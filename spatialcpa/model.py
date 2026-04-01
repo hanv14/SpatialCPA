@@ -7,11 +7,10 @@ into a single end-to-end differentiable model.
 
 import torch
 import torch.nn as nn
-import numpy as np
 
 from spatialcpa.fourier import FourierFeatureEncoder
 from spatialcpa.backbone import SpatialBackbone
-from spatialcpa.heads import ClassifierHead, ZINBExpressionDecoder
+from spatialcpa.heads import ClassifierHead, DirectExpressionDecoder, ZINBExpressionDecoder
 
 
 class SpatialCPA(nn.Module):
@@ -31,9 +30,9 @@ class SpatialCPA(nn.Module):
     n_freq_z : int
         Fourier frequencies for z axis.
     xy_scale : float
-        Characteristic xy spatial scale (µm).
+        Characteristic xy spatial scale.
     z_scale : float
-        Characteristic z spatial scale (µm).
+        Characteristic z spatial scale.
     backbone_hidden : int
         Backbone hidden layer width.
     backbone_output : int
@@ -42,6 +41,9 @@ class SpatialCPA(nn.Module):
         Number of backbone layers.
     dropout : float
         Dropout rate.
+    use_zinb : bool
+        If True, use ZINB decoder (for raw count data).
+        If False, use direct MSE decoder (for normalized data).
     """
 
     def __init__(
@@ -57,11 +59,13 @@ class SpatialCPA(nn.Module):
         backbone_output=256,
         backbone_layers=8,
         dropout=0.1,
+        use_zinb=False,
     ):
         super().__init__()
         self.n_genes = n_genes
         self.n_cell_types = n_cell_types
         self.n_regions = n_regions
+        self.use_zinb = use_zinb
 
         # Fourier feature encoder
         self.fourier = FourierFeatureEncoder(
@@ -96,27 +100,26 @@ class SpatialCPA(nn.Module):
                 hidden_dim=backbone_output,
             )
 
-        # Head C: Expression decoder (ZINB)
-        self.expression_decoder = ZINBExpressionDecoder(
-            input_dim=backbone_output,
-            n_genes=n_genes,
-            n_cell_types=n_cell_types,
-            cell_type_embed_dim=64,
-            hidden_dim=backbone_hidden,
-        )
+        # Head C: Expression decoder
+        if use_zinb:
+            self.expression_decoder = ZINBExpressionDecoder(
+                input_dim=backbone_output,
+                n_genes=n_genes,
+                n_cell_types=n_cell_types,
+                cell_type_embed_dim=64,
+                hidden_dim=backbone_hidden,
+            )
+        else:
+            self.expression_decoder = DirectExpressionDecoder(
+                input_dim=backbone_output,
+                n_genes=n_genes,
+                n_cell_types=n_cell_types,
+                cell_type_embed_dim=64,
+                hidden_dim=backbone_hidden,
+            )
 
     def encode_coords(self, coords):
-        """
-        Encode 3D coordinates → spatial context vector.
-
-        Parameters
-        ----------
-        coords : (N, 3) tensor of (x, y, z).
-
-        Returns
-        -------
-        h : (N, backbone_output) spatial context.
-        """
+        """Encode 3D coordinates → spatial context vector."""
         ff = self.fourier(coords)
         return self.backbone(ff)
 
@@ -124,67 +127,47 @@ class SpatialCPA(nn.Module):
         """
         Full forward pass.
 
-        Parameters
-        ----------
-        coords : (N, 3) tensor of (x, y, z).
-        cell_type_idx : (N,) integer tensor of cell type indices.
-                        If None, uses argmax of cell type predictions.
-
-        Returns
-        -------
-        dict with keys:
-            'h' : (N, D) spatial context
-            'cell_type_logits' : (N, n_cell_types)
-            'region_logits' : (N, n_regions) or None
-            'mu' : (N, n_genes) ZINB mean
-            'theta' : (N, n_genes) ZINB dispersion
-            'pi_logits' : (N, n_genes) ZINB dropout logits
+        Returns dict with 'h', 'cell_type_logits', 'region_logits',
+        and either 'predicted_expr' (MSE mode) or 'mu'/'theta'/'pi_logits' (ZINB mode).
         """
         h = self.encode_coords(coords)
-
         ct_logits = self.cell_type_head(h)
 
         region_logits = None
         if self.region_head is not None:
             region_logits = self.region_head(h)
 
-        # Use provided cell types or predict them
         if cell_type_idx is None:
             cell_type_idx = ct_logits.argmax(dim=-1)
 
-        mu, theta, pi_logits = self.expression_decoder(h, cell_type_idx)
-
-        return {
+        result = {
             'h': h,
             'cell_type_logits': ct_logits,
             'region_logits': region_logits,
-            'mu': mu,
-            'theta': theta,
-            'pi_logits': pi_logits,
         }
+
+        if self.use_zinb:
+            mu, theta, pi_logits = self.expression_decoder(h, cell_type_idx)
+            result['mu'] = mu
+            result['theta'] = theta
+            result['pi_logits'] = pi_logits
+        else:
+            predicted_expr = self.expression_decoder(h, cell_type_idx)
+            result['predicted_expr'] = predicted_expr
+
+        return result
 
     def predict_cell_type(self, coords):
         """Return cell type probabilities at given coordinates."""
         h = self.encode_coords(coords)
         return self.cell_type_head.predict_proba(h)
 
-    def predict_expression(self, coords, cell_type_idx, sample=True):
-        """
-        Predict gene expression at given coordinates for given cell types.
-
-        Parameters
-        ----------
-        coords : (N, 3) coordinates.
-        cell_type_idx : (N,) cell type indices.
-        sample : bool
-            If True, sample from ZINB. If False, return mean.
-
-        Returns
-        -------
-        expr : (N, n_genes)
-        """
+    def predict_expression(self, coords, cell_type_idx):
+        """Predict gene expression at given coordinates."""
         h = self.encode_coords(coords)
-        if sample:
-            return self.expression_decoder.sample(h, cell_type_idx)
+        if self.use_zinb:
+            mu, theta, pi_logits = self.expression_decoder(h, cell_type_idx)
+            pi = torch.sigmoid(pi_logits)
+            return mu * (1 - pi)
         else:
-            return self.expression_decoder.predict_mean(h, cell_type_idx)
+            return self.expression_decoder(h, cell_type_idx)

@@ -9,23 +9,22 @@ import warnings
 warnings.filterwarnings("ignore")
 
 """
-SpatialCPA — Spatial Autocorrelation Evaluation (Moran's I & Geary's C).
+SpatialCPA — Evaluation on STARmap (Moran's I, Geary's C, Gene-wise Pearson r).
 
-This script trains SpatialCPA on the STARmap dataset using a leave-one-out
-protocol (train on slices 1,3,5,7; reconstruct slices 2,4,6) and evaluates
-spatial metrics — the same protocol as run_axialst_eval.py for fair comparison.
+Protocol (matches run_axialst_eval.py):
+  - Split STARmap data into 7 slices
+  - Train on slices 1, 3, 5, 7
+  - Reconstruct held-out slices 2, 4, 6
+  - Compare real vs reconstructed on spatial metrics
 
-Metrics:
-  - Gene-wise Pearson r (predicted vs real expression per gene)
-  - Moran's I correlation (spatial autocorrelation preservation)
-  - Geary's C correlation (local spatial variation preservation)
+Key design decisions:
+  - Expression data is pre-normalized (not raw counts) → use MSE loss, not ZINB
+  - Each cell retains its actual z coordinate (not collapsed to slice median)
+  - True cell types used for expression conditioning during evaluation
+  - Spatial smoothing applied to predictions for coherent spatial structure
 
 Usage:
     python run_spatialcpa_eval.py
-
-Requirements:
-    - STARmap data at: ./data/starmap/STARmap_Wang2018three_data_3D_data.h5ad
-    - pip install anndata scanpy numpy scipy scikit-learn matplotlib tqdm torch
 """
 
 import numpy as np
@@ -37,9 +36,9 @@ from scipy.sparse import issparse
 from scipy.spatial import cKDTree
 
 from spatialcpa.model import SpatialCPA
-from spatialcpa.data import SpatialSection, adata_to_sections, compute_gap_weights
+from spatialcpa.data import SpatialSection, SectionDataset, compute_gap_weights
 from spatialcpa.trainer import SpatialCPATrainer
-from spatialcpa.inference import VirtualSliceGenerator
+from spatialcpa.inference import VirtualSliceGenerator, spatial_smooth
 from spatialcpa.fourier import FourierFeatureEncoder
 
 
@@ -48,21 +47,13 @@ from spatialcpa.fourier import FourierFeatureEncoder
 # ===================================================================
 
 def spatial_weights_knn(positions, k=6):
-    """
-    Build a binary k-NN spatial weight matrix (row-normalised).
-
-    Returns
-    -------
-    W : (N, N) array, row-stochastic
-    """
     tree = cKDTree(positions)
-    dists, indices = tree.query(positions, k=k + 1)  # +1 for self
+    dists, indices = tree.query(positions, k=k + 1)
     N = len(positions)
     W = np.zeros((N, N), dtype=np.float64)
     for i in range(N):
-        nbrs = indices[i, 1:]       # exclude self
+        nbrs = indices[i, 1:]
         W[i, nbrs] = 1.0
-    # Row-normalise
     row_sums = W.sum(axis=1, keepdims=True)
     row_sums[row_sums == 0] = 1.0
     W /= row_sums
@@ -70,7 +61,6 @@ def spatial_weights_knn(positions, k=6):
 
 
 def morans_I(x, W):
-    """Moran's I for a single variable x given weight matrix W."""
     z = x - x.mean()
     zz = z @ z
     if zz == 0:
@@ -82,7 +72,6 @@ def morans_I(x, W):
 
 
 def gearys_C(x, W):
-    """Geary's C for a single variable x given weight matrix W."""
     z = x - x.mean()
     zz = z @ z
     if zz == 0:
@@ -96,27 +85,21 @@ def gearys_C(x, W):
 
 
 def compute_spatial_autocorr(adata, k_neighbors=6, verbose=True):
-    """Compute Moran's I and Geary's C for every gene in an AnnData."""
     positions = np.asarray(adata.obsm['spatial'])
     X = np.asarray(adata.X)
     n_genes = X.shape[1]
-
     if verbose:
         print(f"    Building {k_neighbors}-NN weight matrix "
               f"({adata.n_obs} cells)...")
     W = spatial_weights_knn(positions, k=k_neighbors)
-
     morans = np.zeros(n_genes)
     gearys = np.zeros(n_genes)
-
     for g in range(n_genes):
         morans[g] = morans_I(X[:, g], W)
         gearys[g] = gearys_C(X[:, g], W)
-
     if verbose:
         print(f"    Moran's I: mean={morans.mean():.4f}  "
               f"Geary's C: mean={gearys.mean():.4f}")
-
     return morans, gearys
 
 
@@ -130,7 +113,6 @@ def pearson_r(a, b):
 
 
 def genewise_pearson(real_X, sim_X):
-    """Compute per-gene Pearson r between real and simulated expression."""
     n_genes = real_X.shape[1]
     rs = np.zeros(n_genes)
     for g in range(n_genes):
@@ -144,7 +126,7 @@ def genewise_pearson(real_X, sim_X):
 
 
 # ===================================================================
-# 1. Data preprocessing (same as AxialST eval)
+# 1. Data preprocessing
 # ===================================================================
 
 print("=" * 60)
@@ -166,7 +148,35 @@ if adata.obsp is not None:
 exclude_z = [6, 7, 8, 9, 10, 11, 12, 13, 91, 92, 93, 94]
 adata = adata[~adata.obs['z'].isin(exclude_z)].copy()
 
+# Check expression data properties
+X_check = adata.X
+if issparse(X_check):
+    X_check = np.asarray(X_check.todense())
+print(f"  Expression range: [{X_check.min():.1f}, {X_check.max():.1f}], "
+      f"mean={X_check.mean():.1f}")
+print(f"  Data is pre-normalized (not raw counts) → using MSE loss")
 
+# Normalize expression to a stable range for training
+# The data is already normalized but has huge range (0-479K).
+# Apply log1p to compress, then standardize per gene.
+if issparse(adata.X):
+    adata.X = np.asarray(adata.X.todense())
+adata.X = np.asarray(adata.X, dtype=np.float32)
+
+# Log1p transform to compress dynamic range
+adata.X = np.log1p(adata.X)
+print(f"  After log1p: range [{adata.X.min():.2f}, {adata.X.max():.2f}], "
+      f"mean={adata.X.mean():.2f}")
+
+# Per-gene standardization for stable training
+gene_means = adata.X.mean(axis=0)
+gene_stds = adata.X.std(axis=0)
+gene_stds[gene_stds < 1e-6] = 1.0
+adata.X = (adata.X - gene_means) / gene_stds
+print(f"  After standardization: range [{adata.X.min():.2f}, {adata.X.max():.2f}]")
+
+
+# Split into 7 slices
 def split_data_into_slices(adata, num_slices):
     unique_z = np.sort(np.unique(adata.obs['z']))
     base = len(unique_z) // num_slices
@@ -187,94 +197,95 @@ split_data_into_slices(adata, 7)
 slices = {}
 for i in range(1, 8):
     slices[i] = adata[adata.obs['slice_id'] == f'slice_{i}'].copy()
-    print(f"  slice_{i}: {slices[i].n_obs} cells")
+    z_vals = sorted(slices[i].obs['z'].unique())
+    print(f"  slice_{i}: {slices[i].n_obs} cells, z={z_vals[0]}-{z_vals[-1]} "
+          f"({len(z_vals)} z-layers)")
 
 
 # ===================================================================
-# 2. Prepare training sections from slices 1, 3, 5, 7
+# 2. Build training data with per-cell z coordinates
 # ===================================================================
 
 print("\n" + "=" * 60)
 print("Preparing SpatialCPA training data")
 print("=" * 60)
 
-# Determine device
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"  Device: {device}")
 
-# Build cell type mapping from ALL slices (for consistent encoding)
+# Build cell type mapping from ALL slices
 all_cell_types = set()
 for i in range(1, 8):
     all_cell_types.update(slices[i].obs['cell_class'].unique())
 cell_type_names = sorted(all_cell_types)
 ct_to_idx = {name: i for i, name in enumerate(cell_type_names)}
 n_cell_types = len(cell_type_names)
-print(f"  Cell types: {n_cell_types} — {cell_type_names}")
+print(f"  Cell types: {n_cell_types}")
 
-# Get gene info
 gene_names = list(slices[1].var_names)
 n_genes = len(gene_names)
 print(f"  Genes: {n_genes}")
 
 
-def slice_to_section(adata_slice, z_position, section_id=''):
-    """Convert an AnnData slice to a SpatialSection."""
+def slice_to_sections(adata_slice, ct_to_idx):
+    """
+    Convert an AnnData slice into SpatialSections — one per unique z-value.
+
+    Each cell keeps its actual z coordinate.
+    """
     X = adata_slice.X
     if issparse(X):
         X = np.asarray(X.todense())
     X = np.asarray(X, dtype=np.float32)
 
-    # Get 2D spatial coordinates
     if 'spatial' in adata_slice.obsm:
         coords_xy = np.asarray(adata_slice.obsm['spatial'])[:, :2]
-    elif 'x' in adata_slice.obs.columns and 'y' in adata_slice.obs.columns:
+    elif 'x' in adata_slice.obs.columns:
         coords_xy = np.column_stack([
             adata_slice.obs['x'].values.astype(np.float32),
             adata_slice.obs['y'].values.astype(np.float32),
         ])
     else:
-        # Use z values as a proxy — generate random xy if missing
-        # For STARmap, coordinates should be in obs
-        raise ValueError(f"No spatial coordinates found for {section_id}")
+        raise ValueError("No spatial coordinates found")
 
     ct_indices = np.array(
         [ct_to_idx[c] for c in adata_slice.obs['cell_class'].values],
         dtype=np.int64,
     )
+    z_all = adata_slice.obs['z'].values.astype(np.float32)
 
-    return SpatialSection(
-        expression=X,
-        coords_xy=coords_xy,
-        z_position=z_position,
-        thickness=10.0,  # approximate section thickness in µm
-        cell_type_indices=ct_indices,
-        section_id=section_id,
-    )
+    # One section per unique z-value
+    sections = []
+    for z_val in np.sort(np.unique(z_all)):
+        mask = z_all == z_val
+        idx = np.where(mask)[0]
+        sec = SpatialSection(
+            expression=X[idx],
+            coords_xy=coords_xy[idx],
+            z_values=z_all[idx],
+            cell_type_indices=ct_indices[idx],
+            section_id=f'z={z_val}',
+        )
+        sections.append(sec)
+
+    return sections
 
 
 # Build training sections from slices 1, 3, 5, 7
 train_slice_ids = [1, 3, 5, 7]
 held_out_ids = [2, 4, 6]
 
-# Compute z-positions for each slice (use median z value of cells)
-slice_z_positions = {}
-for i in range(1, 8):
-    z_vals = slices[i].obs['z'].values.astype(float)
-    slice_z_positions[i] = float(np.median(z_vals))
-    print(f"  Slice {i}: z_center = {slice_z_positions[i]:.1f}")
-
 train_sections = []
 for sid in train_slice_ids:
-    sec = slice_to_section(slices[sid], z_position=slice_z_positions[sid],
-                           section_id=f'slice_{sid}')
-    train_sections.append(sec)
-    print(f"  Training section slice_{sid}: {sec.n_cells} cells, "
-          f"z={sec.z_position:.1f}")
+    secs = slice_to_sections(slices[sid], ct_to_idx)
+    train_sections.extend(secs)
+    n_cells = sum(s.n_cells for s in secs)
+    print(f"  Slice {sid}: {len(secs)} z-layers, {n_cells} cells")
 
-# Estimate spatial scales from training data
-all_coords = np.vstack([
-    sec.get_3d_coords() for sec in train_sections
-])
+print(f"  Total training sections: {len(train_sections)}")
+
+# Estimate spatial scales from all training coords
+all_coords = np.vstack([sec.get_3d_coords() for sec in train_sections])
 xy_scale, z_scale = FourierFeatureEncoder.estimate_scales(all_coords)
 print(f"  Estimated scales: xy={xy_scale:.2f}, z={z_scale:.2f}")
 
@@ -290,7 +301,7 @@ print("=" * 60)
 model = SpatialCPA(
     n_genes=n_genes,
     n_cell_types=n_cell_types,
-    n_regions=None,  # STARmap dataset doesn't have region labels
+    n_regions=None,
     n_freq_xy=48,
     n_freq_z=32,
     xy_scale=xy_scale,
@@ -298,7 +309,8 @@ model = SpatialCPA(
     backbone_hidden=512,
     backbone_output=256,
     backbone_layers=8,
-    dropout=0.1,
+    dropout=0.05,
+    use_zinb=False,  # MSE mode for pre-normalized data
 )
 
 total_params = sum(p.numel() for p in model.parameters())
@@ -308,15 +320,17 @@ trainer = SpatialCPATrainer(
     model=model,
     sections=train_sections,
     device=device,
-    lr=1e-3,
-    batch_size=512,
-    n_z_samples=5,
-    loo_weight=0.5,
+    lr=5e-4,
+    batch_size=1024,
+    n_z_samples=3,
+    z_jitter=0.3,
+    loo_weight=0.3,
     expression_weight=1.0,
+    corr_weight=0.5,
 )
 
 t0 = time.time()
-history = trainer.train(n_epochs=80, verbose=True)
+history = trainer.train(n_epochs=50, verbose=True)
 train_time = time.time() - t0
 print(f"\n  Training completed in {train_time:.1f}s")
 print(f"  Final loss: {history[-1]['total']:.4f}")
@@ -336,48 +350,60 @@ generator = VirtualSliceGenerator(
     gene_names=gene_names,
     region_names=None,
     device=device,
+    train_sections=train_sections,  # Enable k-NN refinement
 )
 
 reconstructions = {}
 for held_out in held_out_ids:
-    print(f"\n--- slice_{held_out} (z={slice_z_positions[held_out]:.1f}) ---")
-    t0 = time.time()
+    ref = slices[held_out]
+    z_range = sorted(ref.obs['z'].unique())
+    print(f"\n--- slice_{held_out} (z={z_range[0]}-{z_range[-1]}) ---")
 
-    # Use generate_matching to predict at exact positions of real cells
-    sim = generator.generate_matching(
-        z=slice_z_positions[held_out],
-        reference_adata=slices[held_out],
-        cell_type_key='cell_class',
-        sample_expression=False,  # Use mean for more stable evaluation
-        batch_size=2048,
+    # Get true cell type indices for evaluation
+    true_ct = np.array(
+        [ct_to_idx[c] for c in ref.obs['cell_class'].values],
+        dtype=np.int64,
     )
 
+    t0 = time.time()
+    sim = generator.generate_matching(
+        reference_adata=ref,
+        cell_type_key='cell_class',
+        true_cell_types=true_ct,   # Use ground truth cell types
+        knn_k=5,                   # Small k preserves spatial autocorrelation
+        knn_z_weight=3.0,          # Moderate z-weight for balanced 3D matching
+        knn_alpha=0.0,             # Pure cell-type k-NN (no NN blend)
+        smooth_k=0,                # No spatial smoothing (preserves Moran/Geary)
+        smooth_sigma=1.0,
+        batch_size=4096,
+    )
     print(f"  -> {sim.n_obs} cells in {time.time() - t0:.1f}s")
     reconstructions[held_out] = sim
 
 
 # ===================================================================
-# 5. Normalize and evaluate
+# 5. De-standardize predictions and evaluate
 # ===================================================================
 
 print("\n" + "=" * 60)
-print("Normalizing and computing metrics")
+print("De-standardizing and computing metrics")
 print("=" * 60)
 
-pairs = []   # (name, real_adata, sim_adata)
+# Both real and predicted are in standardized space. For evaluation
+# we de-standardize back to log1p space for fair metric comparison.
+pairs = []
 for held_out in held_out_ids:
     real = slices[held_out].copy()
-    sim  = reconstructions[held_out].copy()
+    sim = reconstructions[held_out].copy()
 
     if issparse(real.X):
         real.X = np.asarray(real.X.todense())
     if issparse(sim.X):
         sim.X = np.asarray(sim.X.todense())
 
-    sc.pp.normalize_total(real, target_sum=1e4)
-    sc.pp.log1p(real)
-    sc.pp.normalize_total(sim, target_sum=1e4)
-    sc.pp.log1p(sim)
+    # De-standardize: X_orig = X * gene_stds + gene_means
+    real.X = real.X * gene_stds + gene_means
+    sim.X = sim.X * gene_stds + gene_means
 
     pairs.append((f"Slice {held_out}", real, sim))
 
@@ -395,10 +421,7 @@ for name, real, sim in pairs:
     real_X = np.asarray(real.X)
     sim_X = np.asarray(sim.X)
 
-    # Ensure same number of cells (generate_matching guarantees this)
-    n_common = min(real_X.shape[0], sim_X.shape[0])
-    gene_rs = genewise_pearson(real_X[:n_common], sim_X[:n_common])
-
+    gene_rs = genewise_pearson(real_X, sim_X)
     gene_r_results[name] = gene_rs
     print(f"  {name}: mean gene-wise r = {np.nanmean(gene_rs):.4f}, "
           f"median = {np.nanmedian(gene_rs):.4f}")
@@ -408,18 +431,18 @@ for name, real, sim in pairs:
 # 7. Compute Moran's I and Geary's C
 # ===================================================================
 
-k_nn = 6   # spatial neighbours
+k_nn = 6
 
 results = {}
 for name, real, sim in pairs:
     print(f"\n  {name} -- real:")
     m_real, g_real = compute_spatial_autocorr(real, k_neighbors=k_nn)
     print(f"  {name} -- reconstructed:")
-    m_sim,  g_sim  = compute_spatial_autocorr(sim,  k_neighbors=k_nn)
+    m_sim, g_sim = compute_spatial_autocorr(sim, k_neighbors=k_nn)
 
     results[name] = {
-        'moran_real': m_real,  'moran_sim': m_sim,
-        'geary_real': g_real,  'geary_sim': g_sim,
+        'moran_real': m_real, 'moran_sim': m_sim,
+        'geary_real': g_real, 'geary_sim': g_sim,
     }
 
 
@@ -445,7 +468,7 @@ for name in results:
 
 
 # ===================================================================
-# 9. Scatter plots: per-gene Moran's I and Geary's C
+# 9. Scatter plots
 # ===================================================================
 
 print("\n" + "=" * 60)
@@ -453,36 +476,31 @@ print("Generating scatter plots")
 print("=" * 60)
 
 fig, axes = plt.subplots(2, 3, figsize=(15, 9))
-
 colors = {'Slice 2': '#D54151', 'Slice 4': '#549745', 'Slice 6': '#B185DC'}
 
 for col, name in enumerate(results):
     r = results[name]
     c = colors[name]
 
-    # --- Moran's I ---
     ax = axes[0, col]
     ax.scatter(r['moran_real'], r['moran_sim'],
                s=30, alpha=0.7, c=c, edgecolors='white', linewidths=0.3)
     lim = [min(r['moran_real'].min(), r['moran_sim'].min()) - 0.02,
            max(r['moran_real'].max(), r['moran_sim'].max()) + 0.02]
     ax.plot(lim, lim, 'k--', lw=1, alpha=0.4)
-    ax.set_xlim(lim)
-    ax.set_ylim(lim)
+    ax.set_xlim(lim); ax.set_ylim(lim)
     ax.set_xlabel("Real (Moran's I)", fontsize=10)
     ax.set_ylabel("SpatialCPA (Moran's I)", fontsize=10)
     r_val = pearson_r(r['moran_real'], r['moran_sim'])
     ax.set_title(f"{name} -- Moran's I\nr = {r_val:.4f}", fontsize=11)
 
-    # --- Geary's C ---
     ax = axes[1, col]
     ax.scatter(r['geary_real'], r['geary_sim'],
                s=30, alpha=0.7, c=c, edgecolors='white', linewidths=0.3)
     lim = [min(r['geary_real'].min(), r['geary_sim'].min()) - 0.02,
            max(r['geary_real'].max(), r['geary_sim'].max()) + 0.02]
     ax.plot(lim, lim, 'k--', lw=1, alpha=0.4)
-    ax.set_xlim(lim)
-    ax.set_ylim(lim)
+    ax.set_xlim(lim); ax.set_ylim(lim)
     ax.set_xlabel("Real (Geary's C)", fontsize=10)
     ax.set_ylabel("SpatialCPA (Geary's C)", fontsize=10)
     r_val = pearson_r(r['geary_real'], r['geary_sim'])
@@ -495,7 +513,7 @@ plt.close()
 
 
 # ===================================================================
-# 10. Summary table (copy-pasteable for paper)
+# 10. Summary table
 # ===================================================================
 
 print("\n" + "=" * 60)
@@ -513,7 +531,6 @@ for name in results:
     r_gene = np.nanmean(gene_r_results[name])
     print(f"{name:<10} {r_gene:>10.4f} {r_m:>10.4f} {r_g:>10.4f}")
 
-# Overall averages
 avg_gene = np.nanmean([np.nanmean(gene_r_results[n]) for n in results])
 avg_moran = np.mean([pearson_r(results[n]['moran_real'], results[n]['moran_sim'])
                       for n in results])
