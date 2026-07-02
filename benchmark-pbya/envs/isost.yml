@@ -1,0 +1,65 @@
+# name: bench_isost
+# channels:
+#   - conda-forge
+#   - pytorch
+#   - pyg
+#   - defaults
+# # dependencies:
+# #   - python=3.10
+# #   - numpy>=1.24
+# #   - scipy>=1.10
+# #   - pandas>=2.0
+# #   - h5py>=3.9
+# #   - pytorch=1.12.0
+# #   - cudatoolkit=11.3
+# #   - faiss-gpu=1.7.3
+# #   - pip
+# #   - pip:
+# #     - anndata>=0.10
+# #     - scanpy>=1.10
+# #     - torch-geometric
+# #     - geomloss
+# #     - torchdiffeq
+# dependencies:
+#   - python=3.10
+#   - numpy>=1.24
+#   - scipy>=1.10
+#   - pandas>=2.0
+#   - h5py>=3.9
+#   - pytorch=1.12.0
+#   - cudatoolkit=11.2
+#   - faiss-gpu=1.7.3
+#   - pyyaml
+#   - pip
+#   - pip:
+#     - anndata>=0.10
+#     - scanpy>=1.10
+#     - torch-geometric
+#     - geomloss
+#     - torchdiffeq
+
+name: bench_isost
+channels:
+  - conda-forge
+  - pyg
+  - defaults
+dependencies:
+  - python=3.10
+  - numpy>=1.24
+  - scipy>=1.10
+  - pandas>=2.0
+  - h5py>=3.9
+  - faiss-gpu=1.7.3
+  - cudatoolkit=11.3
+  - pyyaml
+  - pip
+  - pip:
+    - anndata>=0.10
+    - scanpy>=1.10
+    - torch-geometric==2.3.1
+    - torch-cluster==1.6.0
+    - torch-scatter==2.1.0
+    - torch-sparse==0.6.16
+    - torch-spline-conv==1.2.1
+    - geomloss
+    - torchdiffeq

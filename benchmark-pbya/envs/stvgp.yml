@@ -1,0 +1,17 @@
+name: bench_stvgp
+channels:
+  - conda-forge
+  - pytorch
+  - defaults
+dependencies:
+  - python=3.10
+  - numpy>=1.24
+  - scipy>=1.10
+  - pandas>=2.0
+  - h5py>=3.9
+  - pytorch>=2.0
+  - pip
+  - pip:
+    - anndata>=0.10
+    - scanpy>=1.10
+    # Add stVGP-specific deps when code is available

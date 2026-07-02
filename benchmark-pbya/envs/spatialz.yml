@@ -1,0 +1,16 @@
+name: bench_spatialz
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - numpy>=1.24
+  - scipy>=1.10
+  - pandas>=2.0
+  - scikit-learn>=1.3
+  - h5py>=3.9
+  - pip
+  - pip:
+    - anndata>=0.10
+    - scanpy>=1.10
+    # Add SpatialZ-specific deps after inspecting Zenodo code
