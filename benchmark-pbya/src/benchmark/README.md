@@ -38,6 +38,7 @@ Each wrapper calls the **authors' code directly** — we do not reimplement mode
 | **isoST** | Li et al. 2025 | [github.com/deng-ai-lab/isoST](https://github.com/deng-ai-lab/isoST) | bench_isost | `biaxial_train()`, `IsoST.fine_infer()` | Preprocessing (zscore→PCA→minmax→.pt; authors only show this in notebooks), inverse PCA for expression recovery |
 | **stVGP** | Wang et al. 2026, Adv Sci | [github.com/wzdrgi/stVGP](https://github.com/wzdrgi/stVGP) | bench_stvgp | `gene_rigid_mapping_alignment()`, `adata_preprocess_adjnet()`, `train_stVGP()`, `get_3D_prediction()`, `gene_prediction()` | HVG selection (authors use Moran's I via R), GP subsampling for >5K cells |
 | **SVGP (Spateo)** | Qiu et al. 2024, Cell | [github.com/aristoteleo/spateo-release](https://github.com/aristoteleo/spateo-release) | bench_spateo | GPyTorch SVGP directly (same algorithm as Spateo's `gp_interpolation`) | Full wrapper (Spateo's wrapper deadlocks; we call GPyTorch with identical model/params) |
+| **SpatialCPA** | this repo | `spatialcpa/` package (repo root) | bench_spatialcpa | `SpatialCPA`, `SpatialCPATrainer`, `VirtualSliceGenerator` | Benchmark glue only: expression normalization, cell-type index build (obs → Leiden fallback), per-section `SpatialSection` assembly |
 
 ## Paper datasets → our datasets
 
