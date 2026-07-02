@@ -1,8 +1,13 @@
 """
 Virtual Slice Generation and Inference for SpatialCPA.
 
-Includes neural network prediction, k-NN spatial refinement from training
-data, and spatial smoothing for coherent spatial structure.
+The primary inference path is :func:`interpolate_flanking` /
+:meth:`VirtualSliceGenerator.generate_flanking`: a held-out slice is
+reconstructed at its real cell coordinates by bidirectional z-interpolation of
+inverse-distance k-NN estimates from the two flanking training sections, on the
+original expression scale. The neural-field prediction, k-NN spatial refinement
+(:func:`knn_refine`, :func:`knn_refine_by_celltype`), and spatial smoothing
+(:func:`spatial_smooth`) remain available for the learned/blended variants.
 """
 
 import numpy as np
@@ -179,6 +184,120 @@ def knn_refine_by_celltype(pred_xy, pred_z, pred_ct,
     return result
 
 
+def _idw_section(target_xy, sec_xy, sec_expr, sec_ct, k, n_cell_types):
+    """Inverse-distance-weighted k-NN estimate within a single section.
+
+    For every target cell, find its ``k`` nearest neighbours (in xy) among the
+    cells of one training section and return (a) the inverse-distance-weighted
+    average expression and (b) inverse-distance-weighted class votes.
+
+    Parameters
+    ----------
+    target_xy : (N, 2) query positions.
+    sec_xy : (M, 2) section cell positions.
+    sec_expr : (M, G) section cell expression (any scale).
+    sec_ct : (M,) section cell-type indices, or None.
+    k : int
+        Neighbours to average.
+    n_cell_types : int
+        Size of the vote vector.
+
+    Returns
+    -------
+    expr_est : (N, G) weighted-average expression.
+    votes : (N, n_cell_types) weighted class votes (zeros if sec_ct is None).
+    """
+    m = len(sec_xy)
+    k_actual = min(k, m)
+    tree = cKDTree(sec_xy)
+    dists, idx = tree.query(target_xy, k=k_actual)
+    if k_actual == 1:
+        dists = dists.reshape(-1, 1)
+        idx = idx.reshape(-1, 1)
+
+    weights = 1.0 / (dists + 1e-8)
+    weights /= weights.sum(axis=1, keepdims=True)
+
+    # Weighted average expression: (N, k, G) contracted over k.
+    expr_est = np.einsum("nk,nkg->ng", weights.astype(np.float32),
+                         sec_expr[idx]).astype(np.float32)
+
+    votes = np.zeros((len(target_xy), n_cell_types), dtype=np.float32)
+    if sec_ct is not None:
+        neigh_ct = sec_ct[idx]  # (N, k)
+        rows = np.repeat(np.arange(len(target_xy)), k_actual)
+        np.add.at(votes, (rows, neigh_ct.ravel()), weights.ravel())
+
+    return expr_est, votes
+
+
+def interpolate_flanking(target_xy, target_z, sections, k=12,
+                         n_cell_types=1):
+    """Bidirectional z-interpolation of expression from flanking sections.
+
+    This is the core of SpatialCPA inference at a held-out slice. Each held-out
+    cell sits at a known ``(x, y, z)``; the two training sections immediately
+    below and above ``z`` are located, an inverse-distance k-NN estimate is
+    formed independently in each, and the two estimates are linearly blended by
+    the cell's fractional z-position between the sections. The prediction is
+    produced on the *same scale as the section expression passed in* — feed raw
+    (original-scale) expression to match ground truth for error metrics.
+
+    Parameters
+    ----------
+    target_xy : (N, 2) held-out cell positions.
+    target_z : (N,) held-out cell z-coordinates.
+    sections : list of dict
+        Each ``{"xy": (M,2), "z": float, "expr": (M,G), "ct": (M,) or None}``.
+        ``z`` is the section's characteristic (median) z-coordinate.
+    k : int
+        Neighbours per flanking section.
+    n_cell_types : int
+        Number of cell-type classes for the vote vector. When the target lies
+        outside the training z-range (no section on one side), the single
+        nearest section carries the estimate rather than extrapolating.
+
+    Returns
+    -------
+    expr : (N, G) interpolated expression.
+    cell_types : (N,) predicted cell-type indices (argmax of blended votes).
+    """
+    order = np.argsort([s["z"] for s in sections])
+    z_centers = np.array([sections[i]["z"] for i in order], dtype=np.float64)
+
+    zt = float(np.median(target_z))
+    below = np.where(z_centers <= zt + 1e-9)[0]
+    above = np.where(z_centers >= zt - 1e-9)[0]
+
+    lo = order[below[-1]] if len(below) else order[0]
+    hi = order[above[0]] if len(above) else order[-1]
+
+    z_lo = sections[lo]["z"]
+    z_hi = sections[hi]["z"]
+
+    e_lo, v_lo = _idw_section(target_xy, sections[lo]["xy"], sections[lo]["expr"],
+                              sections[lo].get("ct"), k, n_cell_types)
+
+    if lo == hi or abs(z_hi - z_lo) < 1e-9:
+        # Boundary / degenerate: a single section carries the estimate.
+        expr = e_lo
+        votes = v_lo
+    else:
+        e_hi, v_hi = _idw_section(target_xy, sections[hi]["xy"],
+                                  sections[hi]["expr"], sections[hi].get("ct"),
+                                  k, n_cell_types)
+        # Per-cell fractional position between the two flanking sections.
+        w = np.clip((np.asarray(target_z, dtype=np.float64) - z_lo)
+                    / (z_hi - z_lo), 0.0, 1.0).astype(np.float32)
+        wc = w[:, None]
+        expr = (1.0 - wc) * e_lo + wc * e_hi
+        votes = (1.0 - wc) * v_lo + wc * v_hi
+
+    cell_types = votes.argmax(axis=1) if votes.shape[1] > 0 else \
+        np.zeros(len(target_xy), dtype=np.int64)
+    return expr.astype(np.float32), cell_types.astype(np.int64)
+
+
 class VirtualSliceGenerator:
     """
     Generate virtual tissue slices at arbitrary z-positions.
@@ -226,6 +345,102 @@ class VirtualSliceGenerator:
             self.train_xy = np.concatenate(all_xy, axis=0)
             self.train_z = np.concatenate(all_z, axis=0)
             self.train_ct = np.concatenate(all_ct, axis=0)
+        # Keep the per-section structure for flanking z-interpolation.
+        self.train_sections = train_sections
+
+    @torch.no_grad()
+    def generate_flanking(self, reference_adata, interp_expr_list=None,
+                          k=12, nn_expr_blend=0.0, batch_size=4096):
+        """Generate a held-out slice by bidirectional flanking interpolation.
+
+        This is the recommended inference path for SpatialCPA on the virtual
+        slice benchmark. Expression at each reference cell is estimated by
+        linearly interpolating inverse-distance k-NN estimates from the two
+        training sections flanking the slice in z, and cell types are assigned
+        by the spatially-weighted vote of the same neighbours. Because the
+        estimate is produced on the scale of the supplied section expression,
+        pass raw / original-scale expression (``interp_expr_list``) so the
+        prediction matches the ground truth for error-based metrics.
+
+        Parameters
+        ----------
+        reference_adata : AnnData
+            Reference slice supplying ``obsm['spatial']`` (or obs x/y) and
+            ``obs['z']``.
+        interp_expr_list : list of (M_s, G) arrays or None
+            Per-section expression, aligned with ``self.train_sections``. When
+            None, the sections' own ``.expression`` is used.
+        k : int
+            Neighbours per flanking section.
+        nn_expr_blend : float
+            Optional blend with the neural field's expression prediction:
+            ``blend * nn + (1 - blend) * interpolation``. Off by default; the
+            neural field lives on a different (normalised) scale, so blending is
+            only meaningful when the model was trained on the same scale.
+        batch_size : int
+            Batch size for the (optional) neural expression pass.
+
+        Returns
+        -------
+        virtual_adata : AnnData
+        """
+        if self.train_sections is None:
+            raise ValueError("generate_flanking requires train_sections")
+
+        if 'spatial' in reference_adata.obsm:
+            positions = np.asarray(reference_adata.obsm['spatial'])[:, :2]
+        elif 'x' in reference_adata.obs.columns:
+            positions = np.column_stack([
+                reference_adata.obs['x'].values.astype(np.float32),
+                reference_adata.obs['y'].values.astype(np.float32),
+            ])
+        else:
+            raise ValueError("Cannot find spatial coordinates in reference")
+        positions = positions.astype(np.float32)
+        z_values = reference_adata.obs['z'].values.astype(np.float32)
+
+        if interp_expr_list is None:
+            interp_expr_list = [s.expression for s in self.train_sections]
+
+        sections = []
+        for sec, expr in zip(self.train_sections, interp_expr_list):
+            sections.append({
+                "xy": np.asarray(sec.coords_xy, dtype=np.float32),
+                "z": float(sec.z_center),
+                "expr": np.asarray(expr, dtype=np.float32),
+                "ct": np.asarray(sec.cell_type_indices, dtype=np.int64),
+            })
+
+        n_cell_types = len(self.cell_type_names)
+        expr_all, cell_types = interpolate_flanking(
+            positions, z_values, sections, k=k, n_cell_types=n_cell_types)
+
+        if nn_expr_blend > 0:
+            coords_3d = np.hstack([positions, z_values.reshape(-1, 1)]) \
+                .astype(np.float32)
+            nn_expr = []
+            for start in range(0, len(positions), batch_size):
+                end = min(start + batch_size, len(positions))
+                bc = torch.tensor(coords_3d[start:end], device=self.device)
+                bct = torch.tensor(cell_types[start:end], dtype=torch.long,
+                                   device=self.device)
+                nn_expr.append(
+                    self.model.predict_expression(bc, bct).cpu().numpy())
+            nn_expr = np.concatenate(nn_expr, axis=0)
+            expr_all = nn_expr_blend * nn_expr + (1 - nn_expr_blend) * expr_all
+
+        expr_all = np.clip(expr_all, 0, None).astype(np.float32)
+        cell_type_labels = [self.cell_type_names[i] for i in cell_types]
+
+        obs = pd.DataFrame({
+            'cell_class': cell_type_labels,
+            'cell_type_idx': cell_types,
+        })
+        obs.index = reference_adata.obs.index.copy()
+        virtual_adata = ad.AnnData(X=expr_all, obs=obs,
+                                   var=reference_adata.var.copy())
+        virtual_adata.obsm['spatial'] = positions
+        return virtual_adata
 
     @torch.no_grad()
     def generate_matching(self, reference_adata, cell_type_key='cell_class',

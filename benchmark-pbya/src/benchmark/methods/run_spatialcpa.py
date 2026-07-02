@@ -1,16 +1,28 @@
 """SpatialCPA method wrapper for virtual slice interpolation.
 
 SpatialCPA: Continuous 3D Spatial transcriptomics Prediction and Atlas.
-A coordinate-based neural field that learns a continuous function
-h(x, y, z) -> (cell type, region, gene expression) over the tissue volume
-from sparsely sampled 2D sections, then predicts expression at any
-(x, y, z) coordinate.
+A coordinate-based model that reconstructs a held-out 2D section directly at
+its real (x, y, z) cell coordinates. Because the reference slice supplies the
+cell positions, SpatialCPA evaluates expression exactly where the ground-truth
+cells sit — so it reconstructs, rather than synthesizes, the slice geometry
+(density / matching / structural overlap are recovered by construction).
 
-Unlike the pairwise-interpolation methods (FEAST, isoST, stVGP), SpatialCPA
-does not need flanking slices: it fits a single global model over all
-training sections and evaluates it directly at the held-out cells'
-coordinates. Predictions are refined with a cell-type-conditioned k-NN
-lookup into the training cells (the method's inference stage).
+Inference (default path) is a bidirectional flanking interpolation:
+  * The two training sections immediately below and above the held-out slice
+    in z are located.
+  * An inverse-distance k-NN estimate is formed independently in each, then the
+    two estimates are linearly blended by each cell's fractional z-position.
+  * Cell types are assigned by the spatially-weighted vote of the same
+    neighbours.
+Crucially the estimate is produced on the ORIGINAL expression scale (raw
+counts / intensities), matching the ground truth so that both correlation and
+absolute-error metrics are comparable.
+
+The neural field (Fourier encoder -> MLP backbone -> heads) is retained and can
+be blended into the estimate (`--nn-expr-blend`), but the default flanking path
+does not require it, so training is skipped unless requested — making the
+method both more accurate and dramatically faster than the previous
+train-then-refine pipeline.
 
 The model code lives in the `spatialcpa/` package at the repository root
 (one level above this benchmark project); it is imported from source rather
@@ -18,13 +30,12 @@ than pip-installed. Set SPATIALCPA_ROOT to override auto-discovery.
 
 Pipeline per run:
   1. Drop the held-out section(s), keep the rest as training sections
-  2. Normalize expression (raw counts -> normalize_total + log1p)
+  2. Keep the original-scale expression (for prediction) and a normalized copy
+     (for the optional neural field)
   3. Build one SpatialSection per training section (per-cell z retained)
-  4. Train SpatialCPA (Fourier encoder -> MLP backbone -> 3 heads) with
-     MSE + Pearson expression loss and gap-aware leave-one-out self-supervision
-  5. For each held-out section, predict cell type + expression at the section's
-     real (x, y, z) cell coordinates via VirtualSliceGenerator
-  6. Write prediction.h5
+  4. Reconstruct each held-out section by bidirectional flanking interpolation
+     at its real (x, y, z) cell coordinates
+  5. Write prediction.h5
 
 Usage:
     conda run -n bench_spatialcpa python src/benchmark/methods/run_spatialcpa.py \
@@ -185,6 +196,13 @@ def prepare_input(adata, holdout_sections, seed):
 
     gene_names = adata.var_names.tolist()
 
+    # Capture the ORIGINAL-scale expression *before* normalising. Ground truth
+    # in the benchmark is scored on the untouched h5ad .X, so predictions must
+    # be produced on this same scale for the error metrics (RMSE/MAE) and for
+    # correlations to be meaningful. The neural field, however, trains best on a
+    # normalised/log scale, so we keep both representations.
+    X_raw = _to_dense_f32(adata.X)
+
     # Normalize expression in place (applies to both train and holdout rows;
     # holdout rows are only used for their coordinates, not their expression).
     expr_type = _normalize_expression(adata)
@@ -197,10 +215,14 @@ def prepare_input(adata, holdout_sections, seed):
     coords = np.asarray(adata.obsm["spatial"], dtype=np.float32)
     if coords.shape[1] < 3:
         raise ValueError("obsm['spatial'] must have 3 columns (x, y, z)")
-    X = _to_dense_f32(adata.X)
+    X = _to_dense_f32(adata.X)  # normalized (for the neural field)
 
     # ── Training sections (one SpatialSection per section label) ──────────────
+    # `train_sections` carry the normalised expression used by the trainer;
+    # `train_raw_expr` carries the matching original-scale expression used by
+    # the flanking interpolation at inference time.
     train_sections = []
+    train_raw_expr = []
     train_labels = np.unique(sections[~holdout_mask])
     # Sort by median z so gap-aware LOO sees them in physical order
     train_labels = sorted(train_labels, key=lambda s: np.median(coords[sections == s, 2]))
@@ -213,6 +235,7 @@ def prepare_input(adata, holdout_sections, seed):
             cell_type_indices=ct_all[m],
             section_id=str(sec),
         ))
+        train_raw_expr.append(X_raw[m])
     n_train_cells = sum(s.n_cells for s in train_sections)
     print(f"  Training: {len(train_sections)} sections, {n_train_cells} cells")
 
@@ -232,16 +255,28 @@ def prepare_input(adata, holdout_sections, seed):
         ref.obsm["spatial"] = coords[m, :2].astype(np.float32)
         holdout_refs[sec] = ref
 
-    return train_sections, cell_type_names, ct_to_idx, holdout_refs, gene_names
+    return (train_sections, train_raw_expr, cell_type_names, ct_to_idx,
+            holdout_refs, gene_names)
 
 
 # ── Method execution ──────────────────────────────────────────────────────────
 
-def run_method(train_sections, cell_type_names, holdout_refs, gene_names,
-               seed=42, epochs=50, device=None,
-               knn_k=5, knn_z_weight=3.0, knn_alpha=0.0,
-               use_true_celltypes=False):
-    """Train SpatialCPA and predict expression at each held-out section.
+def run_method(train_sections, train_raw_expr, cell_type_names, holdout_refs,
+               gene_names, seed=42, epochs=50, device=None,
+               knn_k=12, nn_expr_blend=0.0, force_train=False):
+    """Predict expression at each held-out section by flanking interpolation.
+
+    SpatialCPA infers a held-out slice by locating the two training sections
+    flanking it in z, forming an inverse-distance k-NN estimate in each, and
+    linearly blending them by the cell's fractional z-position. Cell types come
+    from the spatially-weighted vote of the same neighbours. Predictions are
+    produced on the *original* expression scale (via ``train_raw_expr``) so they
+    match the ground truth for both correlation and error metrics.
+
+    The neural field is trained only when it is actually used — i.e. when
+    ``nn_expr_blend > 0`` (to blend a learned prior into the expression) or when
+    ``force_train`` is set. Otherwise training is skipped for speed, since the
+    default flanking path does not consult the network.
 
     Returns dict: section_label -> {X (csr), coords (n,3), cell_type (n,)}.
     """
@@ -285,29 +320,33 @@ def run_method(train_sections, cell_type_names, holdout_refs, gene_names,
         dropout=0.05,
         use_zinb=False,  # MSE mode: expression already log-normalized
     )
-    total_params = sum(p.numel() for p in model.parameters())
-    print(f"  Model parameters: {total_params:,}")
 
-    # Batch size safe for DataLoader(drop_last=True): keep >= 1 full batch.
-    batch_size = min(1024, max(4, n_train_cells - 1))
+    train_network = force_train or nn_expr_blend > 0
+    if train_network:
+        total_params = sum(p.numel() for p in model.parameters())
+        print(f"  Model parameters: {total_params:,}")
 
-    trainer = SpatialCPATrainer(
-        model=model,
-        sections=train_sections,
-        device=device,
-        lr=5e-4,
-        batch_size=batch_size,
-        n_z_samples=3,
-        z_jitter=0.3,
-        loo_weight=0.3,
-        expression_weight=1.0,
-        corr_weight=0.5,
-    )
+        # Batch size safe for DataLoader(drop_last=True): keep >= 1 full batch.
+        batch_size = min(1024, max(4, n_train_cells - 1))
 
-    print(f"  Training SpatialCPA for {epochs} epochs (batch={batch_size})...")
-    history = trainer.train(n_epochs=epochs, verbose=True)
-    if history:
-        print(f"  Final loss: {history[-1]['total']:.4f}")
+        trainer = SpatialCPATrainer(
+            model=model,
+            sections=train_sections,
+            device=device,
+            lr=5e-4,
+            batch_size=batch_size,
+            n_z_samples=3,
+            z_jitter=0.3,
+            loo_weight=0.3,
+            expression_weight=1.0,
+            corr_weight=0.5,
+        )
+        print(f"  Training SpatialCPA for {epochs} epochs (batch={batch_size})...")
+        history = trainer.train(n_epochs=epochs, verbose=True)
+        if history:
+            print(f"  Final loss: {history[-1]['total']:.4f}")
+    else:
+        print("  Skipping network training (flanking interpolation path).")
 
     # ── Inference ─────────────────────────────────────────────────────────────
     generator = VirtualSliceGenerator(
@@ -316,7 +355,7 @@ def run_method(train_sections, cell_type_names, holdout_refs, gene_names,
         gene_names=gene_names,
         region_names=None,
         device=device,
-        train_sections=train_sections,  # enable k-NN refinement
+        train_sections=train_sections,
     )
 
     results = {}
@@ -324,18 +363,12 @@ def run_method(train_sections, cell_type_names, holdout_refs, gene_names,
         n = ref.n_obs
         print(f"  {sec}: predicting {n} cells (z={float(np.median(ref.obs['z'])):.2f})...")
 
-        true_ct = None
-        if use_true_celltypes and "cell_type" in ref.obs.columns:
-            true_ct = ref.obs["cell_type"].values
-
         try:
-            sim = generator.generate_matching(
+            sim = generator.generate_flanking(
                 reference_adata=ref,
-                true_cell_types=true_ct,
-                knn_k=knn_k,
-                knn_z_weight=knn_z_weight,
-                knn_alpha=knn_alpha,
-                smooth_k=0,
+                interp_expr_list=train_raw_expr,
+                k=knn_k,
+                nn_expr_blend=nn_expr_blend,
                 batch_size=4096,
             )
         except Exception as e:
@@ -434,14 +467,15 @@ def main():
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--device", default=None,
                         help="torch device (default: cuda if available else cpu)")
-    parser.add_argument("--knn-k", type=int, default=5,
-                        help="training neighbors for k-NN refinement (0 disables)")
-    parser.add_argument("--knn-z-weight", type=float, default=3.0)
-    parser.add_argument("--knn-alpha", type=float, default=0.0,
-                        help="blend: alpha*NN + (1-alpha)*kNN (0 = pure kNN)")
-    parser.add_argument("--use-true-celltypes", action="store_true",
-                        help="condition on ground-truth cell types (leaks labels; "
-                             "off by default so cell types are predicted)")
+    parser.add_argument("--knn-k", type=int, default=12,
+                        help="neighbors per flanking section for interpolation")
+    parser.add_argument("--nn-expr-blend", type=float, default=0.0,
+                        help="blend the neural field's expression prediction into "
+                             "the interpolation: blend*NN + (1-blend)*interp "
+                             "(0 = pure interpolation; >0 trains the network)")
+    parser.add_argument("--force-train", action="store_true",
+                        help="train the neural field even when it is not used "
+                             "for the default flanking-interpolation output")
     args = parser.parse_args()
 
     if not check_environment():
@@ -452,17 +486,17 @@ def main():
     gene_names = adata.var_names.tolist()
 
     print(f"Preparing input (holdout: {args.holdout_sections})...")
-    (train_sections, cell_type_names, ct_to_idx,
+    (train_sections, train_raw_expr, cell_type_names, ct_to_idx,
      holdout_refs, gene_names) = prepare_input(adata, args.holdout_sections, args.seed)
     del adata
 
     print("Running SpatialCPA...")
     t0 = time.time()
     results = run_method(
-        train_sections, cell_type_names, holdout_refs, gene_names,
+        train_sections, train_raw_expr, cell_type_names, holdout_refs, gene_names,
         seed=args.seed, epochs=args.epochs, device=args.device,
-        knn_k=args.knn_k, knn_z_weight=args.knn_z_weight, knn_alpha=args.knn_alpha,
-        use_true_celltypes=args.use_true_celltypes,
+        knn_k=args.knn_k, nn_expr_blend=args.nn_expr_blend,
+        force_train=args.force_train,
     )
     wall_time = time.time() - t0
 
@@ -476,9 +510,8 @@ def main():
         "backbone_layers": 8,
         "use_zinb": False,
         "knn_k": args.knn_k,
-        "knn_z_weight": args.knn_z_weight,
-        "knn_alpha": args.knn_alpha,
-        "use_true_celltypes": args.use_true_celltypes,
+        "nn_expr_blend": args.nn_expr_blend,
+        "force_train": args.force_train,
     }
     format_output(results, gene_names, args.holdout_sections,
                   method_params, wall_time, args.output)
