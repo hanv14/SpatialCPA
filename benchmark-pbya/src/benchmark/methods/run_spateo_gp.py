@@ -24,8 +24,11 @@ import sys
 import time
 from pathlib import Path
 
-os.environ.setdefault("OMP_NUM_THREADS", "4")
-os.environ.setdefault("MKL_NUM_THREADS", "4")
+# Cap CPU threads before numpy/torch are imported so this method cannot
+# saturate every core (tune via BENCH_NUM_THREADS). Shared benchmark helper.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # .../src
+from benchmark._cpu import limit_cpu_threads
+limit_cpu_threads()
 
 import anndata as ad
 import gpytorch

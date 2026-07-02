@@ -10,6 +10,11 @@ import time
 import traceback
 from pathlib import Path
 
+# Cap CPU threads before numpy/torch/scanpy are imported (directly or via the
+# method modules) so a single method cannot saturate every core.
+from ._cpu import limit_cpu_threads
+limit_cpu_threads()
+
 import anndata as ad
 import numpy as np
 

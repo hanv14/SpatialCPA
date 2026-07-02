@@ -12,8 +12,13 @@ import sys
 import time
 from pathlib import Path
 
+from ._cpu import limit_cpu_threads, thread_env
 from .config import DATASETS, METHODS, PROJECT_ROOT, RESULTS_DIR, RANDOM_SEED
 from .resource_monitor import ResourceMonitor, write_resources
+
+# Cap this launcher process; the cap is also propagated to each method
+# subprocess via the environment (see run_single).
+limit_cpu_threads()
 
 
 def run_single(method, dataset, holdout_config, extra_args=None, dry_run=False,
@@ -77,11 +82,13 @@ def run_single(method, dataset, holdout_config, extra_args=None, dry_run=False,
         print("  (dry run — skipping)")
         return {"success": False, "dry_run": True}
 
-    # Run with resource monitoring
+    # Run with resource monitoring. The child inherits a thread-capped
+    # environment so BLAS/OpenMP/PyTorch inside the method cannot use every
+    # core (tune via BENCH_NUM_THREADS).
     with open(log_path, "w") as log_f:
         proc = subprocess.Popen(
             cmd, stdout=log_f, stderr=subprocess.STDOUT,
-            cwd=str(PROJECT_ROOT),
+            cwd=str(PROJECT_ROOT), env=thread_env(),
         )
         monitor = ResourceMonitor(proc.pid)
         monitor.start()
