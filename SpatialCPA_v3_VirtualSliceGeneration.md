@@ -30,7 +30,7 @@ Because it needs the slice it is meant to produce, it cannot build a slice at a
 
 ## What v3 does
 
-`spatialcpa/virtual_slice.py :: VirtualSliceGeneratorV3` generates a complete
+`spatialcpav3/virtual_slice.py :: VirtualSliceGeneratorV3` generates a complete
 virtual slice from **only**:
 
 * a target `z`, and
@@ -79,12 +79,12 @@ exposing the reconstruction↔generation trade-off explicitly.
 To make expression genuinely generative for normalized data (not just a point
 estimate), v3 adds a **Gaussian expression head**:
 
-* `spatialcpa/heads.py`: `GaussianExpressionDecoder` (predicts `μ` and
+* `spatialcpav3/heads.py`: `GaussianExpressionDecoder` (predicts `μ` and
   `log σ²`, has `.sample()`), plus `gaussian_nll`.
-* `spatialcpa/model.py`: new `expression_mode ∈ {'mse','gaussian','zinb'}`
+* `spatialcpav3/model.py`: new `expression_mode ∈ {'mse','gaussian','zinb'}`
   (`use_zinb` still works and maps to `'zinb'`/`'mse'`), plus
   `sample_expression(...)` for all three modes.
-* `spatialcpa/trainer.py`: trains the Gaussian head with NLL + a Pearson term
+* `spatialcpav3/trainer.py`: trains the Gaussian head with NLL + a Pearson term
   on the mean.
 
 All changes are backward compatible: existing code using `use_zinb=True/False`
@@ -119,8 +119,8 @@ lower favors fidelity.
 ## Usage
 
 ```python
-from spatialcpa import SpatialCPA, SpatialCPATrainer, VirtualSliceGeneratorV3
-from spatialcpa.data import SpatialSection
+from spatialcpav3 import SpatialCPA, SpatialCPATrainer, VirtualSliceGeneratorV3
+from spatialcpav3.data import SpatialSection
 
 model = SpatialCPA(n_genes, n_cell_types, expression_mode='gaussian', ...)
 SpatialCPATrainer(model, train_sections, ...).train(n_epochs=50)

@@ -173,6 +173,11 @@ METHODS = {
         "conda_env": "bench_spatialcpa",
         "available": True,
     },
+    "spatialcpav3": {
+        "wrapper": "src/benchmark/methods/run_spatialcpav3.py",
+        "conda_env": "bench_spatialcpav3",
+        "available": True,
+    },
     # STODE removed: it is a temporal interpolation method (developmental timepoints),
     # not a spatial z-interpolation method. See CLAUDE.md "STODE paper audit" for details.
 }

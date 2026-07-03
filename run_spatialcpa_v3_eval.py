@@ -50,11 +50,11 @@ import torch
 from scipy.sparse import issparse
 from scipy.spatial import cKDTree
 
-from spatialcpa.model import SpatialCPA
-from spatialcpa.data import SpatialSection
-from spatialcpa.trainer import SpatialCPATrainer
-from spatialcpa.virtual_slice import VirtualSliceGeneratorV3
-from spatialcpa.fourier import FourierFeatureEncoder
+from spatialcpav3.model import SpatialCPA
+from spatialcpav3.data import SpatialSection
+from spatialcpav3.trainer import SpatialCPATrainer
+from spatialcpav3.virtual_slice import VirtualSliceGeneratorV3
+from spatialcpav3.fourier import FourierFeatureEncoder
 
 
 # ===================================================================
