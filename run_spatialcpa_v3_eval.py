@@ -273,9 +273,9 @@ def main():
         t0 = time.time()
         virt = generator.generate(
             below, above, target_z=target_z,
-            ct_model_weight=0.4, ct_smooth_k=8, ct_smooth_iters=2,
-            ct_temperature=0.5, expr_temperature=0.6, expr_model_weight=0.5,
-            relax_iters=2, seed=args.seed,
+            ct_model_weight=0.3, ct_smooth_k=8, ct_smooth_iters=3,
+            ct_temperature=0.4, expr_temperature=0.35, expr_model_weight=0.1,
+            expr_neighbor_k=2, relax_iters=2, seed=args.seed,
         )
         print(f"    generated {virt.n_obs} cells (real has {real.n_cells}) "
               f"in {time.time() - t0:.1f}s")

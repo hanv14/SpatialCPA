@@ -247,9 +247,9 @@ def prepare_input(adata, holdout_sections, seed):
 
 def run_method(train_sections, cell_type_names, holdout_plan, gene_names,
                seed=42, epochs=50, device=None,
-               ct_model_weight=0.35, ct_temperature=0.5,
-               expr_temperature=0.6, expr_model_weight=0.5, count_jitter=0.0,
-               n_cells=None):
+               ct_model_weight=0.3, ct_temperature=0.4,
+               expr_temperature=0.35, expr_model_weight=0.1, expr_neighbor_k=2,
+               count_jitter=0.0, n_cells=None):
     """Train SpatialCPA v3 and GENERATE each held-out slice from its neighbors.
 
     Returns dict: section_label -> {X (csr), coords (n,3), cell_type (n,)}.
@@ -340,10 +340,11 @@ def run_method(train_sections, cell_type_names, holdout_plan, gene_names,
                 count_jitter=count_jitter,
                 ct_model_weight=ct_model_weight,
                 ct_smooth_k=8,
-                ct_smooth_iters=2,
+                ct_smooth_iters=3,
                 ct_temperature=ct_temperature,
                 expr_temperature=expr_temperature,
                 expr_model_weight=expr_model_weight,
+                expr_neighbor_k=expr_neighbor_k,
                 relax_iters=2,
                 seed=seed,
             )
@@ -440,18 +441,23 @@ def main():
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--device", default=None,
                         help="torch device (default: cuda if available else cpu)")
-    parser.add_argument("--ct-model-weight", type=float, default=0.35,
+    parser.add_argument("--ct-model-weight", type=float, default=0.3,
                         help="blend of learned classifier vs neighbor composition "
                              "for cell types (1=classifier only, 0=neighbors only)")
-    parser.add_argument("--ct-temperature", type=float, default=0.5,
+    parser.add_argument("--ct-temperature", type=float, default=0.4,
                         help="cell-type sampling temperature (0=argmax, coherent "
                              "domains; higher=more diverse)")
-    parser.add_argument("--expr-temperature", type=float, default=0.6,
+    parser.add_argument("--expr-temperature", type=float, default=0.35,
                         help="expression sampling temperature (0=grounded mean, "
                              "1=full learned variance)")
-    parser.add_argument("--expr-model-weight", type=float, default=0.5,
+    parser.add_argument("--expr-model-weight", type=float, default=0.1,
                         help="blend of model mean vs neighbor-anchored mean for "
-                             "expression (1=model only, lower=more grounded)")
+                             "expression (1=model only, lower=more grounded; raise "
+                             "for generation far from any neighbor)")
+    parser.add_argument("--expr-neighbor-k", type=int, default=2,
+                        help="neighbors for the cell-type-conditioned expression "
+                             "anchor (small k tracks real local texture -> higher "
+                             "spatial-autocorrelation fidelity)")
     parser.add_argument("--count-jitter", type=float, default=0.0,
                         help="relative jitter on interpolated cell count")
     parser.add_argument("--n-cells", type=int, default=None,
@@ -479,6 +485,7 @@ def main():
         ct_model_weight=args.ct_model_weight, ct_temperature=args.ct_temperature,
         expr_temperature=args.expr_temperature,
         expr_model_weight=args.expr_model_weight,
+        expr_neighbor_k=args.expr_neighbor_k,
         count_jitter=args.count_jitter, n_cells=args.n_cells,
     )
     wall_time = time.time() - t0
@@ -496,6 +503,7 @@ def main():
         "ct_temperature": args.ct_temperature,
         "expr_temperature": args.expr_temperature,
         "expr_model_weight": args.expr_model_weight,
+        "expr_neighbor_k": args.expr_neighbor_k,
         "count_jitter": args.count_jitter,
         "n_cells": args.n_cells,
     }

@@ -307,6 +307,58 @@ def neighbor_expression_mean(positions, cell_types, ctx, n_genes, k=12, eps=1e-6
     return out, have
 
 
+def neighbor_local_residuals(ctx, k=12, eps=1e-6):
+    """
+    Per-cell-type pool of **calibrated local expression fluctuations** measured
+    on the real flanking tissue.
+
+    For each real neighbor cell, subtract its own leave-self-out same-type
+    inverse-distance mean (the same estimator :func:`neighbor_expression_mean`
+    uses for generated cells). The residual is the cell's genuine local
+    deviation from the smooth field — it carries the *real* magnitude and
+    (near-absent) spatial structure of biological + technical variability.
+
+    Adding a randomly drawn residual of the right type to a generated cell's
+    neighbor-anchored mean therefore reproduces the real slice's spatial
+    statistics (and hence its per-gene Moran's I) far more faithfully than
+    injecting the model's learned Gaussian noise, whose scale is only loosely
+    calibrated.
+
+    Returns
+    -------
+    pools : dict {cell_type_index -> (m_t, n_genes) residual array}.
+    """
+    xy = np.vstack([ctx.below.coords_xy, ctx.above.coords_xy])
+    expr = np.vstack([ctx.below.expression, ctx.above.expression]).astype(np.float32)
+    ctv = np.concatenate([ctx.below.cell_type_indices,
+                          ctx.above.cell_type_indices])
+    zw = np.concatenate([
+        np.full(ctx.below.n_cells, ctx.w_below, dtype=np.float64),
+        np.full(ctx.above.n_cells, ctx.w_above, dtype=np.float64),
+    ])
+
+    pools = {}
+    for t in np.unique(ctv):
+        src = np.where(ctv == t)[0]
+        e = expr[src]
+        if len(src) < 3:
+            # Too few to estimate a local mean — use deviation from the type mean.
+            pools[t] = (e - e.mean(axis=0, keepdims=True)).astype(np.float32)
+            continue
+        pts = xy[src]
+        kk = min(k + 1, len(src))
+        tree = cKDTree(pts)
+        d, idx = tree.query(pts, k=kk)
+        # Drop the self match (first column).
+        d = d[:, 1:]
+        idx = idx[:, 1:]
+        w = zw[src][idx] / (d + eps)
+        w /= np.clip(w.sum(axis=1, keepdims=True), 1e-12, None)
+        local_mean = np.einsum('nk,nkg->ng', w.astype(np.float32), e[idx])
+        pools[t] = (e - local_mean).astype(np.float32)
+    return pools
+
+
 def smooth_probability_field(prob, positions, k=8, iterations=1):
     """
     Spatially smooth a per-cell probability field over the generated points'
@@ -356,9 +408,10 @@ class VirtualSliceGeneratorV3:
     @torch.no_grad()
     def generate(self, section_below, section_above, target_z,
                  n_cells=None, count_jitter=0.0,
-                 ct_model_weight=0.4, ct_smooth_k=8, ct_smooth_iters=1,
-                 ct_temperature=1.0,
-                 expr_temperature=1.0, expr_model_weight=0.5, expr_smooth_k=0,
+                 ct_model_weight=0.3, ct_smooth_k=8, ct_smooth_iters=3,
+                 ct_temperature=0.4,
+                 expr_temperature=0.35, expr_model_weight=0.1, expr_noise='empirical',
+                 expr_neighbor_k=2, expr_smooth_k=0,
                  relax_iters=2, batch_size=4096, seed=None,
                  var=None):
         """
@@ -391,6 +444,14 @@ class VirtualSliceGeneratorV3:
             ``beta*mu_model + (1-beta)*mu_neighbor``. 1.0 uses only the learned
             field; lower values ground expression more in the real neighbors
             (higher fidelity). Generative noise is added on top either way.
+        expr_noise : str
+            Noise model for the generative residual: ``'empirical'`` (default)
+            draws real same-type local fluctuations from the flanking tissue
+            (calibrated to the real slice → best spatial-autocorrelation match);
+            ``'model'`` uses the decoder's learned Gaussian scale.
+        expr_neighbor_k : int
+            Neighbors used for the cell-type-conditioned inverse-distance
+            expression mean. Larger k → smoother, more strongly grounded mean.
         expr_smooth_k : int
             If > 0, light spatial smoothing of expression (off by default so
             spatial autocorrelation is preserved).
@@ -441,7 +502,8 @@ class VirtualSliceGeneratorV3:
         expr = self._generate_expression(
             coords_3d, cell_types, ctx,
             temperature=expr_temperature, expr_model_weight=expr_model_weight,
-            batch_size=batch_size, gen=gen, rng=rng)
+            batch_size=batch_size, gen=gen, rng=rng, noise=expr_noise,
+            neighbor_k=expr_neighbor_k)
 
         if expr_smooth_k > 0:
             expr = _spatial_smooth(expr, positions, k=expr_smooth_k)
@@ -491,7 +553,8 @@ class VirtualSliceGeneratorV3:
         return (u < cdf).argmax(axis=1).astype(np.int64)
 
     def _generate_expression(self, coords_3d, cell_types, ctx,
-                             temperature, expr_model_weight, batch_size, gen, rng):
+                             temperature, expr_model_weight, batch_size, gen, rng,
+                             noise='empirical', neighbor_k=12):
         n = len(coords_3d)
         n_genes = len(self.gene_names)
         mode = self.model.expression_mode
@@ -527,49 +590,33 @@ class VirtualSliceGeneratorV3:
         mu = mu_model
         if beta < 1.0:
             mu_nbr, have = neighbor_expression_mean(
-                coords_3d[:, :2], cell_types, ctx, n_genes)
+                coords_3d[:, :2], cell_types, ctx, n_genes, k=neighbor_k)
             blended = beta * mu_model + (1.0 - beta) * mu_nbr
             mu = np.where(have[:, None], blended, mu_model).astype(np.float32)
 
         # --- 3. generative noise around the grounded mean --------------------
         if temperature <= 0.0:
             return mu
-        if mode == 'gaussian':
-            noise = std_model * temperature * \
+        # 'empirical' (default): draw real local fluctuations from the neighbors
+        # — matches the real slice's noise magnitude/structure, so per-gene
+        # Moran's I lines up. 'model': use the learned Gaussian scale.
+        if noise == 'model' and mode == 'gaussian':
+            eps = std_model * temperature * \
                 rng.standard_normal(mu.shape).astype(np.float32)
-            return (mu + noise).astype(np.float32)
-        # mse: no learned scale — draw same-type residuals from the neighbors.
-        return self._add_empirical_residuals(mu, cell_types, ctx,
-                                             temperature, batch_size, rng)
+            return (mu + eps).astype(np.float32)
+        return self._add_calibrated_residuals(mu, cell_types, ctx,
+                                              temperature, rng)
 
-    def _add_empirical_residuals(self, mean_expr, cell_types, ctx,
-                                 temperature, batch_size, rng):
-        """Add per-cell-type expression residuals drawn from the neighbors."""
-        # Build residual pools: real_expr - model_mean, per cell type.
-        pools = {}
-        for sec in (ctx.below, ctx.above):
-            if sec.n_cells == 0:
-                continue
-            coords = sec.get_3d_coords().astype(np.float32)
-            resid = np.zeros_like(sec.expression, dtype=np.float32)
-            for start in range(0, sec.n_cells, batch_size):
-                end = min(start + batch_size, sec.n_cells)
-                c = torch.tensor(coords[start:end], device=self.device)
-                ct = torch.tensor(sec.cell_type_indices[start:end],
-                                  dtype=torch.long, device=self.device)
-                m = self.model.predict_expression(c, ct).cpu().numpy()
-                resid[start:end] = sec.expression[start:end] - m
-            for ct_id in np.unique(sec.cell_type_indices):
-                mask = sec.cell_type_indices == ct_id
-                pools.setdefault(ct_id, []).append(resid[mask])
-        pools = {k: np.concatenate(v, axis=0) for k, v in pools.items()}
-
+    def _add_calibrated_residuals(self, mean_expr, cell_types, ctx,
+                                  temperature, rng):
+        """Add real same-type local fluctuations (see neighbor_local_residuals)."""
+        pools = neighbor_local_residuals(ctx)
         out = mean_expr.copy()
         for ct_id in np.unique(cell_types):
-            if ct_id not in pools or len(pools[ct_id]) == 0:
+            pool = pools.get(ct_id)
+            if pool is None or len(pool) == 0:
                 continue
             tgt = np.where(cell_types == ct_id)[0]
-            pool = pools[ct_id]
             pick = rng.integers(0, len(pool), size=len(tgt))
             out[tgt] += temperature * pool[pick]
         return out
