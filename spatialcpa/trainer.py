@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from spatialcpa.model import SpatialCPA
 from spatialcpa.data import SectionDataset, compute_gap_weights
-from spatialcpa.heads import zinb_log_prob
+from spatialcpa.heads import zinb_log_prob, gaussian_nll
 
 
 def pearson_corr_loss(predicted, target):
@@ -148,13 +148,22 @@ class SpatialCPATrainer:
                 region_loss = F.cross_entropy(reg_logits[valid], region[valid])
 
         # Expression loss
-        if self.model.use_zinb:
+        if self.model.expression_mode == 'zinb':
             expr_rep = expression.unsqueeze(1).expand(N, K, -1).reshape(N * K, -1)
             log_prob = zinb_log_prob(expr_rep, out['mu'], out['theta'],
                                      out['pi_logits'])
             log_prob_avg = log_prob.reshape(N, K, -1).mean(dim=1)
             expr_loss = -log_prob_avg.mean()
             corr_loss = torch.tensor(0.0, device=self.device)
+        elif self.model.expression_mode == 'gaussian':
+            # Gaussian NLL over the z-slab, plus a Pearson term on the mean so
+            # the generative head still optimises the gene-wise-r metric.
+            expr_rep = expression.unsqueeze(1).expand(N, K, -1).reshape(N * K, -1)
+            nll = gaussian_nll(expr_rep, out['expr_mu'], out['expr_logvar'])
+            nll_avg = nll.reshape(N, K, -1).mean(dim=1)
+            expr_loss = nll_avg.mean()
+            mu_avg = out['expr_mu'].reshape(N, K, -1).mean(dim=1)
+            corr_loss = pearson_corr_loss(mu_avg, expression)
         else:
             predicted = out['predicted_expr'].reshape(N, K, -1).mean(dim=1)
             expr_loss = F.mse_loss(predicted, expression)
@@ -195,10 +204,13 @@ class SpatialCPATrainer:
 
         ct_loss = F.cross_entropy(out['cell_type_logits'], ct)
 
-        if self.model.use_zinb:
+        if self.model.expression_mode == 'zinb':
             log_prob = zinb_log_prob(expr, out['mu'], out['theta'],
                                      out['pi_logits'])
             expr_loss = -log_prob.mean()
+        elif self.model.expression_mode == 'gaussian':
+            expr_loss = gaussian_nll(expr, out['expr_mu'],
+                                     out['expr_logvar']).mean()
         else:
             expr_loss = F.mse_loss(out['predicted_expr'], expr)
 
