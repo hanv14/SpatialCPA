@@ -24,6 +24,7 @@ conda run -n <env> python src/benchmark/methods/run_<method>.py \
 | `run_stvgp.py` | stVGP | bench_stvgp | Wang et al. 2026, Adv Sci | DLPFC defaults, skips >200K cells, GPU required |
 | `run_spateo_gp.py` | SVGP (Spateo) | bench_spateo | Qiu et al. 2024, Cell | SVGP per-gene, n_genes_max=2000, GPU |
 | `run_spatialcpa.py` | SpatialCPA | bench_spatialcpa | (this repo) | Coordinate neural field; no flanking slices needed; predicts at held-out cell coords |
+| `run_spatialcpav2.py` | SpatialCPA v2 | bench_spatialcpa | (this repo) | Re-architected joint field: RFF encoding, gated backbone, FiLM decoder, class-balanced training, hybrid neural+kNN cell typing. Same env as v1 (imports `spatialcpav2/`) |
 
 ## Output format
 
