@@ -247,7 +247,8 @@ def prepare_input(adata, holdout_sections, seed):
 
 def run_method(train_sections, cell_type_names, holdout_plan, gene_names,
                seed=42, epochs=50, device=None,
-               ct_model_weight=0.5, expr_temperature=1.0, count_jitter=0.0,
+               ct_model_weight=0.35, ct_temperature=0.5,
+               expr_temperature=0.6, expr_model_weight=0.5, count_jitter=0.0,
                n_cells=None):
     """Train SpatialCPA v3 and GENERATE each held-out slice from its neighbors.
 
@@ -339,9 +340,10 @@ def run_method(train_sections, cell_type_names, holdout_plan, gene_names,
                 count_jitter=count_jitter,
                 ct_model_weight=ct_model_weight,
                 ct_smooth_k=8,
-                ct_smooth_iters=1,
-                ct_temperature=1.0,
+                ct_smooth_iters=2,
+                ct_temperature=ct_temperature,
                 expr_temperature=expr_temperature,
+                expr_model_weight=expr_model_weight,
                 relax_iters=2,
                 seed=seed,
             )
@@ -438,12 +440,18 @@ def main():
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--device", default=None,
                         help="torch device (default: cuda if available else cpu)")
-    parser.add_argument("--ct-model-weight", type=float, default=0.5,
+    parser.add_argument("--ct-model-weight", type=float, default=0.35,
                         help="blend of learned classifier vs neighbor composition "
                              "for cell types (1=classifier only, 0=neighbors only)")
-    parser.add_argument("--expr-temperature", type=float, default=1.0,
-                        help="expression sampling temperature (0=mean, 1=full "
-                             "learned variance)")
+    parser.add_argument("--ct-temperature", type=float, default=0.5,
+                        help="cell-type sampling temperature (0=argmax, coherent "
+                             "domains; higher=more diverse)")
+    parser.add_argument("--expr-temperature", type=float, default=0.6,
+                        help="expression sampling temperature (0=grounded mean, "
+                             "1=full learned variance)")
+    parser.add_argument("--expr-model-weight", type=float, default=0.5,
+                        help="blend of model mean vs neighbor-anchored mean for "
+                             "expression (1=model only, lower=more grounded)")
     parser.add_argument("--count-jitter", type=float, default=0.0,
                         help="relative jitter on interpolated cell count")
     parser.add_argument("--n-cells", type=int, default=None,
@@ -468,8 +476,9 @@ def main():
     results = run_method(
         train_sections, cell_type_names, holdout_plan, gene_names,
         seed=args.seed, epochs=args.epochs, device=args.device,
-        ct_model_weight=args.ct_model_weight,
+        ct_model_weight=args.ct_model_weight, ct_temperature=args.ct_temperature,
         expr_temperature=args.expr_temperature,
+        expr_model_weight=args.expr_model_weight,
         count_jitter=args.count_jitter, n_cells=args.n_cells,
     )
     wall_time = time.time() - t0
@@ -484,7 +493,9 @@ def main():
         "backbone_layers": 8,
         "expression_mode": "gaussian",
         "ct_model_weight": args.ct_model_weight,
+        "ct_temperature": args.ct_temperature,
         "expr_temperature": args.expr_temperature,
+        "expr_model_weight": args.expr_model_weight,
         "count_jitter": args.count_jitter,
         "n_cells": args.n_cells,
     }

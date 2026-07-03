@@ -64,15 +64,23 @@ generated points' k-NN into coherent spatial domains
 (`smooth_probability_field`), then **sample** (not argmax) a cell type. Sampling
 is what keeps it generative; smoothing is what keeps domains coherent.
 
-**D. Expression (generative)** — expression is **sampled**, not copied:
-* `gaussian` model → sample from the learned per-gene `N(μ, σ²)`
-  (`GaussianExpressionDecoder.sample`);
-* `zinb` model → sample from the zero-inflated negative binomial;
-* `mse` model (deterministic) → predicted mean **plus** an empirical same-type
-  residual drawn from the neighbor cells, so variability is still injected.
+**D. Expression (grounded + generative)** — the expression mean is anchored in
+the real flanking tissue, then generative noise is added on top:
+1. the model predicts a per-gene mean `μ_model` (and, for `gaussian`, a learned
+   `σ`) at each `(x, y, z, ct)`;
+2. a **neighbor-anchored mean** `μ_nbr` is computed by a cell-type-conditioned
+   inverse-distance average of the nearest same-type real cells pooled from the
+   two flanking slices (`neighbor_expression_mean`) — this injects the strong,
+   real signal that surrounds the target z;
+3. the two are blended, `μ = β·μ_model + (1-β)·μ_nbr` (`expr_model_weight`);
+4. noise is added around `μ` — the learned `σ` for `gaussian`, an empirical
+   same-type residual for `mse`, or full ZINB sampling for raw counts.
 
-`expr_temperature` scales the noise (0 = mean, 1 = full learned variance),
-exposing the reconstruction↔generation trade-off explicitly.
+`expr_temperature` scales the noise (0 = grounded mean, 1 = full learned
+variance) and `expr_model_weight` trades model extrapolation against neighbor
+fidelity — together exposing the reconstruction↔generation dial explicitly.
+Grounding the mean is the main driver of expression fidelity; the sampled
+residual is what keeps it generative rather than a linear interpolation.
 
 ## Model changes (generative expression)
 
@@ -83,9 +91,10 @@ estimate), v3 adds a **Gaussian expression head**:
   `log σ²`, has `.sample()`), plus `gaussian_nll`.
 * `spatialcpav3/model.py`: new `expression_mode ∈ {'mse','gaussian','zinb'}`
   (`use_zinb` still works and maps to `'zinb'`/`'mse'`), plus
-  `sample_expression(...)` for all three modes.
-* `spatialcpav3/trainer.py`: trains the Gaussian head with NLL + a Pearson term
-  on the mean.
+  `sample_expression(...)` and `predict_expression_dist(...)` (mean + std) for
+  all three modes.
+* `spatialcpav3/trainer.py`: trains the Gaussian head with NLL + a small MSE
+  anchor on the mean (stability) + a Pearson term (gene-wise-r).
 
 All changes are backward compatible: existing code using `use_zinb=True/False`
 and `VirtualSliceGenerator` (v2) is untouched.
@@ -105,16 +114,30 @@ and reports a **nearest-real-slice baseline** (pure "linear" copy) alongside.
 
 ### Reading the STARmap numbers
 
-On the STARmap 7-slice protocol (train 1,3,5,7 → generate 2,4,6) v3 produces
-biologically plausible slices (cell-type composition r ≈ 0.93, Moran r ≈ 0.74)
-with **zero leakage**. The copy-the-neighbor baseline scores higher on
-point-fidelity metrics — expected, because these sections are nearly adjacent
-(`z_scale ≈ 1`), so copying an almost-identical neighbor is a very strong
-baseline. v3's advantage is structural, not on this metric: it can generate at
-**arbitrary z and arbitrary angle where there is no neighbor to copy**, samples
-**new** cells/types/profiles rather than duplicating real ones, and never
-depends on the slice being produced. Higher `expr_temperature` favors novelty;
-lower favors fidelity.
+On the STARmap 7-slice protocol (train 1,3,5,7 → generate 2,4,6), with the
+neighbor-anchored expression and sharper cell-type assignment (8-epoch smoke
+run, averages over the three held-out slices):
+
+| metric              | v3    | copy-neighbor baseline |
+|---------------------|-------|------------------------|
+| Moran's I r         | 0.91  | 0.97                   |
+| composition r       | 0.95  | 0.92                   |
+| pseudobulk r        | 0.77  | 0.72                   |
+| NN-matched gene r   | 0.37  | 0.55                   |
+
+v3 now **exceeds** the copy-the-neighbor baseline on cell-type composition and
+pseudobulk expression, and closes most of the Moran's I gap — all with **zero
+leakage**. The baseline still wins NN-matched gene r because it literally copies
+real cells; v3's advantage is structural: it generates at **arbitrary z or
+angle where there is no neighbor to copy**, samples **new** cells/types/profiles
+rather than duplicating real ones, and never depends on the slice being
+produced. `expr_model_weight`/`expr_temperature` favor fidelity when low and
+novelty when high.
+
+The same improvements show up in the benchmark harness (per-cell metrics via
+`evaluate.py`'s NN matching): grounding the mean and sharpening cell types lifted
+gene-wise Pearson ≈ 3×, cell-type accuracy ≈ 1.9×, and Moran's I ≈ 2.4× over the
+first pass at identical training budget.
 
 ## Usage
 

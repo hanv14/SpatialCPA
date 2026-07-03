@@ -156,13 +156,14 @@ class SpatialCPATrainer:
             expr_loss = -log_prob_avg.mean()
             corr_loss = torch.tensor(0.0, device=self.device)
         elif self.model.expression_mode == 'gaussian':
-            # Gaussian NLL over the z-slab, plus a Pearson term on the mean so
+            # Gaussian NLL over the z-slab, a small MSE anchor to keep the mean
+            # from drifting while the variance is learned, and a Pearson term so
             # the generative head still optimises the gene-wise-r metric.
             expr_rep = expression.unsqueeze(1).expand(N, K, -1).reshape(N * K, -1)
             nll = gaussian_nll(expr_rep, out['expr_mu'], out['expr_logvar'])
             nll_avg = nll.reshape(N, K, -1).mean(dim=1)
-            expr_loss = nll_avg.mean()
             mu_avg = out['expr_mu'].reshape(N, K, -1).mean(dim=1)
+            expr_loss = nll_avg.mean() + 0.25 * F.mse_loss(mu_avg, expression)
             corr_loss = pearson_corr_loss(mu_avg, expression)
         else:
             predicted = out['predicted_expr'].reshape(N, K, -1).mean(dim=1)

@@ -260,6 +260,53 @@ def neighbor_celltype_prior(positions, ctx, n_cell_types, k=12):
     return (prior / row).astype(np.float32)
 
 
+def neighbor_expression_mean(positions, cell_types, ctx, n_genes, k=12, eps=1e-6):
+    """
+    Cell-type-conditioned inverse-distance expression estimate from the two
+    flanking sections.
+
+    For each generated cell, average the ``k`` nearest **same-type** real cells
+    (pooled from both neighbors, weighted by z-proximity and inverse
+    xy-distance). This grounds the generated expression in the real tissue that
+    actually surrounds the target z — a much stronger signal than the coordinate
+    field alone — while remaining a de-novo synthesis (no held-out access).
+
+    Returns
+    -------
+    mean : (n, n_genes) float32 neighbor-anchored mean (rows without any
+        same-type neighbor are left at zero).
+    have : (n,) bool, True where a same-type estimate was available.
+    """
+    n = len(positions)
+    xy = np.vstack([ctx.below.coords_xy, ctx.above.coords_xy])
+    expr = np.vstack([ctx.below.expression, ctx.above.expression]).astype(np.float32)
+    ctv = np.concatenate([ctx.below.cell_type_indices,
+                          ctx.above.cell_type_indices])
+    zw = np.concatenate([
+        np.full(ctx.below.n_cells, ctx.w_below, dtype=np.float64),
+        np.full(ctx.above.n_cells, ctx.w_above, dtype=np.float64),
+    ])
+
+    out = np.zeros((n, n_genes), dtype=np.float32)
+    have = np.zeros(n, dtype=bool)
+    for t in np.unique(cell_types):
+        tgt = np.where(cell_types == t)[0]
+        src = np.where(ctv == t)[0]
+        if len(src) == 0:
+            continue
+        kk = min(k, len(src))
+        tree = cKDTree(xy[src])
+        d, idx = tree.query(positions[tgt], k=kk)
+        if kk == 1:
+            d = d[:, None]
+            idx = idx[:, None]
+        w = zw[src][idx] / (d + eps)
+        w /= np.clip(w.sum(axis=1, keepdims=True), 1e-12, None)
+        out[tgt] = np.einsum('nk,nkg->ng', w.astype(np.float32), expr[src][idx])
+        have[tgt] = True
+    return out, have
+
+
 def smooth_probability_field(prob, positions, k=8, iterations=1):
     """
     Spatially smooth a per-cell probability field over the generated points'
@@ -309,9 +356,9 @@ class VirtualSliceGeneratorV3:
     @torch.no_grad()
     def generate(self, section_below, section_above, target_z,
                  n_cells=None, count_jitter=0.0,
-                 ct_model_weight=0.5, ct_smooth_k=8, ct_smooth_iters=1,
+                 ct_model_weight=0.4, ct_smooth_k=8, ct_smooth_iters=1,
                  ct_temperature=1.0,
-                 expr_temperature=1.0, expr_smooth_k=0,
+                 expr_temperature=1.0, expr_model_weight=0.5, expr_smooth_k=0,
                  relax_iters=2, batch_size=4096, seed=None,
                  var=None):
         """
@@ -337,7 +384,13 @@ class VirtualSliceGeneratorV3:
         ct_temperature : float
             Softmax temperature for cell-type sampling. 0 → argmax.
         expr_temperature : float
-            Sampling temperature for expression (0 → decoder mean).
+            Sampling temperature for expression (0 → grounded mean, no noise).
+        expr_model_weight : float
+            Blend between the model's predicted expression mean and the
+            neighbor-anchored (real flanking tissue) mean:
+            ``beta*mu_model + (1-beta)*mu_neighbor``. 1.0 uses only the learned
+            field; lower values ground expression more in the real neighbors
+            (higher fidelity). Generative noise is added on top either way.
         expr_smooth_k : int
             If > 0, light spatial smoothing of expression (off by default so
             spatial autocorrelation is preserved).
@@ -387,7 +440,8 @@ class VirtualSliceGeneratorV3:
         # --- D. expression -------------------------------------------------
         expr = self._generate_expression(
             coords_3d, cell_types, ctx,
-            temperature=expr_temperature, batch_size=batch_size, gen=gen, rng=rng)
+            temperature=expr_temperature, expr_model_weight=expr_model_weight,
+            batch_size=batch_size, gen=gen, rng=rng)
 
         if expr_smooth_k > 0:
             expr = _spatial_smooth(expr, positions, k=expr_smooth_k)
@@ -437,30 +491,56 @@ class VirtualSliceGeneratorV3:
         return (u < cdf).argmax(axis=1).astype(np.int64)
 
     def _generate_expression(self, coords_3d, cell_types, ctx,
-                             temperature, batch_size, gen, rng):
+                             temperature, expr_model_weight, batch_size, gen, rng):
         n = len(coords_3d)
         n_genes = len(self.gene_names)
-        out = np.zeros((n, n_genes), dtype=np.float32)
+        mode = self.model.expression_mode
 
+        # ZINB (raw counts): keep pure generative count sampling — blending
+        # counts with a continuous neighbor mean is not well defined.
+        if mode == 'zinb':
+            out = np.zeros((n, n_genes), dtype=np.float32)
+            for start in range(0, n, batch_size):
+                end = min(start + batch_size, n)
+                c = torch.tensor(coords_3d[start:end], device=self.device)
+                ct = torch.tensor(cell_types[start:end], dtype=torch.long,
+                                  device=self.device)
+                out[start:end] = self.model.sample_expression(
+                    c, ct, temperature=temperature, generator=gen).cpu().numpy()
+            return out
+
+        # --- 1. model-predicted mean (and learned std for gaussian) ----------
+        mu_model = np.zeros((n, n_genes), dtype=np.float32)
+        std_model = np.zeros((n, n_genes), dtype=np.float32) if mode == 'gaussian' else None
         for start in range(0, n, batch_size):
             end = min(start + batch_size, n)
             c = torch.tensor(coords_3d[start:end], device=self.device)
             ct = torch.tensor(cell_types[start:end], dtype=torch.long,
                               device=self.device)
-            if self.model.expression_mode in ('gaussian', 'zinb'):
-                e = self.model.sample_expression(
-                    c, ct, temperature=temperature, generator=gen)
-            else:
-                e = self.model.predict_expression(c, ct)
-            out[start:end] = e.cpu().numpy()
+            mu, std = self.model.predict_expression_dist(c, ct)
+            mu_model[start:end] = mu.cpu().numpy()
+            if std_model is not None:
+                std_model[start:end] = std.cpu().numpy()
 
-        # For a deterministic ('mse') model there is no learned noise: inject
-        # biologically realistic variability by adding same-type residuals
-        # sampled from the neighbor cells.
-        if self.model.expression_mode == 'mse' and temperature > 0.0:
-            out = self._add_empirical_residuals(out, cell_types, ctx,
-                                                temperature, batch_size, rng)
-        return out
+        # --- 2. anchor the mean in the real flanking tissue ------------------
+        beta = float(np.clip(expr_model_weight, 0.0, 1.0))
+        mu = mu_model
+        if beta < 1.0:
+            mu_nbr, have = neighbor_expression_mean(
+                coords_3d[:, :2], cell_types, ctx, n_genes)
+            blended = beta * mu_model + (1.0 - beta) * mu_nbr
+            mu = np.where(have[:, None], blended, mu_model).astype(np.float32)
+
+        # --- 3. generative noise around the grounded mean --------------------
+        if temperature <= 0.0:
+            return mu
+        if mode == 'gaussian':
+            noise = std_model * temperature * \
+                rng.standard_normal(mu.shape).astype(np.float32)
+            return (mu + noise).astype(np.float32)
+        # mse: no learned scale — draw same-type residuals from the neighbors.
+        return self._add_empirical_residuals(mu, cell_types, ctx,
+                                             temperature, batch_size, rng)
 
     def _add_empirical_residuals(self, mean_expr, cell_types, ctx,
                                  temperature, batch_size, rng):

@@ -273,8 +273,8 @@ def main():
         t0 = time.time()
         virt = generator.generate(
             below, above, target_z=target_z,
-            ct_model_weight=0.5, ct_smooth_k=8, ct_smooth_iters=1,
-            ct_temperature=1.0, expr_temperature=1.0,
+            ct_model_weight=0.4, ct_smooth_k=8, ct_smooth_iters=2,
+            ct_temperature=0.5, expr_temperature=0.6, expr_model_weight=0.5,
             relax_iters=2, seed=args.seed,
         )
         print(f"    generated {virt.n_obs} cells (real has {real.n_cells}) "

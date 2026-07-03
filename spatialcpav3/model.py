@@ -217,6 +217,26 @@ class SpatialCPA(nn.Module):
         else:
             return self.expression_decoder(h, cell_type_idx)
 
+    def predict_expression_dist(self, coords, cell_type_idx):
+        """
+        Return ``(mean, std)`` of the expression distribution at each coordinate.
+
+        ``std`` is the learned per-gene standard deviation for ``gaussian`` mode
+        and ``None`` for ``mse``/``zinb`` (no directly usable per-cell Gaussian
+        scale). Used by the generator to add calibrated noise around a
+        neighbor-grounded mean.
+        """
+        h = self.encode_coords(coords)
+        if self.expression_mode == 'gaussian':
+            mu, logvar = self.expression_decoder(h, cell_type_idx)
+            return mu, torch.exp(0.5 * logvar)
+        elif self.expression_mode == 'zinb':
+            mu, theta, pi_logits = self.expression_decoder(h, cell_type_idx)
+            pi = torch.sigmoid(pi_logits)
+            return mu * (1 - pi), None
+        else:
+            return self.expression_decoder(h, cell_type_idx), None
+
     def sample_expression(self, coords, cell_type_idx, temperature=1.0,
                           generator=None):
         """
