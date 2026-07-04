@@ -55,6 +55,8 @@ from spatialcpav3.data import SpatialSection
 from spatialcpav3.trainer import SpatialCPATrainer
 from spatialcpav3.virtual_slice import VirtualSliceGeneratorV3
 from spatialcpav3.fourier import FourierFeatureEncoder
+from spatialcpav3.density import (DensityFieldModel, DensityFieldTrainer,
+                                  DensitySampler)
 
 
 # ===================================================================
@@ -134,6 +136,23 @@ def pseudobulk_r(real_X, gen_X):
     return pearson_r(real_X.mean(axis=0), gen_X.mean(axis=0))
 
 
+def density_accuracy(real_xy, gen_xy, bin_size):
+    """Bin-wise count Pearson + occupancy Dice on a shared grid — position
+    (coordinate) accuracy that does not need cell correspondence."""
+    x0, y0 = real_xy.min(axis=0)
+    x1, y1 = real_xy.max(axis=0)
+    nx = max(int(np.ceil((x1 - x0) / bin_size)), 1)
+    ny = max(int(np.ceil((y1 - y0) / bin_size)), 1)
+    xe = x0 + bin_size * np.arange(nx + 1)
+    ye = y0 + bin_size * np.arange(ny + 1)
+    hr, _, _ = np.histogram2d(real_xy[:, 0], real_xy[:, 1], bins=[xe, ye])
+    hg, _, _ = np.histogram2d(gen_xy[:, 0], gen_xy[:, 1], bins=[xe, ye])
+    dp = pearson_r(hr.ravel(), hg.ravel())
+    br, bg = hr > 0, hg > 0
+    dice = 2 * (br & bg).sum() / max(br.sum() + bg.sum(), 1)
+    return dp, float(dice)
+
+
 # ===================================================================
 # Data prep (mirrors v2 eval)
 # ===================================================================
@@ -198,6 +217,10 @@ def slice_to_section(adata_slice, ct_to_idx, section_id):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epochs', type=int, default=50)
+    parser.add_argument('--density-epochs', type=int, default=80)
+    parser.add_argument('--density-attention', action='store_true',
+                        help="use k-NN self-attention in the density field "
+                             "(better count calibration; slower on CPU)")
     parser.add_argument('--device', default=None)
     parser.add_argument('--seed', type=int, default=0)
     args = parser.parse_args()
@@ -255,11 +278,29 @@ def main():
     print(f"  Trained in {time.time() - t0:.1f}s, final loss "
           f"{history[-1]['total']:.4f}")
 
+    # ── Learn the 3D density field (coordinate prior over all slices) ─────
+    print("\n" + "=" * 64)
+    print("Training the 3D cell-density field (all training slices)")
+    print("=" * 64)
+    density_model = DensityFieldModel(
+        xy_scale=xy_scale, z_scale=z_scale, n_freq_xy=48, n_freq_z=24,
+        hidden=192, n_layers=4, use_attention=args.density_attention)
+    dtrainer = DensityFieldTrainer(density_model, train_sections, device=device,
+                                   lr=2e-3, cells_per_bin=1.5)
+    t0 = time.time()
+    dhist = dtrainer.train(n_epochs=args.density_epochs, verbose=False)
+    density_sampler = DensitySampler(density_model, train_sections,
+                                     dtrainer.bin_size, device=device)
+    print(f"  Trained in {time.time() - t0:.1f}s, Poisson NLL "
+          f"{dhist[-1]:.4f}, bin={dtrainer.bin_size:.2f}, "
+          f"attention={args.density_attention}")
+
     # ── Generate held-out slices from their neighbors ─────────────────────
     print("\n" + "=" * 64)
     print("Generating held-out slices from flanking sections")
     print("=" * 64)
-    generator = VirtualSliceGeneratorV3(model, all_ct, gene_names, device=device)
+    generator = VirtualSliceGeneratorV3(model, all_ct, gene_names, device=device,
+                                        density_sampler=density_sampler)
 
     rows = []
     for held in held_out_ids:
@@ -300,9 +341,15 @@ def main():
         pb_r = pseudobulk_r(real_X, gen_X)
         nn_r = np.nanmean(nn_matched_genewise_r(real_X, real_xy, gen_X, gen_xy))
 
-        # baseline: nearest real neighbor slice (pure "linear" copy)
+        # coordinate (position) accuracy: learned-field vs 2-neighbour histogram
+        dp_field, dice_field = density_accuracy(real_xy, gen_xy,
+                                                dtrainer.bin_size)
         base = below if abs(below.z_center - target_z) <= abs(
             above.z_center - target_z) else above
+        dp_base, dice_base = density_accuracy(real_xy, base.coords_xy,
+                                              dtrainer.bin_size)
+
+        # baseline: nearest real neighbor slice (pure "linear" copy)
         b_m, b_g = spatial_autocorr(base.expression, base.coords_xy)
         base_moran_r = pearson_r(m_real, b_m)
         base_comp_r = pearson_r(comp_real, celltype_composition(
@@ -313,12 +360,14 @@ def main():
 
         rows.append(dict(
             slice=held, moran_r=moran_r, geary_r=geary_r, comp_r=comp_r,
-            pb_r=pb_r, nn_r=nn_r,
+            pb_r=pb_r, nn_r=nn_r, dp_field=dp_field, dice_field=dice_field,
             base_moran_r=base_moran_r, base_comp_r=base_comp_r,
-            base_pb_r=base_pb_r, base_nn_r=base_nn_r,
+            base_pb_r=base_pb_r, base_nn_r=base_nn_r, dp_base=dp_base,
         ))
         print(f"    Moran r={moran_r:.3f} Geary r={geary_r:.3f} "
               f"comp r={comp_r:.3f} pseudobulk r={pb_r:.3f} NN-gene r={nn_r:.3f}")
+        print(f"    position: densityPearson={dp_field:.3f} dice={dice_field:.3f}"
+              f" (single-slice baseline densityPearson={dp_base:.3f})")
 
     # ── Summary ───────────────────────────────────────────────────────────
     print("\n" + "=" * 64)
@@ -338,8 +387,31 @@ def main():
     print(f"{'base avg':<8}{avg('base_moran_r'):>9.3f}{'':>9}"
           f"{avg('base_comp_r'):>9.3f}{avg('base_pb_r'):>9.3f}"
           f"{avg('base_nn_r'):>10.3f}")
-    print("\nDone. v3 generates de-novo positions, cell types, and expression")
-    print("from neighboring sections only — no held-out leakage.")
+    print(f"\n  Coordinate accuracy (learned density field): "
+          f"densityPearson={avg('dp_field'):.3f}, dice={avg('dice_field'):.3f}")
+
+    # ── In-silico sectioning demo (arbitrary plane) ───────────────────────
+    print("\n" + "=" * 64)
+    print("In-silico sectioning demo (arbitrary cutting planes)")
+    print("=" * 64)
+    all_xy = np.vstack([s.coords_xy for s in train_sections])
+    cx, cy = all_xy.mean(axis=0)
+    zc = float(np.median(np.concatenate([s.z_values for s in train_sections])))
+    for name, normal in [("axial (z-normal)", (0, 0, 1)),
+                         ("sagittal (x-normal)", (1, 0, 0)),
+                         ("oblique", (1, 0, 1))]:
+        try:
+            sec = generator.generate_section(point=[cx, cy, zc], normal=normal,
+                                             n_grid=140, seed=args.seed)
+            zr = sec.obsm['xyz'][:, 2]
+            print(f"  {name:<20}: {sec.n_obs:5d} cells, "
+                  f"z-span [{zr.min():.0f}, {zr.max():.0f}]")
+        except Exception as e:
+            print(f"  {name:<20}: skipped ({e})")
+
+    print("\nDone. v3 generates de-novo positions (learned 3D density field),")
+    print("cell types, and expression from neighbors only — no held-out leakage,")
+    print("and supports virtual slices at any z and arbitrary cutting planes.")
 
 
 if __name__ == '__main__':

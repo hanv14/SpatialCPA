@@ -19,6 +19,13 @@ from spatialcpav3.model import SpatialCPA
 from spatialcpav3.trainer import SpatialCPATrainer
 from spatialcpav3.inference import VirtualSliceGenerator
 from spatialcpav3.virtual_slice import VirtualSliceGeneratorV3, NeighborContext
+from spatialcpav3.density import (
+    DensityFieldModel,
+    DensityFieldTrainer,
+    DensitySampler,
+    KNNSelfAttention,
+    estimate_bin_size,
+)
 
 __all__ = [
     "SpatialCPA",
@@ -26,4 +33,9 @@ __all__ = [
     "VirtualSliceGenerator",
     "VirtualSliceGeneratorV3",
     "NeighborContext",
+    "DensityFieldModel",
+    "DensityFieldTrainer",
+    "DensitySampler",
+    "KNNSelfAttention",
+    "estimate_bin_size",
 ]

@@ -46,14 +46,35 @@ Output: AnnData with de-novo positions, cell types, and expression at z
 
 ### Pipeline
 
-**A. Cell count** — interpolated from the two neighbors by z-distance
-(`NeighborContext.target_n_cells`), optionally jittered.
+**A/B. Positions (the foundation).** Coordinates are placed before types and
+expression, because those are only meaningful once cells are where they belong.
+There are two position sources:
 
-**B. Positions (generative)** — an interpolated 2-D **density field** is built
-from the two neighbors' occupancy grids, blended by z-distance
-(`build_density_grid`). Positions are sampled from it and then relaxed with a
-light **blue-noise** repulsion (`sample_positions`) so spacing looks like real
-tissue rather than a lattice or clumps. Nothing is copied from the target slice.
+* **Learned 3-D density field** (`spatialcpav3/density.py`, recommended). Cell
+  positions across the whole tissue are modeled as an inhomogeneous Poisson
+  point process with intensity `λ(x, y, z)`. A coordinate network — Fourier
+  features → residual backbone → **k-NN spatial self-attention** → softplus rate
+  head (`DensityFieldModel`) — is trained by Poisson NLL on grid-binned counts
+  pooled over **all** training slices, with empty bins as negatives
+  (`DensityFieldTrainer`). This is a *deep learning prior over 3-D tissue
+  architecture*: it is continuous in `(x, y, z)`, so it can be queried at **any
+  z** (interpolating or extrapolating) and along **any oriented plane** (→
+  in-silico sectioning). At generation the learned field is blended with the two
+  flanking slices' local occupancy (`density_field_weight`) so it matches the
+  local detail of the neighbors while keeping global generalization.
+* **2-neighbor occupancy histogram** (fallback when no density field is
+  supplied): the two neighbors' occupancy grids blended by z-distance
+  (`build_density_grid`).
+
+Either way, positions are sampled from the density and relaxed with a light
+**blue-noise** repulsion so spacing looks like real tissue rather than a lattice
+or clumps. Nothing is copied from the target slice.
+
+The **k-NN self-attention** (`KNNSelfAttention`): each query point attends over
+its nearest neighbours (keys/values) with a learned relative-position bias, so
+the predicted field is spatially coherent. On STARmap it tightened the Poisson
+NLL (0.70→0.67) and, importantly, calibrated the integrated cell count (expected
+N 6319→4789 vs a real ~4150). It is optional (`use_attention`, heavier on CPU).
 
 **C. Cell types (coherent + sampled)** — for each position we combine
 * the learned spatial classifier `P_model(ct | x, y, z)`, and
@@ -109,6 +130,30 @@ estimate), v3 adds a **Gaussian expression head**:
 All changes are backward compatible: existing code using `use_zinb=True/False`
 and `VirtualSliceGenerator` (v2) is untouched.
 
+## Coordinate prediction & in-silico sectioning
+
+`spatialcpav3/density.py` adds the learned 3-D architecture prior described
+above and the machinery to sample from it:
+
+* `DensityFieldModel` / `DensityFieldTrainer` — Poisson intensity field over all
+  slices, with optional `KNNSelfAttention`.
+* `DensitySampler` — queries the field on the axial grid at any z
+  (`sample_plane`) or on an arbitrary oriented plane (`sample_section`), with
+  count inferred from the integrated rate.
+* `VirtualSliceGeneratorV3(..., density_sampler=…)` uses the field for
+  positions; `generate(...)` blends it with local neighbor occupancy
+  (`density_field_weight`).
+* `VirtualSliceGeneratorV3.generate_section(point, normal, …)` performs
+  **in-silico tissue sectioning**: it cuts the volume along any plane (axial,
+  sagittal, coronal, oblique). Since an arbitrary plane has no two parallel
+  observed neighbours, positions come from the density field and cell types /
+  expression come from the trained neural field (model-only).
+
+This directly supports "generate a biologically-realistic virtual slice at any
+given z (any position/orientation of the cut)": axial slices interpolate between
+observed sections with neighbor anchoring, while oblique cuts are produced purely
+from the learned 3-D fields.
+
 ## Evaluation
 
 Because generated cells have **no 1:1 correspondence** with real cells,
@@ -119,6 +164,8 @@ correspondence-free, distribution-level metrics:
 * **cell-type composition** correlation,
 * **pseudobulk** mean-expression correlation,
 * **nearest-neighbor-matched** gene-wise r (spatially-aware fidelity),
+* **coordinate accuracy** — bin-wise density Pearson + occupancy Dice of the
+  generated vs real positions,
 
 and reports a **nearest-real-slice baseline** (pure "linear" copy) alongside.
 
@@ -152,17 +199,39 @@ smoothing or k the other way trades Moran's I for NN-gene r, so those are left
 as exposed knobs rather than baked in. `expr_model_weight`/`expr_temperature`/
 `expr_neighbor_k` control the fidelity↔novelty balance.
 
+Switching positions from the 2-neighbor histogram to the **learned density
+field** (blended with local occupancy) keeps Moran's I r at ≈0.98 and matches or
+beats the histogram on coordinate accuracy per held-out slice, while adding the
+any-z and arbitrary-plane capabilities the histogram cannot provide. Absolute
+coordinate accuracy is modest (density Pearson ≈0.15, Dice ≈0.43 at ~16 µm bins)
+because single-cell positions are a stochastic point process — even an adjacent
+*real* slice only correlates ≈0.14 at that resolution; the Dice shows tissue
+**support** is captured well, and the field additionally yields a well-calibrated
+cell count.
+
 ## Usage
 
 ```python
-from spatialcpav3 import SpatialCPA, SpatialCPATrainer, VirtualSliceGeneratorV3
-from spatialcpav3.data import SpatialSection
+from spatialcpav3 import (SpatialCPA, SpatialCPATrainer, VirtualSliceGeneratorV3,
+                          DensityFieldModel, DensityFieldTrainer, DensitySampler)
 
+# 1. expression / cell-type field
 model = SpatialCPA(n_genes, n_cell_types, expression_mode='gaussian', ...)
 SpatialCPATrainer(model, train_sections, ...).train(n_epochs=50)
 
-gen = VirtualSliceGeneratorV3(model, cell_type_names, gene_names)
+# 2. learned 3-D density (coordinate) field over all slices
+dfm = DensityFieldModel(xy_scale, z_scale, use_attention=True)
+dt = DensityFieldTrainer(dfm, train_sections); dt.train(n_epochs=80)
+sampler = DensitySampler(dfm, train_sections, dt.bin_size)
+
+gen = VirtualSliceGeneratorV3(model, cell_type_names, gene_names,
+                              density_sampler=sampler)
+
+# parallel virtual slice at any z (neighbor-anchored, high fidelity)
 virtual = gen.generate(section_below, section_above, target_z=547.3)
+
+# in-silico sectioning: an arbitrary oblique cut through the volume
+oblique = gen.generate_section(point=[x0, y0, z0], normal=[1, 0, 1])
 # virtual.obsm['spatial'], virtual.obs['cell_class'], virtual.X
 ```
 

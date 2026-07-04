@@ -249,7 +249,9 @@ def run_method(train_sections, cell_type_names, holdout_plan, gene_names,
                seed=42, epochs=50, device=None,
                ct_model_weight=0.3, ct_temperature=0.4,
                expr_temperature=0.35, expr_model_weight=0.1, expr_neighbor_k=2,
-               count_jitter=0.0, n_cells=None):
+               count_jitter=0.0, n_cells=None,
+               density_epochs=80, density_attention=False,
+               density_field_weight=0.5):
     """Train SpatialCPA v3 and GENERATE each held-out slice from its neighbors.
 
     Returns dict: section_label -> {X (csr), coords (n,3), cell_type (n,)}.
@@ -259,6 +261,8 @@ def run_method(train_sections, cell_type_names, holdout_plan, gene_names,
     from spatialcpav3.trainer import SpatialCPATrainer
     from spatialcpav3.virtual_slice import VirtualSliceGeneratorV3
     from spatialcpav3.fourier import FourierFeatureEncoder
+    from spatialcpav3.density import (DensityFieldModel, DensityFieldTrainer,
+                                      DensitySampler)
 
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -315,12 +319,33 @@ def run_method(train_sections, cell_type_names, holdout_plan, gene_names,
     if history:
         print(f"  Final loss: {history[-1]['total']:.4f}")
 
+    # ── Learn the 3D density field (coordinate prior over all slices) ───────────
+    density_sampler = None
+    if len(train_sections) >= 2:
+        try:
+            density_model = DensityFieldModel(
+                xy_scale=xy_scale, z_scale=z_scale, n_freq_xy=48, n_freq_z=24,
+                hidden=192, n_layers=4, use_attention=density_attention)
+            dtrainer = DensityFieldTrainer(density_model, train_sections,
+                                           device=device, lr=2e-3, cells_per_bin=1.5)
+            print(f"  Training 3D density field for {density_epochs} epochs "
+                  f"(attention={density_attention})...")
+            dhist = dtrainer.train(n_epochs=density_epochs, verbose=False)
+            density_sampler = DensitySampler(density_model, train_sections,
+                                             dtrainer.bin_size, device=device)
+            print(f"  Density Poisson NLL: {dhist[-1]:.4f}, bin={dtrainer.bin_size:.2f}")
+        except Exception as e:
+            print(f"  WARNING: density field training failed ({e}); "
+                  f"falling back to histogram positions")
+            density_sampler = None
+
     # ── Generation ────────────────────────────────────────────────────────────
     generator = VirtualSliceGeneratorV3(
         model=model,
         cell_type_names=cell_type_names,
         gene_names=gene_names,
         device=device,
+        density_sampler=density_sampler,
     )
 
     results = {}
@@ -345,6 +370,7 @@ def run_method(train_sections, cell_type_names, holdout_plan, gene_names,
                 expr_temperature=expr_temperature,
                 expr_model_weight=expr_model_weight,
                 expr_neighbor_k=expr_neighbor_k,
+                density_field_weight=density_field_weight,
                 relax_iters=2,
                 seed=seed,
             )
@@ -458,6 +484,15 @@ def main():
                         help="neighbors for the cell-type-conditioned expression "
                              "anchor (small k tracks real local texture -> higher "
                              "spatial-autocorrelation fidelity)")
+    parser.add_argument("--density-epochs", type=int, default=80,
+                        help="epochs to train the learned 3D density field "
+                             "(coordinate prior; 0 disables -> histogram positions)")
+    parser.add_argument("--density-attention", action="store_true",
+                        help="use k-NN self-attention in the density field "
+                             "(better count calibration; slower on CPU)")
+    parser.add_argument("--density-field-weight", type=float, default=0.5,
+                        help="blend of learned field vs local neighbor occupancy "
+                             "for positions (1=field only, 0=neighbor occupancy)")
     parser.add_argument("--count-jitter", type=float, default=0.0,
                         help="relative jitter on interpolated cell count")
     parser.add_argument("--n-cells", type=int, default=None,
@@ -486,6 +521,9 @@ def main():
         expr_temperature=args.expr_temperature,
         expr_model_weight=args.expr_model_weight,
         expr_neighbor_k=args.expr_neighbor_k,
+        density_epochs=args.density_epochs,
+        density_attention=args.density_attention,
+        density_field_weight=args.density_field_weight,
         count_jitter=args.count_jitter, n_cells=args.n_cells,
     )
     wall_time = time.time() - t0
@@ -504,6 +542,9 @@ def main():
         "expr_temperature": args.expr_temperature,
         "expr_model_weight": args.expr_model_weight,
         "expr_neighbor_k": args.expr_neighbor_k,
+        "density_epochs": args.density_epochs,
+        "density_attention": args.density_attention,
+        "density_field_weight": args.density_field_weight,
         "count_jitter": args.count_jitter,
         "n_cells": args.n_cells,
     }

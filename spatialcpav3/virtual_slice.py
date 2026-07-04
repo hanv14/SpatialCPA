@@ -393,15 +393,22 @@ class VirtualSliceGeneratorV3:
     cell_type_names : list of str
     gene_names : list of str
     device : str
+    density_sampler : DensitySampler or None
+        Optional trained 3D density field (:mod:`spatialcpav3.density`). When
+        provided, cell positions and counts are drawn from the learned global
+        tissue-architecture prior (works at any z and along any plane); when
+        None, positions fall back to the 2-neighbour occupancy histogram.
     """
 
-    def __init__(self, model, cell_type_names, gene_names, device='cpu'):
+    def __init__(self, model, cell_type_names, gene_names, device='cpu',
+                 density_sampler=None):
         self.model = model.to(device)
         self.model.eval()
         self.cell_type_names = list(cell_type_names)
         self.gene_names = list(gene_names)
         self.n_cell_types = len(cell_type_names)
         self.device = device
+        self.density_sampler = density_sampler
 
     # -- public API ---------------------------------------------------------
 
@@ -412,7 +419,8 @@ class VirtualSliceGeneratorV3:
                  ct_temperature=0.4,
                  expr_temperature=0.35, expr_model_weight=0.1, expr_noise='empirical',
                  expr_neighbor_k=2, expr_smooth_k=0,
-                 relax_iters=2, batch_size=4096, seed=None,
+                 relax_iters=2, density_field_weight=0.5,
+                 batch_size=4096, seed=None,
                  var=None):
         """
         Generate a complete virtual slice.
@@ -477,14 +485,21 @@ class VirtualSliceGeneratorV3:
 
         ctx = NeighborContext(section_below, section_above, target_z)
 
-        # --- A. cell count -------------------------------------------------
+        # --- A/B. positions (+ count) --------------------------------------
+        # Prefer the learned 3D density field (global tissue-architecture prior,
+        # valid at any z). When two flanking slices exist, refine it with their
+        # local occupancy (hybrid); otherwise fall back to the histogram.
         if n_cells is None:
             n_cells = ctx.target_n_cells(jitter=count_jitter, rng=rng)
-
-        # --- B. positions --------------------------------------------------
-        grid = ctx.build_density_grid()
-        positions = sample_positions(grid, n_cells, rng=rng,
-                                     relax_iters=relax_iters)
+        if self.density_sampler is not None:
+            local_prob = self._neighbor_occupancy_on_grid(ctx)
+            positions = self.density_sampler.sample_plane(
+                target_z, n_cells=n_cells, rng=rng, relax_iters=relax_iters,
+                local_prob=local_prob, field_weight=density_field_weight)
+        else:
+            grid = ctx.build_density_grid()
+            positions = sample_positions(grid, n_cells, rng=rng,
+                                         relax_iters=relax_iters)
         z_col = np.full((len(positions), 1), ctx.target_z, dtype=np.float32)
         coords_3d = np.hstack([positions, z_col]).astype(np.float32)
 
@@ -527,7 +542,104 @@ class VirtualSliceGeneratorV3:
         virtual_adata.uns['z_above'] = ctx.above.z_center
         return virtual_adata
 
+    @torch.no_grad()
+    def generate_section(self, point, normal, n_cells=None, extent=None,
+                         n_grid=160, ct_temperature=0.4, ct_smooth_k=8,
+                         ct_smooth_iters=3, expr_temperature=0.35,
+                         batch_size=4096, seed=None, var=None):
+        """
+        In-silico tissue sectioning: generate a virtual slice on an ARBITRARY
+        oriented plane (sagittal, coronal, oblique) cut through the volume.
+
+        Requires a ``density_sampler`` (learned 3D field). Because an arbitrary
+        plane has no two parallel observed neighbours, positions come from the
+        learned density field and cell types / expression come purely from the
+        trained neural field (no neighbour anchoring).
+
+        Parameters
+        ----------
+        point : (3,) point the plane passes through.
+        normal : (3,) plane normal (defines the cut orientation).
+        n_cells : int or None
+            Number of cells (default inferred from the integrated density).
+        extent, n_grid : float, int
+            In-plane patch half-size and grid resolution.
+        Returns
+        -------
+        AnnData with ``obsm['spatial']`` = in-plane (u, v) coords, ``obsm['xyz']``
+        = 3D positions on the plane, ``obs['cell_class']`` and ``X``.
+        """
+        if self.density_sampler is None:
+            raise ValueError("generate_section requires a density_sampler "
+                             "(train a DensityFieldModel first).")
+        rng = np.random.default_rng(seed)
+        gen = None
+        if seed is not None:
+            gen = torch.Generator(device=self.device).manual_seed(int(seed))
+
+        coords_3d, uv = self.density_sampler.sample_section(
+            point, normal, n_cells=n_cells, extent=extent, n_grid=n_grid, rng=rng)
+        if len(coords_3d) == 0:
+            raise ValueError("No tissue intersects the requested plane.")
+
+        # Cell types from the learned classifier (model-only), smoothed + sampled.
+        p_ct = self._model_celltype_prob(coords_3d, batch_size)
+        p_ct = smooth_probability_field(p_ct, uv, k=ct_smooth_k,
+                                        iterations=ct_smooth_iters)
+        cell_types = self._sample_categorical(p_ct, ct_temperature, rng)
+
+        # Expression from the model only (no parallel neighbours to anchor to).
+        n = len(coords_3d)
+        n_genes = len(self.gene_names)
+        expr = np.zeros((n, n_genes), dtype=np.float32)
+        for s in range(0, n, batch_size):
+            e = min(s + batch_size, n)
+            c = torch.tensor(coords_3d[s:e], device=self.device)
+            ct = torch.tensor(cell_types[s:e], dtype=torch.long, device=self.device)
+            if self.model.expression_mode in ('gaussian', 'zinb'):
+                expr[s:e] = self.model.sample_expression(
+                    c, ct, temperature=expr_temperature, generator=gen).cpu().numpy()
+            else:
+                expr[s:e] = self.model.predict_expression(c, ct).cpu().numpy()
+
+        labels = [self.cell_type_names[i] for i in cell_types]
+        obs = pd.DataFrame({'cell_class': labels, 'cell_type_idx': cell_types})
+        obs.index = [f'section_{i}' for i in range(n)]
+        if var is None:
+            var = pd.DataFrame(index=self.gene_names)
+        adata = ad.AnnData(X=expr.astype(np.float32), obs=obs, var=var)
+        adata.obsm['spatial'] = uv.astype(np.float32)
+        adata.obsm['xyz'] = coords_3d.astype(np.float32)
+        adata.uns['plane_point'] = np.asarray(point, dtype=np.float32)
+        adata.uns['plane_normal'] = np.asarray(normal, dtype=np.float32)
+        return adata
+
     # -- internals ----------------------------------------------------------
+
+    def _neighbor_occupancy_on_grid(self, ctx):
+        """z-weighted occupancy of the two flanking slices on the field grid.
+
+        Returns a per-bin probability aligned to ``DensitySampler.plane_rate_grid``,
+        or None if no density sampler is set.
+        """
+        if self.density_sampler is None:
+            return None
+        s = self.density_sampler
+        gx, gy = s._grid_xy()
+        nx, ny = gx.shape
+        x0 = s.x_min
+        y0 = s.y_min
+        bs = s.bin_size
+        occ = np.zeros(nx * ny, dtype=np.float64)
+        for sec, w_z in ((ctx.below, ctx.w_below), (ctx.above, ctx.w_above)):
+            if w_z <= 0 or sec.n_cells == 0:
+                continue
+            ix = np.clip(((sec.coords_xy[:, 0] - x0) / bs).astype(int), 0, nx - 1)
+            iy = np.clip(((sec.coords_xy[:, 1] - y0) / bs).astype(int), 0, ny - 1)
+            flat = ix * ny + iy
+            np.add.at(occ, flat, w_z)
+        total = occ.sum()
+        return occ / total if total > 0 else None
 
     def _model_celltype_prob(self, coords_3d, batch_size):
         probs = []
