@@ -423,7 +423,7 @@ def run_method(ref_slices, holdout_refs, gene_names, cell_type_names, region_nam
 # ── Output ────────────────────────────────────────────────────────────────────
 
 def format_output(results, gene_names, holdout_sections, method_params,
-                  wall_time, output_path):
+                  wall_time, output_path, method_name="spatialcpav4"):
     """Write prediction.h5 in the standardized benchmark format."""
     if not results:
         print("No results to write!")
@@ -473,7 +473,7 @@ def format_output(results, gene_names, holdout_sections, method_params,
         var.create_dataset("gene_name", data=np.array(gene_names, dtype="S"))
 
         uns = f.create_group("uns")
-        uns.create_dataset("method_name", data="spatialcpav4")
+        uns.create_dataset("method_name", data=method_name)
         uns.create_dataset("holdout_sections", data=json.dumps(holdout_sections))
         uns.create_dataset("method_params", data=json.dumps(method_params))
         uns.create_dataset("wall_time_seconds", data=wall_time)
@@ -522,6 +522,9 @@ def main():
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--tensorboard", action="store_true",
                         help="write TensorBoard logs next to the output")
+    parser.add_argument("--method-name", default="spatialcpav4",
+                        help="name recorded in prediction.h5 uns/method_name "
+                             "(set by the generation-mode wrapper variant)")
     args = parser.parse_args()
 
     if not check_environment():
@@ -563,7 +566,8 @@ def main():
         "batch_size": args.batch_size,
     }
     format_output(results, gene_names, args.holdout_sections,
-                  method_params, wall_time, args.output)
+                  method_params, wall_time, args.output,
+                  method_name=args.method_name)
 
 
 if __name__ == "__main__":

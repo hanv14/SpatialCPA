@@ -178,6 +178,14 @@ METHODS = {
         "conda_env": "bench_spatialcpa",
         "available": True,
     },
+    # De-novo generation variant: never sees the held-out (x, y); synthesizes
+    # the slice via the occupancy head so the cell count is emergent (like
+    # SpatialZ/FEAST/isoST). Same wrapper, --generate-mode forced.
+    "spatialcpav4_gen": {
+        "wrapper": "src/benchmark/methods/run_spatialcpav4_gen.py",
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+    },
     # STODE removed: it is a temporal interpolation method (developmental timepoints),
     # not a spatial z-interpolation method. See CLAUDE.md "STODE paper audit" for details.
 }
