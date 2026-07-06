@@ -95,6 +95,12 @@ def occupancy_bce(logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return F.binary_cross_entropy_with_logits(logits, target)
 
 
+def density_loss(pred_log_density: torch.Tensor, target_log_density: torch.Tensor
+                 ) -> torch.Tensor:
+    """MSE on log1p(intensity) for the density head (all samples: tissue + bg)."""
+    return F.mse_loss(pred_log_density, target_log_density)
+
+
 def compute_total_loss(
     outputs: Dict[str, torch.Tensor],
     batch: Dict[str, torch.Tensor],
@@ -144,10 +150,16 @@ def compute_total_loss(
     # ---- occupancy -------------------------------------------------------- #
     occ_loss = occupancy_bce(outputs["occupancy_logit"], batch["target_occ"])
 
+    # ---- density ---------------------------------------------------------- #
+    dens_loss = outputs["expression"].new_tensor(0.0)
+    if "density" in outputs and "target_density" in batch:
+        dens_loss = density_loss(outputs["density"], batch["target_density"])
+
     total = (
         cfg.expression_weight * expr_term
         + cfg.label_weight * label_term
         + cfg.occupancy_weight * occ_loss
+        + cfg.density_weight * dens_loss
     )
 
     return {
@@ -158,4 +170,5 @@ def compute_total_loss(
         "cell_type": ct_loss.detach(),
         "region": reg_loss.detach(),
         "occupancy": occ_loss.detach(),
+        "density": dens_loss.detach(),
     }

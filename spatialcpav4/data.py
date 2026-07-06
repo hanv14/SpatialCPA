@@ -133,6 +133,14 @@ class SliceStack:
         else:
             self.region = np.zeros(self.n_spots, dtype=np.int64)
 
+        # Per-spot local cell-density (intensity: cells per unit area), estimated
+        # per slice via a kNN density estimator. Used to train the density head
+        # so generation can predict a non-uniform density field and sample cell
+        # positions from it (fully de-novo placement).
+        self.density = np.concatenate(
+            [_knn_density(s.coords_xy) for s in self.slices], axis=0
+        ).astype(np.float32)
+
         # Per-slice cached KDTrees (built lazily).
         self._kdtrees: List[Optional[cKDTree]] = [None] * self.n_slices
 
@@ -173,6 +181,28 @@ class SliceStack:
             return 1.0
         scale = float(np.median(np.concatenate(dists)))
         return scale if scale > 0 else 1.0
+
+
+# --------------------------------------------------------------------------- #
+# Local density estimation                                                     #
+# --------------------------------------------------------------------------- #
+def _knn_density(coords_xy: np.ndarray, k: int = 5) -> np.ndarray:
+    """k-NN local intensity estimate λ (cells per unit area) at each spot.
+
+    ``λ_i = k / (π · d_k(i)²)`` where ``d_k`` is the distance to the k-th nearest
+    neighbor in the same slice. Integrates to roughly the cell count over the
+    slice, so summing a predicted λ-field over an area yields an (approximate)
+    de-novo cell count — no held-out information used.
+    """
+    n = coords_xy.shape[0]
+    if n <= 1:
+        return np.zeros(n, dtype=np.float32)
+    kk = min(k, n - 1)
+    tree = cKDTree(coords_xy)
+    d, _ = tree.query(coords_xy, k=kk + 1)          # +1 for self
+    dk = d[:, -1]
+    lam = kk / (np.pi * np.maximum(dk, 1e-8) ** 2)
+    return lam.astype(np.float32)
 
 
 # --------------------------------------------------------------------------- #
@@ -277,6 +307,7 @@ class TripletSamples:
     target_spot: np.ndarray    # (S,) global index of the target spot, or -1
     occupancy: np.ndarray      # (S,) 1.0 tissue / 0.0 background
     has_target: np.ndarray     # (S,) 1.0 if expression/label supervised
+    target_density: np.ndarray  # (S,) local intensity λ (0.0 for background)
 
     def __len__(self) -> int:
         return self.occupancy.shape[0]
@@ -363,13 +394,20 @@ def build_triplet_samples(
             "{i-1, i+1} -> i triplets."
         )
 
+    target_spot = np.concatenate(target_spot_all, axis=0)
+    # Density target: local intensity at the target spot (0 for background).
+    target_density = np.where(target_spot >= 0,
+                              stack.density[np.clip(target_spot, 0, None)],
+                              0.0).astype(np.float32)
+
     samples = TripletSamples(
         lower_idx=np.concatenate(lower_all, axis=0),
         upper_idx=np.concatenate(upper_all, axis=0),
         target_coords=np.concatenate(coords_all, axis=0).astype(np.float32),
-        target_spot=np.concatenate(target_spot_all, axis=0),
+        target_spot=target_spot,
         occupancy=np.concatenate(occ_all, axis=0),
         has_target=np.concatenate(has_target_all, axis=0),
+        target_density=target_density,
     )
 
     if cache_path is not None:
@@ -398,6 +436,7 @@ def _save_samples(path: Path, s: TripletSamples) -> None:
         target_spot=s.target_spot,
         occupancy=s.occupancy,
         has_target=s.has_target,
+        target_density=s.target_density,
     )
 
 
@@ -410,4 +449,5 @@ def _load_samples(path: Path) -> TripletSamples:
         target_spot=d["target_spot"],
         occupancy=d["occupancy"],
         has_target=d["has_target"],
+        target_density=d["target_density"],
     )

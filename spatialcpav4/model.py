@@ -27,7 +27,7 @@ import torch
 import torch.nn as nn
 
 from .config import ModelConfig
-from .heads import ExpressionHead, LabelHead, OccupancyHead
+from .heads import DensityHead, ExpressionHead, LabelHead, OccupancyHead
 from .tokens import TokenEmbedder
 from .transformer import TransformerAggregator
 
@@ -95,6 +95,11 @@ class SpatialCPATransformer(nn.Module):
             hidden_dim=cfg.label_head_hidden_dim,
             dropout=cfg.dropout,
         )
+        self.density_head = DensityHead(
+            latent_dim=h,
+            hidden_dim=cfg.label_head_hidden_dim,
+            dropout=cfg.dropout,
+        )
 
     # ---- helpers ---------------------------------------------------------- #
     def set_coord_scale(self, scale: float) -> None:
@@ -126,6 +131,7 @@ class SpatialCPATransformer(nn.Module):
             "latent": latent,
             "expression": self.expression_head(latent),
             "occupancy_logit": self.occupancy_head(latent),
+            "density": self.density_head(latent),  # predicts log1p(intensity)
         }
         if ct_logits is not None:
             out["cell_type_logits"] = ct_logits

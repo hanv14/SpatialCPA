@@ -119,6 +119,9 @@ class TripletTokenDataset(Dataset):
             "target_reg": torch.tensor(target_reg, dtype=torch.long),
             "target_occ": torch.tensor(s.occupancy[row], dtype=torch.float32),
             "has_target": torch.tensor(has_target, dtype=torch.float32),
+            # log1p of local intensity λ (stabilises the wide density range).
+            "target_density": torch.tensor(
+                float(np.log1p(s.target_density[row])), dtype=torch.float32),
         }
 
 

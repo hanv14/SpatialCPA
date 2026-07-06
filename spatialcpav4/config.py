@@ -157,6 +157,8 @@ class LossConfig:
     expression_weight: float = 1.0
     label_weight: float = 1.0
     occupancy_weight: float = 1.0
+    # Density-field regression (log-intensity); enables fully de-novo placement.
+    density_weight: float = 1.0
 
     # Expression sub-weights
     mse_weight: float = 1.0
@@ -275,8 +277,11 @@ class InferenceConfig:
     transfer_same_celltype: bool = True    # transfer only from same predicted cell type
 
     # Where candidate cell positions come from at generation:
-    #   "flanking" — the real (x, y) of the flanking slices' cells (realistic
-    #                tissue density/morphology; strong placement metrics).
+    #   "density"  — fully de-novo: sample positions ∝ the predicted density field
+    #                and set the count from its integral (nothing copied from
+    #                neighbor positions or the held-out slice).
+    #   "flanking" — the real (x, y) of the flanking slices' cells (realistic, but
+    #                morphology inherited from neighbors rather than predicted).
     #   "grid"     — a uniform lattice over the bounding box (uniform density).
     position_source: str = "flanking"
 

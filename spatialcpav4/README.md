@@ -218,16 +218,21 @@ evaluation). Three knobs address this:
 
 Where synthesized cells sit is set by `InferenceConfig.position_source`:
 
-- **`"flanking"` (default)** — candidate positions are the real `(x, y)` of the
-  two flanking slices' cells (aligned), so the virtual slice inherits realistic
-  tissue **density and morphology**. This is what the interpolation baselines
-  effectively do, and it is far better on the placement metrics (density,
-  matching rate, cell-type neighborhood organization) than a grid.
-- **`"grid"`** — a uniform lattice over the bounding box. Uniform density, so it
-  scores poorly on density/matching/dice; kept for ablation.
+- **`"density"` (fully de-novo)** — a `DensityHead` predicts a continuous local
+  intensity field `λ(x)` (trained on a kNN density estimate of the training
+  spots). At generation the field is evaluated over a fine grid; the cell
+  **count** is the field integral `N ≈ Σλ·A_cell` and the **positions** are
+  sampled `∝ λ` (an inhomogeneous point process). Both the count and the
+  non-uniform density are predicted by the model — nothing is copied from the
+  neighbors' positions or the held-out slice. Best placement without a position
+  prior.
+- **`"flanking"`** — candidate positions are the real `(x, y)` of the two
+  flanking slices' cells (aligned): realistic density, but the morphology is
+  *inherited* from the neighbors rather than predicted.
+- **`"grid"`** — a uniform lattice (uniform density; ablation baseline).
 
-The occupancy head then filters candidates, cell types are predicted, and
-expression is transferred — all using training cells only (no leakage).
+The occupancy head gates the footprint, cell types are predicted, and expression
+is transferred — all from training cells + the target z only (no leakage).
 
 ## Designed-in extensibility
 

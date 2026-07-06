@@ -177,6 +177,7 @@ def run_method(adata, targets, gene_names, args):
     cfg.inference.position_source = args.position_source
     cfg.model.expression_activation = args.expression_activation
     cfg.loss.variance_weight = args.variance_weight
+    cfg.loss.density_weight = args.density_weight
 
     coord_scale = stack.estimate_coord_scale()
     print(f"  coord scale: {coord_scale:.4f}; building triplet samples "
@@ -251,11 +252,12 @@ def main():
     parser.add_argument("--occupancy-threshold", type=float, default=0.5)
     parser.add_argument("--grid-points", type=int, default=1000)
     parser.add_argument("--grid-type", default="regular", choices=["regular", "random"])
-    parser.add_argument("--position-source", default="flanking",
-                        choices=["flanking", "grid"],
-                        help="candidate cell positions: flanking (real cell "
-                             "coords from the two neighbor slices; realistic "
-                             "density) or grid (uniform lattice)")
+    parser.add_argument("--position-source", default="density",
+                        choices=["density", "flanking", "grid"],
+                        help="candidate cell positions: density (fully de-novo — "
+                             "sample from the predicted density field, count from "
+                             "its integral), flanking (real neighbor-slice coords), "
+                             "or grid (uniform lattice)")
     # Over-smoothing controls (see gen_gene_var_pearson).
     parser.add_argument("--expression-mode", default="transfer",
                         choices=["regress", "transfer", "blend"],
@@ -272,6 +274,8 @@ def main():
                         help="expression head output activation (non-negativity)")
     parser.add_argument("--variance-weight", type=float, default=0.5,
                         help="per-gene variance-matching loss weight")
+    parser.add_argument("--density-weight", type=float, default=1.0,
+                        help="density-field regression loss weight (de-novo placement)")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=256)
@@ -307,6 +311,7 @@ def main():
         "transfer_alpha": args.transfer_alpha, "position_source": args.position_source,
         "expression_activation": args.expression_activation,
         "variance_weight": args.variance_weight,
+        "density_weight": args.density_weight,
         "generation_only": True,
     }
     _v2_io.write_prediction_h5(results, gene_names, target_sections,

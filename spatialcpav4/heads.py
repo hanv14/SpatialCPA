@@ -95,3 +95,20 @@ class OccupancyHead(nn.Module):
 
     def forward(self, h: torch.Tensor) -> torch.Tensor:
         return self.net(h).squeeze(-1)  # (B,)
+
+
+class DensityHead(nn.Module):
+    """Regress local cell-density (log-intensity) from the latent.
+
+    Predicts ``log1p(λ)`` where ``λ`` is cells-per-unit-area. This lets
+    generation predict a continuous, non-uniform density field and sample cell
+    positions (and an integrated cell count) from it — fully de-novo placement,
+    rather than a uniform grid + binary occupancy.
+    """
+
+    def __init__(self, latent_dim: int, hidden_dim: int, dropout: float):
+        super().__init__()
+        self.net = _mlp(latent_dim, hidden_dim, 1, dropout)
+
+    def forward(self, h: torch.Tensor) -> torch.Tensor:
+        return self.net(h).squeeze(-1)  # (B,) predicts log1p(density)

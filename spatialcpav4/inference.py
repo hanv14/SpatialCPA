@@ -46,6 +46,7 @@ class SlicePrediction:
     region: Optional[np.ndarray] = None      # (M,) string labels
     cell_type_idx: Optional[np.ndarray] = None   # (M,) int
     region_idx: Optional[np.ndarray] = None      # (M,) int
+    density: Optional[np.ndarray] = None         # (M,) intensity λ (cells/area)
 
 
 class Predictor:
@@ -156,7 +157,7 @@ class Predictor:
         lower_tree = cKDTree(lower.coords_3d())
         upper_tree = cKDTree(upper.coords_3d())
 
-        expr_out, occ_out = [], []
+        expr_out, occ_out, dens_out = [], [], []
         ct_out: List[np.ndarray] = []
         reg_out: List[np.ndarray] = []
 
@@ -172,6 +173,10 @@ class Predictor:
             out = self.model(batch)
             expr_out.append(out["expression"].float().cpu().numpy())
             occ_out.append(torch.sigmoid(out["occupancy_logit"]).float().cpu().numpy())
+            if "density" in out:
+                # head predicts log1p(λ); recover intensity λ.
+                dens_out.append(np.expm1(np.clip(
+                    out["density"].float().cpu().numpy(), 0.0, None)))
             if "cell_type_logits" in out:
                 ct_out.append(out["cell_type_logits"].argmax(dim=-1).cpu().numpy())
             if "region_logits" in out:
@@ -179,6 +184,7 @@ class Predictor:
 
         expression = np.concatenate(expr_out, axis=0)
         occupancy = np.concatenate(occ_out, axis=0)
+        density = np.concatenate(dens_out, axis=0) if dens_out else None
 
         ct_idx = np.concatenate(ct_out, axis=0) if ct_out else None
         reg_idx = np.concatenate(reg_out, axis=0) if reg_out else None
@@ -199,6 +205,7 @@ class Predictor:
             region=reg_labels,
             cell_type_idx=ct_idx,
             region_idx=reg_idx,
+            density=density,
         )
 
     # ------------------------------------------------------------------ #
@@ -250,6 +257,46 @@ class Predictor:
         ys = np.linspace(ymin, ymax, side)
         gx, gy = np.meshgrid(xs, ys)
         return np.column_stack([gx.ravel(), gy.ravel()]).astype(np.float32)
+
+    def _sample_from_density_field(self, z, lower, upper, xy_bounds,
+                                   n_field_points, occupancy_threshold,
+                                   batch_size, seed):
+        """Fully de-novo placement: sample cell positions from a predicted field.
+
+        1. Predict the density field λ(x) and occupancy over a fine regular grid.
+        2. Restrict to the tissue footprint (occupancy > threshold).
+        3. Estimate the cell count de-novo by integrating the field:
+           ``N ≈ Σ λ · A_cell`` (no held-out count used).
+        4. Sample N positions ∝ λ (inhomogeneous point process) with sub-cell
+           jitter, yielding realistic non-uniform density.
+
+        Everything derives from the two training slices + the target z.
+        """
+        field_xy = self._make_grid(xy_bounds, n_field_points, "regular", seed)
+        field_coords = np.column_stack(
+            [field_xy, np.full(field_xy.shape[0], float(z), dtype=np.float32)]
+        ).astype(np.float32)
+        fp = self.predict(field_coords, lower, upper, batch_size)
+
+        lam = fp.density if fp.density is not None else np.ones(field_xy.shape[0], np.float32)
+        lam = np.clip(lam, 0.0, None)
+        lam = lam * (fp.occupancy_prob > occupancy_threshold)  # footprint gate
+        if lam.sum() <= 0:
+            return np.zeros((0, 2), np.float32)
+
+        xmin, ymin, xmax, ymax = xy_bounds
+        area = max((xmax - xmin) * (ymax - ymin), 1e-8)
+        a_cell = area / field_xy.shape[0]
+        n_cells = int(round(float(lam.sum()) * a_cell))
+        # Guard against a mis-calibrated integral producing absurd counts.
+        n_cells = int(np.clip(n_cells, 1, 20 * field_xy.shape[0]))
+
+        rng = np.random.default_rng(seed)
+        p = lam / lam.sum()
+        sel = rng.choice(field_xy.shape[0], size=n_cells, replace=True, p=p)
+        cell_side = float(np.sqrt(a_cell))
+        jitter = rng.uniform(-0.5, 0.5, size=(n_cells, 2)) * cell_side
+        return (field_xy[sel] + jitter).astype(np.float32)
 
     def _transfer_expression(self, coords, cell_type_idx, source_slices,
                              k=1, same_celltype=True, seed=0):
@@ -360,16 +407,28 @@ class Predictor:
                 rng = np.random.default_rng(seed)
                 cand = cand[rng.choice(cand.shape[0], int(n_grid_points), replace=False)]
             grid_xy = cand
-        elif position_source == "grid":
+        elif position_source in ("grid", "density"):
             if xy_bounds is None:
                 xy = np.vstack([lower.coords_xy, upper.coords_xy])
                 xy_bounds = (
                     float(xy[:, 0].min()), float(xy[:, 1].min()),
                     float(xy[:, 0].max()), float(xy[:, 1].max()),
                 )
-            grid_xy = self._make_grid(xy_bounds, n_grid_points, grid_type, seed)
+            if position_source == "grid":
+                grid_xy = self._make_grid(xy_bounds, n_grid_points, grid_type, seed)
+            else:
+                # Fully de-novo: predict a density field over a fine grid, then
+                # sample cell positions (and the count) from it.
+                grid_xy = self._sample_from_density_field(
+                    z, lower, upper, xy_bounds, n_grid_points,
+                    occupancy_threshold, batch_size, seed)
         else:
             raise ValueError(f"Unknown position_source '{position_source}'")
+
+        if grid_xy.shape[0] == 0:
+            return SlicePrediction(coords=np.zeros((0, 3), np.float32),
+                                   expression=np.zeros((0, self.model.n_genes), np.float32),
+                                   occupancy_prob=np.zeros((0,), np.float32))
 
         coords = np.column_stack(
             [grid_xy, np.full(grid_xy.shape[0], float(z), dtype=np.float32)]
