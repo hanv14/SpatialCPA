@@ -86,7 +86,14 @@ applied to GT, so raw-count GT and log-scale predictions are directly comparable
 - `gen_celltype_composition` — overlap of predicted vs GT cell-type proportions
   (`1 − ½·Σ|p−q|`). Alignment-free; the correspondence-free counterpart of
   cell-matched `celltype_accuracy` (which, like `pearson_median`, collapses under
-  imperfect placement). *(same mix 1.0, single-class 0.5, disjoint 0.0.)*
+  imperfect placement). Measures the cell-type *mix* only. *(same mix 1.0,
+  single-class 0.5, disjoint 0.0.)*
+- `gen_celltype_nhood_agreement` — cell-type **spatial organization**: Pearson r
+  between the neighborhood-enrichment matrices `P(neighbor = j | center = i)` of
+  prediction and GT (which types sit next to which). Alignment-free; conditioning
+  on the center type factors out composition, so it catches a method that gets
+  the mix right but places types in the wrong regions. *(faithful +1.0;
+  same-mix-but-spatially-shuffled +0.16.)*
 
 **Secondary — alignment-dependent (trustworthy only on asymmetric tissue) or
 scale-sensitive:**

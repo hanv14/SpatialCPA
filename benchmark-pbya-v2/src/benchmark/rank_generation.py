@@ -26,7 +26,8 @@ PRIMARY = [
     ("gen_coexpression_agreement", +1),
     ("gen_morans_agreement", +1),
     ("gen_sinkhorn", -1),               # OT distance: lower = better
-    ("gen_celltype_composition", +1),
+    ("gen_celltype_composition", +1),   # cell-type mix
+    ("gen_celltype_nhood_agreement", +1),  # cell-type spatial organization
     ("gen_gene_var_pearson", +1),       # variance preservation (over-smoothing guard)
 ]
 

@@ -256,6 +256,53 @@ def celltype_composition(pred_types, gt_types):
     return {"celltype_composition": float(1.0 - tvd)}
 
 
+def celltype_neighborhood_agreement(pred_xy, pred_types, gt_xy, gt_types, k=10):
+    """Correspondence-free SPATIAL cell-type organization agreement.
+
+    ``celltype_composition`` only checks the overall cell-type *mix*; a method can
+    get the proportions right yet place types in the wrong regions. This compares
+    spatial *organization*: for each cell type i, the distribution of its spatial
+    neighbors' types P(neighbor = j | center = i) — the row-normalized
+    neighborhood-enrichment matrix (à la squidpy nhood enrichment). Conditioning
+    on the center type factors out composition, so this isolates "which types sit
+    next to which". Pearson r between the pred and GT matrices; alignment-free.
+    """
+    pred_types = np.asarray(pred_types).astype(str)
+    gt_types = np.asarray(gt_types).astype(str)
+    labels = sorted(set(pred_types.tolist()) | set(gt_types.tolist()))
+    if len(labels) < 2:
+        return {"celltype_nhood_agreement": np.nan}
+    idx = {l: i for i, l in enumerate(labels)}
+    nt = len(labels)
+
+    def cond_matrix(xy, types):
+        t = np.array([idx[x] for x in types])
+        n = len(t)
+        if n < k + 1:
+            return None
+        _, nn = cKDTree(xy).query(xy, k=min(k + 1, n))
+        nn = nn[:, 1:]
+        M = np.zeros((nt, nt))
+        neigh_t = t[nn]                      # (n, k)
+        for ti in range(nt):
+            rows = neigh_t[t == ti]
+            if rows.size:
+                counts = np.bincount(rows.ravel(), minlength=nt).astype(float)
+                s = counts.sum()
+                if s > 0:
+                    M[ti] = counts / s
+        return M
+
+    Mp = cond_matrix(pred_xy, pred_types)
+    Mg = cond_matrix(gt_xy, gt_types)
+    if Mp is None or Mg is None:
+        return {"celltype_nhood_agreement": np.nan}
+    a, b = Mp.ravel(), Mg.ravel()
+    if a.std() == 0 or b.std() == 0:
+        return {"celltype_nhood_agreement": np.nan}
+    return {"celltype_nhood_agreement": float(pearsonr(a, b)[0])}
+
+
 def density_agreement(pred_xy, gt_xy, grid=20):
     all_xy = np.vstack([pred_xy, gt_xy])
     xe = np.linspace(all_xy[:, 0].min(), all_xy[:, 0].max(), grid + 1)
@@ -339,10 +386,12 @@ def evaluate_generation(prediction_path, h5ad_path, output_path=None,
         m.update(density_agreement(pred_xy_al, gt_xy, grid=grid))      # needs alignment
         # Secondary — scale-sensitive.
         m.update(gene_level_agreement(pL, gL))
-        # Cell-type composition (correspondence-free), when GT has labels.
+        # Cell-type metrics (correspondence-free), when GT has labels.
         if "cell_type" in gt.obs.columns:
-            m.update(celltype_composition(pred["cell_type"][pm],
-                                          gt.obs["cell_type"].values[gm]))
+            gt_types = gt.obs["cell_type"].values[gm]
+            m.update(celltype_composition(pred["cell_type"][pm], gt_types))
+            m.update(celltype_neighborhood_agreement(
+                pred_xy, pred["cell_type"][pm], gt_xy, gt_types, k=moran_k))
         per_section.append(m)
         weights.append(int(gm.sum()))
 
