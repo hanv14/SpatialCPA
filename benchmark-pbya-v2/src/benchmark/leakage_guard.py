@@ -348,22 +348,51 @@ def build_labels_train_only(adata, key, train_mask, seed=42, leiden_fallback=Tru
 # Evaluation-side rigid alignment (predictions -> ground truth)                #
 # --------------------------------------------------------------------------- #
 def align_prediction_to_gt(pred_xy: np.ndarray, gt_xy: np.ndarray,
-                           with_scale: bool = True) -> np.ndarray:
+                           with_scale: bool = True, n_init_angles: int = 12
+                           ) -> np.ndarray:
     """Rigidly align predicted coordinates onto GT before matching.
 
     In a generation benchmark the absolute coordinate frame is arbitrary (the
     method synthesizes in the training frame; the training frame was re-registered
     training-only, so it differs from the held-out GT frame by a rigid transform).
-    This aligns the predicted point cloud onto the GT cloud via ICP so that
-    downstream nearest-neighbor matching is frame-invariant.
+    This aligns the predicted point cloud onto the GT cloud so that downstream
+    nearest-neighbor matching is frame-invariant.
+
+    A single ICP run initialised from the PCA principal axis is unreliable when
+    the tissue outline is near-symmetric (e.g. a roundish occupancy blob): ICP
+    can settle in a rotated local minimum, mismatching interior cells and
+    depressing per-cell correlation even for a good prediction. To avoid that we
+    try multiple initial rotations (and a reflection), ICP-refine each, and keep
+    the transform with the lowest nearest-neighbor residual — a global,
+    orientation-robust alignment.
 
     This is an EVALUATION-side operation: it uses the GT (which evaluation is
     allowed to see) and does not feed anything back to the method — so it is not
     leakage. Returns the aligned predicted coordinates.
     """
+    pred_xy = np.asarray(pred_xy, dtype=np.float64)
+    gt_xy = np.asarray(gt_xy, dtype=np.float64)
     if len(pred_xy) < 3 or len(gt_xy) < 3:
-        return np.asarray(pred_xy, dtype=np.float64)
-    R, t, s = icp_align(np.asarray(pred_xy, dtype=np.float64),
-                        np.asarray(gt_xy, dtype=np.float64),
-                        with_scale=with_scale)
-    return apply_transform(np.asarray(pred_xy, dtype=np.float64), R, t, s)
+        return pred_xy
+
+    gt_c = gt_xy.mean(axis=0)
+    p_c = pred_xy.mean(axis=0)
+    pred_centered = pred_xy - p_c
+    tree = cKDTree(gt_xy)
+
+    best_out = None
+    best_err = np.inf
+    for k in range(max(n_init_angles, 1)):
+        ang = 2.0 * np.pi * k / max(n_init_angles, 1)
+        c, sn = np.cos(ang), np.sin(ang)
+        Rot = np.array([[c, -sn], [sn, c]])
+        for refl in (1.0, -1.0):
+            R0 = Rot @ np.array([[refl, 0.0], [0.0, 1.0]])
+            init = pred_centered @ R0.T + gt_c
+            R, t, s = icp_align(init, gt_xy, with_scale=with_scale, init_pca=False)
+            out = apply_transform(init, R, t, s)
+            err = float(np.mean(tree.query(out, k=1)[0]))
+            if err < best_err:
+                best_err = err
+                best_out = out
+    return best_out if best_out is not None else pred_xy
