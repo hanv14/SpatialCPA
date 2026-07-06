@@ -170,15 +170,39 @@ def run_single(method, dataset, holdout_config, extra_args=None, dry_run=False,
               "prediction_path": str(prediction_path)}
 
     if run_eval:
+        import json as _json
         from .evaluate import evaluate
-        print(f"  Evaluating (rigid-aligned)...")
+        from .evaluate_generation import evaluate_generation
+        print(f"  Evaluating...")
         try:
+            # Cell-matched (correspondence-dependent) metrics — kept for
+            # reference / coverage (matching_rate, density). NOT primary for
+            # generation: they need a cell-to-cell correspondence that de-novo
+            # generation does not produce.
             metrics = evaluate(str(prediction_path), str(dataset_info["path"]),
-                               str(metrics_path))
-            print(f"  Done. Pearson median: {metrics.get('pearson_median', 'N/A')}")
+                               output_path=None)
+            # PRIMARY for generation: correspondence-free structural metrics
+            # (gene-gene coexpression, per-gene Moran's I agreement, distribution).
+            gen = evaluate_generation(str(prediction_path),
+                                      str(dataset_info["path"]), output_path=None)
+            for k, v in gen.items():
+                if k in ("method", "holdout_sections", "n_holdout_cells_gt",
+                         "n_predicted_cells", "n_common_genes"):
+                    continue
+                metrics[f"gen_{k}" if not k.startswith("gen_") else k] = v
+            Path(metrics_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(metrics_path, "w") as f:
+                _json.dump(metrics, f, indent=2)
+            print(f"  Done. [generation] coexpr_agree="
+                  f"{metrics.get('gen_coexpression_agreement', 'N/A')} "
+                  f"morans_agree={metrics.get('gen_morans_agreement', 'N/A')} "
+                  f"| [cell-matched, ref] pearson_median="
+                  f"{metrics.get('pearson_median', 'N/A')}")
             result["metrics_path"] = str(metrics_path)
         except Exception as e:
             print(f"  Evaluation failed: {e}")
+            import traceback
+            traceback.print_exc()
             result["eval_error"] = str(e)
 
     return result

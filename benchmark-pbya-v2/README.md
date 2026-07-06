@@ -52,14 +52,44 @@ metrics.json
 The `train_registered.h5ad` is built **once per holdout** and reused across
 methods (fair comparison), cached under `results/_v2_inputs/`.
 
-### Evaluation frame
+### Evaluation methodology (generation ≠ coordinate-matched)
 
-After training-only re-registration, the training frame differs from the
-held-out GT frame by a rigid (+scale) transform. `evaluate.py` therefore aligns
-the synthesized cloud onto the GT cloud (per section, via ICP) **before** any
-spatial metric. This is an evaluation-side operation — it uses the GT (which
-evaluation is allowed to see) and feeds nothing back to the method, so it is not
-leakage. Metric definitions are otherwise identical to v1.
+De-novo generation does **not** produce a cell-to-cell correspondence with the
+GT slice — cells are synthesized, not placed on GT cells. So the v1 primary
+metric (`pearson_median`: correlate expression across nearest-neighbor-matched
+cells) is the **wrong measurement** for generation: it manufactures a
+correspondence that doesn't exist, is acutely sensitive to sub-cell alignment and
+grid-vs-real density, and on near-symmetric tissue collapses toward/below zero
+even for a faithful generation. (This is why generation-mode `pearson_median`
+comes out negative.)
+
+v2 therefore evaluates the generated slice as a **field/distribution**, not a
+cell list, in `evaluate_generation.py`:
+
+**Primary — correspondence-free (and mostly alignment-free):**
+- `gen_coexpression_agreement` — Pearson r between the gene-gene correlation
+  matrices of prediction and GT. Alignment-free. *(Validated: faithful +0.97,
+  scrambled +0.04, random −0.01; identical at 0° and 180°.)*
+- `gen_morans_agreement` — Pearson r between per-gene Moran's I of prediction and
+  GT (each within its own slice). Alignment-free; tests whether the same genes
+  are spatially structured. *(faithful +0.69, scrambled/random ≈0.)*
+- `gen_gene_mean_pearson` / `gen_gene_var_pearson` — per-gene mean/variance
+  agreement. Alignment-free. Expression is normalized identically for both
+  slices first, so scale (log-pred vs raw-GT) doesn't distort them.
+
+**Secondary — alignment-dependent (trustworthy only on asymmetric tissue):**
+- `gen_field_pearson` / `gen_field_ssim` — binned spatial-field agreement.
+- `gen_density_pearson` — bin-wise cell-density agreement.
+
+For the alignment-dependent metrics, the synthesized cloud is aligned onto GT
+with an **orientation-robust** ICP (multiple initial rotations + reflection,
+lowest-residual fit — a single PCA-seeded ICP silently flips on round tissue).
+Alignment is an evaluation-side operation (uses GT, feeds nothing back to the
+method), so it is not leakage.
+
+The v1 **cell-matched metrics are still computed and stored for reference**
+(`pearson_median`, `matching_rate`, …) but are explicitly *not* the primary
+score for generation.
 
 ---
 
