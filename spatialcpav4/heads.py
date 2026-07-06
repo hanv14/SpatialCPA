@@ -35,12 +35,25 @@ def _mlp(in_dim: int, hidden_dim: int, out_dim: int, dropout: float) -> nn.Seque
 class ExpressionHead(nn.Module):
     """Regress the full gene-expression vector from the latent."""
 
-    def __init__(self, latent_dim: int, n_genes: int, hidden_dim: int, dropout: float):
+    def __init__(self, latent_dim: int, n_genes: int, hidden_dim: int, dropout: float,
+                 activation: str = "softplus"):
         super().__init__()
         self.net = _mlp(latent_dim, hidden_dim, n_genes, dropout)
+        # Expression is non-negative; a plain linear head can emit negatives
+        # (which are unphysical and break downstream log normalization). Softplus
+        # keeps the output >= 0 while staying smooth. ``"none"`` restores the
+        # original linear head.
+        if activation == "softplus":
+            self.activation = nn.Softplus()
+        elif activation == "relu":
+            self.activation = nn.ReLU()
+        elif activation in (None, "none", "identity"):
+            self.activation = nn.Identity()
+        else:
+            raise ValueError(f"Unknown expression activation '{activation}'")
 
     def forward(self, h: torch.Tensor) -> torch.Tensor:
-        return self.net(h)
+        return self.activation(self.net(h))
 
 
 class LabelHead(nn.Module):

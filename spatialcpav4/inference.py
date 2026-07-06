@@ -251,6 +251,55 @@ class Predictor:
         gx, gy = np.meshgrid(xs, ys)
         return np.column_stack([gx.ravel(), gy.ravel()]).astype(np.float32)
 
+    def _transfer_expression(self, coords, cell_type_idx, source_slices,
+                             k=1, same_celltype=True, seed=0):
+        """Copy expression onto query points from the nearest training cells.
+
+        Pure regression collapses cell-to-cell variance (over-smoothing). As in
+        SpatialZ and the original SpatialCPA's k-NN refinement, transferring real
+        expression profiles from nearby training cells restores that variance.
+        For each query point we take the inverse-distance-weighted expression of
+        its ``k`` nearest source cells (optionally restricted to the query's
+        predicted cell type). ``k=1`` copies the single nearest profile
+        (maximum variance); larger ``k`` trades variance for smoothness.
+
+        Uses only training (source) cells, so it introduces no leakage.
+        """
+        src_expr = np.concatenate([s.expression for s in source_slices], axis=0)
+        src_xy = np.concatenate([s.coords_xy for s in source_slices], axis=0)
+        if same_celltype and all(s.cell_type_indices is not None for s in source_slices):
+            src_ct = np.concatenate([s.cell_type_indices for s in source_slices], axis=0)
+        else:
+            src_ct = None
+            same_celltype = False
+
+        out = np.zeros((coords.shape[0], src_expr.shape[1]), dtype=np.float32)
+        q_xy = coords[:, :2]
+
+        groups = ([(-1, np.arange(coords.shape[0]))] if not same_celltype
+                  else [(ct, np.where(cell_type_idx == ct)[0])
+                        for ct in np.unique(cell_type_idx)])
+        for ct, q_idx in groups:
+            if len(q_idx) == 0:
+                continue
+            if same_celltype:
+                s_idx = np.where(src_ct == ct)[0]
+                if len(s_idx) == 0:
+                    s_idx = np.arange(src_expr.shape[0])  # fallback: any cell
+            else:
+                s_idx = np.arange(src_expr.shape[0])
+            kk = min(k, len(s_idx))
+            tree = cKDTree(src_xy[s_idx])
+            dist, nn = tree.query(q_xy[q_idx], k=kk)
+            if kk == 1:
+                dist = dist[:, None]; nn = nn[:, None]
+            w = 1.0 / (dist + 1e-8)
+            w /= w.sum(axis=1, keepdims=True)
+            src_e = src_expr[s_idx]
+            out[q_idx] = np.einsum("qk,qkg->qg", w.astype(np.float32),
+                                   src_e[nn])
+        return out
+
     def generate_virtual_slice(
         self,
         z: float,
@@ -261,6 +310,10 @@ class Predictor:
         grid_type: str = "regular",
         batch_size: int = 4096,
         seed: int = 0,
+        expression_mode: str = "regress",
+        transfer_k: int = 1,
+        transfer_alpha: float = 0.0,
+        transfer_same_celltype: bool = True,
     ) -> SlicePrediction:
         """Synthesise a virtual slice at an arbitrary z coordinate.
 
@@ -305,12 +358,29 @@ class Predictor:
         pred = self.predict(coords, lower, upper, batch_size)
 
         keep = pred.occupancy_prob > occupancy_threshold
+        kept_coords = pred.coords[keep]
+        expression = pred.expression[keep]
+        kept_ct_idx = pred.cell_type_idx[keep] if pred.cell_type_idx is not None else None
+
+        # Expression source: regressed (smooth), transferred (real profiles from
+        # nearby training cells -> preserves variance), or a blend of the two.
+        if expression_mode in ("transfer", "blend") and kept_coords.shape[0] > 0:
+            transferred = self._transfer_expression(
+                kept_coords, kept_ct_idx, [lower, upper],
+                k=transfer_k, same_celltype=transfer_same_celltype, seed=seed)
+            if expression_mode == "transfer":
+                expression = transferred
+            else:  # blend: alpha * regressed + (1 - alpha) * transferred
+                expression = transfer_alpha * expression + (1.0 - transfer_alpha) * transferred
+        elif expression_mode not in ("regress", "transfer", "blend"):
+            raise ValueError(f"Unknown expression_mode '{expression_mode}'")
+
         return SlicePrediction(
-            coords=pred.coords[keep],
-            expression=pred.expression[keep],
+            coords=kept_coords,
+            expression=expression,
             occupancy_prob=pred.occupancy_prob[keep],
             cell_type=pred.cell_type[keep] if pred.cell_type is not None else None,
             region=pred.region[keep] if pred.region is not None else None,
-            cell_type_idx=pred.cell_type_idx[keep] if pred.cell_type_idx is not None else None,
+            cell_type_idx=kept_ct_idx,
             region_idx=pred.region_idx[keep] if pred.region_idx is not None else None,
         )

@@ -81,6 +81,7 @@ class SpatialCPATransformer(nn.Module):
             n_genes=n_genes,
             hidden_dim=cfg.resolved_expression_head_hidden_dim(),
             dropout=cfg.dropout,
+            activation=cfg.expression_activation,
         )
         self.label_head = LabelHead(
             latent_dim=h,

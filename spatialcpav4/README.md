@@ -196,6 +196,24 @@ which bypasses the occupancy/generation behavior):
 
 ---
 
+## Reducing over-smoothing (expression variance)
+
+MSE regression predicts the conditional mean of the neighbors, so a purely
+regressed slice is over-smooth: it reproduces gene-gene structure and mean levels
+but collapses cell-to-cell variance (near-zero per-gene variance agreement at
+evaluation). Three knobs address this:
+
+- **Non-negative expression head** — `ModelConfig.expression_activation`
+  (`"softplus"` default) keeps predictions ≥ 0 (a linear head can emit
+  unphysical negatives).
+- **Variance-matching loss** — `LossConfig.variance_weight` (default 0.5)
+  penalizes mismatch between the per-gene std of predictions and targets.
+- **Expression transfer at generation** — `InferenceConfig.expression_mode`:
+  `"transfer"` copies real profiles from the nearest training cells (as SpatialZ
+  and the original SpatialCPA do), restoring full cell-to-cell variance;
+  `"blend"` mixes it with the regression (`transfer_alpha`); `"regress"` is the
+  smooth baseline. Transfer uses only training cells → no leakage.
+
 ## Designed-in extensibility
 
 The following can be added **without major refactoring**:

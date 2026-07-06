@@ -171,6 +171,11 @@ def run_method(adata, targets, gene_names, args):
     cfg.inference.occupancy_threshold = args.occupancy_threshold
     cfg.inference.grid_points = args.grid_points
     cfg.inference.grid_type = args.grid_type
+    cfg.inference.expression_mode = args.expression_mode
+    cfg.inference.transfer_k = args.transfer_k
+    cfg.inference.transfer_alpha = args.transfer_alpha
+    cfg.model.expression_activation = args.expression_activation
+    cfg.loss.variance_weight = args.variance_weight
 
     coord_scale = stack.estimate_coord_scale()
     print(f"  coord scale: {coord_scale:.4f}; building triplet samples "
@@ -206,7 +211,11 @@ def run_method(adata, targets, gene_names, args):
                 n_grid_points=cfg.inference.grid_points,
                 occupancy_threshold=cfg.inference.occupancy_threshold,
                 grid_type=cfg.inference.grid_type,
-                batch_size=cfg.inference.batch_size, seed=args.seed)
+                batch_size=cfg.inference.batch_size, seed=args.seed,
+                expression_mode=cfg.inference.expression_mode,
+                transfer_k=cfg.inference.transfer_k,
+                transfer_alpha=cfg.inference.transfer_alpha,
+                transfer_same_celltype=cfg.inference.transfer_same_celltype)
         except Exception as e:
             print(f"    ERROR: {e}")
             import traceback
@@ -240,6 +249,22 @@ def main():
     parser.add_argument("--occupancy-threshold", type=float, default=0.5)
     parser.add_argument("--grid-points", type=int, default=1000)
     parser.add_argument("--grid-type", default="regular", choices=["regular", "random"])
+    # Over-smoothing controls (see gen_gene_var_pearson).
+    parser.add_argument("--expression-mode", default="transfer",
+                        choices=["regress", "transfer", "blend"],
+                        help="expression source at generation: regress (smooth, "
+                             "collapses variance), transfer (copy real profiles "
+                             "from nearest training cells, preserves variance), "
+                             "or blend")
+    parser.add_argument("--transfer-k", type=int, default=1,
+                        help="neighbors to transfer from (1 = copy nearest)")
+    parser.add_argument("--transfer-alpha", type=float, default=0.0,
+                        help="blend weight on the regressed expression (blend mode)")
+    parser.add_argument("--expression-activation", default="softplus",
+                        choices=["softplus", "relu", "none"],
+                        help="expression head output activation (non-negativity)")
+    parser.add_argument("--variance-weight", type=float, default=0.5,
+                        help="per-gene variance-matching loss weight")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=256)
@@ -271,6 +296,10 @@ def main():
         "occupancy_threshold": args.occupancy_threshold,
         "grid_points": args.grid_points, "grid_type": args.grid_type,
         "lr": args.lr, "epochs": args.epochs, "batch_size": args.batch_size,
+        "expression_mode": args.expression_mode, "transfer_k": args.transfer_k,
+        "transfer_alpha": args.transfer_alpha,
+        "expression_activation": args.expression_activation,
+        "variance_weight": args.variance_weight,
         "generation_only": True,
     }
     _v2_io.write_prediction_h5(results, gene_names, target_sections,

@@ -58,6 +58,24 @@ def pearson_corr_loss(
     return 1.0 - corr.mean()
 
 
+def variance_match_loss(
+    pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor
+) -> torch.Tensor:
+    """Penalize mismatch between per-gene std of predictions and targets.
+
+    MSE regression collapses toward the conditional mean, destroying cell-to-cell
+    variance (visible as near-zero per-gene variance agreement at evaluation).
+    Matching the per-gene standard deviation across the (masked) batch pushes the
+    model to preserve that spread.
+    """
+    m = mask > 0
+    if m.sum() < 4:
+        return pred.new_tensor(0.0)
+    pred_std = pred[m].std(dim=0)
+    tgt_std = target[m].std(dim=0)
+    return F.mse_loss(pred_std, tgt_std)
+
+
 def masked_cross_entropy(
     logits: torch.Tensor, target: torch.Tensor, has_target: torch.Tensor
 ) -> torch.Tensor:
@@ -107,7 +125,8 @@ def compute_total_loss(
     # ---- expression ------------------------------------------------------- #
     mse = masked_mse_loss(outputs["expression"], batch["target_expr"], has_target)
     pear = pearson_corr_loss(outputs["expression"], batch["target_expr"], has_target)
-    expr_term = cfg.mse_weight * mse + cfg.pearson_weight * pear
+    var = variance_match_loss(outputs["expression"], batch["target_expr"], has_target)
+    expr_term = cfg.mse_weight * mse + cfg.pearson_weight * pear + cfg.variance_weight * var
 
     # ---- labels ----------------------------------------------------------- #
     ct_loss = outputs["expression"].new_tensor(0.0)
@@ -135,6 +154,7 @@ def compute_total_loss(
         "total": total,
         "mse": mse.detach(),
         "pearson": pear.detach(),
+        "variance": var.detach(),
         "cell_type": ct_loss.detach(),
         "region": reg_loss.detach(),
         "occupancy": occ_loss.detach(),

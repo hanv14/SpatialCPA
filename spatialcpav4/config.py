@@ -78,6 +78,11 @@ class ModelConfig:
 
     expression_encoder: str = "linear"
 
+    # Output activation for the expression head. Expression is non-negative, so
+    # "softplus" (default) prevents unphysical negative predictions; "none"
+    # restores the original linear head.
+    expression_activation: str = "softplus"
+
     def resolved_dim_feedforward(self) -> int:
         return self.dim_feedforward if self.dim_feedforward is not None else 4 * self.hidden_dim
 
@@ -156,6 +161,11 @@ class LossConfig:
     # Expression sub-weights
     mse_weight: float = 1.0
     pearson_weight: float = 0.5
+    # Variance-matching weight: penalizes mismatch between the per-gene standard
+    # deviation of predictions and targets across the batch. Counteracts the
+    # mean-collapse / over-smoothing that MSE regression induces (which shows up
+    # as a near-zero per-gene variance agreement at evaluation).
+    variance_weight: float = 0.5
 
     # Label sub-weights
     cell_type_weight: float = 1.0
@@ -253,6 +263,16 @@ class InferenceConfig:
     grid_points: int = 1000
     batch_size: int = 4096
     grid_type: str = "regular"
+
+    # Expression source at generation:
+    #   "regress"  — the model's regressed expression (smooth; collapses variance).
+    #   "transfer" — copy real profiles from the nearest training cells (preserves
+    #                cell-to-cell variance, as SpatialZ / original SpatialCPA do).
+    #   "blend"    — transfer_alpha * regressed + (1 - transfer_alpha) * transfer.
+    expression_mode: str = "regress"
+    transfer_k: int = 1                    # neighbors to transfer from (1 = copy nearest)
+    transfer_alpha: float = 0.0            # blend weight on the regressed expression
+    transfer_same_celltype: bool = True    # transfer only from same predicted cell type
 
 
 # --------------------------------------------------------------------------- #
