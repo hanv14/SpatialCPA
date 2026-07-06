@@ -42,21 +42,44 @@ from pathlib import Path
 import numpy as np
 import scipy.sparse as sp
 from scipy.spatial import cKDTree
-from scipy.stats import pearsonr
+from scipy.spatial.distance import cdist
+from scipy.stats import pearsonr, rankdata
 
 from .evaluate import load_prediction, load_ground_truth
 from .leakage_guard import align_prediction_to_gt
 
 
 # --------------------------------------------------------------------------- #
-# Normalization (per-cell; makes pred and GT scale-comparable)                 #
+# Normalization                                                                #
 # --------------------------------------------------------------------------- #
 def _normalize_counts(X, target_sum=1e4):
-    """Per-cell total-count normalize + log1p (numpy; no scanpy dependency)."""
+    """Per-cell total-count normalize + log1p (numpy; no scanpy dependency).
+
+    Used only for the scale-sensitive secondary metrics (gene mean/variance).
+    """
     X = np.asarray(X, dtype=np.float64)
     totals = X.sum(axis=1, keepdims=True)
     totals[totals == 0] = 1.0
     return np.log1p(X / totals * target_sum)
+
+
+def _rank_normalize(X):
+    """Per-gene rank normalization to (0, 1).
+
+    FAIRNESS: this is invariant to any monotonic per-gene transform, so a method
+    that outputs raw counts and one that outputs log1p-normalized expression get
+    the *identical* representation. The primary structural metrics are computed
+    on this, so they don't depend on each method's output scale — the key to a
+    fair cross-method comparison. (Ties get average ranks.)
+    """
+    X = np.asarray(X, dtype=np.float64)
+    n = X.shape[0]
+    if n == 0:
+        return X
+    R = np.empty_like(X)
+    for g in range(X.shape[1]):
+        R[:, g] = rankdata(X[:, g], method="average")
+    return (R - 0.5) / n
 
 
 # --------------------------------------------------------------------------- #
@@ -168,6 +191,45 @@ def gene_level_agreement(pred_X, gt_X):
     return out
 
 
+def _sinkhorn_cost(A, B, eps=0.05, n_iter=150):
+    """Entropic-OT transport cost between point sets A, B (uniform weights)."""
+    C = cdist(A, B, metric="sqeuclidean")
+    scale = np.median(C) + 1e-9
+    C = C / scale
+    K = np.exp(-C / eps) + 1e-300
+    n, m = C.shape
+    a = np.full(n, 1.0 / n)
+    b = np.full(m, 1.0 / m)
+    u = np.ones(n)
+    v = np.ones(m)
+    for _ in range(n_iter):
+        u = a / (K @ v)
+        v = b / (K.T @ u)
+    P = u[:, None] * K * v[None, :]
+    return float((P * C).sum())
+
+
+def sinkhorn_divergence(pred_X, gt_X, max_n=400, eps=0.05, seed=0):
+    """Debiased Sinkhorn divergence between two expression point clouds.
+
+    An alignment-free, correspondence-free measure of how well the *distribution*
+    of cell expression profiles matches. Computed on rank-normalized expression
+    (scale-fair). Lower = closer distributions. 0 for identical distributions.
+    """
+    rng = np.random.default_rng(seed)
+    def sub(X):
+        if X.shape[0] > max_n:
+            return X[rng.choice(X.shape[0], max_n, replace=False)]
+        return X
+    A, B = sub(pred_X), sub(gt_X)
+    if A.shape[0] < 5 or B.shape[0] < 5:
+        return {"sinkhorn": np.nan}
+    sab = _sinkhorn_cost(A, B, eps)
+    saa = _sinkhorn_cost(A, A, eps)
+    sbb = _sinkhorn_cost(B, B, eps)
+    return {"sinkhorn": float(max(sab - 0.5 * (saa + sbb), 0.0))}
+
+
 def density_agreement(pred_xy, gt_xy, grid=20):
     all_xy = np.vstack([pred_xy, gt_xy])
     xe = np.linspace(all_xy[:, 0].min(), all_xy[:, 0].max(), grid + 1)
@@ -225,11 +287,17 @@ def evaluate_generation(prediction_path, h5ad_path, output_path=None,
         gm = gt_sections == sec
         if pm.sum() < 5 or gm.sum() < 5:
             continue
-        # Normalize BOTH slices identically (scale-comparable).
-        pX = _normalize_counts(pred_X_all[pm])
+        pred_X = pred_X_all[pm]
         gX_raw = gt.X[gm][:, ggi]
         gX_raw = gX_raw.toarray() if sp.issparse(gX_raw) else np.asarray(gX_raw)
-        gX = _normalize_counts(gX_raw)
+
+        # PRIMARY metrics on rank-normalized expression: SCALE-FAIR — invariant
+        # to each method's output scale (raw vs log vs any monotonic transform).
+        pR = _rank_normalize(pred_X)
+        gR = _rank_normalize(gX_raw)
+        # SECONDARY (scale-sensitive) mean/variance on log-normalized expression.
+        pL = _normalize_counts(pred_X)
+        gL = _normalize_counts(gX_raw)
 
         gt_xy = gt_spatial[gm, :2]
         pred_xy = np.column_stack([pred["x"][pm], pred["y"][pm]])
@@ -237,11 +305,14 @@ def evaluate_generation(prediction_path, h5ad_path, output_path=None,
         pred_xy_al = align_prediction_to_gt(pred_xy, gt_xy, with_scale=True)
 
         m = {}
-        m.update(field_metrics(pred_xy_al, pX, gt_xy, gX, grid=grid))
-        m.update(density_agreement(pred_xy_al, gt_xy, grid=grid))
-        m.update(morans_agreement(pred_xy, pX, gt_xy, gX, k=moran_k))  # alignment-free
-        m.update(coexpression_agreement(pX, gX))                        # alignment-free
-        m.update(gene_level_agreement(pX, gX))                          # alignment-free
+        # Primary — scale-fair, (mostly) alignment-free.
+        m.update(coexpression_agreement(pR, gR))                       # alignment-free
+        m.update(morans_agreement(pred_xy, pR, gt_xy, gR, k=moran_k))  # alignment-free
+        m.update(sinkhorn_divergence(pR, gR))                          # alignment-free OT
+        m.update(field_metrics(pred_xy_al, pR, gt_xy, gR, grid=grid))  # needs alignment
+        m.update(density_agreement(pred_xy_al, gt_xy, grid=grid))      # needs alignment
+        # Secondary — scale-sensitive.
+        m.update(gene_level_agreement(pL, gL))
         per_section.append(m)
         weights.append(int(gm.sum()))
 

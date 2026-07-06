@@ -240,10 +240,11 @@ METHODS = {
 # that generation does not produce — see evaluate_generation.py).
 METRIC_NAMES = [
     # ── Primary: correspondence-free generation metrics ──
-    "gen_coexpression_agreement",  # gene-gene structure agreement (alignment-free)
-    "gen_morans_agreement",        # per-gene Moran's I agreement (alignment-free)
-    "gen_gene_mean_pearson",       # per-gene mean agreement (alignment-free)
-    "gen_gene_var_pearson",        # per-gene variance agreement (alignment-free)
+    "gen_coexpression_agreement",  # gene-gene structure agreement (scale-fair, alignment-free)
+    "gen_morans_agreement",        # per-gene Moran's I agreement (scale-fair, alignment-free)
+    "gen_sinkhorn",                # OT distance between expression distributions (lower=better)
+    "gen_gene_mean_pearson",       # per-gene mean agreement (scale-sensitive, secondary)
+    "gen_gene_var_pearson",        # per-gene variance agreement (scale-sensitive, secondary)
     "gen_field_pearson",           # binned spatial-field agreement (needs alignment)
     "gen_field_ssim",              # binned structural similarity (needs alignment)
     "gen_density_pearson",         # bin-wise cell-density agreement (needs alignment)

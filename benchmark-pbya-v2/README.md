@@ -66,20 +66,35 @@ comes out negative.)
 v2 therefore evaluates the generated slice as a **field/distribution**, not a
 cell list, in `evaluate_generation.py`:
 
-**Primary — correspondence-free (and mostly alignment-free):**
-- `gen_coexpression_agreement` — Pearson r between the gene-gene correlation
-  matrices of prediction and GT. Alignment-free. *(Validated: faithful +0.97,
-  scrambled +0.04, random −0.01; identical at 0° and 180°.)*
-- `gen_morans_agreement` — Pearson r between per-gene Moran's I of prediction and
-  GT (each within its own slice). Alignment-free; tests whether the same genes
-  are spatially structured. *(faithful +0.69, scrambled/random ≈0.)*
-- `gen_gene_mean_pearson` / `gen_gene_var_pearson` — per-gene mean/variance
-  agreement. Alignment-free. Expression is normalized identically for both
-  slices first, so scale (log-pred vs raw-GT) doesn't distort them.
+**Scale-fairness (critical for cross-method comparison).** Methods emit
+expression on different scales (raw-ish vs log-normalized vs …). The primary
+metrics are computed on **per-gene rank-normalized** expression, which is
+invariant to any monotonic per-value transform — so two methods that differ only
+in output scale get the *identical* score. *(Validated: linear, log1p, sqrt and
+×1000 all yield bit-identical primary metrics.)* The same rank-normalization is
+applied to GT, so raw-count GT and log-scale predictions are directly comparable.
 
-**Secondary — alignment-dependent (trustworthy only on asymmetric tissue):**
-- `gen_field_pearson` / `gen_field_ssim` — binned spatial-field agreement.
-- `gen_density_pearson` — bin-wise cell-density agreement.
+**Primary — correspondence-free, scale-fair, (mostly) alignment-free:**
+- `gen_coexpression_agreement` — Pearson r between the gene-gene correlation
+  matrices of prediction and GT. Alignment-free. *(faithful +0.97, scrambled
+  +0.11, random −0.06; identical at 0° and 180°.)*
+- `gen_morans_agreement` — Pearson r between per-gene Moran's I of prediction and
+  GT. Alignment-free; tests whether the same genes are spatially structured.
+- `gen_sinkhorn` — debiased Sinkhorn (entropic optimal-transport) divergence
+  between the two expression distributions. Alignment-free; **lower = better**
+  (0 = identical distribution). *(faithful 0.20, scrambled/random 0.63.)*
+
+**Secondary — alignment-dependent (trustworthy only on asymmetric tissue) or
+scale-sensitive:**
+- `gen_field_pearson` / `gen_field_ssim` — binned spatial-field agreement (need
+  alignment).
+- `gen_density_pearson` — bin-wise cell-density agreement (needs alignment).
+- `gen_gene_mean_pearson` / `gen_gene_var_pearson` — per-gene mean/variance
+  agreement (scale-sensitive; on log-normalized expression).
+
+**Uniform application.** `run_benchmark` runs this identical evaluation for every
+method (spatialcpav4_gen, SpatialZ, FEAST, isoST) — same input, same
+re-registration, same metrics — so the comparison is apples-to-apples.
 
 For the alignment-dependent metrics, the synthesized cloud is aligned onto GT
 with an **orientation-robust** ICP (multiple initial rotations + reflection,

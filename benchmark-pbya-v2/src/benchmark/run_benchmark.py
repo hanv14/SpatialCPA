@@ -193,9 +193,10 @@ def run_single(method, dataset, holdout_config, extra_args=None, dry_run=False,
             Path(metrics_path).parent.mkdir(parents=True, exist_ok=True)
             with open(metrics_path, "w") as f:
                 _json.dump(metrics, f, indent=2)
-            print(f"  Done. [generation] coexpr_agree="
+            print(f"  Done. [generation, primary] coexpr_agree="
                   f"{metrics.get('gen_coexpression_agreement', 'N/A')} "
                   f"morans_agree={metrics.get('gen_morans_agreement', 'N/A')} "
+                  f"sinkhorn={metrics.get('gen_sinkhorn', 'N/A')} "
                   f"| [cell-matched, ref] pearson_median="
                   f"{metrics.get('pearson_median', 'N/A')}")
             result["metrics_path"] = str(metrics_path)
