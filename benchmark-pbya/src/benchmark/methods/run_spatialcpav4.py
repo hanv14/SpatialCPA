@@ -105,7 +105,13 @@ def _to_dense_f32(X):
 
 
 def _normalize_expression(adata):
-    """Normalize .X to a log space suitable for MSE training (mirrors stVGP)."""
+    """Normalize .X to a log space suitable for MSE training (mirrors stVGP).
+
+    LEAKAGE SAFETY: every transform used here (normalize_total, log1p) is
+    strictly per-cell / per-value — no statistic is pooled across cells — so
+    applying it to the full AnnData yields exactly the same training-cell values
+    as a train-only pass. No held-out information enters the training features.
+    """
     import scanpy as sc
 
     expr_type = adata.uns.get("expression_type", "raw_counts")
@@ -122,36 +128,52 @@ def _normalize_expression(adata):
     return expr_type
 
 
-def _build_label_indices(adata, key, seed):
-    """Return (indices int64[n], names list[str]) for a categorical obs column.
+def _build_label_indices(adata, key, seed, train_mask):
+    """Return (indices int64[n_all], names list[str]) for a categorical obs column.
+
+    LEAKAGE SAFETY: the label vocabulary — and, in the Leiden fallback, the
+    clustering itself — are derived from TRAINING cells only (``train_mask``), so
+    no held-out information reaches training. Held-out cells are mapped into the
+    training vocabulary where their label exists and get index -1 otherwise;
+    either way held-out entries are never consumed during training (the wrapper
+    only reads indices for reference sections), they are returned solely to keep
+    the array aligned to ``adata``.
 
     Uses obs[key] when present so predicted labels are comparable to ground
     truth.  For cell_type, falls back to Leiden clustering then a single class.
     Returns (None, None) if the column is absent and no fallback applies.
     """
+    train_idx = np.where(train_mask)[0]
+
     if key in adata.obs.columns:
         labels = adata.obs[key].values.astype(str)
-        names = sorted(pd.unique(labels).tolist())
+        # Vocabulary from TRAINING cells only.
+        names = sorted(pd.unique(labels[train_mask]).tolist())
         idx_map = {n: i for i, n in enumerate(names)}
-        idx = np.array([idx_map[l] for l in labels], dtype=np.int64)
-        print(f"  {key} from obs['{key}']: {len(names)} classes")
+        idx = np.array([idx_map.get(l, -1) for l in labels], dtype=np.int64)
+        n_unseen = int((idx[~train_mask] == -1).sum()) if (~train_mask).any() else 0
+        print(f"  {key} from obs['{key}']: {len(names)} classes (train-only vocab; "
+              f"{n_unseen} held-out cells with unseen labels)")
         return idx, names
 
     if key != "cell_type":
         return None, None
 
+    # Leiden fallback fit on TRAINING cells only.
     try:
         import scanpy as sc
-        tmp = adata.copy()
+        tmp = adata[train_mask].copy()
         sc.pp.pca(tmp, n_comps=min(30, tmp.n_vars - 1, tmp.n_obs - 1))
         sc.pp.neighbors(tmp, n_neighbors=15)
         sc.tl.leiden(tmp, resolution=1.0, random_state=seed)
-        labels = tmp.obs["leiden"].values.astype(str)
-        names = sorted(pd.unique(labels).tolist(), key=lambda s: int(s))
+        train_labels = tmp.obs["leiden"].values.astype(str)
+        names = sorted(pd.unique(train_labels).tolist(), key=lambda s: int(s))
         idx_map = {n: i for i, n in enumerate(names)}
-        idx = np.array([idx_map[l] for l in labels], dtype=np.int64)
+        # Held-out cells default to -1 (never used for training).
+        idx = np.full(adata.n_obs, -1, dtype=np.int64)
+        idx[train_idx] = np.array([idx_map[l] for l in train_labels], dtype=np.int64)
         names = [f"leiden_{n}" for n in names]
-        print(f"  cell_type from Leiden fallback: {len(names)} classes")
+        print(f"  cell_type from Leiden fallback (train-only): {len(names)} classes")
         return idx, names
     except Exception as e:
         print(f"  WARNING: Leiden fallback failed ({e}); using a single cell type")
@@ -180,9 +202,11 @@ def prepare_input(adata, holdout_sections, seed):
     expr_type = _normalize_expression(adata)
     print(f"  Expression type: {expr_type}")
 
-    # Label spaces are computed across ALL cells so train/holdout share them.
-    ct_all, cell_type_names = _build_label_indices(adata, "cell_type", seed)
-    reg_all, region_names = _build_label_indices(adata, "region", seed)
+    # Label spaces are built from TRAINING cells only (~holdout_mask) so no
+    # held-out information leaks into training; see _build_label_indices.
+    train_mask = ~holdout_mask
+    ct_all, cell_type_names = _build_label_indices(adata, "cell_type", seed, train_mask)
+    reg_all, region_names = _build_label_indices(adata, "region", seed, train_mask)
 
     coords = np.asarray(adata.obsm["spatial"], dtype=np.float32)
     if coords.shape[1] < 3:
