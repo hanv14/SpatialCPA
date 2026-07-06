@@ -56,8 +56,11 @@ def _normalize_counts(X, target_sum=1e4):
     """Per-cell total-count normalize + log1p (numpy; no scanpy dependency).
 
     Used only for the scale-sensitive secondary metrics (gene mean/variance).
+    Negative values are clipped to 0 first: expression is non-negative, but a
+    regression head (e.g. spatialcpav4's linear expression decoder) can emit
+    negatives, which would otherwise make ``log1p`` return NaN.
     """
-    X = np.asarray(X, dtype=np.float64)
+    X = np.clip(np.asarray(X, dtype=np.float64), 0.0, None)
     totals = X.sum(axis=1, keepdims=True)
     totals[totals == 0] = 1.0
     return np.log1p(X / totals * target_sum)
