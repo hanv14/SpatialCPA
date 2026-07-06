@@ -83,6 +83,10 @@ applied to GT, so raw-count GT and log-scale predictions are directly comparable
 - `gen_sinkhorn` — debiased Sinkhorn (entropic optimal-transport) divergence
   between the two expression distributions. Alignment-free; **lower = better**
   (0 = identical distribution). *(faithful 0.20, scrambled/random 0.63.)*
+- `gen_celltype_composition` — overlap of predicted vs GT cell-type proportions
+  (`1 − ½·Σ|p−q|`). Alignment-free; the correspondence-free counterpart of
+  cell-matched `celltype_accuracy` (which, like `pearson_median`, collapses under
+  imperfect placement). *(same mix 1.0, single-class 0.5, disjoint 0.0.)*
 
 **Secondary — alignment-dependent (trustworthy only on asymmetric tissue) or
 scale-sensitive:**
@@ -181,7 +185,14 @@ python -m src.benchmark.run_benchmark --method feast --dataset allen_merfish_bra
 # full campaign
 python -m src.benchmark.run_all --methods spatialcpav4_gen spatialz feast isost
 python -m src.benchmark.aggregate_results
+
+# rank methods on the PRIMARY generation metrics (per dataset + overall)
+python -m src.benchmark.rank_generation
 ```
+
+`rank_generation` tables every method on the correspondence-free primary metrics
+(averaged over holdout sections) and computes a composite rank, so you compare on
+the full LOO sweep rather than single sections.
 
 Data location is auto-resolved to the shared v1 tree; override with
 `BENCH_V2_DATA` / `BENCH_V2_TOOLS`.

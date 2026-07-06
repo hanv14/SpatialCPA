@@ -233,6 +233,29 @@ def sinkhorn_divergence(pred_X, gt_X, max_n=400, eps=0.05, seed=0):
     return {"sinkhorn": float(max(sab - 0.5 * (saa + sbb), 0.0))}
 
 
+def celltype_composition(pred_types, gt_types):
+    """Correspondence-free cell-type agreement: overlap of type proportions.
+
+    Cell-matched ``celltype_accuracy`` (see ``evaluate.py``) needs a cell-to-cell
+    correspondence generation doesn't provide, so it collapses when placement /
+    matching is imperfect — exactly like matched per-gene Pearson. This instead
+    compares the *composition* (categorical distribution) of predicted vs GT cell
+    types via the overlap coefficient ``1 - ½·Σ|p_i − q_i|`` (total-variation
+    complement). 1 = identical mix, 0 = disjoint. Alignment-free.
+    """
+    pred_types = np.asarray(pred_types).astype(str)
+    gt_types = np.asarray(gt_types).astype(str)
+    # Ignore unlabeled predictions ("NA"/"") only if the method predicted none;
+    # otherwise keep them so a non-predicting method is scored honestly.
+    labels = sorted(set(pred_types.tolist()) | set(gt_types.tolist()))
+    if not labels:
+        return {"celltype_composition": np.nan}
+    p = np.array([np.mean(pred_types == l) for l in labels])
+    q = np.array([np.mean(gt_types == l) for l in labels])
+    tvd = 0.5 * np.abs(p - q).sum()
+    return {"celltype_composition": float(1.0 - tvd)}
+
+
 def density_agreement(pred_xy, gt_xy, grid=20):
     all_xy = np.vstack([pred_xy, gt_xy])
     xe = np.linspace(all_xy[:, 0].min(), all_xy[:, 0].max(), grid + 1)
@@ -316,6 +339,10 @@ def evaluate_generation(prediction_path, h5ad_path, output_path=None,
         m.update(density_agreement(pred_xy_al, gt_xy, grid=grid))      # needs alignment
         # Secondary — scale-sensitive.
         m.update(gene_level_agreement(pL, gL))
+        # Cell-type composition (correspondence-free), when GT has labels.
+        if "cell_type" in gt.obs.columns:
+            m.update(celltype_composition(pred["cell_type"][pm],
+                                          gt.obs["cell_type"].values[gm]))
         per_section.append(m)
         weights.append(int(gm.sum()))
 
@@ -323,9 +350,9 @@ def evaluate_generation(prediction_path, h5ad_path, output_path=None,
         metrics["error"] = "no evaluable sections"
     else:
         w = np.array(weights, dtype=float)
-        keys = per_section[0].keys()
+        keys = sorted({k for s in per_section for k in s})  # union; robust to gaps
         for kname in keys:
-            vals = np.array([s[kname] for s in per_section], dtype=float)
+            vals = np.array([s.get(kname, np.nan) for s in per_section], dtype=float)
             ok = ~np.isnan(vals)
             metrics[kname] = float(np.average(vals[ok], weights=w[ok])) if ok.any() else None
 

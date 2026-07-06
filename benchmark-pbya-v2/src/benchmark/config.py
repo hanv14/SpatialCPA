@@ -243,6 +243,7 @@ METRIC_NAMES = [
     "gen_coexpression_agreement",  # gene-gene structure agreement (scale-fair, alignment-free)
     "gen_morans_agreement",        # per-gene Moran's I agreement (scale-fair, alignment-free)
     "gen_sinkhorn",                # OT distance between expression distributions (lower=better)
+    "gen_celltype_composition",    # cell-type proportion agreement (correspondence-free)
     "gen_gene_mean_pearson",       # per-gene mean agreement (scale-sensitive, secondary)
     "gen_gene_var_pearson",        # per-gene variance agreement (scale-sensitive, secondary)
     "gen_field_pearson",           # binned spatial-field agreement (needs alignment)
