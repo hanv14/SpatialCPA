@@ -274,6 +274,12 @@ class InferenceConfig:
     transfer_alpha: float = 0.0            # blend weight on the regressed expression
     transfer_same_celltype: bool = True    # transfer only from same predicted cell type
 
+    # Where candidate cell positions come from at generation:
+    #   "flanking" — the real (x, y) of the flanking slices' cells (realistic
+    #                tissue density/morphology; strong placement metrics).
+    #   "grid"     — a uniform lattice over the bounding box (uniform density).
+    position_source: str = "flanking"
+
 
 # --------------------------------------------------------------------------- #
 # Top-level bundle                                                             #

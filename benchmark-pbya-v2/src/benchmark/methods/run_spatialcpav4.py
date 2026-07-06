@@ -174,6 +174,7 @@ def run_method(adata, targets, gene_names, args):
     cfg.inference.expression_mode = args.expression_mode
     cfg.inference.transfer_k = args.transfer_k
     cfg.inference.transfer_alpha = args.transfer_alpha
+    cfg.inference.position_source = args.position_source
     cfg.model.expression_activation = args.expression_activation
     cfg.loss.variance_weight = args.variance_weight
 
@@ -215,7 +216,8 @@ def run_method(adata, targets, gene_names, args):
                 expression_mode=cfg.inference.expression_mode,
                 transfer_k=cfg.inference.transfer_k,
                 transfer_alpha=cfg.inference.transfer_alpha,
-                transfer_same_celltype=cfg.inference.transfer_same_celltype)
+                transfer_same_celltype=cfg.inference.transfer_same_celltype,
+                position_source=cfg.inference.position_source)
         except Exception as e:
             print(f"    ERROR: {e}")
             import traceback
@@ -249,6 +251,11 @@ def main():
     parser.add_argument("--occupancy-threshold", type=float, default=0.5)
     parser.add_argument("--grid-points", type=int, default=1000)
     parser.add_argument("--grid-type", default="regular", choices=["regular", "random"])
+    parser.add_argument("--position-source", default="flanking",
+                        choices=["flanking", "grid"],
+                        help="candidate cell positions: flanking (real cell "
+                             "coords from the two neighbor slices; realistic "
+                             "density) or grid (uniform lattice)")
     # Over-smoothing controls (see gen_gene_var_pearson).
     parser.add_argument("--expression-mode", default="transfer",
                         choices=["regress", "transfer", "blend"],
@@ -297,7 +304,7 @@ def main():
         "grid_points": args.grid_points, "grid_type": args.grid_type,
         "lr": args.lr, "epochs": args.epochs, "batch_size": args.batch_size,
         "expression_mode": args.expression_mode, "transfer_k": args.transfer_k,
-        "transfer_alpha": args.transfer_alpha,
+        "transfer_alpha": args.transfer_alpha, "position_source": args.position_source,
         "expression_activation": args.expression_activation,
         "variance_weight": args.variance_weight,
         "generation_only": True,

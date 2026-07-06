@@ -214,6 +214,21 @@ evaluation). Three knobs address this:
   `"blend"` mixes it with the regression (`transfer_alpha`); `"regress"` is the
   smooth baseline. Transfer uses only training cells → no leakage.
 
+## Cell placement (density / matching / cell-type organization)
+
+Where synthesized cells sit is set by `InferenceConfig.position_source`:
+
+- **`"flanking"` (default)** — candidate positions are the real `(x, y)` of the
+  two flanking slices' cells (aligned), so the virtual slice inherits realistic
+  tissue **density and morphology**. This is what the interpolation baselines
+  effectively do, and it is far better on the placement metrics (density,
+  matching rate, cell-type neighborhood organization) than a grid.
+- **`"grid"`** — a uniform lattice over the bounding box. Uniform density, so it
+  scores poorly on density/matching/dice; kept for ablation.
+
+The occupancy head then filters candidates, cell types are predicted, and
+expression is transferred — all using training cells only (no leakage).
+
 ## Designed-in extensibility
 
 The following can be added **without major refactoring**:

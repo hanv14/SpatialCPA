@@ -314,6 +314,7 @@ class Predictor:
         transfer_k: int = 1,
         transfer_alpha: float = 0.0,
         transfer_same_celltype: bool = True,
+        position_source: str = "flanking",
     ) -> SlicePrediction:
         """Synthesise a virtual slice at an arbitrary z coordinate.
 
@@ -325,32 +326,51 @@ class Predictor:
             The reference slices (a full stack) to interpolate between.
         xy_bounds
             ``(xmin, ymin, xmax, ymax)``.  ``None`` -> bounding box of the two
-            flanking slices.
+            flanking slices. Only used by ``position_source="grid"``.
         n_grid_points
-            Approximate number of grid query points.
+            Number of candidate query positions (grid) or the subsample size
+            (flanking); ``None``/0 with ``"flanking"`` keeps all flanking cells.
         occupancy_threshold
-            Keep only grid points whose predicted occupancy exceeds this.
+            Keep only candidates whose predicted occupancy exceeds this.
         grid_type
-            ``"regular"`` or ``"random"``.
+            ``"regular"`` or ``"random"`` (``position_source="grid"`` only).
+        position_source
+            Where candidate cell positions come from:
+              * ``"flanking"`` (default) — the real (x, y) of the two flanking
+                slices' cells (they mark where tissue actually is), giving
+                realistic density/morphology. Far better placement than a grid.
+              * ``"grid"`` — a uniform lattice over the bounding box (uniform
+                density; produces poor density/matching metrics).
         batch_size
             Inference batch size.
         seed
-            RNG seed for ``grid_type="random"``.
+            RNG seed for random sampling.
 
         Returns
         -------
-        SlicePrediction restricted to the accepted (occupied) grid points.
+        SlicePrediction restricted to the accepted (occupied) positions.
         """
         lower, upper = self._pick_flanking_slices(z, slices)
 
-        if xy_bounds is None:
-            xy = np.vstack([lower.coords_xy, upper.coords_xy])
-            xy_bounds = (
-                float(xy[:, 0].min()), float(xy[:, 1].min()),
-                float(xy[:, 0].max()), float(xy[:, 1].max()),
-            )
+        if position_source == "flanking":
+            # Candidate positions = real flanking-slice cell coordinates (aligned).
+            # Real tissue morphology and density, unlike a uniform grid.
+            cand = np.vstack([lower.coords_xy, upper.coords_xy]).astype(np.float32)
+            if n_grid_points and cand.shape[0] > int(n_grid_points):
+                rng = np.random.default_rng(seed)
+                cand = cand[rng.choice(cand.shape[0], int(n_grid_points), replace=False)]
+            grid_xy = cand
+        elif position_source == "grid":
+            if xy_bounds is None:
+                xy = np.vstack([lower.coords_xy, upper.coords_xy])
+                xy_bounds = (
+                    float(xy[:, 0].min()), float(xy[:, 1].min()),
+                    float(xy[:, 0].max()), float(xy[:, 1].max()),
+                )
+            grid_xy = self._make_grid(xy_bounds, n_grid_points, grid_type, seed)
+        else:
+            raise ValueError(f"Unknown position_source '{position_source}'")
 
-        grid_xy = self._make_grid(xy_bounds, n_grid_points, grid_type, seed)
         coords = np.column_stack(
             [grid_xy, np.full(grid_xy.shape[0], float(z), dtype=np.float32)]
         ).astype(np.float32)
