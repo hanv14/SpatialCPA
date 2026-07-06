@@ -179,6 +179,21 @@ conda run -n bench_spatialcpa python \
 It is registered as method `spatialcpav4` in `config.py`. All hyperparameters
 are CLI flags (`--help`).
 
+**Two inference regimes** (the benchmark task normally supplies query positions,
+which bypasses the occupancy/generation behavior):
+
+- *Coordinate-matched* (default) — predict at the held-out cells' real `(x, y)`
+  positions; one output per held-out cell, so the predicted count equals the
+  held-out count. This is what the per-cell metrics in `evaluate.py` expect, and
+  matches how stVGP/spatialcpa operate.
+- *De-novo synthesis* (`--generate-mode`) — ignore the held-out `(x, y)`; build a
+  grid over the **flanking training slices'** XY bounding box at the target z,
+  run the occupancy head, and keep only grid points predicted to be tissue. The
+  cell count is **emergent** (like SpatialZ/FEAST/isoST). Only the target z (a
+  position, not content) is taken from the held-out section, so no held-out
+  information leaks. Tune with `--grid-points` (default 1000), `--grid-type`
+  (`regular`/`random`), and `--occupancy-threshold`.
+
 ---
 
 ## Designed-in extensibility

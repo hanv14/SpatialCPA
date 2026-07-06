@@ -293,6 +293,8 @@ def run_method(ref_slices, holdout_refs, gene_names, cell_type_names, region_nam
     cfg.train.seed = args.seed
     cfg.train.device = device
     cfg.inference.occupancy_threshold = args.occupancy_threshold
+    cfg.inference.grid_points = args.grid_points
+    cfg.inference.grid_type = args.grid_type
     # Batch size safe for tiny inputs.
     cfg.train.batch_size = min(args.batch_size, max(8, n_ref_cells))
     cfg.train.checkpoint_dir = str(Path(args.output).parent / "spatialcpav4_ckpt")
@@ -347,40 +349,73 @@ def run_method(ref_slices, holdout_refs, gene_names, cell_type_names, region_nam
         n_neighbors=cfg.data.n_neighbors,
     )
 
-    # ── Inference: predict each held-out section from its flanking slices ────
+    # ── Inference ────────────────────────────────────────────────────────────
+    # Two regimes:
+    #   * default (coordinate-matched): predict at the held-out cells' real
+    #     (x, y) positions -> one output per held-out cell, count == held-out.
+    #   * --generate-mode (de-novo synthesis): ignore the held-out (x, y); build
+    #     a grid over the flanking slices' XY bounding box at the target z, run
+    #     the occupancy head, and keep only grid points predicted to be tissue.
+    #     The cell count is emergent (like SpatialZ / FEAST / isoST). Only the
+    #     target z is taken from the held-out section (its position, not its
+    #     content), matching how the other generative wrappers operate.
     results = {}
     for sec, ref in holdout_refs.items():
-        coords_xy = ref["coords_xy"]
         z = ref["z"]
         z_center = float(np.median(z))
-        coords_3d = np.column_stack([coords_xy, z]).astype(np.float32)
-        n = coords_3d.shape[0]
-
         lower, upper = Predictor._pick_flanking_slices(z_center, stack.slices)
-        print(f"  {sec}: predicting {n} cells at z={z_center:.2f} "
-              f"(lower={lower.section_id}, upper={upper.section_id})...")
 
         try:
-            pred = predictor.predict(
-                coords_3d, lower, upper, batch_size=cfg.inference.batch_size
-            )
+            if args.generate_mode:
+                n_ref = ref["coords_xy"].shape[0]
+                print(f"  {sec}: generating virtual slice at z={z_center:.2f} "
+                      f"(lower={lower.section_id}, upper={upper.section_id}, "
+                      f"grid={cfg.inference.grid_points} {cfg.inference.grid_type}, "
+                      f"occ>{cfg.inference.occupancy_threshold}); "
+                      f"held-out has {n_ref} cells...")
+                vs = predictor.generate_virtual_slice(
+                    z=z_center,
+                    slices=stack.slices,
+                    xy_bounds=None,  # flanking training slices' bbox (leakage-safe)
+                    n_grid_points=cfg.inference.grid_points,
+                    occupancy_threshold=cfg.inference.occupancy_threshold,
+                    grid_type=cfg.inference.grid_type,
+                    batch_size=cfg.inference.batch_size,
+                    seed=args.seed,
+                )
+                coords_3d = vs.coords.astype(np.float32)
+                expr = _to_dense_f32(vs.expression)
+                labels = vs.cell_type
+            else:
+                coords_xy = ref["coords_xy"]
+                coords_3d = np.column_stack([coords_xy, z]).astype(np.float32)
+                print(f"  {sec}: predicting {coords_3d.shape[0]} cells at "
+                      f"z={z_center:.2f} (lower={lower.section_id}, "
+                      f"upper={upper.section_id})...")
+                pred = predictor.predict(
+                    coords_3d, lower, upper, batch_size=cfg.inference.batch_size
+                )
+                expr = _to_dense_f32(pred.expression)
+                labels = pred.cell_type
         except Exception as e:
             print(f"    ERROR: {e}")
             import traceback
             traceback.print_exc()
             continue
 
-        expr = _to_dense_f32(pred.expression)
-        cell_type = (
-            pred.cell_type.astype(str) if pred.cell_type is not None
-            else np.array(["NA"] * n)
-        )
+        n = coords_3d.shape[0]
+        if n == 0:
+            print(f"    WARNING: 0 cells produced for {sec} "
+                  f"(no grid point passed occupancy threshold); skipping")
+            continue
+
+        cell_type = labels.astype(str) if labels is not None else np.array(["NA"] * n)
         results[sec] = {
             "X": sp.csr_matrix(expr.astype(np.float32)),
             "coords": coords_3d.astype(np.float64),
             "cell_type": cell_type,
         }
-        print(f"    -> {expr.shape[0]} cells predicted")
+        print(f"    -> {n} cells produced")
 
     return results
 
@@ -466,6 +501,17 @@ def main():
     parser.add_argument("--negative-ratio", type=float, default=1.0,
                         help="background occupancy negatives per real spot")
     parser.add_argument("--occupancy-threshold", type=float, default=0.5)
+    # Inference regime
+    parser.add_argument("--generate-mode", action="store_true",
+                        help="de-novo virtual-slice generation: synthesize cells "
+                             "on a grid over the flanking slices' XY bbox and keep "
+                             "those with occupancy > threshold (emergent cell count, "
+                             "like SpatialZ). Default off = predict at the held-out "
+                             "cells' real (x, y) coordinates.")
+    parser.add_argument("--grid-points", type=int, default=1000,
+                        help="approx number of grid query points in --generate-mode")
+    parser.add_argument("--grid-type", default="regular", choices=["regular", "random"],
+                        help="grid layout in --generate-mode")
     # Loss
     parser.add_argument("--expression-weight", type=float, default=1.0)
     parser.add_argument("--label-weight", type=float, default=1.0)
@@ -506,6 +552,9 @@ def main():
         "neighbors": args.neighbors,
         "negative_ratio": args.negative_ratio,
         "occupancy_threshold": args.occupancy_threshold,
+        "generate_mode": args.generate_mode,
+        "grid_points": args.grid_points,
+        "grid_type": args.grid_type,
         "expression_weight": args.expression_weight,
         "label_weight": args.label_weight,
         "occupancy_weight": args.occupancy_weight,
