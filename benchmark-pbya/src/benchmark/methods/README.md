@@ -24,6 +24,7 @@ conda run -n <env> python src/benchmark/methods/run_<method>.py \
 | `run_stvgp.py` | stVGP | bench_stvgp | Wang et al. 2026, Adv Sci | DLPFC defaults, skips >200K cells, GPU required |
 | `run_spateo_gp.py` | SVGP (Spateo) | bench_spateo | Qiu et al. 2024, Cell | SVGP per-gene, n_genes_max=2000, GPU |
 | `run_spatialcpa.py` | SpatialCPA | bench_spatialcpa | (this repo) | Coordinate neural field; no flanking slices needed; predicts at held-out cell coords |
+| `run_spatialcpav4.py` | SpatialCPA-v4 | bench_spatialcpa | (this repo) | Transformer; learns {Slice(i-1),Slice(i+1)}->Slice(i); k-NN neighbor tokens + CLS; expression/label/occupancy heads |
 
 ## Output format
 
@@ -41,3 +42,4 @@ Each wrapper writes `prediction.h5` with:
 **Spateo GP**: SVGP, training_iter=50, batch_size=1024, inducing_num=512
 **SpatialZ**: Default paper parameters
 **SpatialCPA**: n_freq_xy=48, n_freq_z=32, backbone 512x8 -> 256, MSE mode, epochs=50; inference k-NN refine k=5, z_weight=3, alpha=0 (pure cell-type k-NN). Cell types predicted by the model (not leaked) unless `--use-true-celltypes`.
+**SpatialCPA-v4**: transformer hidden=256, layers=4, heads=8, dropout=0.1, neighbors=10/side (20 tokens + CLS), epochs=100, lr=1e-3; MSE+Pearson expression loss, cross-entropy label loss, BCE occupancy loss. Predicts each held-out section from its nearest lower/upper reference slices. All hyperparameters are CLI flags (see `run_spatialcpav4.py --help`).
