@@ -161,8 +161,9 @@ class SpatialCPAv6:
             q_embed = (1.0 - t) * lo_e[res.lo_idx] + t * up_e[res.up_idx]
             init_types = (np.where(pick_up, up_lab[res.up_idx], lo_lab[res.lo_idx])
                           if has_ct else None)
-        else:
-            # Real-cell placement (default): preserves real (x, y)-expression coupling.
+        elif cfg.synthesis.placement == "interpolate":
+            # Real-cell mixing from both slices: preserves real (x, y)-expression
+            # coupling but interleaves two lattices (ablation).
             lo_sel, up_sel = self._place_real(lower, upper, t, n_target, rng)
             coords_xy = np.concatenate([lo_xy[lo_sel], up_xy[up_sel]], axis=0)
             expr = np.concatenate([lower.expression[lo_sel],
@@ -171,6 +172,11 @@ class SpatialCPAv6:
             init_types = (np.concatenate([lo_lab[lo_sel], up_lab[up_sel]])
                           if has_ct else None)
             n = coords_xy.shape[0]
+        else:
+            # Fail loudly rather than silently falling back — a silent fallback to
+            # a different placement is exactly how a version mismatch (new wrapper +
+            # old package) can go unnoticed.
+            raise ValueError(f"Unknown placement '{cfg.synthesis.placement}'")
 
         # ---- annotation (label channel only) --------------------------------- #
         cell_type_idx = None

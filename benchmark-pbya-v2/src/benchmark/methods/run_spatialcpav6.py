@@ -61,8 +61,11 @@ def check_environment():
         print("ERROR: could not locate the `spatialcpav6` package.", file=sys.stderr)
         return False
     try:
+        import spatialcpav6
         from spatialcpav6 import SpatialCPAv6, SpatialCPAv6Config  # noqa: F401
-        print(f"spatialcpav6 imported from {_SPATIALCPAV6_ROOT}")
+        print(f"spatialcpav6 v{getattr(spatialcpav6, '__version__', '?')} "
+              f"imported from {_SPATIALCPAV6_ROOT} "
+              f"(default placement: {SpatialCPAv6Config().synthesis.placement})")
         return True
     except ImportError as e:
         print(f"ERROR: failed to import spatialcpav6: {e}", file=sys.stderr)

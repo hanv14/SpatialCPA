@@ -31,4 +31,4 @@ __all__ = [
     "SpatialCPAv6", "VirtualSlice",
 ]
 
-__version__ = "6.0.0"
+__version__ = "6.1.0"   # 6.1.0: coherent barycentric OT `morph` placement (default)
