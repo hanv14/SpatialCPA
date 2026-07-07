@@ -116,6 +116,60 @@ def _deshrink(coords_xy, lo_xy, up_xy, t, strength):
     return (1.0 - strength) * coords_xy + strength * scaled
 
 
+def barycentric_interpolate(
+    anchor_xy: np.ndarray, other_xy: np.ndarray,
+    anchor_e: np.ndarray, other_e: np.ndarray,
+    w: float, cfg, seed: int = 0,
+):
+    """Coherent single-sheet placement via the barycentric OT map.
+
+    Random real-cell *mixing* interleaves two offset lattices, so a synthesized
+    cell's local neighborhood contains cells from both flanking slices — which
+    attenuates spatial autocorrelation and gene-gene structure (the ``morans`` /
+    ``coexpression`` / ``nhood`` metrics) whenever adjacent sections are already
+    near-identical (e.g. thin volumetric z-planes). This instead morphs the
+    *anchor* slice into the other along the optimal-transport map, producing **one**
+    coherent cell sheet:
+
+    1. entropic-OT plan ``P`` (anchor × other) under the joint spatial+molecular
+       cost, peaked so the map is near-deterministic;
+    2. barycentric image of each anchor cell ``i``:
+       ``x̂_i = Σ_j P(j|i)·other_xy[j]`` (its OT-matched location in the other slice);
+    3. interpolated position ``(1-w)·x_i + w·x̂_i``.
+
+    The displacement ``w·(x̂_i − x_i)`` scales with how different the two slices are,
+    so the method **auto-adapts**: ≈ a coherent copy of the anchor when the slices
+    are near-identical (matching a single-slice copy on the coherence metrics), and
+    a genuine morph toward the intermediate footprint when they differ. One cell per
+    anchor cell → no density doubling. Returns interpolated ``coords_xy`` and the
+    anchor-cell index each came from (so expression/labels stay real and coherent).
+    """
+    rng = np.random.default_rng(seed)
+    n_a = anchor_xy.shape[0]
+    sub_a = _subsample(n_a, cfg.max_ot_cells, rng)
+    sub_b = _subsample(other_xy.shape[0], cfg.max_ot_cells, rng)
+    Axy, Bxy = anchor_xy[sub_a], other_xy[sub_b]
+    Ae, Be = anchor_e[sub_a], other_e[sub_b]
+
+    Csp = cdist(Axy, Bxy, metric="sqeuclidean")
+    Csp = Csp / (np.median(Csp) + 1e-9)
+    if cfg.embed_weight > 0 and Ae.shape[1] > 0:
+        Cem = cdist(Ae, Be, metric="sqeuclidean")
+        Cem = Cem / (np.median(Cem) + 1e-9)
+        cost = (1.0 - cfg.embed_weight) * Csp + cfg.embed_weight * Cem
+    else:
+        cost = Csp
+
+    P = sinkhorn_plan(cost, cfg.epsilon, cfg.n_iter)
+    row = P / (P.sum(axis=1, keepdims=True) + 1e-300)     # P(j | i)
+    image = row @ Bxy                                     # (n_sub_a, 2) OT image
+    coords = ((1.0 - w) * Axy + w * image).astype(np.float32)
+    if cfg.deshrink and coords.shape[0] >= 3:
+        # Guard against barycentric contraction: match the interpolated footprint.
+        coords = _deshrink(coords, Axy, Bxy, w, cfg.deshrink_strength)
+    return coords, sub_a
+
+
 def transport_interpolate(
     lo_xy: np.ndarray, up_xy: np.ndarray,
     lo_embed: np.ndarray, up_embed: np.ndarray,

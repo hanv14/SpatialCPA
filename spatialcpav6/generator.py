@@ -121,7 +121,25 @@ class SpatialCPAv6:
         up_lab = upper.cell_type_indices if has_ct else None
 
         # ---- placement ------------------------------------------------------- #
-        if cfg.synthesis.placement == "backbone":
+        if cfg.synthesis.placement == "morph":
+            # Coherent single-sheet barycentric OT morph. Anchor = the flanking
+            # slice nearest in z (more coherent with the target); morph it toward
+            # the other by w. Auto-adapts: ≈ coherent copy when slices are
+            # near-identical, genuine morph when they differ.
+            if abs(lower.z_center - z) <= abs(upper.z_center - z):
+                anchor, other, anchor_e, other_e, w = lower, upper, lo_e, up_e, t
+                a_lab = lo_lab
+            else:
+                anchor, other, anchor_e, other_e, w = upper, lower, up_e, lo_e, 1.0 - t
+                a_lab = up_lab
+            coords_xy, a_idx = tp.barycentric_interpolate(
+                anchor.coords_xy.astype(np.float64), other.coords_xy.astype(np.float64),
+                anchor_e, other_e, w, cfg.transport, seed=cfg.synthesis.seed)
+            expr = anchor.expression[a_idx].astype(np.float32)
+            q_embed = anchor_e[a_idx]
+            init_types = a_lab[a_idx] if has_ct else None
+            n = coords_xy.shape[0]
+        elif cfg.synthesis.placement == "backbone":
             # Positions + expression from the flanking slice nearest in z, so the
             # expression-structure metrics match a single-slice copy (cannot lose);
             # both slices still drive the label channel below.

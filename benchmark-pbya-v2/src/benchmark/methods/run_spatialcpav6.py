@@ -191,12 +191,14 @@ def main():
         description="SpatialCPA-v6 generation-only wrapper (benchmark-pbya-v2)")
     _v2_io.add_v2_args(parser)
     # Placement regime (see spatialcpav6/README.md — the field-vs-density trade-off).
-    parser.add_argument("--placement", default="interpolate",
-                        choices=["interpolate", "backbone", "ot_geodesic"],
-                        help="interpolate (both slices; wins field/ssim + niche, "
-                             "default), backbone (single nearest slice; conservative "
-                             "— ties expression metrics, cannot lose them; still wins "
-                             "niche), or ot_geodesic (displacement interpolation)")
+    parser.add_argument("--placement", default="morph",
+                        choices=["morph", "backbone", "interpolate", "ot_geodesic"],
+                        help="morph (default — coherent single-sheet barycentric OT "
+                             "morph; auto-adapts, ties a single-slice copy on near-"
+                             "identical sections and morphs when slices differ, so it "
+                             "wins field/ssim without losing coherence), backbone "
+                             "(single nearest slice; most conservative), interpolate "
+                             "(both-slice mixing; ablation), or ot_geodesic (ablation)")
     # Embedding / foundation-model prior.
     parser.add_argument("--embedding", default="pca",
                         choices=["pca", "coexpr", "fm_gene", "concat"],

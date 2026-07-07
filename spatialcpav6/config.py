@@ -64,7 +64,10 @@ class TransportConfig:
     max_ot_cells: int = 1500      # subsample each flanking slice to this for OT
     epsilon: float = 0.05         # Sinkhorn entropic regularization (peaked plan)
     n_iter: int = 200             # Sinkhorn iterations
-    embed_weight: float = 0.35    # cost = (1-w)*spatial + w*embedding (both median-normed)
+    # cost = (1-w)*spatial + w*embedding (both median-normed). Spatial-dominant so
+    # the morph map stays local (≈ identity when slices are near-identical) while a
+    # little molecular guidance keeps matches across tissue shifts coherent.
+    embed_weight: float = 0.15
     deshrink: bool = True         # rescale interpolated cloud to interpolated covariance
     deshrink_strength: float = 1.0  # 0 = off, 1 = full covariance match
 
@@ -120,22 +123,22 @@ class SynthesisConfig:
     """Placement, count and expression transfer."""
 
     # Where synthesized cells' (x, y) + expression come from:
-    #   "backbone"     — take positions + expression from the single flanking slice
-    #                    nearest in z (default). The expression-structure metrics
-    #                    (coexpr / morans / gene_var / sinkhorn / density) then match
-    #                    a single-slice copy exactly — they cannot lose — while both
-    #                    flanking slices are still used for the *label* channel
-    #                    (spatial-interpolation annotation + niche), the lever that
-    #                    lets composition / neighborhood beat a single-slice copy.
-    #   "interpolate"  — draw real cells from both flanking slices in the
-    #                    z-interpolated ratio (mixture of both; better distribution
-    #                    estimate but slightly attenuates single-slice structure).
-    #   "ot_geodesic"  — optimal-transport displacement interpolation (moves cells
-    #                    to interpolated positions; principled but breaks coupling).
-    # Default "interpolate": secures the field/ssim wins (both slices) plus the
-    # niche win, ties the near-saturated primaries. Switch to "backbone" for the
-    # conservative regime that cannot lose the expression-structure metrics.
-    placement: str = "interpolate"
+    #   "morph"        — coherent single-sheet barycentric OT morph of the nearest
+    #                    flanking slice toward the other (default). Produces ONE cell
+    #                    sheet (no density doubling), and its displacement auto-adapts
+    #                    to how different the slices are: ≈ a coherent copy when they
+    #                    are near-identical (ties a single-slice copy on the coherence
+    #                    metrics — no loss on volumetric z-planes) and a genuine morph
+    #                    toward the intermediate footprint when they differ (keeps the
+    #                    field/ssim wins). Resolves the field-vs-coherence trade-off.
+    #   "backbone"     — positions + expression from the single nearest flanking
+    #                    slice; expression-structure metrics match a single-slice copy
+    #                    exactly (cannot lose). Most conservative.
+    #   "interpolate"  — draw real cells from BOTH slices in the z-interpolated ratio
+    #                    (mixture; interleaves two lattices — attenuates single-slice
+    #                    structure on near-identical sections). Kept for ablation.
+    #   "ot_geodesic"  — pair-sampled displacement interpolation (ablation).
+    placement: str = "morph"
     # Cell count of the virtual slice: z-interpolated flanking count (emergent).
     count_mode: str = "interpolate"   # "interpolate" | "lower" | "upper" | "mean"
     # Expression source for each synthesized cell.

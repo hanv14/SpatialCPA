@@ -61,19 +61,25 @@ gracefully to PCA when its asset is absent, so the benchmark always runs.
 
 ### 2. Placement (`transport.py`, `generator.py`)
 The synthesized cell **count** is the z-interpolated flanking count
-`N ≈ (1−t)·N_lo + t·N_hi` (emergent — never the held-out count). Three regimes:
+`N ≈ (1−t)·N_lo + t·N_hi` (emergent — never the held-out count). Four regimes:
 
-- **`interpolate` (default)** — draw real cells from *both* flanking slices in the
-  ratio `(1−t):t`, keeping each cell's real `(x, y)` and profile. The population is
-  the mixture of both flanking distributions — a better estimate of the true
-  intermediate than either single slice.
-- **`backbone`** — take positions + expression from the single flanking slice
-  nearest in *z*. The expression-structure metrics then match a single-slice copy
-  *exactly*; both slices are still used for the label channel (below).
-- **`ot_geodesic`** — entropic-OT coupling between the flanking slices in a joint
-  spatial+molecular cost, then McCann displacement interpolation to *t* (cells are
-  moved to interpolated positions). The most principled morphing, with a
-  covariance de-shrink to preserve the footprint.
+- **`morph` (default)** — coherent single-sheet **barycentric OT map**. Take the
+  flanking slice nearest in *z* as the anchor and morph it toward the other along
+  the entropic-OT map: each anchor cell `i` moves to `(1−w)·x_i + w·x̂_i`, where
+  `x̂_i = Σ_j P(j|i)·x_j` is its OT-matched location in the other slice. This
+  produces **one** cell sheet (no density doubling), keeps each cell's real
+  profile, and — crucially — its displacement **auto-adapts** to how different the
+  two slices are: ≈ a coherent copy when they are near-identical (thin volumetric
+  z-planes → matches a single-slice copy on the coherence metrics, no loss) and a
+  genuine morph toward the intermediate footprint when they differ (keeps the
+  field/ssim wins). This resolves the field-vs-coherence trade-off below.
+- **`backbone`** — positions + expression from the single nearest flanking slice;
+  the expression-structure metrics match a single-slice copy *exactly* (cannot
+  lose), but field/ssim only tie. Most conservative.
+- **`interpolate`** — draw real cells from *both* slices in the ratio `(1−t):t`.
+  Interleaves two offset lattices, which attenuates local structure on
+  near-identical sections; kept as an ablation.
+- **`ot_geodesic`** — pair-sampled McCann displacement interpolation (ablation).
 
 ### 3. Annotation (`annotation.py`) — FM prior + cell–cell communication
 Labels are re-derived from **both** slices and refined, **anchored** to the copied
@@ -116,34 +122,35 @@ The correspondence-free metrics **factorize**: `coexpression` / `morans` /
 `celltype_composition` / `celltype_nhood` depend only on **(position, label)**.
 v6 exploits this by treating the two channels separately.
 
-Controlled experiments (a re-registered synthetic volume mirroring the benchmark,
-leave-one-out over interior sections) reveal a genuine **Pareto trade-off** that
-also shows up in the real v5-vs-SpatialZ numbers:
+The first real-benchmark run exposed a genuine **field-vs-coherence Pareto
+trade-off**. On `imc_breast_cancer` (13 dissimilar sections) v6 won 8/9 metrics
+over SpatialZ; but on `starmap_visual_cortex` (87 near-identical thin z-planes)
+the earlier `interpolate` default *lost* the coherence metrics
+(`coexpression`/`morans`/`composition`/`nhood`) — because when adjacent sections
+are near-identical, copying the single nearest slice is near-optimal and mixing
+two offset lattices attenuates local structure. The `morph` placement resolves
+this: it is a single coherent sheet whose displacement auto-adapts to slice
+similarity, so it recovers single-slice coherence on volumetric z-planes **and**
+keeps the field/ssim wins where slices differ.
 
-| metric family | wants… | v6 regime that wins |
+Controlled two-regime experiments (a "near-identical" volume like STARmap and a
+"dissimilar" volume like IMC, leave-one-out) confirm the fix — win-or-tie count
+vs a single-slice copy, out of 8 primaries:
+
+| placement | near-identical | dissimilar |
 |---|---|---|
-| `field_pearson` / `field_ssim` (spatial field) | **both** slices | `interpolate` (like real v5: 0.33 vs 0.03) |
-| `celltype_nhood` (communication) | interpolated niche | **both** regimes (niche MRF) |
-| `celltype_composition`, cell-matched accuracy | interpolated annotation | both regimes |
-| `morans` / `density` (local structure) | **one** coherent slice | `backbone` (ties — cannot lose) |
-| `coexpression` / `sinkhorn` (near-saturated) | copy real cells | ~tie either way |
+| `interpolate` (old default) | 1/8 | 3/8 |
+| **`morph` (new default)** | **5/8** (ties all coherence; wins field) | **8/8** (wins field/density/morans) |
+| `backbone` (conservative) | 8/8 (ties all; wins nothing extra) | 8/8 (ties; field only ties) |
 
-Because of this trade-off, **no single configuration strictly wins every metric** —
-copying real cells is already near the ceiling on the saturated primaries, so
-those are ties within holdout noise (exactly what v5 vs SpatialZ showed: within
-±0.01). v6 therefore ships two default-able regimes:
-
-- **`--placement interpolate` (default)** — secures the `field`/`ssim` wins plus the
-  new niche win; ties the saturated primaries on real data; small cost on the
-  tiny, noise-dominated `density` metric.
-- **`--placement backbone`** — the conservative regime: the expression-structure
-  metrics *equal* a single-slice copy (they cannot lose), while the FM + niche
-  annotation still wins `celltype_nhood` / `composition` / cell-matched accuracy.
-
-Run both on the real benchmark and pick per your priority; the real leave-one-out
-sweep is the arbiter. The **reliable, mechanism-driven wins over SpatialZ** are the
-spatial-field metrics, the cell–cell-communication neighborhood metric, and the
-cell-matched cell-type accuracy — at a fraction of v5's compute.
+`morph` is the default because it is the only regime that **wins** `field`/`ssim`
+on *both* regimes while not losing coherence on near-identical sections; `backbone`
+never loses but only ties field. The near-saturated primaries (`coexpression`,
+`sinkhorn`) remain ties within holdout noise — copying real cells is at the ceiling
+there. The **reliable, mechanism-driven wins over SpatialZ** are the spatial-field
+metrics, the cell–cell-communication neighborhood metric, and cell-matched cell-type
+accuracy — at a fraction of v5's compute (real STARmap: 453 s vs 20,810 s; IMC:
+66 s vs 9,114 s).
 
 ---
 
@@ -154,7 +161,7 @@ cell-matched cell-type accuracy — at a fraction of v5's compute.
 | `config.py`        | All hyperparameters as dataclasses (`SpatialCPAv6Config`). |
 | `data.py`          | `Slice`, `SliceStack`, flanking-slice selection. |
 | `embedding.py`     | Cell-state embedder: PCA / pretrained gene embedding / FM registry. |
-| `transport.py`     | Entropic OT plan, displacement interpolation, count/fraction. |
+| `transport.py`     | Entropic OT plan, coherent barycentric morph + displacement interpolation, count/fraction. |
 | `communication.py` | Neighborhood-enrichment matrices + niche MRF label refinement. |
 | `annotation.py`    | Anchored annotation: spatial/FM prior + composition + niche. |
 | `generator.py`     | `SpatialCPAv6` — end-to-end `generate_virtual_slice`. |
@@ -199,7 +206,7 @@ python -m src.benchmark.run_benchmark --method spatialcpav6_gen \
     -- --placement backbone --classifier prototype
 ```
 
-Key flags (`--help`): `--placement {interpolate,backbone,ot_geodesic}`,
+Key flags (`--help`): `--placement {morph,backbone,interpolate,ot_geodesic}`,
 `--embedding {pca,coexpr,fm_gene,concat}`, `--fm-gene-embedding PATH`,
 `--classifier {spatial,prototype,knn}`, `--no-communication`, `--expression-mode
 {endpoint,transfer,blend}`.
