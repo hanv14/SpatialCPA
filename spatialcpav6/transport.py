@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
+from scipy.spatial import cKDTree
 from scipy.spatial.distance import cdist
 
 
@@ -163,11 +164,25 @@ def barycentric_interpolate(
     P = sinkhorn_plan(cost, cfg.epsilon, cfg.n_iter)
     row = P / (P.sum(axis=1, keepdims=True) + 1e-300)     # P(j | i)
     image = row @ Bxy                                     # (n_sub_a, 2) OT image
+
+    # Dissimilarity signal for the "adaptive" placement: how far each anchor cell is
+    # transported by the OT map, in units of the anchor's cell spacing. On thin
+    # volumetric z-planes (STARmap) adjacent sections are nearly registered, so cells
+    # barely move (small value) and a coherent morph is best; on distinct tissue
+    # sections (IMC) cells map far (large value) and the barycentric map contracts,
+    # so both-slice interpolation is the better estimate. Logged by the wrapper so
+    # the threshold can be verified per dataset.
+    if Axy.shape[0] >= 2:
+        spacing = float(np.median(cKDTree(Axy).query(Axy, k=2)[0][:, 1])) or 1.0
+    else:
+        spacing = 1.0
+    dissimilarity = float(np.median(np.linalg.norm(image - Axy, axis=1)) / spacing)
+
     coords = ((1.0 - w) * Axy + w * image).astype(np.float32)
     if cfg.deshrink and coords.shape[0] >= 3:
         # Guard against barycentric contraction: match the interpolated footprint.
         coords = _deshrink(coords, Axy, Bxy, w, cfg.deshrink_strength)
-    return coords, sub_a
+    return coords, sub_a, dissimilarity
 
 
 def transport_interpolate(

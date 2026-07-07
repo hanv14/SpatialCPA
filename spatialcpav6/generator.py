@@ -101,6 +101,65 @@ class SpatialCPAv6:
         return lo_sel, up_sel
 
     # ------------------------------------------------------------------ #
+    # Placement helpers. Each returns
+    #   (coords_xy, expr, q_embed, init_types, dissimilarity_or_None)
+    # ------------------------------------------------------------------ #
+    def _place_morph(self, c):
+        """Coherent single-sheet barycentric OT morph of the nearest slice."""
+        lower, upper, z, t = c["lower"], c["upper"], c["z"], c["t"]
+        if abs(lower.z_center - z) <= abs(upper.z_center - z):
+            anchor, other, anchor_e, other_e, w, a_lab = (
+                lower, upper, c["lo_e"], c["up_e"], t, c["lo_lab"])
+        else:
+            anchor, other, anchor_e, other_e, w, a_lab = (
+                upper, lower, c["up_e"], c["lo_e"], 1.0 - t, c["up_lab"])
+        coords_xy, a_idx, disp = tp.barycentric_interpolate(
+            anchor.coords_xy.astype(np.float64), other.coords_xy.astype(np.float64),
+            anchor_e, other_e, w, self.cfg.transport, seed=self.cfg.synthesis.seed)
+        expr = anchor.expression[a_idx].astype(np.float32)
+        q_embed = anchor_e[a_idx]
+        init_types = a_lab[a_idx] if c["has_ct"] else None
+        return coords_xy, expr, q_embed, init_types, disp
+
+    def _place_backbone(self, c):
+        """Positions + expression from the single flanking slice nearest in z."""
+        lower, upper, z = c["lower"], c["upper"], c["z"]
+        back = lower if abs(lower.z_center - z) <= abs(upper.z_center - z) else upper
+        back_e = c["lo_e"] if back is lower else c["up_e"]
+        init_types = back.cell_type_indices if c["has_ct"] else None
+        return (back.coords_xy.astype(np.float64), back.expression.astype(np.float32),
+                back_e, init_types, None)
+
+    def _place_interpolate(self, c):
+        """Real-cell mixing from both slices in the z-interpolated ratio."""
+        lower, upper, t = c["lower"], c["upper"], c["t"]
+        lo_xy, up_xy, lo_e, up_e = c["lo_xy"], c["up_xy"], c["lo_e"], c["up_e"]
+        lo_sel, up_sel = self._place_real(lower, upper, t, c["n_target"], c["rng"])
+        coords_xy = np.concatenate([lo_xy[lo_sel], up_xy[up_sel]], axis=0)
+        expr = np.concatenate([lower.expression[lo_sel],
+                               upper.expression[up_sel]], axis=0).astype(np.float32)
+        q_embed = np.concatenate([lo_e[lo_sel], up_e[up_sel]], axis=0)
+        init_types = (np.concatenate([c["lo_lab"][lo_sel], c["up_lab"][up_sel]])
+                      if c["has_ct"] else None)
+        return coords_xy, expr, q_embed, init_types, None
+
+    def _place_ot_geodesic(self, c):
+        """Pair-sampled McCann displacement interpolation (ablation)."""
+        lower, upper, t = c["lower"], c["upper"], c["t"]
+        lo_e, up_e = c["lo_e"], c["up_e"]
+        res = tp.transport_interpolate(c["lo_xy"], c["up_xy"], lo_e, up_e, t,
+                                       c["n_target"], self.cfg.transport,
+                                       seed=self.cfg.synthesis.seed)
+        n = res.coords_xy.shape[0]
+        pick_up = c["rng"].random(n) < t
+        expr = np.where(pick_up[:, None], upper.expression[res.up_idx],
+                        lower.expression[res.lo_idx]).astype(np.float32)
+        q_embed = (1.0 - t) * lo_e[res.lo_idx] + t * up_e[res.up_idx]
+        init_types = (np.where(pick_up, c["up_lab"][res.up_idx], c["lo_lab"][res.lo_idx])
+                      if c["has_ct"] else None)
+        return res.coords_xy, expr, q_embed, init_types, None
+
+    # ------------------------------------------------------------------ #
     def generate_virtual_slice(self, z: float) -> VirtualSlice:
         cfg = self.cfg
         rng = np.random.default_rng(cfg.synthesis.seed)
@@ -121,62 +180,40 @@ class SpatialCPAv6:
         up_lab = upper.cell_type_indices if has_ct else None
 
         # ---- placement ------------------------------------------------------- #
-        if cfg.synthesis.placement == "morph":
-            # Coherent single-sheet barycentric OT morph. Anchor = the flanking
-            # slice nearest in z (more coherent with the target); morph it toward
-            # the other by w. Auto-adapts: ≈ coherent copy when slices are
-            # near-identical, genuine morph when they differ.
-            if abs(lower.z_center - z) <= abs(upper.z_center - z):
-                anchor, other, anchor_e, other_e, w = lower, upper, lo_e, up_e, t
-                a_lab = lo_lab
+        ctx = dict(lower=lower, upper=upper, lo_e=lo_e, up_e=up_e, lo_xy=lo_xy,
+                   up_xy=up_xy, lo_lab=lo_lab, up_lab=up_lab, t=t, z=z,
+                   n_target=n_target, has_ct=has_ct, rng=rng)
+        placement = cfg.synthesis.placement
+        self._last_placement = placement
+        self._last_dissimilarity = None
+
+        if placement == "adaptive":
+            # Route by the OT-map displacement between the flanking slices: keep the
+            # coherent morph when they are near-identical (small displacement, e.g.
+            # thin volumetric z-planes), and switch to both-slice interpolation when
+            # they are distinct tissue (large displacement), where the barycentric map
+            # contracts and crushes density/composition.
+            coords_xy, expr, q_embed, init_types, disp = self._place_morph(ctx)
+            self._last_dissimilarity = disp
+            if disp is not None and disp > cfg.transport.adaptive_threshold:
+                coords_xy, expr, q_embed, init_types, _ = self._place_interpolate(ctx)
+                self._last_placement = "interpolate"
             else:
-                anchor, other, anchor_e, other_e, w = upper, lower, up_e, lo_e, 1.0 - t
-                a_lab = up_lab
-            coords_xy, a_idx = tp.barycentric_interpolate(
-                anchor.coords_xy.astype(np.float64), other.coords_xy.astype(np.float64),
-                anchor_e, other_e, w, cfg.transport, seed=cfg.synthesis.seed)
-            expr = anchor.expression[a_idx].astype(np.float32)
-            q_embed = anchor_e[a_idx]
-            init_types = a_lab[a_idx] if has_ct else None
-            n = coords_xy.shape[0]
-        elif cfg.synthesis.placement == "backbone":
-            # Positions + expression from the flanking slice nearest in z, so the
-            # expression-structure metrics match a single-slice copy (cannot lose);
-            # both slices still drive the label channel below.
-            back = lower if abs(lower.z_center - z) <= abs(upper.z_center - z) else upper
-            back_e = lo_e if back is lower else up_e
-            coords_xy = back.coords_xy.astype(np.float64)
-            expr = back.expression.astype(np.float32)
-            q_embed = back_e
-            init_types = back.cell_type_indices if has_ct else None
-            n = coords_xy.shape[0]
-        elif cfg.synthesis.placement == "ot_geodesic":
-            res = tp.transport_interpolate(lo_xy, up_xy, lo_e, up_e, t, n_target,
-                                           cfg.transport, seed=cfg.synthesis.seed)
-            coords_xy = res.coords_xy
-            n = coords_xy.shape[0]
-            pick_up = rng.random(n) < t
-            expr = np.where(pick_up[:, None], upper.expression[res.up_idx],
-                            lower.expression[res.lo_idx]).astype(np.float32)
-            q_embed = (1.0 - t) * lo_e[res.lo_idx] + t * up_e[res.up_idx]
-            init_types = (np.where(pick_up, up_lab[res.up_idx], lo_lab[res.lo_idx])
-                          if has_ct else None)
-        elif cfg.synthesis.placement == "interpolate":
-            # Real-cell mixing from both slices: preserves real (x, y)-expression
-            # coupling but interleaves two lattices (ablation).
-            lo_sel, up_sel = self._place_real(lower, upper, t, n_target, rng)
-            coords_xy = np.concatenate([lo_xy[lo_sel], up_xy[up_sel]], axis=0)
-            expr = np.concatenate([lower.expression[lo_sel],
-                                   upper.expression[up_sel]], axis=0).astype(np.float32)
-            q_embed = np.concatenate([lo_e[lo_sel], up_e[up_sel]], axis=0)
-            init_types = (np.concatenate([lo_lab[lo_sel], up_lab[up_sel]])
-                          if has_ct else None)
-            n = coords_xy.shape[0]
+                self._last_placement = "morph"
+        elif placement == "morph":
+            coords_xy, expr, q_embed, init_types, _ = self._place_morph(ctx)
+        elif placement == "backbone":
+            coords_xy, expr, q_embed, init_types, _ = self._place_backbone(ctx)
+        elif placement == "interpolate":
+            coords_xy, expr, q_embed, init_types, _ = self._place_interpolate(ctx)
+        elif placement == "ot_geodesic":
+            coords_xy, expr, q_embed, init_types, _ = self._place_ot_geodesic(ctx)
         else:
             # Fail loudly rather than silently falling back — a silent fallback to
             # a different placement is exactly how a version mismatch (new wrapper +
             # old package) can go unnoticed.
-            raise ValueError(f"Unknown placement '{cfg.synthesis.placement}'")
+            raise ValueError(f"Unknown placement '{placement}'")
+        n = coords_xy.shape[0]
 
         # ---- annotation (label channel only) --------------------------------- #
         cell_type_idx = None

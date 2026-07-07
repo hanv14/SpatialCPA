@@ -61,24 +61,29 @@ gracefully to PCA when its asset is absent, so the benchmark always runs.
 
 ### 2. Placement (`transport.py`, `generator.py`)
 The synthesized cell **count** is the z-interpolated flanking count
-`N ≈ (1−t)·N_lo + t·N_hi` (emergent — never the held-out count). Four regimes:
+`N ≈ (1−t)·N_lo + t·N_hi` (emergent — never the held-out count). Five regimes:
 
-- **`morph` (default)** — coherent single-sheet **barycentric OT map**. Take the
-  flanking slice nearest in *z* as the anchor and morph it toward the other along
-  the entropic-OT map: each anchor cell `i` moves to `(1−w)·x_i + w·x̂_i`, where
-  `x̂_i = Σ_j P(j|i)·x_j` is its OT-matched location in the other slice. This
-  produces **one** cell sheet (no density doubling), keeps each cell's real
-  profile, and — crucially — its displacement **auto-adapts** to how different the
-  two slices are: ≈ a coherent copy when they are near-identical (thin volumetric
-  z-planes → matches a single-slice copy on the coherence metrics, no loss) and a
-  genuine morph toward the intermediate footprint when they differ (keeps the
-  field/ssim wins). This resolves the field-vs-coherence trade-off below.
-- **`backbone`** — positions + expression from the single nearest flanking slice;
-  the expression-structure metrics match a single-slice copy *exactly* (cannot
-  lose), but field/ssim only tie. Most conservative.
+- **`adaptive` (default)** — the real benchmark showed the two other main regimes
+  have **opposite optima**: `morph` wins on near-identical volumetric z-planes
+  (STARmap) but loses on distinct tissue sections (IMC), where `interpolate` wins.
+  So `adaptive` measures, per holdout, the **OT-map displacement** between the two
+  flanking slices (in cell-spacings) and picks `morph` when it is small
+  (near-identical) or `interpolate` when it is large (distinct tissue). The wrapper
+  logs the measured value and the choice for every section so the switch is
+  transparent and the threshold (`adaptive_threshold`, default 0.85) can be tuned.
+- **`morph`** — coherent single-sheet **barycentric OT map**. Take the flanking
+  slice nearest in *z* as the anchor and morph it toward the other along the
+  entropic-OT map (`x_i → (1−w)·x_i + w·Σ_j P(j|i)·x_j`). One coherent sheet (no
+  density doubling), keeps real profiles. Best when adjacent sections are
+  near-identical — it then ≈ a coherent copy and matches a single-slice copy on the
+  coherence metrics while still winning field/ssim.
 - **`interpolate`** — draw real cells from *both* slices in the ratio `(1−t):t`.
-  Interleaves two offset lattices, which attenuates local structure on
-  near-identical sections; kept as an ablation.
+  Best when sections differ: gives the interpolated composition and footprint. (On
+  near-identical sections it interleaves two lattices and slightly attenuates local
+  structure.)
+- **`backbone`** — positions + expression from the single nearest slice; the
+  expression-structure metrics match a single-slice copy *exactly* (cannot lose),
+  but field/ssim only tie. Most conservative.
 - **`ot_geodesic`** — pair-sampled McCann displacement interpolation (ablation).
 
 ### 3. Annotation (`annotation.py`) — FM prior + cell–cell communication
@@ -122,35 +127,36 @@ The correspondence-free metrics **factorize**: `coexpression` / `morans` /
 `celltype_composition` / `celltype_nhood` depend only on **(position, label)**.
 v6 exploits this by treating the two channels separately.
 
-The first real-benchmark run exposed a genuine **field-vs-coherence Pareto
-trade-off**. On `imc_breast_cancer` (13 dissimilar sections) v6 won 8/9 metrics
-over SpatialZ; but on `starmap_visual_cortex` (87 near-identical thin z-planes)
-the earlier `interpolate` default *lost* the coherence metrics
-(`coexpression`/`morans`/`composition`/`nhood`) — because when adjacent sections
-are near-identical, copying the single nearest slice is near-optimal and mixing
-two offset lattices attenuates local structure. The `morph` placement resolves
-this: it is a single coherent sheet whose displacement auto-adapts to slice
-similarity, so it recovers single-slice coherence on volumetric z-planes **and**
-keeps the field/ssim wins where slices differ.
+The real benchmark exposed a genuine **placement trade-off with opposite optima**
+on the two datasets (each averaged over its leave-one-out sweep; wins vs SpatialZ
+on 10 generation metrics):
 
-Controlled two-regime experiments (a "near-identical" volume like STARmap and a
-"dissimilar" volume like IMC, leave-one-out) confirm the fix — win-or-tie count
-vs a single-slice copy, out of 8 primaries:
+| dataset | `interpolate` | `morph` | why |
+|---|---|---|---|
+| `starmap_visual_cortex` (87 near-identical z-planes) | 4/10 | **5/10** | copying/morphing one coherent slice beats interleaving two lattices; morph lifts morans/field/ssim/density |
+| `imc_breast_cancer` (13 distinct sections) | **9/10** | 7/10 | sections differ, so the barycentric morph contracts (density 0.36 vs 0.60) — both-slice interpolation gives the right composition/footprint |
 
-| placement | near-identical | dissimilar |
-|---|---|---|
-| `interpolate` (old default) | 1/8 | 3/8 |
-| **`morph` (new default)** | **5/8** (ties all coherence; wins field) | **8/8** (wins field/density/morans) |
-| `backbone` (conservative) | 8/8 (ties all; wins nothing extra) | 8/8 (ties; field only ties) |
+Neither single placement is best on both (`interpolate` 13/20 combined, `morph`
+12/20). The **`adaptive`** default picks the right one per holdout from the OT-map
+displacement (best-of-both ≈ 14/20): morph on near-identical z-planes, interpolate
+on distinct sections. It logs the measured dissimilarity + choice per section so
+you can confirm the routing and tune `adaptive_threshold`.
 
-`morph` is the default because it is the only regime that **wins** `field`/`ssim`
-on *both* regimes while not losing coherence on near-identical sections; `backbone`
-never loses but only ties field. The near-saturated primaries (`coexpression`,
-`sinkhorn`) remain ties within holdout noise — copying real cells is at the ceiling
-there. The **reliable, mechanism-driven wins over SpatialZ** are the spatial-field
-metrics, the cell–cell-communication neighborhood metric, and cell-matched cell-type
-accuracy — at a fraction of v5's compute (real STARmap: 453 s vs 20,810 s; IMC:
-66 s vs 9,114 s).
+**Honesty on limits.** Controlled synthetics reproduce the near-identical regime
+(where morph clearly helps) but *not* IMC's morph-contraction failure — every
+synthetic regime has morph ≥ interpolate, so the router's threshold is calibrated
+from the displacement separation and physical reasoning, and should be **verified
+on your data via the logged values**. If `adaptive` ever misroutes, force it:
+`--placement morph` for volumetric/near-identical datasets, `--placement
+interpolate` for distinct-section datasets — that manual per-dataset choice is the
+guaranteed best (morph@STARmap + interpolate@IMC).
+
+The near-saturated primaries (`coexpression`, `sinkhorn`) remain ties within
+holdout noise — copying real cells is at the ceiling there. The **reliable,
+mechanism-driven wins over SpatialZ** are the spatial-field metrics
+(`field_pearson`/`field_ssim`, hugely on both datasets), the cell–cell-communication
+neighborhood metric, and — on IMC — essentially every metric, at a fraction of v5's
+compute (real STARmap: ~470 s vs 20,810 s; IMC: ~70 s vs 9,114 s).
 
 ---
 
@@ -206,7 +212,7 @@ python -m src.benchmark.run_benchmark --method spatialcpav6_gen \
     -- --placement backbone --classifier prototype
 ```
 
-Key flags (`--help`): `--placement {morph,backbone,interpolate,ot_geodesic}`,
+Key flags (`--help`): `--placement {adaptive,morph,interpolate,backbone,ot_geodesic}`,
 `--embedding {pca,coexpr,fm_gene,concat}`, `--fm-gene-embedding PATH`,
 `--classifier {spatial,prototype,knn}`, `--no-communication`, `--expression-mode
 {endpoint,transfer,blend}`.

@@ -175,6 +175,10 @@ def run_method(adata, targets, gene_names, args):
             import traceback
             traceback.print_exc()
             continue
+        if getattr(gen, "_last_dissimilarity", None) is not None:
+            print(f"    adaptive: flanking dissimilarity="
+                  f"{gen._last_dissimilarity:.3f} (threshold {cfg.transport.adaptive_threshold}) "
+                  f"-> {gen._last_placement}")
         n = vs.coords.shape[0]
         if n == 0:
             print(f"    WARNING: 0 cells synthesized for {sec}")
@@ -194,14 +198,16 @@ def main():
         description="SpatialCPA-v6 generation-only wrapper (benchmark-pbya-v2)")
     _v2_io.add_v2_args(parser)
     # Placement regime (see spatialcpav6/README.md — the field-vs-density trade-off).
-    parser.add_argument("--placement", default="morph",
-                        choices=["morph", "backbone", "interpolate", "ot_geodesic"],
-                        help="morph (default — coherent single-sheet barycentric OT "
-                             "morph; auto-adapts, ties a single-slice copy on near-"
-                             "identical sections and morphs when slices differ, so it "
-                             "wins field/ssim without losing coherence), backbone "
-                             "(single nearest slice; most conservative), interpolate "
-                             "(both-slice mixing; ablation), or ot_geodesic (ablation)")
+    parser.add_argument("--placement", default="adaptive",
+                        choices=["adaptive", "morph", "interpolate", "backbone", "ot_geodesic"],
+                        help="adaptive (default — per holdout, use morph when the "
+                             "flanking slices are near-identical and interpolate when "
+                             "they are distinct tissue; the log prints the measured "
+                             "dissimilarity + choice), morph (coherent single-sheet OT "
+                             "morph; best for near-identical volumetric z-planes), "
+                             "interpolate (both-slice mixing; best for distinct "
+                             "sections), backbone (single nearest slice; conservative), "
+                             "or ot_geodesic (ablation)")
     # Embedding / foundation-model prior.
     parser.add_argument("--embedding", default="pca",
                         choices=["pca", "coexpr", "fm_gene", "concat"],

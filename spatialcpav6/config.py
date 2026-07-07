@@ -70,6 +70,14 @@ class TransportConfig:
     embed_weight: float = 0.15
     deshrink: bool = True         # rescale interpolated cloud to interpolated covariance
     deshrink_strength: float = 1.0  # 0 = off, 1 = full covariance match
+    # "adaptive" placement uses morph while the OT-map displacement between the
+    # flanking slices (in cell-spacings) stays below this, and switches to
+    # interpolate above it. Small displacement = near-identical sections (morph);
+    # large = distinct tissue where the barycentric map contracts (interpolate).
+    # Calibrated so near-identical volumetric z-planes (~0.65) pick morph and
+    # distinct sections (>~1.0) pick interpolate; verify with the per-dataset
+    # dissimilarity the wrapper logs, and tune if needed.
+    adaptive_threshold: float = 0.85
 
 
 @dataclass
@@ -123,22 +131,22 @@ class SynthesisConfig:
     """Placement, count and expression transfer."""
 
     # Where synthesized cells' (x, y) + expression come from:
+    #   "adaptive"     — measure the flanking-slice dissimilarity (OT-map displacement
+    #                    in cell-spacings) and use "morph" when the slices are
+    #                    near-identical, "interpolate" when they differ (default).
+    #                    The two regimes have opposite optima on the real benchmark:
+    #                    morph wins on near-identical volumetric z-planes (STARmap)
+    #                    but the barycentric map contracts on dissimilar sections
+    #                    (IMC), where both-slice interpolation is far better —
+    #                    adaptive picks the right one per holdout.
     #   "morph"        — coherent single-sheet barycentric OT morph of the nearest
-    #                    flanking slice toward the other (default). Produces ONE cell
-    #                    sheet (no density doubling), and its displacement auto-adapts
-    #                    to how different the slices are: ≈ a coherent copy when they
-    #                    are near-identical (ties a single-slice copy on the coherence
-    #                    metrics — no loss on volumetric z-planes) and a genuine morph
-    #                    toward the intermediate footprint when they differ (keeps the
-    #                    field/ssim wins). Resolves the field-vs-coherence trade-off.
-    #   "backbone"     — positions + expression from the single nearest flanking
-    #                    slice; expression-structure metrics match a single-slice copy
-    #                    exactly (cannot lose). Most conservative.
-    #   "interpolate"  — draw real cells from BOTH slices in the z-interpolated ratio
-    #                    (mixture; interleaves two lattices — attenuates single-slice
-    #                    structure on near-identical sections). Kept for ablation.
+    #                    flanking slice (best when slices are near-identical).
+    #   "interpolate"  — real cells from BOTH slices in the z-interpolated ratio
+    #                    (best when slices differ; better composition/footprint).
+    #   "backbone"     — positions + expression from the single nearest slice
+    #                    (most conservative; expression metrics cannot lose).
     #   "ot_geodesic"  — pair-sampled displacement interpolation (ablation).
-    placement: str = "morph"
+    placement: str = "adaptive"
     # Cell count of the virtual slice: z-interpolated flanking count (emergent).
     count_mode: str = "interpolate"   # "interpolate" | "lower" | "upper" | "mean"
     # Expression source for each synthesized cell.
