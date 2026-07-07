@@ -107,9 +107,19 @@ scale-sensitive:**
 method (spatialcpav4_gen, SpatialZ, FEAST, isoST) — same input, same
 re-registration, same metrics — so the comparison is apples-to-apples.
 
-For the alignment-dependent metrics, the synthesized cloud is aligned onto GT
-with an **orientation-robust** ICP (multiple initial rotations + reflection,
-lowest-residual fit — a single PCA-seeded ICP silently flips on round tissue).
+For the alignment-dependent metrics (and the cell-matched reference metrics), the
+synthesized cloud is aligned onto GT with an **orientation-robust** ICP (multiple
+initial rotations + reflection — a single PCA-seeded ICP silently flips on round
+tissue). Orientation is chosen by **correspondence quality, not raw residual**:
+each candidate (both the un-refined rotation and its ICP-refined version) is scored
+by how many GT cells have a predicted cell within a data-driven radius, with ties
+broken toward the identity pose. Scoring by mean nearest-neighbor residual instead
+(the earlier behavior) let an ICP-with-scale fit settle on a lower-residual but
+biologically wrong pose — a flip/collapse that scrambled the cell-to-cell
+correspondence and cratered the cell-matched `celltype_accuracy` / `celltype_f1` /
+`matching_rate` even for a faithful, already-aligned prediction. The new selection
+is method-agnostic (applied identically to every method), so the comparison stays
+apples-to-apples; it only stops the aligner from choosing degenerate poses.
 Alignment is an evaluation-side operation (uses GT, feeds nothing back to the
 method), so it is not leakage.
 

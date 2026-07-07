@@ -259,24 +259,27 @@ class Predictor:
         return np.column_stack([gx.ravel(), gy.ravel()]).astype(np.float32)
 
     def _interpolate_positions(self, lower, upper, z, seed=0):
-        """v5 placement: interpolate matched flanking cells to the target z.
+        """v5 placement: z-interpolated subsample of the real flanking positions.
 
         For interpolation between two neighboring sections, the best estimate of
         *where* the cells of the in-between slice sit — and *how many* there are —
-        comes directly from the flanking slices, whose tissue morphology changes
-        only slowly from plane to plane. We:
+        comes directly from the flanking slices, whose tissue morphology and density
+        change only slowly from plane to plane. We:
 
         1. compute the interpolation fraction ``t = (z - z_lo) / (z_hi - z_lo)``
            (clamped to ``[0, 1]``; ``0.5`` when the two centers coincide);
-        2. match every lower-slice cell to its nearest upper-slice cell and place a
-           candidate at ``(1-t)·p_lo + t·p_match`` (and symmetrically match every
-           upper cell to the nearest lower cell), giving positions that morph
-           between the two real point clouds;
-        3. set the target count to the z-interpolated flanking count
-           ``N ≈ (1-t)·N_lo + t·N_hi`` and subsample the candidate pool down to it,
-           so the synthesized density matches the true tissue rather than doubling
-           it (as stacking both slices would) or collapsing it (as a mis-calibrated
-           density integral can).
+        2. set the target count to the z-interpolated flanking count
+           ``N ≈ (1-t)·N_lo + t·N_hi``;
+        3. draw ``round((1-t)·N)`` cells from the lower slice and the rest from the
+           upper slice, using each slice's **real** ``(x, y)`` — so the closer slice
+           contributes proportionally more, and the synthesized cloud keeps the true
+           tissue footprint and density.
+
+        Using the real flanking coordinates (rather than averaging matched pairs)
+        matters: averaging contracts the cloud toward its centroid, shrinking the
+        footprint and inflating local density, which both distorts the density/field
+        metrics and lets the evaluation's rigid aligner settle on a wrong pose. Real
+        positions preserve the extent, so the aligner recovers the correct frame.
 
         Uses only the two training flanking slices — no held-out information — so it
         is leakage-safe.
@@ -286,22 +289,28 @@ class Predictor:
         t = float(np.clip(t, 0.0, 1.0))
         lo_xy = lower.coords_xy.astype(np.float64)
         up_xy = upper.coords_xy.astype(np.float64)
-        if lo_xy.shape[0] == 0 or up_xy.shape[0] == 0:
+        n_lo, n_up = lo_xy.shape[0], up_xy.shape[0]
+        if n_lo == 0 or n_up == 0:
             return np.vstack([lo_xy, up_xy]).astype(np.float32)
 
-        # Match each cell to the nearest cell in the opposite slice, then move it a
-        # fraction ``t`` of the way toward its match.
-        _, nn_up = cKDTree(up_xy).query(lo_xy, k=1)
-        interp_lo = (1.0 - t) * lo_xy + t * up_xy[nn_up]
-        _, nn_lo = cKDTree(lo_xy).query(up_xy, k=1)
-        interp_up = (1.0 - t) * lo_xy[nn_lo] + t * up_xy
+        n_target = int(round((1.0 - t) * n_lo + t * n_up))
+        n_target = max(n_target, 1)
+        # Split the target count between the slices by the interpolation weight,
+        # capped at each slice's available cells.
+        take_lo = min(int(round((1.0 - t) * n_target)), n_lo)
+        take_up = min(n_target - take_lo, n_up)
+        rng = np.random.default_rng(seed)
 
-        cand = np.vstack([interp_lo, interp_up])
-        n_target = int(round((1.0 - t) * lo_xy.shape[0] + t * up_xy.shape[0]))
-        n_target = max(int(np.clip(n_target, 1, cand.shape[0])), 1)
-        if cand.shape[0] > n_target:
-            rng = np.random.default_rng(seed)
-            cand = cand[rng.choice(cand.shape[0], n_target, replace=False)]
+        def _sample(xy, k):
+            if k <= 0:
+                return xy[:0]
+            if k >= xy.shape[0]:
+                return xy
+            return xy[rng.choice(xy.shape[0], k, replace=False)]
+
+        cand = np.vstack([_sample(lo_xy, take_lo), _sample(up_xy, take_up)])
+        if cand.shape[0] == 0:  # degenerate guard
+            cand = np.vstack([lo_xy, up_xy])
         return cand.astype(np.float32)
 
     def _transfer_celltype(self, coords, source_slices):

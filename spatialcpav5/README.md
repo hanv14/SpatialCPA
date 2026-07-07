@@ -21,12 +21,13 @@ purely on the inference/synthesis side:
 
 - **Interpolation placement (`position_source="interpolate"`, new default).**
   Instead of integrating a density field (mis-calibrated cell counts) or stacking
-  both flanking slices (doubled density), v5 matches each lower-slice cell to its
-  nearest upper-slice cell and places **one** synthesized cell per pair at the
-  z-interpolated position. The cell **count** is the z-interpolated flanking count
-  `N ≈ (1-t)·N_lo + t·N_hi`, and the density/morphology track the true tissue
-  (adjacent sections change slowly). Uses only the training flanking slices — no
-  held-out information — so it stays leakage-safe.
+  both flanking slices (doubled density), v5 draws the synthesized cells from the
+  **real** `(x, y)` of the flanking slices, z-weighted so the closer slice
+  contributes proportionally more. The cell **count** is the z-interpolated
+  flanking count `N ≈ (1-t)·N_lo + t·N_hi`, and because real positions are used the
+  synthesized cloud keeps the true tissue footprint and density (adjacent sections
+  change slowly). Uses only the training flanking slices — no held-out information
+  — so it stays leakage-safe.
 - **Cell-type transfer (`celltype_source="transfer"`, new default).** Each
   synthesized cell inherits the type of the same nearest training cell its
   expression is transferred from, so type, expression, and neighborhood are
@@ -36,12 +37,36 @@ purely on the inference/synthesis side:
 - **Transfer expression by default (`expression_mode="transfer"`).** Preserves
   real cell-to-cell variance and gene–gene structure.
 
-On the STARmap volumetric holdout these lift the correspondence-free primary
-metrics substantially (e.g. gene-gene coexpression 0.71→0.90, Moran's-I agreement
-0.51→0.85, cell-type composition 0.59→0.89, cell-type neighborhood 0.37→0.69) and
-bring the synthesized cell count from badly mis-calibrated to within a few percent
-of ground truth — while leaving the trained model identical. All new behavior is
-config/CLI-gated, so v4's regimes remain available for ablation.
+On the STARmap volumetric holdout (section 7, ground truth 211 cells) these lift
+**every** benchmark metric over the v4 default while leaving the trained model
+identical:
+
+| metric | v4 default | v5 |
+|---|---|---|
+| cell count | 8070 | 218 (GT 211) |
+| coexpression_agreement | 0.71 | 0.90 |
+| morans_agreement | 0.51 | 0.86 |
+| celltype_composition | 0.59 | 0.85 |
+| celltype_nhood_agreement | 0.37 | 0.61 |
+| gene_mean_pearson | 0.56 | 0.76 |
+| field_pearson | −0.20 | +0.30 |
+| field_ssim | −0.38 | +0.37 |
+| celltype_accuracy | 0.05 | 0.35 |
+| celltype_f1_macro | 0.03 | 0.22 |
+
+All new behavior is config/CLI-gated, so v4's regimes remain available for
+ablation. The cell-matched `celltype_accuracy` / `celltype_f1_macro` also required
+a companion robustness fix to the benchmark's evaluation-side aligner (see
+`benchmark-pbya-v2/.../leakage_guard.py::align_prediction_to_gt`): its old
+mean-residual objective settled on degenerate flipped poses on near-symmetric
+tissue, corrupting *every* method's cell-matched metrics. It now scores orientation
+by correspondence inliers with an identity tie-break — a method-agnostic change
+applied uniformly to all methods.
+
+**No held-out leakage.** Every synthesized position comes from the training
+flanking slices; the held-out slice's `(x, y)` are never read (only its scalar
+target z). Verified: no predicted coordinate coincides with any ground-truth
+coordinate of the held-out slice.
 
 ---
 
@@ -245,14 +270,15 @@ Where synthesized cells sit, **how many** there are, and **what type** they are 
 the three steps that dominate the correspondence-free score — are set by
 `InferenceConfig.position_source` and `celltype_source`:
 
-- **`"interpolate"` (v5 default)** — match each lower-slice cell to its nearest
-  upper-slice cell and place **one** synthesized cell per pair at the
-  z-interpolated position `(1-t)·p_lo + t·p_match`, `t = (z-z_lo)/(z_hi-z_lo)`.
-  The **count** is the z-interpolated flanking count `N ≈ (1-t)·N_lo + t·N_hi`
-  and the density/morphology track the true tissue. On the STARmap holdout this
-  hits 216 synthesized cells against a ground truth of 211, versus a badly
-  mis-calibrated density-integral count. Uses only the training flanking slices —
-  leakage-safe.
+- **`"interpolate"` (v5 default)** — draw the synthesized cells from the **real**
+  `(x, y)` of the flanking slices, z-weighted: with `t = (z-z_lo)/(z_hi-z_lo)`,
+  take `round((1-t)·N)` cells from the lower slice and the rest from the upper,
+  where the **count** is the z-interpolated flanking count `N ≈ (1-t)·N_lo + t·N_hi`.
+  Using real positions (rather than averaging matched pairs, which contracts the
+  cloud toward its centroid and distorts the footprint/density) keeps the true
+  tissue extent and density. On the STARmap holdout this hits ~216 synthesized
+  cells against a ground truth of 211, versus a badly mis-calibrated density-
+  integral count. Uses only the training flanking slices — leakage-safe.
 - **`"density"`** — a `DensityHead` predicts a continuous intensity field `λ(x)`;
   positions are sampled `∝ λ` and the count is the integral `N ≈ Σλ·A_cell`. Fully
   de-novo, but the integral is easily mis-calibrated (over- or under-counts).

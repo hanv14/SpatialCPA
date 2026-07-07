@@ -362,9 +362,25 @@ def align_prediction_to_gt(pred_xy: np.ndarray, gt_xy: np.ndarray,
     the tissue outline is near-symmetric (e.g. a roundish occupancy blob): ICP
     can settle in a rotated local minimum, mismatching interior cells and
     depressing per-cell correlation even for a good prediction. To avoid that we
-    try multiple initial rotations (and a reflection), ICP-refine each, and keep
-    the transform with the lowest nearest-neighbor residual — a global,
-    orientation-robust alignment.
+    try multiple initial rotations (and a reflection) and pick the best.
+
+    **Orientation is chosen by correspondence quality, not raw residual.** Scoring
+    candidates by mean nearest-neighbor residual is deceptive on near-symmetric
+    tissue: an ICP-with-scale fit can *shrink/rotate* the cloud into a
+    lower-residual but biologically wrong pose (a 180°/reflection flip, or a
+    collapse toward the centroid) that scrambles which predicted cell sits on which
+    GT cell — so the cell-matched metrics crater even though a faithful, already-
+    aligned prediction was handed in. Instead we score each candidate by the number
+    of GT cells that have a predicted cell within a data-driven radius (a few times
+    the median GT nearest-neighbor spacing) — i.e. the count the downstream
+    matching actually uses — and, crucially, we evaluate **both** the un-refined
+    initial rotation and its ICP-refined version (ICP can drift away from a correct
+    identity start into a wrong local minimum). Ties are broken toward lower
+    residual and then toward the smallest rotation from identity, so for data that
+    is already in a common frame (e.g. volumetric / pre-registered datasets) the
+    identity pose wins instead of a spurious flip. This selection is method-
+    agnostic: it is applied identically to every method, so the comparison stays
+    fair — it only stops the aligner from choosing degenerate poses.
 
     This is an EVALUATION-side operation: it uses the GT (which evaluation is
     allowed to see) and does not feed anything back to the method — so it is not
@@ -380,19 +396,37 @@ def align_prediction_to_gt(pred_xy: np.ndarray, gt_xy: np.ndarray,
     pred_centered = pred_xy - p_c
     tree = cKDTree(gt_xy)
 
+    # Data-driven inlier radius: a few times the median GT nearest-neighbor
+    # spacing, so orientation scoring is unit-agnostic across datasets.
+    gd, _ = tree.query(gt_xy, k=min(2, len(gt_xy)))
+    med_nn = float(np.median(gd[:, -1])) if gd.ndim == 2 else 1.0
+    inlier_radius = 2.0 * med_nn if med_nn > 0 else np.inf
+
+    def _score(out):
+        # Correspondence count in the matching direction (GT -> nearest pred),
+        # plus mean residual as a tie-breaker (negated so larger = better).
+        d, _ = cKDTree(out).query(gt_xy, k=1)
+        return int((d <= inlier_radius).sum()), -float(np.mean(d))
+
     best_out = None
-    best_err = np.inf
+    best_key = (-1, -np.inf, np.inf)  # (inliers, -mean_resid, -rotation_penalty)
     for k in range(max(n_init_angles, 1)):
         ang = 2.0 * np.pi * k / max(n_init_angles, 1)
         c, sn = np.cos(ang), np.sin(ang)
         Rot = np.array([[c, -sn], [sn, c]])
+        # Rotation-from-identity penalty (0 at ang=0, no reflection).
+        rot_pen = abs(((ang + np.pi) % (2.0 * np.pi)) - np.pi)
         for refl in (1.0, -1.0):
             R0 = Rot @ np.array([[refl, 0.0], [0.0, 1.0]])
             init = pred_centered @ R0.T + gt_c
             R, t, s = icp_align(init, gt_xy, with_scale=with_scale, init_pca=False)
-            out = apply_transform(init, R, t, s)
-            err = float(np.mean(tree.query(out, k=1)[0]))
-            if err < best_err:
-                best_err = err
-                best_out = out
+            refined = apply_transform(init, R, t, s)
+            pen = rot_pen + (0.0 if refl > 0 else np.pi / 2.0)
+            # Consider both the un-refined init and the ICP-refined pose.
+            for out in (init, refined):
+                inl, neg_resid = _score(out)
+                key = (inl, neg_resid, -pen)
+                if key > best_key:
+                    best_key = key
+                    best_out = out
     return best_out if best_out is not None else pred_xy
