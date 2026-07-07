@@ -199,9 +199,10 @@ def main():
                              "niche), or ot_geodesic (displacement interpolation)")
     # Embedding / foundation-model prior.
     parser.add_argument("--embedding", default="pca",
-                        choices=["pca", "fm_gene", "concat"],
-                        help="cell-state embedding: pca (local, default), fm_gene "
-                             "(pretrained gene embedding prior), or concat")
+                        choices=["pca", "coexpr", "fm_gene", "concat"],
+                        help="cell-state embedding: pca (local, default), coexpr "
+                             "(data-derived gene-program prior), fm_gene (pretrained "
+                             "gene embedding, needs --fm-gene-embedding), or concat")
     parser.add_argument("--embed-dim", type=int, default=32)
     parser.add_argument("--fm-gene-embedding", default=None,
                         help="path to a pretrained gene-embedding matrix "

@@ -200,9 +200,47 @@ python -m src.benchmark.run_benchmark --method spatialcpav6_gen \
 ```
 
 Key flags (`--help`): `--placement {interpolate,backbone,ot_geodesic}`,
-`--embedding {pca,fm_gene,concat}`, `--fm-gene-embedding PATH`,
+`--embedding {pca,coexpr,fm_gene,concat}`, `--fm-gene-embedding PATH`,
 `--classifier {spatial,prototype,knn}`, `--no-communication`, `--expression-mode
 {endpoint,transfer,blend}`.
+
+### Recommended real-benchmark runbook
+
+```bash
+# 1. default (interpolate) vs the conservative regime vs the baseline
+python -m src.benchmark.run_all --methods spatialcpav6_gen spatialz
+python -m src.benchmark.run_benchmark --method spatialcpav6_gen \
+    --dataset starmap_visual_cortex --holdout-json holdouts.json \
+    -- --placement backbone --classifier prototype     # conservative variant
+python -m src.benchmark.rank_generation                # composite on the 6 primaries
+```
+
+### Plugging in a pretrained foundation model (external prior)
+
+The FM cell-state prior is the lever most likely to move the *near-saturated*
+primaries on real (noisy, sparse-panel) data, where the local PCA is a weaker
+representation. Convert a pretrained gene embedding once, then point v6 at it —
+see `foundation_assets.py`:
+
+```bash
+# scGPT / Geneformer / gene2vec  ->  v6 .npz  (weights not bundled; bring your own)
+python -m spatialcpav6.foundation_assets --source gene2vec \
+    --input gene2vec_dim_200.txt --output gene_emb.npz
+python -m spatialcpav6.foundation_assets --source scgpt \
+    --vocab vocab.json --weights best_model.pt --output gene_emb.npz
+
+# use it (the FM embedding drives cell-type calling + expression denoising):
+python -m src.benchmark.run_benchmark --method spatialcpav6_gen \
+    --dataset <ds> --holdout-json holdouts.json \
+    -- --embedding fm_gene --fm-gene-embedding gene_emb.npz \
+       --classifier prototype --expression-mode blend
+```
+
+`--embedding coexpr` is a no-download alternative: a data-derived gene-program
+embedding (SVD of the training gene-gene correlation matrix). *On a controlled
+synthetic the FM/coexpr priors were verified to load and produce a distinct
+embedding, but did not move the metrics — the clean synthetic saturates the local
+PCA (a ceiling effect). Their benefit must be measured on the real benchmark.*
 
 ### Verification status (honest)
 The leakage-safe core (embedding, OT placement, niche MRF, annotation, all three

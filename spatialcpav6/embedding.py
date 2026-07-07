@@ -179,8 +179,26 @@ def build_embedder(train_expression: np.ndarray, gene_names, cfg) -> Embedder:
             return (Z / s).astype(np.float32)
         return fn
 
+    def _make_coexpr():
+        # Data-derived gene-program embedding: project cells through the SVD of the
+        # training gene-gene correlation matrix (leakage-safe; no external asset).
+        from .foundation_assets import build_coexpression_embedding
+        _, W = build_coexpression_embedding(X, gene_names, cfg.n_components)
+        col_mean = X.mean(axis=0, keepdims=True)
+        col_std = X.std(axis=0, keepdims=True); col_std[col_std == 0] = 1.0
+
+        def fn(E):
+            Z = ((np.asarray(E, dtype=np.float32) - col_mean) / col_std) @ W
+            Z = Z - Z.mean(axis=0, keepdims=True)
+            s = Z.std(axis=0, keepdims=True); s[s == 0] = 1.0
+            return (Z / s).astype(np.float32)
+        return fn
+
     if method == "pca":
         return Embedder(_make_pca(), "pca")
+
+    if method == "coexpr":
+        return Embedder(_make_coexpr(), "coexpr")
 
     if method == "fm_gene":
         fn = _make_fm_gene()
