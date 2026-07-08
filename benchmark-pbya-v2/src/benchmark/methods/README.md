@@ -24,6 +24,8 @@ target sections so the evaluator joins correctly).
 
 | Wrapper | Method | Env | Status | Notes |
 |---------|--------|-----|--------|-------|
+| `run_spatialcpav8.py` | SpatialCPA-v8 (gen) | bench_spatialcpa | available | Training-free coherent-OT bridge: adaptive smoothed-OT morph (near-identical slices) vs real-cell interpolation (distinct slices) + niche annotation. Smoothing the OT displacement field preserves local structure while morphing the global field, resolving the structure-vs-field trade-off. Verified end-to-end + ablated on both regimes. See `spatialcpav8/README.md`. |
+| `run_spatialcpav6.py` | SpatialCPA-v6 (gen) | bench_spatialcpa | available | Training-free OT: adaptive barycentric morph vs interpolation; FM-prior + niche-MRF annotation. Verified end-to-end. |
 | `run_spatialcpav4.py` | SpatialCPA-v4 (gen) | bench_spatialcpa | available | Transformer + occupancy head; grid over flanking training bbox; emergent count. Verified end-to-end. |
 | `run_spatialz.py` | SpatialZ | bench_spatialz | available | Reuses `run_method` synthesis unchanged; only I/O swapped. Needs runtime pass. |
 | `run_feast.py` | FEAST | bench_feast | available | Reuses PASTE2 + interpolation unchanged; only I/O swapped. Needs runtime pass. |
