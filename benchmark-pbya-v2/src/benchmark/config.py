@@ -190,6 +190,12 @@ def registration_for(dataset_name):
 # regressors (stVGP, Spateo SVGP) are NOT generation-native and are disabled in
 # v2 (they would require the held-out query coordinates). See README.
 METHODS = {
+    "spatialcpav7_gen": {
+        "wrapper": "src/benchmark/methods/run_spatialcpav7.py",
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "generation_native": True,
+    },
     "spatialcpav6_gen": {
         "wrapper": "src/benchmark/methods/run_spatialcpav6.py",
         "conda_env": "bench_spatialcpa",
