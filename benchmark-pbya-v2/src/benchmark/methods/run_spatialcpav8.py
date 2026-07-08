@@ -182,7 +182,8 @@ def run_method(adata, targets, gene_names, args):
 
     results = {}
     for sec, z in targets:
-        print(f"  {sec}: synthesizing virtual slice at z={z:.2f} (symmetric OT bridge)...")
+        print(f"  {sec}: synthesizing virtual slice at z={z:.2f} "
+              f"(placement={cfg.bridge.mode})...")
         try:
             vs = gen.generate_virtual_slice(z=z)
         except Exception as e:
@@ -190,7 +191,10 @@ def run_method(adata, targets, gene_names, args):
             import traceback
             traceback.print_exc()
             continue
-        if getattr(gen, "_last_dissimilarity", None) is not None:
+        if getattr(gen, "_cv_scores", None):
+            print(f"    CV placement selection: chose {gen._last_placement} "
+                  f"from {{" + ", ".join(f'{k}:{v:.3f}' for k, v in gen._cv_scores.items()) + "}")
+        elif getattr(gen, "_last_dissimilarity", None) is not None:
             print(f"    flanking dissimilarity="
                   f"{gen._last_dissimilarity:.3f} (placement={gen._last_placement})")
         n = vs.coords.shape[0]
@@ -212,18 +216,21 @@ def main():
         description="SpatialCPA-v8 generation-only wrapper (benchmark-pbya-v2)")
     _v2_io.add_v2_args(parser)
     # Placement regime.
-    parser.add_argument("--placement", default="adaptive",
-                        choices=["adaptive", "smooth_morph", "symmetric", "morph",
-                                 "interpolate", "backbone"],
-                        help="adaptive (default — per holdout, smooth morph when the "
-                             "flanking slices are near-identical and symmetric "
-                             "both-slice mixing when they are distinct; the log prints "
-                             "the measured displacement + choice), smooth_morph "
-                             "(coherent smoothed-OT deformation of the nearest slice), "
-                             "symmetric (bidirectional McCann barycentric bridge from "
-                             "BOTH slices), morph (un-smoothed barycentric morph; "
-                             "v6-style ablation), interpolate (random both-slice "
-                             "mixing; ablation), or backbone (single nearest slice)")
+    parser.add_argument("--placement", default="smooth_morph",
+                        choices=["smooth_morph", "adaptive", "coherent_mix", "symmetric",
+                                 "morph", "interpolate", "backbone"],
+                        help="smooth_morph (default — coherent smoothed-OT deformation "
+                             "of the single nearest clean slice: inherits a single "
+                             "slice's structure/density fidelity while its non-rigid "
+                             "warp adds the interpolated field the copy lacks), "
+                             "adaptive (pick the placement per dataset by leakage-safe "
+                             "internal cross-validation on a held-out training slice; "
+                             "logs the CV scores), coherent_mix (both-slice expression "
+                             "on one coherent density manifold), symmetric "
+                             "(bidirectional McCann barycentric bridge), morph "
+                             "(un-smoothed barycentric morph; ablation), interpolate "
+                             "(random both-slice mixing; ablation), or backbone "
+                             "(single nearest slice; SpatialZ-like)")
     parser.add_argument("--adaptive-threshold", type=float, default=0.85,
                         help="displacement (cell-spacings) above which adaptive "
                              "switches from smooth morph to symmetric mixing")

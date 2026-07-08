@@ -60,26 +60,50 @@ applied a raw per-cell barycentric map (coherent only when the slices are alread
 near-identical) or fell back to random mixing; v8 makes the coherence explicit and
 regularized, so a single smooth morph keeps structure **and** matches the field.
 
-### Adaptive routing (default)
+### Why this beats a single-slice-copy baseline (SpatialZ)
 
-Two flanking sections can be near-identical (thin volumetric z-planes) or genuinely
-distinct tissue. v8 measures the OT-map displacement between them (in units of cell
-spacing) and routes per holdout:
+The strongest simple baseline, SpatialZ, essentially **copies the nearest real
+slice**. That wins the metrics a single clean slice is naturally good at —
+co-expression, Moran's, composition, neighbourhood organization, and **cell
+density** — because it *is* a real, coherent tissue slice; but it loses every
+metric that requires matching the in-between geometry — the binned **field**
+metrics and the **cell-matched** fidelity/accuracy — because a rigid alignment
+cannot reshape one slice into the held-out one.
 
-- **small displacement → smooth morph** — a coherent single-sheet deformation is
-  both structure-preserving and field-accurate;
-- **large displacement → real-cell interpolation** — here a single-slice morph
-  would have to travel too far and would smear, so mixing real cells from *both*
-  slices at their real coordinates is the better estimate of the true intermediate.
+The smooth morph is designed as a strict improvement on that baseline: it **is a
+single clean slice** (so it inherits the copy's structure/density fidelity — the
+purely expression-derived metrics are even *identical* to a copy, since the warp
+does not touch expression values) **plus a coherent non-rigid warp** (so it also
+matches the interpolated field and lands cells near the real ones — the metrics
+the copy fails). In head-to-head tests against a copy baseline on synthetic data
+in both regimes, the smooth morph wins the large majority of metrics and ties most
+of the rest (see `validation/`).
 
-The chosen branch and the measured displacement are logged per holdout, so the
-`adaptive_threshold` is auditable and tunable per dataset.
+**Honest caveat — a genuine Pareto frontier.** A pure copy is intrinsically hard
+to beat on a *few* single-slice-fidelity metrics (notably cell-matched density /
+dice on near-identical planes, where the copy is already perfectly aligned and any
+warp can only perturb the crude cell-matched alignment). The smooth morph wins the
+clear majority and closes the gap on the rest, but "win *every* metric" against a
+real-slice copy is a multi-objective question, not a single-number one; the honest
+claim is a large, consistent net gain, not a strict domination on all 27 columns.
+
+### Adaptive placement by internal cross-validation (opt-in)
+
+Which placement is best is dataset-dependent. `--placement adaptive` selects it
+automatically and leakage-safely: it holds out a **middle training slice**,
+regenerates it from its flanks with each candidate placement, scores each
+reconstruction against the real (training) slice with a benchmark-faithful score
+(co-expression, cell-matched fidelity, composition, density, field, field-SSIM),
+and uses the winner for the actual target. The benchmark's held-out slice is never
+touched, so this adds no leakage; the CV scores are logged for audit
+(`selection.py`).
 
 ### The four pipeline steps
 
 1. **Count** — emergent: the z-interpolated flanking cell count (never the held-out
    count).
-2. **Placement** — adaptive coherent OT bridge (above).
+2. **Placement** — coherent smoothed-OT morph of the single nearest clean slice
+   (default), or an internally cross-validated choice among placements (`adaptive`).
 3. **Annotation** — each cell's label is anchored on its *real* source cell, then
    refined by a foundation-model / spatial-interpolation prior and a **cell-cell
    communication (niche) Markov-random-field** that pins the synthesized slice's
@@ -120,20 +144,23 @@ steps complement rather than fight each other.
 
 The method was developed and unit/ablation-tested against the actual
 `benchmark-pbya-v2` evaluators (`evaluate.py` + `evaluate_generation.py`) on
-synthetic multi-slice datasets in **both** regimes:
+synthetic multi-slice datasets in **both** regimes, comparing the default smooth
+morph to a single-slice-copy baseline (`--placement backbone`, the SpatialZ
+archetype):
 
-- **near-identical / volumetric regime** (the STARmap-like case where v6 was
-  beaten by v5/SpatialZ): v8's smooth morph **strictly dominates v6** across the
-  structure metrics *and* the field/density metrics simultaneously (e.g.
-  co-expression, composition, `field_pearson`, `density_pearson`, cell-type
-  accuracy all improve together);
-- **distinct-tissue regime** (IMC-like): v8 routes to real-cell interpolation and
-  **matches v6** (no regression).
+- **distinct-tissue regime** (IMC-like): the smooth morph beats the copy on ~10
+  metrics with essentially no real losses (ties the purely-expression metrics and
+  wins field, density, cell-matched accuracy, dice, cell-matched density);
+- **near-identical / volumetric regime** (STARmap-like): the smooth morph wins the
+  field and generation-density metrics and ties the structure metrics; the copy
+  retains a narrow edge on **cell-matched density / dice** only (where a perfectly
+  aligned copy is intrinsically hard to beat — the genuine Pareto residue).
 
-The two `*_morans_i_*_median` scores (the *magnitude* of the prediction's own
-spatial autocorrelation, with no ground-truth target in the metric) can be
-slightly lower for the coherent morph than for both-slice overlay; this is a
-property of the metric, not a loss of fidelity.
+Against v6, the smooth morph strictly dominates in the near-identical regime and
+matches it in the distinct-tissue regime. On the *real* datasets the actual
+SpatialZ is considerably weaker than this clean-copy proxy (e.g. its IMC
+co-expression is 0.38 vs the proxy's 0.84), so the margin on real data is expected
+to be larger than the synthetic proxy suggests.
 
 The processed benchmark datasets and conda environments are not bundled in this
 repository, so the full cross-dataset leaderboard must be reproduced where the data
@@ -165,7 +192,8 @@ tuning and are documented in `run_spatialcpav8.py`.
 | `config.py` | all knobs (7 stage dataclasses) — defaults are production settings |
 | `data.py` | `Slice` / `SliceStack` containers, flanking-slice selection |
 | `embedding.py` | cell-state embedding (PCA / co-expression / pretrained gene embedding) |
-| `transport.py` | **smooth morph**, symmetric McCann bridge, entropic-OT plan |
+| `transport.py` | **smooth morph**, symmetric McCann bridge, coherent-mix, entropic-OT plan |
+| `selection.py` | leakage-safe internal cross-validation for `--placement adaptive` |
 | `density.py` | optional density calibration to the interpolated field (opt-in) |
 | `annotation.py` | OT-anchor + FM/spatial prior + niche MRF cell typing |
 | `communication.py` | neighbourhood-enrichment niche model (cell-cell communication) |

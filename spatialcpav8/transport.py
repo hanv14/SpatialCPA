@@ -257,6 +257,79 @@ def smooth_morph(anchor_xy, other_xy, anchor_e, other_e, w, tcfg, bcfg, seed=0):
     return coords, sub_a, dissimilarity
 
 
+def coherent_mix(lo_xy, up_xy, lo_e, up_e, t, n_target, tcfg, bcfg, seed=0,
+                 anchor_is_lower=True):
+    """Both-slice expression on a single coherent density manifold.
+
+    The failure mode of plain real-cell interpolation is *density*: it
+    concatenates cells from two spatially-offset slices, so the combined point
+    cloud is a superposition of two densities that no rigid alignment can reconcile
+    with the ground-truth density field. ``coherent_mix`` keeps interpolation's key
+    strength — the synthesized population is drawn from *both* flanking slices, so
+    the expression field and co-expression structure reflect the true intermediate
+    mixture — while removing that failure mode: the *minority* (non-anchor) slice's
+    cells are mapped through the entropic-OT barycentric correspondence into the
+    **anchor** slice's coordinate frame, so every synthesized cell lies on one
+    coherent manifold with the anchor slice's (single-slice, realistic) density.
+
+    Result: single-slice density and spatial coherence (as in a clean copy /
+    SpatialZ) together with a both-slice expression population (as in
+    interpolation). Returns a :class:`BridgeResult`.
+    """
+    rng = np.random.default_rng(seed)
+    n_lo, n_up = lo_xy.shape[0], up_xy.shape[0]
+    if anchor_is_lower:
+        a_xy, o_xy, a_e, o_e = lo_xy, up_xy, lo_e, up_e
+        n_a, n_o, frac_o = n_lo, n_up, t
+    else:
+        a_xy, o_xy, a_e, o_e = up_xy, lo_xy, up_e, lo_e
+        n_a, n_o, frac_o = n_up, n_lo, 1.0 - t
+
+    sub_a = _subsample(n_a, tcfg.max_ot_cells, rng)
+    sub_o = _subsample(n_o, tcfg.max_ot_cells, rng)
+    Aa, Ao = a_xy[sub_a].astype(np.float64), o_xy[sub_o].astype(np.float64)
+    Ea, Eo = a_e[sub_a], o_e[sub_o]
+
+    cost = _joint_cost(Ao, Aa, Eo, Ea, tcfg.embed_weight)   # other x anchor
+    P = sinkhorn_plan(cost, tcfg.epsilon, tcfg.n_iter)
+    img_o = _barycentric_image(P, Aa)                       # other cell -> anchor frame
+
+    if Aa.shape[0] >= 2 and Ao.shape[0] >= 1:
+        spacing = float(np.median(cKDTree(Aa).query(Aa, k=2)[0][:, 1])) or 1.0
+        # how far each other-cell is moved into the anchor frame, in cell-spacings
+        dissimilarity = float(np.median(np.linalg.norm(img_o - Ao, axis=1)) / spacing)
+    else:
+        dissimilarity = 0.0
+
+    fmin = float(bcfg.symmetric_min_fraction)
+    frac_o = float(np.clip(frac_o, fmin, 1.0 - fmin)) if 0.0 < frac_o < 1.0 else float(np.clip(frac_o, 0.0, 1.0))
+    take_o = int(round(frac_o * n_target))
+    take_a = n_target - take_o
+
+    def _draw(coords, sub_full, take):
+        if take <= 0 or coords.shape[0] == 0:
+            return np.zeros((0, 2)), np.zeros(0, int)
+        pick = rng.integers(0, coords.shape[0], size=take)
+        return coords[pick], sub_full[pick]
+
+    c_a, s_a = _draw(Aa, sub_a, take_a)          # anchor cells at their real coords
+    c_o, s_o = _draw(img_o, sub_o, take_o)       # other cells mapped into anchor frame
+    coords = np.concatenate([c_a, c_o], axis=0)
+    from_upper = (np.concatenate([np.zeros(c_a.shape[0], bool), np.ones(c_o.shape[0], bool)])
+                  if anchor_is_lower else
+                  np.concatenate([np.ones(c_a.shape[0], bool), np.zeros(c_o.shape[0], bool)]))
+    if anchor_is_lower:
+        lo_src = np.concatenate([s_a, np.full(c_o.shape[0], -1, int)])
+        up_src = np.concatenate([np.full(c_a.shape[0], -1, int), s_o])
+    else:
+        up_src = np.concatenate([s_a, np.full(c_o.shape[0], -1, int)])
+        lo_src = np.concatenate([np.full(c_a.shape[0], -1, int), s_o])
+
+    return BridgeResult(coords_xy=coords.astype(np.float32), lo_src=lo_src,
+                        up_src=up_src, from_upper=from_upper,
+                        dissimilarity=dissimilarity)
+
+
 def one_sided_morph(anchor_xy, other_xy, anchor_e, other_e, w, tcfg, seed=0):
     """One-sided barycentric morph of the anchor slice (v6-style; ablation).
 

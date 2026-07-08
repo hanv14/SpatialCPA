@@ -108,8 +108,20 @@ class BridgeConfig:
     ``t`` still contributes a few far-slice cells (keeps the mixture non-degenerate).
     """
 
-    mode: str = "adaptive"
-    adaptive_threshold: float = 0.85
+    # Default is ``smooth_morph`` — the coherent smoothed-OT deformation of the
+    # single nearest clean slice. Against a single-slice-copy baseline (SpatialZ)
+    # it inherits that baseline's structure/density fidelity (it *is* one clean
+    # slice) while its non-rigid warp adds the interpolated-field and cell-matched
+    # accuracy the copy lacks — so it beats the copy on the large majority of
+    # metrics in both the near-identical and distinct-tissue regimes (validated in
+    # ``validation/``). ``adaptive`` instead selects a placement per dataset by
+    # leakage-safe internal cross-validation (see ``selection.py``).
+    mode: str = "smooth_morph"
+    # Candidate placements the adaptive selector cross-validates on a held-out
+    # *training* slice (leakage-safe); the best reconstruction is used for the
+    # target. Order is the tie-break preference.
+    adaptive_candidates: tuple = ("smooth_morph", "interpolate", "coherent_mix")
+    adaptive_threshold: float = 0.85     # fallback displacement heuristic (unused by CV)
     smooth_k: int = 12
     smooth_iters: int = 3
     symmetric_min_fraction: float = 0.05

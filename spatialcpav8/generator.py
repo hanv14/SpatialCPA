@@ -46,6 +46,7 @@ from .embedding import build_embedder
 from . import transport as tp
 from . import density as dens
 from . import annotation as ann
+from . import selection as sel
 
 
 @dataclass
@@ -107,50 +108,16 @@ class SpatialCPAv8:
         lo_lab = lower.cell_type_indices if has_ct else None
         up_lab = upper.cell_type_indices if has_ct else None
 
-        # ---- placement: adaptive smooth-morph vs symmetric bridge ------------ #
+        # ---- placement: resolve mode (internal CV for "adaptive"), then place  #
         mode = cfg.bridge.mode
-        self._last_placement = mode
         self._last_dissimilarity = None
-
         if mode == "adaptive":
-            # Route by the OT-map displacement between the flanking slices. When they
-            # are near-identical (small displacement — thin volumetric z-planes) the
-            # smooth morph is a coherent single-sheet deformation that keeps the
-            # structure metrics at copy-quality *and* nails the interpolated field.
-            # When they are distinct tissue (large displacement) that same morph
-            # would smear local structure, so we fall back to real-cell interpolation
-            # (both slices at their real coordinates), which preserves each slice's
-            # structure. The router reuses the displacement smooth_morph measures.
-            coords_xy, expr, q_embed, init_types = self._place_smooth_morph(
-                lower, upper, lo_e, up_e, lo_lab, up_lab, t, z, has_ct, cfg)
-            if self._last_dissimilarity is not None and \
-                    self._last_dissimilarity > cfg.bridge.adaptive_threshold:
-                coords_xy, expr, q_embed, init_types = self._place_interpolate(
-                    lower, upper, lo_e, up_e, lo_lab, up_lab, t, n_target, has_ct, rng)
-                self._last_placement = "interpolate"
-            else:
-                self._last_placement = "smooth_morph"
-        elif mode == "smooth_morph":
-            coords_xy, expr, q_embed, init_types = self._place_smooth_morph(
-                lower, upper, lo_e, up_e, lo_lab, up_lab, t, z, has_ct, cfg)
-        elif mode == "symmetric":
-            br = tp.symmetric_bridge(lo_xy, up_xy, lo_e, up_e, t, n_target,
-                                     cfg.transport, cfg.bridge, seed=cfg.synthesis.seed)
-            coords_xy = br.coords_xy.astype(np.float64)
-            self._last_dissimilarity = br.dissimilarity
-            expr, q_embed, init_types = self._gather_sources(
-                br, lower, upper, lo_e, up_e, lo_lab, up_lab, has_ct)
-        elif mode == "morph":
-            coords_xy, expr, q_embed, init_types = self._place_morph(
-                lower, upper, lo_e, up_e, lo_lab, up_lab, t, z, has_ct, cfg)
-        elif mode == "backbone":
-            coords_xy, expr, q_embed, init_types = self._place_backbone(
-                lower, upper, lo_e, up_e, lo_lab, up_lab, z, has_ct)
-        elif mode == "interpolate":
-            coords_xy, expr, q_embed, init_types = self._place_interpolate(
-                lower, upper, lo_e, up_e, lo_lab, up_lab, t, n_target, has_ct, rng)
-        else:
-            raise ValueError(f"Unknown bridge mode '{mode}'")
+            mode = self._resolve_adaptive_mode(cfg)
+        self._last_placement = mode
+
+        coords_xy, expr, q_embed, init_types = self._place_by_mode(
+            mode, lower, upper, lo_e, up_e, lo_xy, up_xy, lo_lab, up_lab,
+            t, z, n_target, has_ct, rng, cfg)
 
         # ---- density calibration (position channel only) --------------------- #
         if cfg.density.enabled and coords_xy.shape[0] >= 8:
@@ -205,6 +172,84 @@ class SpatialCPAv8:
                             cell_type=cell_type_labels, cell_type_idx=cell_type_idx)
 
     # ------------------------------------------------------------------ #
+    # Mode dispatch                                                       #
+    # ------------------------------------------------------------------ #
+    def _place_by_mode(self, mode, lower, upper, lo_e, up_e, lo_xy, up_xy,
+                       lo_lab, up_lab, t, z, n_target, has_ct, rng, cfg):
+        if mode == "smooth_morph":
+            return self._place_smooth_morph(lower, upper, lo_e, up_e, lo_lab, up_lab,
+                                            t, z, has_ct, cfg)
+        if mode == "symmetric":
+            br = tp.symmetric_bridge(lo_xy, up_xy, lo_e, up_e, t, n_target,
+                                     cfg.transport, cfg.bridge, seed=cfg.synthesis.seed)
+            self._last_dissimilarity = br.dissimilarity
+            coords_xy = br.coords_xy.astype(np.float64)
+            expr, q_embed, init_types = self._gather_sources(
+                br, lower, upper, lo_e, up_e, lo_lab, up_lab, has_ct)
+            return coords_xy, expr, q_embed, init_types
+        if mode == "coherent_mix":
+            return self._place_coherent_mix(lower, upper, lo_e, up_e, lo_lab, up_lab,
+                                            t, z, n_target, has_ct, cfg)
+        if mode == "morph":
+            return self._place_morph(lower, upper, lo_e, up_e, lo_lab, up_lab,
+                                     t, z, has_ct, cfg)
+        if mode == "backbone":
+            return self._place_backbone(lower, upper, lo_e, up_e, lo_lab, up_lab,
+                                        z, has_ct)
+        if mode == "interpolate":
+            return self._place_interpolate(lower, upper, lo_e, up_e, lo_lab, up_lab,
+                                           t, n_target, has_ct, rng)
+        raise ValueError(f"Unknown bridge mode '{mode}'")
+
+    # ------------------------------------------------------------------ #
+    # Adaptive placement via leakage-safe internal cross-validation       #
+    # ------------------------------------------------------------------ #
+    def _resolve_adaptive_mode(self, cfg):
+        """Pick the placement that best reconstructs a held-out *training* slice.
+
+        Cached after the first call. Falls back to the displacement heuristic when
+        there are too few training slices for a CV split. Only training slices are
+        used, so this introduces no leakage.
+        """
+        if getattr(self, "_cv_mode", None) is not None:
+            return self._cv_mode
+        candidates = list(cfg.bridge.adaptive_candidates)
+        mid = sel.pick_cv_slice(self.stack)
+        if mid is None:
+            self._cv_mode = "interpolate"  # safe default with <3 training slices
+            self._cv_scores = {}
+            return self._cv_mode
+
+        target = self.stack.slices[mid]
+        reduced = SliceStack([s for i, s in enumerate(self.stack.slices) if i != mid])
+        real_xy = target.coords_xy.astype(np.float64)
+        real_X = target.expression.astype(np.float64)
+        real_types = target.cell_type_indices if self.stack.has_cell_type else None
+
+        scores = {}
+        for cand in candidates:
+            try:
+                sub_cfg = _clone_cfg_with_mode(cfg, cand)
+                sub = SpatialCPAv8(reduced, self.gene_names,
+                                   self.cell_type_names, cfg=sub_cfg)
+                vs = sub.generate_virtual_slice(z=float(target.z_center))
+                if vs.coords.shape[0] < 5:
+                    scores[cand] = -np.inf
+                    continue
+                scores[cand] = sel.score_reconstruction(
+                    vs.coords, vs.expression, vs.cell_type_idx,
+                    real_xy, real_X, real_types)
+            except Exception:
+                scores[cand] = -np.inf
+
+        self._cv_scores = scores
+        best = max(scores, key=scores.get) if scores else "interpolate"
+        if not np.isfinite(scores.get(best, -np.inf)):
+            best = "interpolate"
+        self._cv_mode = best
+        return best
+
+    # ------------------------------------------------------------------ #
     # Source gathering for the symmetric bridge                          #
     # ------------------------------------------------------------------ #
     def _gather_sources(self, br, lower, upper, lo_e, up_e, lo_lab, up_lab, has_ct):
@@ -234,6 +279,18 @@ class SpatialCPAv8:
     # ------------------------------------------------------------------ #
     # Ablation placements                                                #
     # ------------------------------------------------------------------ #
+    def _place_coherent_mix(self, lower, upper, lo_e, up_e, lo_lab, up_lab, t, z,
+                            n_target, has_ct, cfg):
+        anchor_is_lower = abs(lower.z_center - z) <= abs(upper.z_center - z)
+        br = tp.coherent_mix(
+            lower.coords_xy.astype(np.float64), upper.coords_xy.astype(np.float64),
+            lo_e, up_e, t, n_target, cfg.transport, cfg.bridge,
+            seed=cfg.synthesis.seed, anchor_is_lower=anchor_is_lower)
+        self._last_dissimilarity = br.dissimilarity
+        expr, q_embed, init_types = self._gather_sources(
+            br, lower, upper, lo_e, up_e, lo_lab, up_lab, has_ct)
+        return br.coords_xy.astype(np.float64), expr, q_embed, init_types
+
     def _place_smooth_morph(self, lower, upper, lo_e, up_e, lo_lab, up_lab, t, z, has_ct, cfg):
         if abs(lower.z_center - z) <= abs(upper.z_center - z):
             anchor, other, ae, oe, w, a_lab = lower, upper, lo_e, up_e, t, lo_lab
@@ -283,6 +340,19 @@ class SpatialCPAv8:
         q_embed = np.concatenate([lo_e[lo_sel], up_e[up_sel]], axis=0)
         init_types = (np.concatenate([lo_lab[lo_sel], up_lab[up_sel]]) if has_ct else None)
         return coords_xy, expr, q_embed, init_types
+
+
+def _clone_cfg_with_mode(cfg, mode):
+    """Shallow-copy the config with a concrete placement mode for a CV probe.
+
+    The probe reuses the same transport/annotation settings but a fixed placement
+    and (to keep CV fast and side-effect-free) density calibration disabled.
+    """
+    import copy
+    sub = copy.deepcopy(cfg)
+    sub.bridge.mode = mode
+    sub.density.enabled = False
+    return sub
 
 
 def _transfer_same_type(query_embed, query_labels, src_expr, src_embed,
