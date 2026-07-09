@@ -23,6 +23,12 @@ Usage
     python -m src.benchmark.plot_disaggregated
     python -m src.benchmark.plot_disaggregated --metrics pearson field_pearson
     python -m src.benchmark.plot_disaggregated --kind box --input-dir <dir> --output-dir <dir>
+
+    # control method order (left-to-right) and display names on the plots
+    python -m src.benchmark.plot_disaggregated \
+        --method-order spatialcpav8_gen spatialz feast isost \
+        --method-names spatialcpav8_gen='SpatialCPA v8' spatialz=SpatialZ \
+                       feast=FEAST isost=isoST
 """
 
 from __future__ import annotations
@@ -132,7 +138,8 @@ def _method_color_map(tables):
 
 
 # ── One panel (one dataset): distribution across methods ──────────────────────
-def _draw_panel(ax, sub, column, methods, color_map, kind, ylim, zero_line):
+def _draw_panel(ax, sub, column, methods, color_map, kind, ylim, zero_line,
+                labels=None):
     """Draw the per-method distribution of ``column`` for one dataset."""
     positions, data, colors, present = [], [], [], []
     for i, m in enumerate(methods):
@@ -179,8 +186,9 @@ def _draw_panel(ax, sub, column, methods, color_map, kind, ylim, zero_line):
             ax.scatter(np.full(len(vals), i) + jitter, vals, s=3,
                        color=c, alpha=0.6, linewidths=0)
 
+    labels = labels or {}
     ax.set_xticks(range(len(methods)))
-    ax.set_xticklabels(methods, rotation=45, ha="right")
+    ax.set_xticklabels([labels.get(m, m) for m in methods], rotation=45, ha="right")
     ax.set_xlim(-0.6, len(methods) - 0.4)
     if ylim is not None:
         ax.set_ylim(*ylim)
@@ -188,7 +196,8 @@ def _draw_panel(ax, sub, column, methods, color_map, kind, ylim, zero_line):
 
 
 # ── One figure per metric: grid of dataset panels ─────────────────────────────
-def plot_metric(df, metric, methods, color_map, output_dir, kind="violin"):
+def plot_metric(df, metric, methods, color_map, output_dir, kind="violin",
+                method_labels=None):
     column = metric["column"]
     if column not in df.columns:
         return False
@@ -217,7 +226,8 @@ def plot_metric(df, metric, methods, color_map, output_dir, kind="violin"):
             continue
         ds = datasets[idx]
         _draw_panel(ax, df[df["dataset"] == ds], column, methods_present,
-                    color_map, kind, metric["ylim"], metric["zero_line"])
+                    color_map, kind, metric["ylim"], metric["zero_line"],
+                    labels=method_labels)
         ax.set_title(ds)
         if c == 0:
             ax.set_ylabel(metric["label"])
@@ -225,7 +235,9 @@ def plot_metric(df, metric, methods, color_map, output_dir, kind="violin"):
 
     # single shared method legend (colour key) as a horizontal strip at the
     # bottom — avoids colliding with (possibly long) per-panel dataset titles.
-    handles = [Patch(facecolor=color_map[m], edgecolor="none", alpha=0.7, label=m)
+    method_labels = method_labels or {}
+    handles = [Patch(facecolor=color_map[m], edgecolor="none", alpha=0.7,
+                     label=method_labels.get(m, m))
                for m in methods_present]
     if handles:
         fig.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.0),
@@ -243,7 +255,30 @@ def plot_metric(df, metric, methods, color_map, output_dir, kind="violin"):
     return True
 
 
-def generate_all(input_dir=None, output_dir=None, metrics=None, kind="violin"):
+def _order_methods(present, method_order):
+    """Left-to-right method order: listed ones first, then the rest (sorted).
+
+    ``present`` is the set of method ids in the data. Anything in
+    ``method_order`` that isn't present is dropped (with a note); anything
+    present but not listed is appended in sorted order so nothing silently
+    vanishes from the figures.
+    """
+    present = set(present)
+    if not method_order:
+        return sorted(present)
+    missing = [m for m in method_order if m not in present]
+    if missing:
+        print(f"  note: --method-order names not in data (ignored): {missing}")
+    ordered = [m for m in method_order if m in present]
+    rest = sorted(present - set(ordered))
+    if rest:
+        print(f"  note: methods present but not in --method-order "
+              f"(appended after): {rest}")
+    return ordered + rest
+
+
+def generate_all(input_dir=None, output_dir=None, metrics=None, kind="violin",
+                 method_order=None, method_labels=None):
     set_nature_style()
     input_dir = Path(input_dir) if input_dir else (SUMMARY_DIR / "disaggregated")
     output_dir = Path(output_dir) if output_dir else (FIGURES_DIR / "disaggregated")
@@ -254,8 +289,13 @@ def generate_all(input_dir=None, output_dir=None, metrics=None, kind="violin"):
               f"Run:  python -m src.benchmark.evaluate_disaggregated --all")
         return
 
-    color_map = _method_color_map(tables)
-    methods = list(color_map.keys())
+    color_map = _method_color_map(tables)          # colours keyed by method id
+    methods = _order_methods(color_map.keys(), method_order)
+
+    method_labels = method_labels or {}
+    unknown = [k for k in method_labels if k not in color_map]
+    if unknown:
+        print(f"  note: --method-names for methods not in data (ignored): {unknown}")
 
     wanted = set(metrics) if metrics else None
     made = 0
@@ -265,10 +305,26 @@ def generate_all(input_dir=None, output_dir=None, metrics=None, kind="violin"):
         df = tables.get(metric["table"])
         if df is None:
             continue
-        if plot_metric(df, metric, methods, color_map, output_dir, kind=kind):
+        if plot_metric(df, metric, methods, color_map, output_dir, kind=kind,
+                       method_labels=method_labels):
             print(f"  wrote {metric['table']}__{metric['column']}.png/.pdf")
             made += 1
     print(f"\n{made} metric figure(s) written to {output_dir}")
+
+
+def _parse_method_names(pairs):
+    """Parse ``key=Display Name`` pairs into a {method_id: label} dict."""
+    if not pairs:
+        return {}
+    mapping = {}
+    for p in pairs:
+        if "=" not in p:
+            raise SystemExit(
+                f"--method-names entry '{p}' must be of the form key=Label "
+                f"(e.g. spatialz='SpatialZ')")
+        key, label = p.split("=", 1)
+        mapping[key.strip()] = label.strip()
+    return mapping
 
 
 def main():
@@ -284,8 +340,18 @@ def main():
                     help="only plot these metric columns (e.g. pearson field_pearson)")
     ap.add_argument("--kind", choices=["violin", "box", "strip"], default="violin",
                     help="per-method distribution style (default: violin+box)")
+    ap.add_argument("--method-order", nargs="+", metavar="METHOD",
+                    help="left-to-right order of methods, e.g. "
+                         "--method-order spatialcpav8_gen spatialz feast isost "
+                         "(methods present but unlisted are appended after)")
+    ap.add_argument("--method-names", nargs="+", metavar="KEY=LABEL",
+                    help="display names for methods, e.g. --method-names "
+                         "spatialz=SpatialZ feast=FEAST spatialcpav8_gen='SpatialCPA v8' "
+                         "(ordering/colours still use the underlying method id)")
     args = ap.parse_args()
-    generate_all(args.input_dir, args.output_dir, args.metrics, args.kind)
+    generate_all(args.input_dir, args.output_dir, args.metrics, args.kind,
+                 method_order=args.method_order,
+                 method_labels=_parse_method_names(args.method_names))
 
 
 if __name__ == "__main__":
