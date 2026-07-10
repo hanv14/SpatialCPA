@@ -24,6 +24,7 @@ target sections so the evaluator joins correctly).
 
 | Wrapper | Method | Env | Status | Notes |
 |---------|--------|-----|--------|-------|
+| `run_spatialcpav9.py` | SpatialCPA-v9 (gen) | bench_spatialcpa | available | **Learned** neural cross-slice flow-matching bridge (rectified-flow / OT-CFM) conditioned on z + neighbouring slices; PyTorch, trains per holdout, falls back to the v8 OT morph. Runs end-to-end; on small per-holdout data it does not beat the training-free morph — see `spatialcpav9/README.md` (honest eval). |
 | `run_spatialcpav8.py` | SpatialCPA-v8 (gen) | bench_spatialcpa | available | Training-free coherent-OT bridge: adaptive smoothed-OT morph (near-identical slices) vs real-cell interpolation (distinct slices) + niche annotation. Smoothing the OT displacement field preserves local structure while morphing the global field, resolving the structure-vs-field trade-off. Verified end-to-end + ablated on both regimes. See `spatialcpav8/README.md`. |
 | `run_spatialcpav6.py` | SpatialCPA-v6 (gen) | bench_spatialcpa | available | Training-free OT: adaptive barycentric morph vs interpolation; FM-prior + niche-MRF annotation. Verified end-to-end. |
 | `run_spatialcpav4.py` | SpatialCPA-v4 (gen) | bench_spatialcpa | available | Transformer + occupancy head; grid over flanking training bbox; emergent count. Verified end-to-end. |
