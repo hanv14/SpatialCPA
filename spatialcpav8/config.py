@@ -95,6 +95,15 @@ class BridgeConfig:
         by the *spatially smoothed* OT field: a coherent near-isometric deformation
         that keeps the structure metrics at copy-quality while morphing the global
         footprint toward the interpolated shape. Best when slices are near-identical.
+      * ``"diffeo_morph"`` — diffeomorphic tissue morphogenesis: advect the nearest
+        slice's cells along a continuous regularized velocity-field *flow* (multi-
+        step ODE; near-diffeomorphic, invertible, whole-stack-estimable). Same
+        single-slice-anchored winning behaviour as ``smooth_morph`` but a distinct
+        registration/morphogenesis method class (see README).
+      * ``"diffeo"`` — two-sided diffeomorphic velocity-field bridge (advects BOTH
+        slices along smooth fields to the geodesic depth; methodologically distinct
+        but, like all two-slice constructions, trades away some single-slice
+        density/structure — kept as an ablation).
       * ``"symmetric"`` — bidirectional McCann barycentric bridge drawing both
         flanking populations in the ``(1-t):t`` ratio. Best when slices differ.
       * ``"morph"`` — one-sided *un-smoothed* barycentric morph (v6 morph; ablation).

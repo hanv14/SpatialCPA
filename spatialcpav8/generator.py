@@ -176,12 +176,13 @@ class SpatialCPAv8:
     # ------------------------------------------------------------------ #
     def _place_by_mode(self, mode, lower, upper, lo_e, up_e, lo_xy, up_xy,
                        lo_lab, up_lab, t, z, n_target, has_ct, rng, cfg):
-        if mode == "smooth_morph":
+        if mode in ("smooth_morph", "diffeo_morph"):
             return self._place_smooth_morph(lower, upper, lo_e, up_e, lo_lab, up_lab,
-                                            t, z, has_ct, cfg)
-        if mode == "symmetric":
-            br = tp.symmetric_bridge(lo_xy, up_xy, lo_e, up_e, t, n_target,
-                                     cfg.transport, cfg.bridge, seed=cfg.synthesis.seed)
+                                            t, z, has_ct, cfg, svf=(mode == "diffeo_morph"))
+        if mode in ("symmetric", "diffeo"):
+            bridge_fn = tp.svf_bridge if mode == "diffeo" else tp.symmetric_bridge
+            br = bridge_fn(lo_xy, up_xy, lo_e, up_e, t, n_target,
+                           cfg.transport, cfg.bridge, seed=cfg.synthesis.seed)
             self._last_dissimilarity = br.dissimilarity
             coords_xy = br.coords_xy.astype(np.float64)
             expr, q_embed, init_types = self._gather_sources(
@@ -291,14 +292,20 @@ class SpatialCPAv8:
             br, lower, upper, lo_e, up_e, lo_lab, up_lab, has_ct)
         return br.coords_xy.astype(np.float64), expr, q_embed, init_types
 
-    def _place_smooth_morph(self, lower, upper, lo_e, up_e, lo_lab, up_lab, t, z, has_ct, cfg):
+    def _place_smooth_morph(self, lower, upper, lo_e, up_e, lo_lab, up_lab, t, z,
+                            has_ct, cfg, svf=False):
         if abs(lower.z_center - z) <= abs(upper.z_center - z):
             anchor, other, ae, oe, w, a_lab = lower, upper, lo_e, up_e, t, lo_lab
         else:
             anchor, other, ae, oe, w, a_lab = upper, lower, up_e, lo_e, 1.0 - t, up_lab
-        coords_xy, a_idx, disp = tp.smooth_morph(
-            anchor.coords_xy.astype(np.float64), other.coords_xy.astype(np.float64),
-            ae, oe, w, cfg.transport, cfg.bridge, seed=cfg.synthesis.seed)
+        if svf:
+            coords_xy, a_idx, disp = tp.svf_morph(
+                anchor.coords_xy.astype(np.float64), other.coords_xy.astype(np.float64),
+                ae, oe, w, cfg.transport, cfg.bridge, seed=cfg.synthesis.seed)
+        else:
+            coords_xy, a_idx, disp = tp.smooth_morph(
+                anchor.coords_xy.astype(np.float64), other.coords_xy.astype(np.float64),
+                ae, oe, w, cfg.transport, cfg.bridge, seed=cfg.synthesis.seed)
         self._last_dissimilarity = disp
         expr = anchor.expression[a_idx].astype(np.float32)
         q_embed = ae[a_idx]

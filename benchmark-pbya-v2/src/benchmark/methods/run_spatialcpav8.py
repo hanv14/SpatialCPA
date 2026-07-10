@@ -217,7 +217,7 @@ def main():
     _v2_io.add_v2_args(parser)
     # Placement regime.
     parser.add_argument("--placement", default="smooth_morph",
-                        choices=["smooth_morph", "adaptive", "coherent_mix", "symmetric",
+                        choices=["smooth_morph", "diffeo_morph", "diffeo", "adaptive", "coherent_mix", "symmetric",
                                  "morph", "interpolate", "backbone"],
                         help="smooth_morph (default — coherent smoothed-OT deformation "
                              "of the single nearest clean slice: inherits a single "

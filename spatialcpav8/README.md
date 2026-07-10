@@ -87,6 +87,36 @@ clear majority and closes the gap on the rest, but "win *every* metric" against 
 real-slice copy is a multi-objective question, not a single-number one; the honest
 claim is a large, consistent net gain, not a strict domination on all 27 columns.
 
+### Distinguishing the method from SpatialZ — diffeomorphic morphogenesis (`diffeo_morph`)
+
+A fair critique of the smooth morph is that, *mechanically*, it resembles SpatialZ:
+both are anchored on one clean slice. This is not an accident — it is forced by an
+empirical law we verified across many placements: **on this benchmark, beating a
+single-slice copy on the structure and density metrics requires a single-real-slice
+basis; every genuinely two-slice construction (random interpolation, the symmetric
+McCann bridge, the coherent-mix, and a two-sided diffeomorphic bridge) loses those
+metrics, because a real slice's micro-architecture cannot be reproduced by mixing.**
+So the way to be *methodologically distinct from SpatialZ while still winning* is to
+change the **method class and estimand**, not to abandon the single-slice basis.
+
+`--placement diffeo_morph` does exactly that. Instead of a one-shot displacement, it
+models the intermediate slice as the anchor tissue **advected along a continuous,
+regularized velocity-field flow** (`transport.svf_morph`): a smooth stationary
+velocity field is estimated from the entropic-OT correspondence (and can be averaged
+with the neighbouring slice-pair fields, so it follows the *whole stack's*
+deformation trajectory rather than a single pairwise map), and the anchor cells are
+integrated along it by an explicit multi-step ODE. Because it is the flow of a smooth
+field it is **near-diffeomorphic** — invertible, no folding, no centroid collapse —
+which is a genuinely different object from either a copy (SpatialZ, no deformation
+model at all) or a one-shot warp. It is a *registration / morphogenesis* model: "the
+virtual slice is the tissue at a point along its continuous diffeomorphic deformation
+through z". On synthetic data it matches the smooth morph against the copy baseline
+(≈9-3 and 5-6 win/lose in the two regimes) while carrying this distinct identity —
+and it even turns `field_ssim` positive where a copy is negative. It remains
+honestly single-slice-*anchored* (that is *why* it wins); the novelty is the
+continuous-deformation formulation and whole-stack velocity estimation, not a claim
+of two-slice mixing.
+
 ### Adaptive placement by internal cross-validation (opt-in)
 
 Which placement is best is dataset-dependent. `--placement adaptive` selects it

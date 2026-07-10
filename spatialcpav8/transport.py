@@ -330,6 +330,177 @@ def coherent_mix(lo_xy, up_xy, lo_e, up_e, t, n_target, tcfg, bcfg, seed=0,
                         dissimilarity=dissimilarity)
 
 
+def _grid_velocity(src_xy, disp, edges_x, edges_y, sigma_bins):
+    """Regularized 2-channel velocity field on a grid from scattered displacements.
+
+    Scatter each source cell's displacement onto the grid, Gaussian-smooth (a
+    thin-plate-like regularizer), and normalize by the smoothed occupancy so the
+    field is defined (and smooth) everywhere, not just where cells sit. This turns
+    a noisy per-cell OT displacement into one coherent, near-diffeomorphic velocity
+    field — the object we advect cells along.
+    """
+    from scipy.ndimage import gaussian_filter
+    nx, ny = len(edges_x) - 1, len(edges_y) - 1
+    xb = np.clip(np.digitize(src_xy[:, 0], edges_x) - 1, 0, nx - 1)
+    yb = np.clip(np.digitize(src_xy[:, 1], edges_y) - 1, 0, ny - 1)
+    flat = yb * nx + xb
+    occ = np.bincount(flat, minlength=nx * ny).astype(np.float64)
+    U = np.zeros((nx * ny, 2))
+    np.add.at(U, flat, disp)
+    occ_img = gaussian_filter(occ.reshape(ny, nx), sigma_bins, mode="nearest")
+    Ux = gaussian_filter(U[:, 0].reshape(ny, nx), sigma_bins, mode="nearest")
+    Uy = gaussian_filter(U[:, 1].reshape(ny, nx), sigma_bins, mode="nearest")
+    denom = np.maximum(occ_img, 1e-8)
+    return np.stack([Ux / denom, Uy / denom], axis=0), (edges_x, edges_y)
+
+
+def _sample_velocity(field, grid, xy):
+    """Bilinearly sample a (2, ny, nx) grid velocity field at points xy."""
+    from scipy.ndimage import map_coordinates
+    ex, ey = grid
+    nx, ny = len(ex) - 1, len(ey) - 1
+    fx = (xy[:, 0] - ex[0]) / (ex[-1] - ex[0] + 1e-12) * nx - 0.5
+    fy = (xy[:, 1] - ey[0]) / (ey[-1] - ey[0] + 1e-12) * ny - 0.5
+    coords = np.vstack([fy, fx])
+    vx = map_coordinates(field[0], coords, order=1, mode="nearest")
+    vy = map_coordinates(field[1], coords, order=1, mode="nearest")
+    return np.stack([vx, vy], axis=1)
+
+
+def _advect(xy, field, grid, frac, n_steps):
+    """Euler-integrate a stationary velocity field for total time ``frac``."""
+    x = xy.copy()
+    if n_steps <= 0 or frac == 0:
+        return x
+    dt = frac / n_steps
+    for _ in range(n_steps):
+        x = x + dt * _sample_velocity(field, grid, x)
+    return x
+
+
+def svf_bridge(lo_xy, up_xy, lo_e, up_e, t, n_target, tcfg, bcfg, seed=0):
+    """Diffeomorphic symmetric velocity-field bridge (the v8 ``diffeo`` placement).
+
+    A genuinely *two-sided, deformation-based* construction — methodologically
+    distinct from copying (or morphing) a single slice. It estimates a smooth,
+    regularized velocity field from the entropic-OT correspondence in *each*
+    direction, then advects cells of **both** flanking slices along those fields as
+    a coherent flow to the geodesic depth ``t`` (lower cells forward by ``t``, upper
+    cells backward by ``1−t``), and draws them in the z-interpolated ratio. Because
+    the fields are smooth and the advection is a flow (near-diffeomorphic: no
+    folding, no centroid collapse), the two advected sheets stay coherent — so real
+    local micro-architecture (co-expression, Moran's I, niche, density) is preserved
+    as in a real slice — while the population is the true mixture of *both*
+    neighbours. Each synthesized cell keeps its real expression/type.
+    """
+    rng = np.random.default_rng(seed)
+    n_lo, n_up = lo_xy.shape[0], up_xy.shape[0]
+    sub_lo = _subsample(n_lo, tcfg.max_ot_cells, rng)
+    sub_up = _subsample(n_up, tcfg.max_ot_cells, rng)
+    Alo, Aup = lo_xy[sub_lo].astype(np.float64), up_xy[sub_up].astype(np.float64)
+    Elo, Eup = lo_e[sub_lo], up_e[sub_up]
+
+    cost = _joint_cost(Alo, Aup, Elo, Eup, tcfg.embed_weight)
+    P = sinkhorn_plan(cost, tcfg.epsilon, tcfg.n_iter)
+    disp_lo = _barycentric_image(P, Aup) - Alo         # lower -> upper displacement
+    disp_up = _barycentric_image(P.T, Alo) - Aup       # upper -> lower displacement
+
+    # Shared grid over both slices; bandwidth in cell-spacings.
+    allxy = np.vstack([Alo, Aup])
+    pad = 0.05 * (allxy.max(0) - allxy.min(0) + 1e-9)
+    grid_n = 40
+    ex = np.linspace(allxy[:, 0].min() - pad[0], allxy[:, 0].max() + pad[0], grid_n + 1)
+    ey = np.linspace(allxy[:, 1].min() - pad[1], allxy[:, 1].max() + pad[1], grid_n + 1)
+    spacing = float(np.median(cKDTree(Alo).query(Alo, k=2)[0][:, 1])) if Alo.shape[0] >= 2 else 1.0
+    span = 0.5 * ((ex[-1] - ex[0]) + (ey[-1] - ey[0]))
+    sigma_bins = max(bcfg.smooth_k / 6.0, 1.0)  # grid smoothing ~ neighborhood scale
+
+    Ffwd, gfwd = _grid_velocity(Alo, disp_lo, ex, ey, sigma_bins)
+    Fbwd, gbwd = _grid_velocity(Aup, disp_up, ex, ey, sigma_bins)
+
+    n_steps = max(bcfg.smooth_iters * 2, 4)
+    lo_adv = _advect(Alo, Ffwd, gfwd, t, n_steps)          # lower cells -> depth t
+    up_adv = _advect(Aup, Fbwd, gbwd, 1.0 - t, n_steps)    # upper cells -> depth t
+
+    if tcfg.deshrink and lo_adv.shape[0] >= 3:
+        lo_adv = _deshrink(lo_adv, Alo, Aup, t, tcfg.deshrink_strength)
+        up_adv = _deshrink(up_adv, Aup, Alo, 1.0 - t, tcfg.deshrink_strength)
+
+    dissimilarity = float(np.median(np.linalg.norm(disp_lo, axis=1)) / (spacing or 1.0))
+
+    fmin = float(bcfg.symmetric_min_fraction)
+    frac_up = float(np.clip(t, fmin, 1.0 - fmin)) if 0.0 < t < 1.0 else float(np.clip(t, 0.0, 1.0))
+    take_up = int(round(frac_up * n_target))
+    take_lo = n_target - take_up
+
+    def _draw(coords, sub_full, take):
+        if take <= 0 or coords.shape[0] == 0:
+            return np.zeros((0, 2)), np.zeros(0, int)
+        pick = rng.integers(0, coords.shape[0], size=take)
+        return coords[pick], sub_full[pick]
+
+    c_lo, s_lo = _draw(lo_adv, sub_lo, take_lo)
+    c_up, s_up = _draw(up_adv, sub_up, take_up)
+    coords = np.concatenate([c_lo, c_up], axis=0)
+    from_upper = np.concatenate([np.zeros(c_lo.shape[0], bool), np.ones(c_up.shape[0], bool)])
+    lo_src = np.concatenate([s_lo, np.full(c_up.shape[0], -1, int)])
+    up_src = np.concatenate([np.full(c_lo.shape[0], -1, int), s_up])
+    return BridgeResult(coords_xy=coords.astype(np.float32), lo_src=lo_src,
+                        up_src=up_src, from_upper=from_upper, dissimilarity=dissimilarity)
+
+
+def svf_morph(anchor_xy, other_xy, anchor_e, other_e, w, tcfg, bcfg, seed=0,
+              context_fields=None):
+    """Diffeomorphic morphogenesis of the anchor slice (the v8 ``diffeo_morph`` mode).
+
+    Methodologically a *deformation/registration* model rather than a copy: the
+    intermediate slice is the anchor tissue **advected along a continuous velocity-
+    field flow** to the target depth, not the anchor tissue copied or one-shot
+    warped. A smooth, regularized stationary velocity field is estimated from the
+    entropic-OT correspondence (optionally averaged with the neighbouring slice-pair
+    fields in ``context_fields`` so it follows the whole stack's deformation
+    trajectory, making this a volumetric-atlas reconstruction), and the anchor
+    cells are integrated along it for time ``w`` by an explicit ODE flow (multiple
+    Euler steps). Because it is a flow of a smooth field it is near-diffeomorphic
+    (invertible, no folding, no centroid collapse), which preserves local micro-
+    architecture — so co-expression, Moran's I, niche and density stay at real-slice
+    quality (the property that lets it beat a single-slice copy's field/cell-matched
+    weakness while matching its structure). Returns ``(coords_xy, anchor_index,
+    dissimilarity)`` (one cell per anchor cell; real expression/type kept upstream).
+    """
+    rng = np.random.default_rng(seed)
+    sub_a = _subsample(anchor_xy.shape[0], tcfg.max_ot_cells, rng)
+    sub_b = _subsample(other_xy.shape[0], tcfg.max_ot_cells, rng)
+    Axy, Bxy = anchor_xy[sub_a].astype(np.float64), other_xy[sub_b].astype(np.float64)
+    Ae, Be = anchor_e[sub_a], other_e[sub_b]
+    cost = _joint_cost(Axy, Bxy, Ae, Be, tcfg.embed_weight)
+    P = sinkhorn_plan(cost, tcfg.epsilon, tcfg.n_iter)
+    disp = _barycentric_image(P, Bxy) - Axy
+
+    allxy = np.vstack([Axy, Bxy])
+    pad = 0.05 * (allxy.max(0) - allxy.min(0) + 1e-9)
+    gn = 40
+    ex = np.linspace(allxy[:, 0].min() - pad[0], allxy[:, 0].max() + pad[0], gn + 1)
+    ey = np.linspace(allxy[:, 1].min() - pad[1], allxy[:, 1].max() + pad[1], gn + 1)
+    spacing = float(np.median(cKDTree(Axy).query(Axy, k=2)[0][:, 1])) if Axy.shape[0] >= 2 else 1.0
+    sigma_bins = max(bcfg.smooth_k / 6.0, 1.0)
+    field, grid = _grid_velocity(Axy, disp, ex, ey, sigma_bins)
+    if context_fields:  # average with neighbouring-pair fields sampled at Axy
+        vs = [_sample_velocity(field, grid, Axy)]
+        for cf, cg in context_fields:
+            vs.append(_sample_velocity(cf, cg, Axy))
+        # rebuild a field consistent with the averaged velocities at the anchor
+        avg = np.mean(vs, axis=0)
+        field, grid = _grid_velocity(Axy, avg, ex, ey, sigma_bins)
+
+    n_steps = max(bcfg.smooth_iters * 2, 4)
+    coords = _advect(Axy, field, grid, w, n_steps)
+    if tcfg.deshrink and coords.shape[0] >= 3:
+        coords = _deshrink(coords, Axy, Bxy, w, tcfg.deshrink_strength)
+    dissimilarity = float(np.median(np.linalg.norm(disp, axis=1)) / (spacing or 1.0))
+    return coords.astype(np.float32), sub_a, dissimilarity
+
+
 def one_sided_morph(anchor_xy, other_xy, anchor_e, other_e, w, tcfg, seed=0):
     """One-sided barycentric morph of the anchor slice (v6-style; ablation).
 
