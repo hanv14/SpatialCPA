@@ -24,6 +24,9 @@ Usage
     python -m src.benchmark.plot_disaggregated --metrics pearson field_pearson
     python -m src.benchmark.plot_disaggregated --kind box --input-dir <dir> --output-dir <dir>
 
+    # only plot chosen datasets, in the given panel order
+    python -m src.benchmark.plot_disaggregated --datasets cosmx_nsclc_3d imc_breast_cancer
+
     # control method order (left-to-right) and display names on the plots
     python -m src.benchmark.plot_disaggregated \
         --method-order spatialcpav8_gen spatialz feast isost \
@@ -197,7 +200,7 @@ def _draw_panel(ax, sub, column, methods, color_map, kind, ylim, zero_line,
 
 # ── One figure per metric: grid of dataset panels ─────────────────────────────
 def plot_metric(df, metric, methods, color_map, output_dir, kind="violin",
-                method_labels=None):
+                method_labels=None, dataset_order=None):
     column = metric["column"]
     if column not in df.columns:
         return False
@@ -205,7 +208,12 @@ def plot_metric(df, metric, methods, color_map, output_dir, kind="violin",
     if df.empty:
         return False
 
-    datasets = sorted(df["dataset"].dropna().unique())
+    present = set(df["dataset"].dropna().unique())
+    if dataset_order:
+        # keep the user's chosen datasets, in the given order
+        datasets = [d for d in dataset_order if d in present]
+    else:
+        datasets = sorted(present)
     n = len(datasets)
     if n == 0:
         return False
@@ -278,7 +286,7 @@ def _order_methods(present, method_order):
 
 
 def generate_all(input_dir=None, output_dir=None, metrics=None, kind="violin",
-                 method_order=None, method_labels=None):
+                 method_order=None, method_labels=None, datasets=None):
     set_nature_style()
     input_dir = Path(input_dir) if input_dir else (SUMMARY_DIR / "disaggregated")
     output_dir = Path(output_dir) if output_dir else (FIGURES_DIR / "disaggregated")
@@ -297,6 +305,15 @@ def generate_all(input_dir=None, output_dir=None, metrics=None, kind="violin",
     if unknown:
         print(f"  note: --method-names for methods not in data (ignored): {unknown}")
 
+    if datasets:
+        present = set(d for df in tables.values() for d in df["dataset"].dropna().unique())
+        missing = [d for d in datasets if d not in present]
+        if missing:
+            print(f"  note: --datasets not found in data (ignored): {missing}")
+        if not any(d in present for d in datasets):
+            print("  no requested datasets present; nothing to plot.")
+            return
+
     wanted = set(metrics) if metrics else None
     made = 0
     for metric in METRICS:
@@ -306,7 +323,7 @@ def generate_all(input_dir=None, output_dir=None, metrics=None, kind="violin",
         if df is None:
             continue
         if plot_metric(df, metric, methods, color_map, output_dir, kind=kind,
-                       method_labels=method_labels):
+                       method_labels=method_labels, dataset_order=datasets):
             print(f"  wrote {metric['table']}__{metric['column']}.png/.pdf")
             made += 1
     print(f"\n{made} metric figure(s) written to {output_dir}")
@@ -338,6 +355,10 @@ def main():
                     help="dir for figures (default: results/summary/figures/disaggregated)")
     ap.add_argument("--metrics", nargs="+",
                     help="only plot these metric columns (e.g. pearson field_pearson)")
+    ap.add_argument("--datasets", nargs="+", metavar="DATASET",
+                    help="only plot these datasets, in this order "
+                         "(e.g. cosmx_nsclc_3d imc_breast_cancer); "
+                         "default plots every dataset present, sorted")
     ap.add_argument("--kind", choices=["violin", "box", "strip"], default="violin",
                     help="per-method distribution style (default: violin+box)")
     ap.add_argument("--method-order", nargs="+", metavar="METHOD",
@@ -351,7 +372,8 @@ def main():
     args = ap.parse_args()
     generate_all(args.input_dir, args.output_dir, args.metrics, args.kind,
                  method_order=args.method_order,
-                 method_labels=_parse_method_names(args.method_names))
+                 method_labels=_parse_method_names(args.method_names),
+                 datasets=args.datasets)
 
 
 if __name__ == "__main__":
