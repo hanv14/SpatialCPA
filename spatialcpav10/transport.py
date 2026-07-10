@@ -1,0 +1,529 @@
+"""
+Symmetric optimal-transport bridge between two flanking slices (SpatialCPA-v10).
+
+Biological premise (shared with v6): between two adjacent physical sections the
+tissue changes *continuously*, so the principled model of the in-between slice is
+the displacement interpolation (McCann geodesic) of the two flanking cell
+distributions under optimal transport.
+
+What is new in v8 is *how the geodesic midpoint is discretized into cells*. v6
+had to pick, per holdout, between two imperfect discretizations:
+
+* **one-sided morph** — displace every cell of the *nearest* slice along the OT
+  map. Coherent (a single sheet, so spatial autocorrelation and local
+  neighborhoods survive), but the synthesized population is drawn from **one**
+  flanking slice only, so mixture-sensitive metrics (composition, co-expression,
+  distribution) reflect that single slice rather than the true intermediate mix.
+* **random interpolation** — sample matched pairs and jitter between them. Right
+  mixture, but incoherent: a cell's neighbors come from unrelated parts of the two
+  slices, which attenuates spatial structure.
+
+v8's :func:`symmetric_bridge` removes the trade-off. It builds the barycentric
+image of **both** slices under the *same* entropic-OT plan and draws cells from
+the two coherent projected sheets in the z-interpolated ratio ``(1-t) : t``:
+
+    lower cell i  ->  x_i + t · (barycentric_image_of_i_in_upper − x_i)
+    upper cell j  ->  x_j + (1−t) · (barycentric_image_of_j_in_lower − x_j)
+
+Each projected sheet is coherent (a smooth barycentric displacement of a real
+slice, one cell per source cell — no density doubling), and their union in the
+right ratio is the correct mixture. This is exactly the two "halves" of the
+McCann interpolant that a one-sided morph throws away, recombined.
+
+Everything uses the two *training* flanking slices and the scalar target z only —
+no held-out information — so it is leakage-safe.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+from scipy.spatial import cKDTree
+from scipy.spatial.distance import cdist
+
+
+@dataclass
+class BridgeResult:
+    """A synthesized in-between sheet: coherent positions from both slices."""
+
+    coords_xy: np.ndarray     # (M, 2) interpolated positions
+    lo_src: np.ndarray        # (M,) index into the lower slice (−1 if from upper)
+    up_src: np.ndarray        # (M,) index into the upper slice (−1 if from lower)
+    from_upper: np.ndarray    # (M,) bool: True if the cell's source is the upper slice
+    dissimilarity: float      # OT-map displacement in cell-spacings (diagnostic)
+
+
+def interpolation_fraction(z: float, z_lo: float, z_hi: float) -> float:
+    """``t = (z - z_lo) / (z_hi - z_lo)`` clamped to [0, 1] (0.5 if degenerate)."""
+    if z_hi == z_lo:
+        return 0.5
+    return float(np.clip((float(z) - z_lo) / (z_hi - z_lo), 0.0, 1.0))
+
+
+def interpolated_count(n_lo: int, n_hi: int, t: float, mode: str = "interpolate") -> int:
+    """Emergent cell count of the virtual slice (never uses the held-out count)."""
+    if mode == "lower":
+        n = n_lo
+    elif mode == "upper":
+        n = n_hi
+    elif mode == "mean":
+        n = 0.5 * (n_lo + n_hi)
+    else:  # interpolate
+        n = (1.0 - t) * n_lo + t * n_hi
+    return max(int(round(n)), 1)
+
+
+def _subsample(n: int, cap: int, rng: np.random.Generator) -> np.ndarray:
+    if n <= cap:
+        return np.arange(n)
+    return np.sort(rng.choice(n, cap, replace=False))
+
+
+def sinkhorn_plan(cost: np.ndarray, epsilon: float, n_iter: int) -> np.ndarray:
+    """Entropic-OT plan for a cost matrix with uniform marginals (sum-1 coupling).
+
+    The cost is median-scaled so ``epsilon`` is dimensionless and behaves
+    consistently across datasets.
+    """
+    n, m = cost.shape
+    a = np.full(n, 1.0 / n)
+    b = np.full(m, 1.0 / m)
+    scale = np.median(cost) + 1e-9
+    K = np.exp(-cost / (scale * epsilon)) + 1e-300
+    u = np.ones(n)
+    v = np.ones(m)
+    for _ in range(n_iter):
+        u = a / (K @ v)
+        v = b / (K.T @ u)
+    P = u[:, None] * K * v[None, :]
+    s = P.sum()
+    return P / (s if s > 0 else 1.0)
+
+
+def _joint_cost(Axy, Bxy, Ae, Be, embed_weight):
+    """Median-normalized spatial + embedding squared-distance cost."""
+    Csp = cdist(Axy, Bxy, metric="sqeuclidean")
+    Csp = Csp / (np.median(Csp) + 1e-9)
+    if embed_weight > 0 and Ae.shape[1] > 0 and Be.shape[1] > 0:
+        Cem = cdist(Ae, Be, metric="sqeuclidean")
+        Cem = Cem / (np.median(Cem) + 1e-9)
+        return (1.0 - embed_weight) * Csp + embed_weight * Cem
+    return Csp
+
+
+def _deshrink(coords_xy, lo_xy, up_xy, t, strength):
+    """Rescale the interpolated cloud to the z-interpolated flanking footprint.
+
+    Barycentric projection of a diffuse OT plan can contract the cloud toward its
+    centroid (shrinking the footprint, inflating local density). We correct that
+    by matching the cloud's per-axis mean and standard deviation to the
+    z-interpolated statistics of the two flanking slices — the leakage-safe
+    estimate of the true intermediate extent.
+    """
+    target_mean = (1.0 - t) * lo_xy.mean(axis=0) + t * up_xy.mean(axis=0)
+    target_std = (1.0 - t) * lo_xy.std(axis=0) + t * up_xy.std(axis=0)
+    cur_mean = coords_xy.mean(axis=0)
+    cur_std = coords_xy.std(axis=0)
+    cur_std = np.where(cur_std > 1e-8, cur_std, 1.0)
+    scaled = (coords_xy - cur_mean) / cur_std * target_std + target_mean
+    return (1.0 - strength) * coords_xy + strength * scaled
+
+
+def _barycentric_image(P_rows, target_xy):
+    """Barycentric image ``x̂_i = Σ_j P(j|i)·target_xy[j]`` for each source row."""
+    row = P_rows / (P_rows.sum(axis=1, keepdims=True) + 1e-300)
+    return row @ target_xy
+
+
+def symmetric_bridge(lo_xy, up_xy, lo_e, up_e, t, n_target, tcfg, bcfg, seed=0):
+    """Bidirectional McCann barycentric bridge (the v8 default placement).
+
+    Projects both flanking slices through the *same* entropic-OT plan and draws
+    ``n_target`` cells from the two coherent projected sheets in the ratio
+    ``(1-t) : t``. Returns a :class:`BridgeResult` whose ``lo_src`` / ``up_src``
+    index the *full* flanking slices so expression and labels stay real.
+    """
+    rng = np.random.default_rng(seed)
+    n_lo, n_up = lo_xy.shape[0], up_xy.shape[0]
+    sub_lo = _subsample(n_lo, tcfg.max_ot_cells, rng)
+    sub_up = _subsample(n_up, tcfg.max_ot_cells, rng)
+    Alo, Aup = lo_xy[sub_lo].astype(np.float64), up_xy[sub_up].astype(np.float64)
+    Elo, Eup = lo_e[sub_lo], up_e[sub_up]
+
+    cost = _joint_cost(Alo, Aup, Elo, Eup, tcfg.embed_weight)
+    P = sinkhorn_plan(cost, tcfg.epsilon, tcfg.n_iter)              # (nlo, nup)
+
+    # Barycentric images under the shared plan (both directions).
+    img_lo = _barycentric_image(P, Aup)              # lower cell -> its upper location
+    img_up = _barycentric_image(P.T, Alo)            # upper cell -> its lower location
+
+    # McCann displacement toward the target z from each side.
+    coords_lo = (1.0 - t) * Alo + t * img_lo         # lower cells moved by fraction t
+    coords_up = (1.0 - t) * img_up + t * Aup         # upper cells moved by fraction 1−t
+
+    # Diagnostic: OT-map displacement between the flanking slices, in cell-spacings.
+    if Alo.shape[0] >= 2:
+        spacing = float(np.median(cKDTree(Alo).query(Alo, k=2)[0][:, 1])) or 1.0
+    else:
+        spacing = 1.0
+    dissimilarity = float(np.median(np.linalg.norm(img_lo - Alo, axis=1)) / spacing)
+
+    # Draw from the two coherent sheets in the z-interpolated ratio, guarding the
+    # minority side so a near-integer t still carries a few far-slice cells.
+    fmin = float(bcfg.symmetric_min_fraction)
+    frac_up = float(np.clip(t, fmin, 1.0 - fmin)) if 0.0 < t < 1.0 else float(np.clip(t, 0.0, 1.0))
+    take_up = int(round(frac_up * n_target))
+    take_lo = n_target - take_up
+
+    def _draw(coords, sub_full, take):
+        if take <= 0 or coords.shape[0] == 0:
+            return np.zeros((0, 2)), np.zeros(0, int)
+        pick = rng.integers(0, coords.shape[0], size=take)
+        return coords[pick], sub_full[pick]
+
+    c_lo, src_lo = _draw(coords_lo, sub_lo, take_lo)
+    c_up, src_up = _draw(coords_up, sub_up, take_up)
+
+    coords = np.concatenate([c_lo, c_up], axis=0)
+    from_upper = np.concatenate([
+        np.zeros(c_lo.shape[0], bool), np.ones(c_up.shape[0], bool)])
+    lo_src = np.concatenate([src_lo, np.full(c_up.shape[0], -1, int)])
+    up_src = np.concatenate([np.full(c_lo.shape[0], -1, int), src_up])
+
+    if tcfg.deshrink and coords.shape[0] >= 3:
+        coords = _deshrink(coords, Alo, Aup, t, tcfg.deshrink_strength)
+
+    return BridgeResult(coords_xy=coords.astype(np.float32), lo_src=lo_src,
+                        up_src=up_src, from_upper=from_upper,
+                        dissimilarity=dissimilarity)
+
+
+def _smooth_field(xy, vec, k, n_iter):
+    """Spatially smooth a per-cell vector field over the kNN graph.
+
+    Averaging each cell's vector with its spatial neighbors a few times turns a
+    noisy per-cell field into a coherent one: neighboring cells share almost the
+    same value, so applying it as a displacement moves local patches *together*
+    (a near-isometric tissue deformation) instead of scattering cells
+    independently. That is what preserves local neighborhoods — and hence Moran's
+    I, co-expression and niche structure — while still morphing the global shape.
+    """
+    n = xy.shape[0]
+    if n < k + 1 or n_iter <= 0:
+        return vec
+    _, nn = cKDTree(xy).query(xy, k=min(k + 1, n))
+    out = vec
+    for _ in range(n_iter):
+        out = out[nn].mean(axis=1)          # include self (nn[:,0]) for stability
+    return out
+
+
+def smooth_morph(anchor_xy, other_xy, anchor_e, other_e, w, tcfg, bcfg, seed=0):
+    """Smoothed-OT morph of the anchor slice (the v8 default placement).
+
+    Like a one-sided barycentric morph — copy the *anchor* slice's real cells (so
+    their expression, labels and local structure stay exactly real) and displace
+    them along the entropic-OT map toward the other slice — but the barycentric
+    displacement field is **spatially smoothed** first (:func:`_smooth_field`) so
+    the morph is a coherent, near-isometric tissue deformation rather than a
+    per-cell scatter. This keeps the position-coupled structure metrics
+    (``morans`` / ``coexpression`` / ``nhood``) at copy-quality while the smooth
+    warp still moves the global footprint toward the interpolated in-between shape
+    (helping the ``field`` / ``density`` metrics). One cell per anchor cell → no
+    density doubling.
+
+    Returns ``(coords_xy, anchor_index, dissimilarity)``.
+    """
+    rng = np.random.default_rng(seed)
+    sub_a = _subsample(anchor_xy.shape[0], tcfg.max_ot_cells, rng)
+    sub_b = _subsample(other_xy.shape[0], tcfg.max_ot_cells, rng)
+    Axy, Bxy = anchor_xy[sub_a].astype(np.float64), other_xy[sub_b].astype(np.float64)
+    Ae, Be = anchor_e[sub_a], other_e[sub_b]
+    cost = _joint_cost(Axy, Bxy, Ae, Be, tcfg.embed_weight)
+    P = sinkhorn_plan(cost, tcfg.epsilon, tcfg.n_iter)
+    image = _barycentric_image(P, Bxy)                    # OT target location
+    disp = image - Axy                                    # raw per-cell displacement
+    if Axy.shape[0] >= 2:
+        spacing = float(np.median(cKDTree(Axy).query(Axy, k=2)[0][:, 1])) or 1.0
+    else:
+        spacing = 1.0
+    dissimilarity = float(np.median(np.linalg.norm(disp, axis=1)) / spacing)
+    # Spatially smooth the displacement into a coherent deformation, then morph.
+    disp_s = _smooth_field(Axy, disp, bcfg.smooth_k, bcfg.smooth_iters)
+    coords = (Axy + w * disp_s).astype(np.float32)
+    if tcfg.deshrink and coords.shape[0] >= 3:
+        coords = _deshrink(coords, Axy, Bxy, w, tcfg.deshrink_strength)
+    return coords, sub_a, dissimilarity
+
+
+def coherent_mix(lo_xy, up_xy, lo_e, up_e, t, n_target, tcfg, bcfg, seed=0,
+                 anchor_is_lower=True):
+    """Both-slice expression on a single coherent density manifold.
+
+    The failure mode of plain real-cell interpolation is *density*: it
+    concatenates cells from two spatially-offset slices, so the combined point
+    cloud is a superposition of two densities that no rigid alignment can reconcile
+    with the ground-truth density field. ``coherent_mix`` keeps interpolation's key
+    strength — the synthesized population is drawn from *both* flanking slices, so
+    the expression field and co-expression structure reflect the true intermediate
+    mixture — while removing that failure mode: the *minority* (non-anchor) slice's
+    cells are mapped through the entropic-OT barycentric correspondence into the
+    **anchor** slice's coordinate frame, so every synthesized cell lies on one
+    coherent manifold with the anchor slice's (single-slice, realistic) density.
+
+    Result: single-slice density and spatial coherence (as in a clean copy /
+    SpatialZ) together with a both-slice expression population (as in
+    interpolation). Returns a :class:`BridgeResult`.
+    """
+    rng = np.random.default_rng(seed)
+    n_lo, n_up = lo_xy.shape[0], up_xy.shape[0]
+    if anchor_is_lower:
+        a_xy, o_xy, a_e, o_e = lo_xy, up_xy, lo_e, up_e
+        n_a, n_o, frac_o = n_lo, n_up, t
+    else:
+        a_xy, o_xy, a_e, o_e = up_xy, lo_xy, up_e, lo_e
+        n_a, n_o, frac_o = n_up, n_lo, 1.0 - t
+
+    sub_a = _subsample(n_a, tcfg.max_ot_cells, rng)
+    sub_o = _subsample(n_o, tcfg.max_ot_cells, rng)
+    Aa, Ao = a_xy[sub_a].astype(np.float64), o_xy[sub_o].astype(np.float64)
+    Ea, Eo = a_e[sub_a], o_e[sub_o]
+
+    cost = _joint_cost(Ao, Aa, Eo, Ea, tcfg.embed_weight)   # other x anchor
+    P = sinkhorn_plan(cost, tcfg.epsilon, tcfg.n_iter)
+    img_o = _barycentric_image(P, Aa)                       # other cell -> anchor frame
+
+    if Aa.shape[0] >= 2 and Ao.shape[0] >= 1:
+        spacing = float(np.median(cKDTree(Aa).query(Aa, k=2)[0][:, 1])) or 1.0
+        # how far each other-cell is moved into the anchor frame, in cell-spacings
+        dissimilarity = float(np.median(np.linalg.norm(img_o - Ao, axis=1)) / spacing)
+    else:
+        dissimilarity = 0.0
+
+    fmin = float(bcfg.symmetric_min_fraction)
+    frac_o = float(np.clip(frac_o, fmin, 1.0 - fmin)) if 0.0 < frac_o < 1.0 else float(np.clip(frac_o, 0.0, 1.0))
+    take_o = int(round(frac_o * n_target))
+    take_a = n_target - take_o
+
+    def _draw(coords, sub_full, take):
+        if take <= 0 or coords.shape[0] == 0:
+            return np.zeros((0, 2)), np.zeros(0, int)
+        pick = rng.integers(0, coords.shape[0], size=take)
+        return coords[pick], sub_full[pick]
+
+    c_a, s_a = _draw(Aa, sub_a, take_a)          # anchor cells at their real coords
+    c_o, s_o = _draw(img_o, sub_o, take_o)       # other cells mapped into anchor frame
+    coords = np.concatenate([c_a, c_o], axis=0)
+    from_upper = (np.concatenate([np.zeros(c_a.shape[0], bool), np.ones(c_o.shape[0], bool)])
+                  if anchor_is_lower else
+                  np.concatenate([np.ones(c_a.shape[0], bool), np.zeros(c_o.shape[0], bool)]))
+    if anchor_is_lower:
+        lo_src = np.concatenate([s_a, np.full(c_o.shape[0], -1, int)])
+        up_src = np.concatenate([np.full(c_a.shape[0], -1, int), s_o])
+    else:
+        up_src = np.concatenate([s_a, np.full(c_o.shape[0], -1, int)])
+        lo_src = np.concatenate([np.full(c_a.shape[0], -1, int), s_o])
+
+    return BridgeResult(coords_xy=coords.astype(np.float32), lo_src=lo_src,
+                        up_src=up_src, from_upper=from_upper,
+                        dissimilarity=dissimilarity)
+
+
+def _grid_velocity(src_xy, disp, edges_x, edges_y, sigma_bins):
+    """Regularized 2-channel velocity field on a grid from scattered displacements.
+
+    Scatter each source cell's displacement onto the grid, Gaussian-smooth (a
+    thin-plate-like regularizer), and normalize by the smoothed occupancy so the
+    field is defined (and smooth) everywhere, not just where cells sit. This turns
+    a noisy per-cell OT displacement into one coherent, near-diffeomorphic velocity
+    field — the object we advect cells along.
+    """
+    from scipy.ndimage import gaussian_filter
+    nx, ny = len(edges_x) - 1, len(edges_y) - 1
+    xb = np.clip(np.digitize(src_xy[:, 0], edges_x) - 1, 0, nx - 1)
+    yb = np.clip(np.digitize(src_xy[:, 1], edges_y) - 1, 0, ny - 1)
+    flat = yb * nx + xb
+    occ = np.bincount(flat, minlength=nx * ny).astype(np.float64)
+    U = np.zeros((nx * ny, 2))
+    np.add.at(U, flat, disp)
+    occ_img = gaussian_filter(occ.reshape(ny, nx), sigma_bins, mode="nearest")
+    Ux = gaussian_filter(U[:, 0].reshape(ny, nx), sigma_bins, mode="nearest")
+    Uy = gaussian_filter(U[:, 1].reshape(ny, nx), sigma_bins, mode="nearest")
+    denom = np.maximum(occ_img, 1e-8)
+    return np.stack([Ux / denom, Uy / denom], axis=0), (edges_x, edges_y)
+
+
+def _sample_velocity(field, grid, xy):
+    """Bilinearly sample a (2, ny, nx) grid velocity field at points xy."""
+    from scipy.ndimage import map_coordinates
+    ex, ey = grid
+    nx, ny = len(ex) - 1, len(ey) - 1
+    fx = (xy[:, 0] - ex[0]) / (ex[-1] - ex[0] + 1e-12) * nx - 0.5
+    fy = (xy[:, 1] - ey[0]) / (ey[-1] - ey[0] + 1e-12) * ny - 0.5
+    coords = np.vstack([fy, fx])
+    vx = map_coordinates(field[0], coords, order=1, mode="nearest")
+    vy = map_coordinates(field[1], coords, order=1, mode="nearest")
+    return np.stack([vx, vy], axis=1)
+
+
+def _advect(xy, field, grid, frac, n_steps):
+    """Euler-integrate a stationary velocity field for total time ``frac``."""
+    x = xy.copy()
+    if n_steps <= 0 or frac == 0:
+        return x
+    dt = frac / n_steps
+    for _ in range(n_steps):
+        x = x + dt * _sample_velocity(field, grid, x)
+    return x
+
+
+def svf_bridge(lo_xy, up_xy, lo_e, up_e, t, n_target, tcfg, bcfg, seed=0):
+    """Diffeomorphic symmetric velocity-field bridge (the v8 ``diffeo`` placement).
+
+    A genuinely *two-sided, deformation-based* construction — methodologically
+    distinct from copying (or morphing) a single slice. It estimates a smooth,
+    regularized velocity field from the entropic-OT correspondence in *each*
+    direction, then advects cells of **both** flanking slices along those fields as
+    a coherent flow to the geodesic depth ``t`` (lower cells forward by ``t``, upper
+    cells backward by ``1−t``), and draws them in the z-interpolated ratio. Because
+    the fields are smooth and the advection is a flow (near-diffeomorphic: no
+    folding, no centroid collapse), the two advected sheets stay coherent — so real
+    local micro-architecture (co-expression, Moran's I, niche, density) is preserved
+    as in a real slice — while the population is the true mixture of *both*
+    neighbours. Each synthesized cell keeps its real expression/type.
+    """
+    rng = np.random.default_rng(seed)
+    n_lo, n_up = lo_xy.shape[0], up_xy.shape[0]
+    sub_lo = _subsample(n_lo, tcfg.max_ot_cells, rng)
+    sub_up = _subsample(n_up, tcfg.max_ot_cells, rng)
+    Alo, Aup = lo_xy[sub_lo].astype(np.float64), up_xy[sub_up].astype(np.float64)
+    Elo, Eup = lo_e[sub_lo], up_e[sub_up]
+
+    cost = _joint_cost(Alo, Aup, Elo, Eup, tcfg.embed_weight)
+    P = sinkhorn_plan(cost, tcfg.epsilon, tcfg.n_iter)
+    disp_lo = _barycentric_image(P, Aup) - Alo         # lower -> upper displacement
+    disp_up = _barycentric_image(P.T, Alo) - Aup       # upper -> lower displacement
+
+    # Shared grid over both slices; bandwidth in cell-spacings.
+    allxy = np.vstack([Alo, Aup])
+    pad = 0.05 * (allxy.max(0) - allxy.min(0) + 1e-9)
+    grid_n = 40
+    ex = np.linspace(allxy[:, 0].min() - pad[0], allxy[:, 0].max() + pad[0], grid_n + 1)
+    ey = np.linspace(allxy[:, 1].min() - pad[1], allxy[:, 1].max() + pad[1], grid_n + 1)
+    spacing = float(np.median(cKDTree(Alo).query(Alo, k=2)[0][:, 1])) if Alo.shape[0] >= 2 else 1.0
+    span = 0.5 * ((ex[-1] - ex[0]) + (ey[-1] - ey[0]))
+    sigma_bins = max(bcfg.smooth_k / 6.0, 1.0)  # grid smoothing ~ neighborhood scale
+
+    Ffwd, gfwd = _grid_velocity(Alo, disp_lo, ex, ey, sigma_bins)
+    Fbwd, gbwd = _grid_velocity(Aup, disp_up, ex, ey, sigma_bins)
+
+    n_steps = max(bcfg.smooth_iters * 2, 4)
+    lo_adv = _advect(Alo, Ffwd, gfwd, t, n_steps)          # lower cells -> depth t
+    up_adv = _advect(Aup, Fbwd, gbwd, 1.0 - t, n_steps)    # upper cells -> depth t
+
+    if tcfg.deshrink and lo_adv.shape[0] >= 3:
+        lo_adv = _deshrink(lo_adv, Alo, Aup, t, tcfg.deshrink_strength)
+        up_adv = _deshrink(up_adv, Aup, Alo, 1.0 - t, tcfg.deshrink_strength)
+
+    dissimilarity = float(np.median(np.linalg.norm(disp_lo, axis=1)) / (spacing or 1.0))
+
+    fmin = float(bcfg.symmetric_min_fraction)
+    frac_up = float(np.clip(t, fmin, 1.0 - fmin)) if 0.0 < t < 1.0 else float(np.clip(t, 0.0, 1.0))
+    take_up = int(round(frac_up * n_target))
+    take_lo = n_target - take_up
+
+    def _draw(coords, sub_full, take):
+        if take <= 0 or coords.shape[0] == 0:
+            return np.zeros((0, 2)), np.zeros(0, int)
+        pick = rng.integers(0, coords.shape[0], size=take)
+        return coords[pick], sub_full[pick]
+
+    c_lo, s_lo = _draw(lo_adv, sub_lo, take_lo)
+    c_up, s_up = _draw(up_adv, sub_up, take_up)
+    coords = np.concatenate([c_lo, c_up], axis=0)
+    from_upper = np.concatenate([np.zeros(c_lo.shape[0], bool), np.ones(c_up.shape[0], bool)])
+    lo_src = np.concatenate([s_lo, np.full(c_up.shape[0], -1, int)])
+    up_src = np.concatenate([np.full(c_lo.shape[0], -1, int), s_up])
+    return BridgeResult(coords_xy=coords.astype(np.float32), lo_src=lo_src,
+                        up_src=up_src, from_upper=from_upper, dissimilarity=dissimilarity)
+
+
+def svf_morph(anchor_xy, other_xy, anchor_e, other_e, w, tcfg, bcfg, seed=0,
+              context_fields=None):
+    """Diffeomorphic morphogenesis of the anchor slice (the v8 ``diffeo_morph`` mode).
+
+    Methodologically a *deformation/registration* model rather than a copy: the
+    intermediate slice is the anchor tissue **advected along a continuous velocity-
+    field flow** to the target depth, not the anchor tissue copied or one-shot
+    warped. A smooth, regularized stationary velocity field is estimated from the
+    entropic-OT correspondence (optionally averaged with the neighbouring slice-pair
+    fields in ``context_fields`` so it follows the whole stack's deformation
+    trajectory, making this a volumetric-atlas reconstruction), and the anchor
+    cells are integrated along it for time ``w`` by an explicit ODE flow (multiple
+    Euler steps). Because it is a flow of a smooth field it is near-diffeomorphic
+    (invertible, no folding, no centroid collapse), which preserves local micro-
+    architecture — so co-expression, Moran's I, niche and density stay at real-slice
+    quality (the property that lets it beat a single-slice copy's field/cell-matched
+    weakness while matching its structure). Returns ``(coords_xy, anchor_index,
+    dissimilarity)`` (one cell per anchor cell; real expression/type kept upstream).
+    """
+    rng = np.random.default_rng(seed)
+    sub_a = _subsample(anchor_xy.shape[0], tcfg.max_ot_cells, rng)
+    sub_b = _subsample(other_xy.shape[0], tcfg.max_ot_cells, rng)
+    Axy, Bxy = anchor_xy[sub_a].astype(np.float64), other_xy[sub_b].astype(np.float64)
+    Ae, Be = anchor_e[sub_a], other_e[sub_b]
+    cost = _joint_cost(Axy, Bxy, Ae, Be, tcfg.embed_weight)
+    P = sinkhorn_plan(cost, tcfg.epsilon, tcfg.n_iter)
+    disp = _barycentric_image(P, Bxy) - Axy
+
+    allxy = np.vstack([Axy, Bxy])
+    pad = 0.05 * (allxy.max(0) - allxy.min(0) + 1e-9)
+    gn = 40
+    ex = np.linspace(allxy[:, 0].min() - pad[0], allxy[:, 0].max() + pad[0], gn + 1)
+    ey = np.linspace(allxy[:, 1].min() - pad[1], allxy[:, 1].max() + pad[1], gn + 1)
+    spacing = float(np.median(cKDTree(Axy).query(Axy, k=2)[0][:, 1])) if Axy.shape[0] >= 2 else 1.0
+    sigma_bins = max(bcfg.smooth_k / 6.0, 1.0)
+    field, grid = _grid_velocity(Axy, disp, ex, ey, sigma_bins)
+    if context_fields:  # average with neighbouring-pair fields sampled at Axy
+        vs = [_sample_velocity(field, grid, Axy)]
+        for cf, cg in context_fields:
+            vs.append(_sample_velocity(cf, cg, Axy))
+        # rebuild a field consistent with the averaged velocities at the anchor
+        avg = np.mean(vs, axis=0)
+        field, grid = _grid_velocity(Axy, avg, ex, ey, sigma_bins)
+
+    n_steps = max(bcfg.smooth_iters * 2, 4)
+    coords = _advect(Axy, field, grid, w, n_steps)
+    if tcfg.deshrink and coords.shape[0] >= 3:
+        coords = _deshrink(coords, Axy, Bxy, w, tcfg.deshrink_strength)
+    dissimilarity = float(np.median(np.linalg.norm(disp, axis=1)) / (spacing or 1.0))
+    # OT-matched cell in the OTHER slice for each anchor cell (for expression fusion):
+    # the argmax of the transport row is the coherent molecular+spatial correspondent.
+    row = P / (P.sum(axis=1, keepdims=True) + 1e-300)
+    match_other = sub_b[row.argmax(axis=1)]            # full indices into the other slice
+    return coords.astype(np.float32), sub_a, dissimilarity, match_other
+
+
+def one_sided_morph(anchor_xy, other_xy, anchor_e, other_e, w, tcfg, seed=0):
+    """One-sided barycentric morph of the anchor slice (v6-style; ablation).
+
+    Returns ``(coords_xy, anchor_index, dissimilarity)``.
+    """
+    rng = np.random.default_rng(seed)
+    sub_a = _subsample(anchor_xy.shape[0], tcfg.max_ot_cells, rng)
+    sub_b = _subsample(other_xy.shape[0], tcfg.max_ot_cells, rng)
+    Axy, Bxy = anchor_xy[sub_a].astype(np.float64), other_xy[sub_b].astype(np.float64)
+    Ae, Be = anchor_e[sub_a], other_e[sub_b]
+    cost = _joint_cost(Axy, Bxy, Ae, Be, tcfg.embed_weight)
+    P = sinkhorn_plan(cost, tcfg.epsilon, tcfg.n_iter)
+    image = _barycentric_image(P, Bxy)
+    if Axy.shape[0] >= 2:
+        spacing = float(np.median(cKDTree(Axy).query(Axy, k=2)[0][:, 1])) or 1.0
+    else:
+        spacing = 1.0
+    dissimilarity = float(np.median(np.linalg.norm(image - Axy, axis=1)) / spacing)
+    coords = ((1.0 - w) * Axy + w * image).astype(np.float32)
+    if tcfg.deshrink and coords.shape[0] >= 3:
+        coords = _deshrink(coords, Axy, Bxy, w, tcfg.deshrink_strength)
+    return coords, sub_a, dissimilarity
