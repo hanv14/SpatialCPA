@@ -498,7 +498,11 @@ def svf_morph(anchor_xy, other_xy, anchor_e, other_e, w, tcfg, bcfg, seed=0,
     if tcfg.deshrink and coords.shape[0] >= 3:
         coords = _deshrink(coords, Axy, Bxy, w, tcfg.deshrink_strength)
     dissimilarity = float(np.median(np.linalg.norm(disp, axis=1)) / (spacing or 1.0))
-    return coords.astype(np.float32), sub_a, dissimilarity
+    # OT-matched cell in the OTHER slice for each anchor cell (for expression fusion):
+    # the argmax of the transport row is the coherent molecular+spatial correspondent.
+    row = P / (P.sum(axis=1, keepdims=True) + 1e-300)
+    match_other = sub_b[row.argmax(axis=1)]            # full indices into the other slice
+    return coords.astype(np.float32), sub_a, dissimilarity, match_other
 
 
 def one_sided_morph(anchor_xy, other_xy, anchor_e, other_e, w, tcfg, seed=0):

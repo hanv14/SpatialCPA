@@ -125,7 +125,7 @@ class BridgeConfig:
     # metrics in both the near-identical and distinct-tissue regimes (validated in
     # ``validation/``). ``adaptive`` instead selects a placement per dataset by
     # leakage-safe internal cross-validation (see ``selection.py``).
-    mode: str = "smooth_morph"
+    mode: str = "diffeo_morph"
     # Candidate placements the adaptive selector cross-validates on a held-out
     # *training* slice (leakage-safe); the best reconstruction is used for the
     # target. Order is the tie-break preference.
@@ -212,9 +212,22 @@ class SynthesisConfig:
     # Expression source for each synthesized cell:
     #   "endpoint"  — copy the real profile of the source cell (max variance,
     #                 preserves gene-gene structure). Default.
+    #   "fusion"    — TWO-slice OT fusion on the single-slice deformed backbone:
+    #                 with probability ``w`` (the depth fraction toward the other
+    #                 slice) each cell takes the real profile+type of its
+    #                 OT-matched cell in the OTHER flanking slice, else keeps its
+    #                 own. The population becomes a genuine (1-w):w mixture of both
+    #                 slices' real cells placed on a coherent single-slice
+    #                 deformation — so each synthesized cell is a hybrid present in
+    #                 neither real slice (mechanistically NOT a single-slice copy),
+    #                 the intermediate expression population / composition is better
+    #                 estimated, and because the swap uses the coherent OT
+    #                 correspondent, local spatial structure (Moran's, niche) is
+    #                 preserved. Only available for the ``diffeo_morph`` placement,
+    #                 which returns the OT match.
     #   "transfer"  — nearest same-type training cell in embed space (denoises).
     #   "blend"     — mix endpoint and transferred (transfer_alpha on transferred).
-    expression_mode: str = "endpoint"
+    expression_mode: str = "fusion"
     transfer_k: int = 1
     transfer_alpha: float = 0.5
     seed: int = 42

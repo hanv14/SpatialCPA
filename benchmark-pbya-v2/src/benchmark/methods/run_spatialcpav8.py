@@ -216,7 +216,7 @@ def main():
         description="SpatialCPA-v8 generation-only wrapper (benchmark-pbya-v2)")
     _v2_io.add_v2_args(parser)
     # Placement regime.
-    parser.add_argument("--placement", default="smooth_morph",
+    parser.add_argument("--placement", default="diffeo_morph",
                         choices=["smooth_morph", "diffeo_morph", "diffeo", "adaptive", "coherent_mix", "symmetric",
                                  "morph", "interpolate", "backbone"],
                         help="smooth_morph (default — coherent smoothed-OT deformation "
@@ -288,8 +288,8 @@ def main():
     parser.add_argument("--no-composition-constraint", action="store_true",
                         help="do not pin composition to the interpolated flanking mix")
     # Expression.
-    parser.add_argument("--expression-mode", default="endpoint",
-                        choices=["endpoint", "transfer", "blend"],
+    parser.add_argument("--expression-mode", default="fusion",
+                        choices=["endpoint", "fusion", "transfer", "blend"],
                         help="endpoint (copy real profile; max variance, default), "
                              "transfer (nearest same-type training cell), or blend")
     parser.add_argument("--transfer-alpha", type=float, default=0.5,
