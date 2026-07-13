@@ -65,6 +65,9 @@ def main():
                         help="Skip if prediction.h5 already exists")
     parser.add_argument("--no-eval", action="store_true",
                         help="Produce predictions only; run evaluate_all.py separately")
+    parser.add_argument("extra_args", nargs="*",
+                        help="Extra args forwarded to every method wrapper, e.g. "
+                             "'-- --teacher omiclip --teacher-weights /path/checkpoint.pt'")
     args = parser.parse_args()
 
     # Resolve methods
@@ -91,6 +94,8 @@ def main():
     print(f"  Methods: {methods}")
     print(f"  Datasets: {datasets}")
     print(f"  Strategies: {args.strategy}")
+    if args.extra_args:
+        print(f"  Wrapper extra args: {' '.join(args.extra_args)}")
 
     campaign = build_campaign(
         methods, datasets, args.strategy, args.k,
@@ -109,8 +114,8 @@ def main():
             continue
 
         print(f"\n[{i}/{len(campaign)}] Running: {method} | {dataset} | {holdout_id}")
-        result = run_single(method, dataset, holdout, dry_run=args.dry_run,
-                            run_eval=not args.no_eval)
+        result = run_single(method, dataset, holdout, extra_args=args.extra_args,
+                            dry_run=args.dry_run, run_eval=not args.no_eval)
         result["method"] = method
         result["dataset"] = dataset
         result["holdout_id"] = holdout_id
