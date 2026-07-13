@@ -110,6 +110,9 @@ def run_method(adata, targets, gene_names, args):
     cfg.train.device = args.device
     cfg.teacher.kind = args.teacher
     cfg.teacher.weights_path = args.teacher_weights
+    cfg.teacher.gene_embedding_path = args.gene_embedding
+    cfg.teacher.model_arch = args.teacher_arch
+    cfg.teacher.top_genes = args.teacher_top_genes
     cfg.inference.expr_decode = args.expr_decode
     cfg.inference.residual_weight = args.residual_weight
     cfg.inference.z_marginalize = args.z_marginalize
@@ -145,9 +148,21 @@ def main():
     _v2_io.add_v2_args(parser)
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
-    parser.add_argument("--teacher", default="auto", choices=["auto", "omiclip", "path2space", "proxy"],
-                        help="foundation-model teacher (data-derived proxy if weights absent)")
-    parser.add_argument("--teacher-weights", default=None, help="path to OmiCLIP/Path2Space weights")
+    parser.add_argument("--teacher", default="auto",
+                        choices=["auto", "omiclip", "path2space", "gene_embedding", "proxy"],
+                        help="foundation-model teacher: omiclip (real, needs open_clip + "
+                             "--teacher-weights), path2space/gene_embedding (real, needs "
+                             "--gene-embedding matrix), auto (real if weights given else proxy), "
+                             "or proxy (data-derived stand-in)")
+    parser.add_argument("--teacher-weights", default=None,
+                        help="OmiCLIP checkpoint (open_clip pretrained) for --teacher omiclip")
+    parser.add_argument("--gene-embedding", default=None,
+                        help="pretrained gene-embedding matrix (.npz genes/embedding or .npy) "
+                             "for --teacher path2space/gene_embedding")
+    parser.add_argument("--teacher-arch", default="coca_ViT-L-14",
+                        help="open_clip architecture for the OmiCLIP text tower")
+    parser.add_argument("--teacher-top-genes", type=int, default=50,
+                        help="genes per spot in the OmiCLIP gene-sentence")
     parser.add_argument("--expr-decode", default="residual", choices=["residual", "field"],
                         help="residual (layout-conditioned real profile; default) or field (pure Stage-2)")
     parser.add_argument("--residual-weight", type=float, default=0.7)

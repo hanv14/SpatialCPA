@@ -168,7 +168,7 @@ def train_model(m):
     cfg = m.cfg
     torch.manual_seed(cfg.train.seed); np.random.seed(cfg.train.seed)
     # Build the teacher first so the network knows its embedding dim.
-    m._teacher = build_teacher(cfg.teacher, m.stack)
+    m._teacher = build_teacher(cfg.teacher, m.stack, m.gene_names)
     m._teacher_dim = int(m._teacher.embed(m.stack.slices[0].expression,
                                           m.stack.slices[0].coords_xy).shape[1])
     nn_ = _build(m)

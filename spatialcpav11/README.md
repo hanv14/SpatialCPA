@@ -24,13 +24,22 @@ query point, an **occupancy** logit, a **cell-type/region** distribution, and a
 - **Knowledge distillation from a frozen multimodal foundation model** (OmiCLIP /
   Path2Space), used as a *teacher* even though no images are present:
   - *feature alignment* — the student layout code is aligned (cosine) to the teacher's
-    per-region embedding of the real slice;
-  - *pseudo-layout targets* — the teacher's spatial-domain segmentation supervises the
+    per-spot embedding of the real slice;
+  - *pseudo-layout targets* — the teacher's spatial-domain clustering supervises the
     layout code via a domain head.
-  Real teachers plug in via `teacher.register_teacher` + `--teacher-weights`; when the
-  FM is unavailable a **data-derived stand-in** (spatial-domain embedding + clustering
-  computed from the training slices) provides the same *kind* of layout signal, so
-  training runs end-to-end. *(Swap in the real FM for a publication-grade result.)*
+
+  Two **real** teachers are implemented (`teacher.py`) and selected via `--teacher`:
+  - **`omiclip`** — the actual OmiCLIP mechanism: each spot's expression → a *sentence*
+    of its top-N expressed gene symbols → OmiCLIP's CLIP/CoCa **text tower** (loaded
+    with `open_clip`), the same way OmiCLIP/Loki embed ST without images. Needs
+    `pip install open_clip_torch` and the OmiCLIP checkpoint (`--teacher-weights`).
+  - **`path2space` / `gene_embedding`** — expression projected through a pretrained
+    **gene-embedding matrix** `cell = X_norm @ W` (scGPT / Geneformer / Gene2vec, or a
+    Path2Space-derived gene-program matrix); `--gene-embedding matrix.npz`.
+
+  When no FM asset is supplied a **data-derived proxy** stands in (spatial-domain
+  embedding + clustering) so training always runs — clearly logged as a stand-in. Add
+  your own teacher with `teacher.register_teacher(name, builder)`.
 - **Self-supervised layout reconstruction** — querying real slices reconstructs their
   occupancy (BCE on real spots vs. empty locations) and cell-type field (CE).
 
@@ -84,7 +93,11 @@ Registered as `spatialcpav11_gen` (needs PyTorch, in `bench_spatialcpa`):
 
 ```bash
 python -m benchmark.run_benchmark --method spatialcpav11_gen --dataset imc_breast_cancer
-# real teacher: --teacher omiclip --teacher-weights omiclip.pt ; pure field: --expr-decode field
+# real OmiCLIP teacher (needs: pip install open_clip_torch):
+#   ... spatialcpav11_gen ... --teacher omiclip --teacher-weights /path/omiclip.pt
+# real gene-embedding (scGPT/Geneformer/Path2Space program) teacher:
+#   ... spatialcpav11_gen ... --teacher path2space --gene-embedding /path/genes.npz
+# pure generative expression field: --expr-decode field
 ```
 
 ### Package layout

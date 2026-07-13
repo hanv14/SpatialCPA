@@ -77,6 +77,16 @@ class TeacherConfig:
     weights_path: str | None = None
     embed_dim: int = 64
     n_pseudo_domains: int = 8     # pseudo-layout (spatial-domain) clusters from the teacher
+    # ── Real-teacher loading ──────────────────────────────────────────────────
+    # OmiCLIP: expression -> "sentence" of the top-N expressed gene symbols -> the
+    # CLIP/CoCa text tower (open_clip). These control that pipeline.
+    model_arch: str = "coca_ViT-L-14"   # open_clip architecture for OmiCLIP
+    top_genes: int = 50                 # genes per spot in the OmiCLIP gene-sentence
+    encode_batch: int = 256             # spots per forward pass on the FM
+    device: str = "auto"                # teacher inference device (auto|cpu|cuda)
+    # path2space / generic gene-embedding teacher: a pretrained gene-embedding matrix
+    # (.npz genes/embedding or a panel-aligned .npy) projected as cell = X_norm @ W.
+    gene_embedding_path: str | None = None
 
 
 @dataclass
