@@ -42,9 +42,13 @@ def _pca(train_expr, d):
 class SpatialCPAv11:
     def __init__(self, stack: SliceStack, gene_names: Sequence[str],
                  cell_type_names: Optional[Sequence[str]] = None,
-                 cfg: Optional[SpatialCPAv11Config] = None) -> None:
+                 cfg: Optional[SpatialCPAv11Config] = None,
+                 gene_symbols: Optional[Sequence[str]] = None) -> None:
         self.stack = stack
         self.gene_names = list(gene_names)
+        # Optional gene SYMBOLS for the OmiCLIP teacher (e.g. an adata.var symbol
+        # column) — used only to build the gene-sentence, not for expression columns.
+        self.gene_symbols = list(gene_symbols) if gene_symbols is not None else None
         self.cell_type_names = list(cell_type_names) if cell_type_names is not None else None
         self.cfg = cfg or SpatialCPAv11Config()
         self.n_types = max(stack.n_cell_types() or 1, 1)

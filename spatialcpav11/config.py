@@ -87,6 +87,11 @@ class TeacherConfig:
     # path2space / generic gene-embedding teacher: a pretrained gene-embedding matrix
     # (.npz genes/embedding or a panel-aligned .npy) projected as cell = X_norm @ W.
     gene_embedding_path: str | None = None
+    # OmiCLIP's text tower keys on gene SYMBOLS. For an Ensembl-ID panel, supply an
+    # id->symbol mapping (2-col TSV/CSV or .npz ids/symbols) to translate the panel
+    # before building the gene-sentence. If None, symbols already provided by the
+    # caller (e.g. an adata.var symbol column) are used, else the panel names as-is.
+    symbol_map_path: str | None = None
 
 
 @dataclass
