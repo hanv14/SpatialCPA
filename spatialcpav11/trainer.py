@@ -67,15 +67,32 @@ def _nhood_enrichment(nxy, types, n_types, k=10):
 # --------------------------------------------------------------------------- #
 # Build                                                                        #
 # --------------------------------------------------------------------------- #
-def _device(cfg):
+def _device(cfg, m=None):
+    if m is not None and getattr(m, "_force_cpu", False):
+        return "cpu"
     d = cfg.train.device
-    return ("cuda" if torch.cuda.is_available() else "cpu") if d == "auto" else d
+    if d != "auto":
+        return d
+    if not torch.cuda.is_available():
+        return "cpu"
+    # Don't pick a GPU that is (nearly) full — a common cause of OOM on the first
+    # allocation when another process holds the card.
+    try:
+        free, _ = torch.cuda.mem_get_info()
+        if free < 512 * 1024 * 1024:      # < 512 MB free
+            print(f"[spatialcpav11] GPU has only {free/1e6:.0f} MB free; using CPU.")
+            return "cpu"
+    except Exception:
+        pass
+    return "cuda"
 
 
 def _build(m):
     cfg = m.cfg
-    dev = _device(cfg)
+    dev = _device(cfg, m)
     nt, d = m.n_types, m._embed_dim
+    if cfg.train.verbose:
+        print(f"[spatialcpav11] training device: {dev}")
     fx = FourierFeatures(cfg.fourier.xy_bands, cfg.fourier.xy_max_freq).to(dev)
     fz = FourierFeatures(cfg.fourier.z_bands, cfg.fourier.z_max_freq).to(dev)
     fx_dim = 2 * fx.out_mult

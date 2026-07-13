@@ -69,23 +69,47 @@ class SpatialCPAv11:
         return (float(z) - self._z_c) / self._z_s
 
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _is_oom(e):
+        return ("out of memory" in str(e).lower()
+                or e.__class__.__name__ in ("OutOfMemoryError", "AcceleratorError"))
+
     def _fit(self):
         try:
             import torch  # noqa: F401
         except Exception as e:
             print(f"[spatialcpav11] PyTorch unavailable ({e}); OT-morph fallback.")
             return
-        try:
-            from .trainer import train_model
-            train_model(self)
-            self.trained = True
-        except Exception as e:
-            import traceback
-            print(f"[spatialcpav11] training failed ({e}); OT-morph fallback.")
-            if not self.cfg.train.fallback_on_error:
-                raise
-            traceback.print_exc()
-            self.trained = False
+        from .trainer import train_model
+        # Attempt on the selected device; on CUDA out-of-memory retry on CPU (the
+        # neural model then still trains, just slower — better than the trivial
+        # nearest-slice fallback). Only give up to the OT-morph fallback if CPU fails.
+        self._force_cpu = False
+        for attempt in ("device", "cpu"):
+            try:
+                train_model(self)
+                self.trained = True
+                return
+            except Exception as e:
+                oom = self._is_oom(e)
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
+                if attempt == "device" and oom and not self._force_cpu:
+                    print(f"[spatialcpav11] CUDA out of memory; retrying training on CPU. "
+                          f"(free a GPU or pass --device cpu to skip this.)")
+                    self._force_cpu = True
+                    continue
+                import traceback
+                print(f"[spatialcpav11] training failed ({e}); OT-morph fallback.")
+                if not self.cfg.train.fallback_on_error:
+                    raise
+                traceback.print_exc()
+                self.trained = False
+                return
 
     # ------------------------------------------------------------------ #
     def generate_virtual_slice(self, z: float) -> VirtualSlice:
