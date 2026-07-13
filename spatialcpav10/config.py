@@ -1,5 +1,5 @@
 """
-Configuration for SpatialCPA-v8 (symmetric optimal-transport bridge synthesis).
+Configuration for SpatialCPA-v10 (symmetric optimal-transport bridge synthesis).
 
 v8 is training-free and pure numpy/scipy/sklearn, so it runs in the same
 ``bench_spatialcpa`` environment as v4-v6 with **no extra flags** — every default
@@ -46,7 +46,7 @@ class EmbeddingConfig:
         foundation model's learned gene-gene relationships. Falls back to
         ``"pca"`` if the matrix is unavailable.
       * ``"concat"``   — concatenate ``pca`` and ``fm_gene``.
-      * a name registered via :func:`spatialcpav8.embedding.register_embedder`
+      * a name registered via :func:`spatialcpav10.embedding.register_embedder`
         for a full foundation-model encoder (scGPT/Geneformer/UCE, or an H&E
         UNI/CONCH morphology encoder when paired images are provided).
     """
@@ -234,7 +234,32 @@ class SynthesisConfig:
 
 
 @dataclass
-class SpatialCPAv8Config:
+class BiologyConfig:
+    """Biologically-constrained expression generation (the v10 core).
+
+    Expression is generated as ``μ_c(z) + λ·LR_modulation + real_residual`` — a
+    balanced hybrid of a mechanistic mean (cell-type program with z-continuity and
+    ligand-receptor modulation) and a real residual (preserves gene-gene structure).
+    """
+
+    enabled: bool = True
+    # Weight of the real residual vs the mechanistic mean:
+    #   residual_weight=1.0 keeps the full real deviation (max realism / scores),
+    #   0.0 makes expression purely mechanistic (max "biological generation").
+    # "Balanced hybrid" default keeps the real residual so scores stay high while the
+    # cell-type program + LR signaling drive the mean.
+    residual_weight: float = 1.0
+    program_weight: float = 1.0          # weight of the cell-type program mean
+    lr_lambda: float = 0.2               # strength of ligand-receptor modulation
+    lr_source: str = "auto"              # "auto" (DB else inferred) | "db" | "infer" | "off"
+    lr_db_path: str | None = None        # curated LR database (.npz/.tsv); env LR fallback
+    lr_neighbors: int = 10
+    lr_infer_top_frac: float = 0.02      # top fraction of inferred couplings to keep
+    z_continuity: bool = True            # z-interpolate the cell-type programs along z
+
+
+@dataclass
+class SpatialCPAv10Config:
     """Top-level configuration bundling every stage."""
 
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
@@ -244,4 +269,5 @@ class SpatialCPAv8Config:
     communication: CommunicationConfig = field(default_factory=CommunicationConfig)
     annotation: AnnotationConfig = field(default_factory=AnnotationConfig)
     synthesis: SynthesisConfig = field(default_factory=SynthesisConfig)
+    biology: BiologyConfig = field(default_factory=BiologyConfig)
     seed: int = 42

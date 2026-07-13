@@ -1,5 +1,5 @@
 """
-Symmetric optimal-transport bridge between two flanking slices (SpatialCPA-v8).
+Symmetric optimal-transport bridge between two flanking slices (SpatialCPA-v10).
 
 Biological premise (shared with v6): between two adjacent physical sections the
 tissue changes *continuously*, so the principled model of the in-between slice is
