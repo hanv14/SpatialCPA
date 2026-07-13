@@ -350,20 +350,29 @@ def run_all(results_dir=None, methods=None, datasets=None, force=False,
     print(f"Found {len(preds)} prediction files")
 
     masters = {t: [] for t in _TABLES}
-    n_ok = n_skip = n_fail = 0
+    n_ok = n_skip = n_stale = n_fail = 0
     for pred_path, gt_path, out_dir, ids in preds:
         rel = pred_path.relative_to(results_dir).parent
-        done = all((out_dir / f"{t}.csv").exists() for t in _TABLES)
-        if done and not force:
+        csvs = [out_dir / f"{t}.csv" for t in _TABLES]
+        exist = all(c.exists() for c in csvs)
+        # "up to date" = all three CSVs exist AND none is older than the
+        # prediction. A regenerated prediction.h5 (newer mtime) is treated as
+        # not-done so new results are never scored with a stale cache.
+        fresh = exist and min(c.stat().st_mtime for c in csvs) >= pred_path.stat().st_mtime
+        if fresh and not force:
             n_skip += 1
-            # still fold existing per-run CSVs into the masters
+            # still fold the existing (up-to-date) per-run CSVs into the masters
             for t in _TABLES:
                 try:
                     masters[t].append(pd.read_csv(out_dir / f"{t}.csv"))
                 except Exception:
                     pass
             continue
-        print(f"  Disaggregating {rel}...")
+        if exist and not force:
+            n_stale += 1
+            print(f"  Re-evaluating {rel} (prediction newer than cached CSVs)...")
+        else:
+            print(f"  Disaggregating {rel}...")
         try:
             tables = disaggregate(str(pred_path), gt_path, grid=grid,
                                   moran_k=moran_k, ids=ids)
@@ -390,7 +399,8 @@ def run_all(results_dir=None, methods=None, datasets=None, force=False,
             path = summary_dir / f"{t}.csv"
             alldf.to_csv(path, index=False)
             print(f"Wrote {len(alldf)} rows -> {path}")
-    print(f"\nDone: {n_ok} evaluated, {n_skip} skipped, {n_fail} failed")
+    print(f"\nDone: {n_ok} evaluated ({n_stale} of them re-evaluated as stale), "
+          f"{n_skip} skipped (up to date), {n_fail} failed")
 
 
 # --------------------------------------------------------------------------- #
@@ -410,7 +420,9 @@ def main():
     ap.add_argument("--methods", nargs="+", help="(--all) restrict to these methods")
     ap.add_argument("--datasets", nargs="+", help="(--all) restrict to these datasets")
     ap.add_argument("--force", action="store_true",
-                    help="(--all) recompute even if CSVs already exist")
+                    help="(--all) recompute every prediction, even ones whose "
+                         "CSVs are already up to date (by default only new or "
+                         "regenerated predictions are (re)evaluated)")
     ap.add_argument("--grid", type=int, default=20)
     ap.add_argument("--moran-k", type=int, default=10)
     args = ap.parse_args()
