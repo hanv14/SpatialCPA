@@ -40,6 +40,14 @@ query point, an **occupancy** logit, a **cell-type/region** distribution, and a
   When no FM asset is supplied a **data-derived proxy** stands in (spatial-domain
   embedding + clustering) so training always runs — clearly logged as a stand-in. Add
   your own teacher with `teacher.register_teacher(name, builder)`.
+
+  **Gene symbols (OmiCLIP).** OmiCLIP's text tower keys on gene *symbols*. If your
+  panel's `var_names` are Ensembl IDs, symbols are resolved automatically in this
+  order: (1) a symbol column already in `adata.var` (`gene_symbol`/`symbol`/
+  `feature_name`/… — used automatically); (2) an explicit id→symbol map
+  (`--teacher-symbol-map file.npz|tsv`, Ensembl version suffixes stripped); (3) the
+  panel names as-is, with a warning. Symbols are used only for the gene-sentence, not
+  for the expression columns.
 - **Self-supervised layout reconstruction** — querying real slices reconstructs their
   occupancy (BCE on real spots vs. empty locations) and cell-type field (CE).
 

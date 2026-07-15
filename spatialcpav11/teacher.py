@@ -73,6 +73,69 @@ def _teacher_device(cfg):
 
 
 # --------------------------------------------------------------------------- #
+# Gene-symbol resolution (OmiCLIP keys on gene symbols)                         #
+# --------------------------------------------------------------------------- #
+def _looks_ensembl(genes, frac=0.3):
+    hits = sum(str(g).upper().startswith(("ENSG", "ENSMUSG", "ENST", "ENSMUST",
+                                          "ENSRNOG", "ENSMMUG")) for g in genes)
+    return hits >= max(1, int(frac * len(genes)))
+
+
+def _load_symbol_map(path):
+    """Load an id->symbol map from a .npz (ids/symbols) or a 2-column TSV/CSV."""
+    import os
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        if path.endswith(".npz"):
+            d = np.load(path, allow_pickle=True)
+            ids = [str(x) for x in d["ids"]]
+            syms = [str(x) for x in d["symbols"]]
+            return dict(zip(ids, syms))
+        m = {}
+        for line in open(path):
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            parts = line.split("\t") if "\t" in line else line.split(",")
+            if len(parts) >= 2:
+                m[parts[0].strip()] = parts[1].strip()
+        return m
+    except Exception:
+        return {}
+
+
+def resolve_symbols(gene_names, gene_symbols=None, symbol_map_path=None):
+    """Resolve gene SYMBOLS for the OmiCLIP sentence, in priority order:
+
+    1. explicit ``gene_symbols`` from the caller (e.g. an ``adata.var`` symbol column);
+    2. an id->symbol mapping file (``symbol_map_path``) applied to the panel names;
+    3. the panel names as-is (with a warning if they look like Ensembl IDs, since the
+       OmiCLIP vocabulary is symbol-based and those tokens won't match).
+
+    Strips Ensembl version suffixes (``ENSG…​.3`` -> ``ENSG…``) before mapping.
+    """
+    names = [str(g) for g in gene_names]
+    if gene_symbols is not None:
+        syms = [str(s) if s not in (None, "", "nan") else names[i]
+                for i, s in enumerate(gene_symbols)]
+        return syms
+    m = _load_symbol_map(symbol_map_path)
+    if m:
+        def _map(g):
+            return m.get(g) or m.get(g.split(".")[0]) or g
+        syms = [_map(g) for g in names]
+        n_mapped = sum(1 for g, s in zip(names, syms) if s != g)
+        print(f"[spatialcpav11] symbol map applied: {n_mapped}/{len(names)} genes translated.")
+        return syms
+    if _looks_ensembl(names):
+        print("[spatialcpav11] WARNING: panel looks like Ensembl IDs but no symbol map "
+              "was given — OmiCLIP's text tower keys on gene symbols, so distillation "
+              "will be weak. Pass an adata.var symbol column or --teacher-symbol-map.")
+    return names
+
+
+# --------------------------------------------------------------------------- #
 # Real teacher 1: OmiCLIP (gene-sentence -> CLIP/CoCa text tower)               #
 # --------------------------------------------------------------------------- #
 class OmiCLIPTeacher:
@@ -83,11 +146,12 @@ class OmiCLIPTeacher:
     spatial transcriptomics.
     """
 
-    def __init__(self, cfg, gene_names):
+    def __init__(self, cfg, gene_names, gene_symbols=None):
         import torch
         import open_clip
         self.cfg = cfg
-        self.genes = [str(g).upper() for g in gene_names]
+        syms = resolve_symbols(gene_names, gene_symbols, cfg.symbol_map_path)
+        self.genes = [str(g).upper() for g in syms]
         self.dev = _teacher_device(cfg)
         model, _, _ = open_clip.create_model_and_transforms(
             cfg.model_arch, pretrained=cfg.weights_path)
@@ -121,8 +185,8 @@ class OmiCLIPTeacher:
         return _kmeans_domains(self.embed(expr, xy), self.cfg.n_pseudo_domains)
 
 
-def _build_omiclip(cfg, stack, gene_names):
-    return OmiCLIPTeacher(cfg, gene_names)
+def _build_omiclip(cfg, stack, gene_names, gene_symbols=None):
+    return OmiCLIPTeacher(cfg, gene_names, gene_symbols=gene_symbols)
 
 
 # --------------------------------------------------------------------------- #
@@ -176,7 +240,7 @@ def _load_gene_matrix(path, gene_names):
     return W if np.any(W) else None
 
 
-def _build_gene_embedding(cfg, stack, gene_names):
+def _build_gene_embedding(cfg, stack, gene_names, gene_symbols=None):
     W = _load_gene_matrix(cfg.gene_embedding_path or cfg.weights_path, gene_names)
     if W is None:
         raise RuntimeError("no usable gene-embedding matrix (set --gene-embedding)")
@@ -221,7 +285,7 @@ class ProxyTeacher:
 # --------------------------------------------------------------------------- #
 # Dispatch                                                                     #
 # --------------------------------------------------------------------------- #
-def build_teacher(cfg, stack, gene_names):
+def build_teacher(cfg, stack, gene_names, gene_symbols=None):
     """Instantiate the teacher (real FM if requested/available, else the proxy)."""
     want = None
     if cfg.kind in ("omiclip", "path2space", "gene_embedding"):
@@ -230,7 +294,7 @@ def build_teacher(cfg, stack, gene_names):
         want = cfg.name if cfg.name in TEACHER_REGISTRY else "omiclip"
     if want is not None and want in TEACHER_REGISTRY:
         try:
-            t = TEACHER_REGISTRY[want](cfg, stack, gene_names)
+            t = TEACHER_REGISTRY[want](cfg, stack, gene_names, gene_symbols)
             print(f"[spatialcpav11] teacher: real {want} "
                   f"(weights={cfg.weights_path or cfg.gene_embedding_path}).")
             return t

@@ -77,6 +77,21 @@ def _normalize_expression(adata):
     return et
 
 
+def _gene_symbols(adata):
+    """Return gene SYMBOLS aligned to var order from a common .var column, else None.
+
+    Lets the OmiCLIP teacher use symbols even when var_names are Ensembl IDs.
+    """
+    for col in ("gene_symbol", "gene_symbols", "symbol", "SYMBOL", "Symbol",
+                "feature_name", "gene_name", "gene_names", "GeneSymbol"):
+        if col in adata.var.columns:
+            vals = adata.var[col].astype(str).tolist()
+            if any(v and v.lower() != "nan" for v in vals):
+                print(f"  using gene symbols from adata.var['{col}'] for the teacher")
+                return vals
+    return None
+
+
 def build_stack(adata, ct_all):
     from spatialcpav11 import Slice, SliceStack
     sections = adata.obs["section"].values.astype(str)
@@ -113,6 +128,7 @@ def run_method(adata, targets, gene_names, args):
     cfg.teacher.gene_embedding_path = args.gene_embedding
     cfg.teacher.model_arch = args.teacher_arch
     cfg.teacher.top_genes = args.teacher_top_genes
+    cfg.teacher.symbol_map_path = args.teacher_symbol_map
     cfg.inference.expr_decode = args.expr_decode
     cfg.inference.residual_weight = args.residual_weight
     cfg.inference.z_marginalize = args.z_marginalize
@@ -121,7 +137,9 @@ def run_method(adata, targets, gene_names, args):
           f"expr_decode={cfg.inference.expr_decode} (residual_w={cfg.inference.residual_weight}), "
           f"z_marginalize={cfg.inference.z_marginalize}")
 
-    gen = SpatialCPAv11(stack, gene_names=gene_names, cell_type_names=cell_type_names, cfg=cfg)
+    gene_symbols = args._gene_symbols  # resolved in main() from adata.var
+    gen = SpatialCPAv11(stack, gene_names=gene_names, cell_type_names=cell_type_names,
+                        cfg=cfg, gene_symbols=gene_symbols)
     print(f"  neural fields trained: {gen.trained}")
 
     results = {}
@@ -163,6 +181,10 @@ def main():
                         help="open_clip architecture for the OmiCLIP text tower")
     parser.add_argument("--teacher-top-genes", type=int, default=50,
                         help="genes per spot in the OmiCLIP gene-sentence")
+    parser.add_argument("--teacher-symbol-map", default=None,
+                        help="id->symbol map (.npz ids/symbols or 2-col TSV/CSV) to translate "
+                             "an Ensembl-ID panel to gene symbols for the OmiCLIP teacher "
+                             "(an adata.var symbol column is used automatically if present)")
     parser.add_argument("--expr-decode", default="residual", choices=["residual", "field"],
                         help="residual (layout-conditioned real profile; default) or field (pure Stage-2)")
     parser.add_argument("--residual-weight", type=float, default=0.7)
@@ -179,6 +201,7 @@ def main():
     adata = ad.read_h5ad(args.input)
     _v2_io.guard_no_holdout(adata, target_sections)
     gene_names = adata.var_names.tolist()
+    args._gene_symbols = _gene_symbols(adata)   # symbols for the OmiCLIP teacher, if any
     _normalize_expression(adata)
 
     print(f"Running SpatialCPA-v11 for targets {[(s, round(z, 2)) for s, z in targets]}...")
