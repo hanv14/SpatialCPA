@@ -170,7 +170,7 @@ def main():
     parser.add_argument("--joint-dim", type=int, default=48, help="joint latent dim d")
     parser.add_argument("--ode-steps", type=int, default=12, help="Euler steps for the sampling ODE")
     parser.add_argument("--ensemble", type=int, default=4, help="initial noises marginalized per query")
-    parser.add_argument("--position-mode", default="morph", choices=["morph", "flanking", "nearest"])
+    parser.add_argument("--position-mode", default="flanking", choices=["morph", "flanking", "nearest"])
     parser.add_argument("--displacement-scale", type=float, default=0.5,
                         help="scale on the flow-decoded displacement field (morph mode)")
     parser.add_argument("--ground-blend-flow", type=float, default=0.20,

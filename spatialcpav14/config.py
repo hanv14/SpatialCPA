@@ -103,7 +103,7 @@ class GenerationConfig:
     # the z-interpolated ratio then applies the flow-decoded continuous displacement field
     # (a learned deformation — NOT optimal transport); "flanking" uses the resample only;
     # "nearest" copies the single nearest slice's layout (near-identical planes).
-    position_mode: str = "morph"        # "morph" | "flanking" | "nearest"
+    position_mode: str = "flanking"     # "flanking" | "morph" | "nearest"
     displacement_scale: float = 0.5     # scale on the flow-decoded displacement field
     near_identical_ratio: float = 0.60  # cross/within spacing threshold for auto "nearest"
 
