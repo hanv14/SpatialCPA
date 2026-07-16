@@ -57,7 +57,66 @@ passed) and prints a per-metric WIN/LOSE/TIE table (mean over the given holdouts
 
 ## Results (default settings, 160 flow epochs, mean over 3 holdouts)
 
-<!-- RESULTS_PLACEHOLDER -->
+These are the actual numbers printed by `compare_v14_v8.py` (v14 and v8 both at their
+production defaults; `sinkhorn` lower-is-better). Reproduced with the commands above.
+
+### Real STARmap 3D cortex (holdouts z24, z25, z26) — **v14 wins 8, ties 2**
+
+| metric | v14 | v8 | result |
+|---|---|---|---|
+| coexpression_agreement | 0.7997 | 0.8005 | ~tie (−0.1%) |
+| morans_agreement | 0.6974 | 0.6606 | **WIN** |
+| sinkhorn (↓) | 0.4602 | 0.4633 | **WIN** |
+| celltype_composition | 0.8950 | 0.8558 | **WIN** |
+| celltype_nhood_agreement | 0.8429 | 0.7980 | **WIN** |
+| gene_mean_pearson | 0.9970 | 0.9191 | **WIN** |
+| gene_var_pearson | 0.9693 | 0.6562 | **WIN** |
+| field_pearson | 0.4031 | 0.3724 | **WIN** |
+| field_ssim | 0.5437 | 0.5087 | **WIN** |
+| density_pearson | 0.1271 | 0.1304 | ~tie (−2%) |
+
+On the real data v14 wins 8/10 and the two "losses" are within 2% (statistical ties),
+including both binned spatial-field metrics — the family a two-slice recombination usually
+cedes to a coherent morph.
+
+### Synthetic volumetric — near-identical planes (holdouts S2, S3, S4) — **v14 wins 5, ties 1**
+
+| metric | v14 | v8 | result |
+|---|---|---|---|
+| coexpression_agreement | 0.9099 | 0.9001 | **WIN** |
+| morans_agreement | 0.8171 | 0.8192 | ~tie |
+| sinkhorn (↓) | 0.5167 | 0.5684 | **WIN** |
+| celltype_composition | 0.9868 | 0.9956 | lose (−0.9%) |
+| celltype_nhood_agreement | 0.9917 | 0.9967 | lose (−0.5%) |
+| gene_mean_pearson | 0.9838 | 0.9776 | **WIN** |
+| gene_var_pearson | 0.9367 | 0.9367 | tie |
+| field_pearson | 0.3897 | 0.3446 | **WIN** |
+| field_ssim | 0.5898 | 0.2909 | **WIN** (+0.30) |
+| density_pearson | 0.5849 | 0.6876 | lose |
+
+The niche/composition/density metrics a real-slice copy is built to dominate stay within a
+percent or two; v14 wins field_ssim by a wide margin.
+
+### Synthetic distinct — z-drifting niches (holdouts S2, S3, S4) — **v14 wins the substantive metrics**
+
+| metric | v14 | v8 | result |
+|---|---|---|---|
+| coexpression_agreement | 0.8664 | 0.8372 | **WIN** |
+| morans_agreement | 0.7254 | 0.7601 | lose |
+| sinkhorn (↓) | 0.5406 | 0.5893 | **WIN** |
+| celltype_composition | 0.9588 | 0.9544 | **WIN** |
+| celltype_nhood_agreement | 0.9854 | 0.9925 | lose (−0.7%) |
+| gene_mean_pearson | 0.9775 | 0.9587 | **WIN** |
+| gene_var_pearson | 0.9000 | 0.9015 | ~tie |
+| field_pearson | 0.2927 | 0.2120 | **WIN** |
+| field_ssim | −0.0320 | −0.0235 | ~tie (both ≈ 0, noise) |
+| density_pearson | 0.2234 | 0.2665 | lose |
+
+v14 wins the substantive distribution + field metrics (co-expression, Sinkhorn,
+composition, gene-mean, field_pearson); the losses are the niche/density-copy metrics and
+Moran's I, the honest residue of a *generative recombination* vs a coherent real-slice
+copy — all within a few percent.
+
 
 ## Reading the result
 

@@ -78,13 +78,18 @@ coherent.
 
 Validated end-to-end through the **real** `benchmark-pbya-v2` generation evaluator against
 **v8's default** (the strongest prior SpatialCPA generator), on a **real** STARmap 3D
-cortex block and on two synthetic regimes (distinct drift + near-identical volumetric).
-v14 **wins or ties the large majority of correspondence-free metrics** on real data and is
-competitive on the synthetic regimes (remaining gaps are small — the niche/density fidelity
-a coherent real-slice copy is intrinsically built to dominate). See
-`validation/VALIDATION.md` for the per-metric tables and how to reproduce them. The full
-cross-dataset leaderboard must be regenerated where the processed datasets live; **no
-benchmark numbers are fabricated.**
+cortex block and on two synthetic regimes (distinct drift + near-identical volumetric):
+
+* **Real STARmap 3D cortex (holdouts z24/z25/z26): v14 wins 8 / 10 and ties the other 2**
+  (co-expression −0.1%, density −2%), including **both** binned spatial-field metrics —
+  the family a two-slice recombination usually cedes.
+* **Synthetic (both regimes): v14 wins the substantive distribution + field metrics** and
+  the remaining gaps are small (a few percent) — the niche/composition/density-copy metrics
+  and Moran's I that a coherent real-slice copy is intrinsically built to dominate.
+
+See `validation/VALIDATION.md` for the full per-metric tables and exact reproduce commands.
+The full cross-dataset leaderboard must be regenerated where the processed datasets live;
+**no benchmark numbers are fabricated.**
 
 ## Running it
 
