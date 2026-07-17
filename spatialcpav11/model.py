@@ -93,6 +93,14 @@ class SpatialCPAv11:
             try:
                 train_model(self)
                 self.trained = True
+                # Release the training cache back to the driver so the resident
+                # footprint drops to just what inference needs (good GPU citizen).
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
                 return
             except Exception as e:
                 oom = self._is_oom(e)

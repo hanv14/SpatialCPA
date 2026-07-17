@@ -16,6 +16,11 @@ import sys
 import time
 from pathlib import Path
 
+# Be a good GPU citizen: use expandable CUDA segments so the allocator grows/shrinks
+# and returns memory to the driver instead of pre-reserving a large pool that blocks
+# other processes from sharing the card. Must be set before torch initializes CUDA.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import anndata as ad
 import numpy as np
 import scipy.sparse as sp
@@ -123,6 +128,7 @@ def run_method(adata, targets, gene_names, args):
     cfg.train.seed = args.seed
     cfg.train.epochs = args.epochs
     cfg.train.device = args.device
+    cfg.train.gpu_mem_fraction = args.gpu_mem_fraction
     cfg.teacher.kind = args.teacher
     cfg.teacher.weights_path = args.teacher_weights
     cfg.teacher.gene_embedding_path = args.gene_embedding
@@ -166,6 +172,9 @@ def main():
     _v2_io.add_v2_args(parser)
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
+    parser.add_argument("--gpu-mem-fraction", type=float, default=None,
+                        help="cap this process to a fraction (0-1) of the GPU so it "
+                             "coexists with other users, e.g. 0.3")
     parser.add_argument("--teacher", default="auto",
                         choices=["auto", "omiclip", "path2space", "gene_embedding", "proxy"],
                         help="foundation-model teacher: omiclip (real, needs open_clip + "

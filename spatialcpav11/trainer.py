@@ -93,6 +93,13 @@ def _build(m):
     nt, d = m.n_types, m._embed_dim
     if cfg.train.verbose:
         print(f"[spatialcpav11] training device: {dev}")
+    if dev == "cuda" and cfg.train.gpu_mem_fraction:
+        try:
+            torch.cuda.set_per_process_memory_fraction(float(cfg.train.gpu_mem_fraction))
+            print(f"[spatialcpav11] capped GPU use to "
+                  f"{float(cfg.train.gpu_mem_fraction):.0%} of the card.")
+        except Exception:
+            pass
     fx = FourierFeatures(cfg.fourier.xy_bands, cfg.fourier.xy_max_freq).to(dev)
     fz = FourierFeatures(cfg.fourier.z_bands, cfg.fourier.z_max_freq).to(dev)
     fx_dim = 2 * fx.out_mult
