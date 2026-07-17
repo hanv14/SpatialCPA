@@ -126,6 +126,9 @@ class TrainConfig:
     seed: int = 42
     verbose: bool = True
     fallback_on_error: bool = True    # fall back to a deterministic layout if training fails
+    # Cap this process to a fraction of the GPU (0<f<=1) so it coexists with others;
+    # None = no cap. Combine with PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True.
+    gpu_mem_fraction: float | None = None
 
 
 @dataclass
