@@ -26,10 +26,11 @@ generative pipeline whose estimand is the completed field, not a transported
 slice.
 """
 
+from . import runtime
 from .config import (ExprDiffusionConfig, ExprVAEConfig, FieldConfig,
                      FrameConfig, HierarchyConfig, InferenceConfig,
-                     LayoutConfig, QCConfig, SpatialCPAv15Config,
-                     StructureConfig, TypeConfig)
+                     LayoutConfig, QCConfig, RuntimeConfig,
+                     SpatialCPAv15Config, StructureConfig, TypeConfig)
 from .data import Slice, SliceStack, VirtualSlice, build_stack_from_arrays
 from .generator import SpatialCPAv15
 
@@ -40,5 +41,5 @@ __all__ = [
     "VirtualSlice", "build_stack_from_arrays",
     "QCConfig", "TypeConfig", "HierarchyConfig", "FrameConfig", "FieldConfig",
     "StructureConfig", "LayoutConfig", "ExprVAEConfig", "ExprDiffusionConfig",
-    "InferenceConfig", "__version__",
+    "InferenceConfig", "RuntimeConfig", "runtime", "__version__",
 ]

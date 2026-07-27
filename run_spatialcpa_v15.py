@@ -11,7 +11,10 @@ With no arguments this:
 2. runs, for every holdout, the **real** ``benchmark-pbya-v2`` leakage-safe
    pipeline — split off the held-out section, re-register the training slices
    without it, hand the method only a training-only file and a scalar target z;
-3. runs **SpatialCPA-v15** at its production defaults (the complete pipeline of
+3. runs **SpatialCPA-v15** at its production defaults — on the **GPU when one is
+   available**, under a co-operative memory policy so other processes can use the
+   same card (see ``--device`` / ``--gpu-memory-fraction`` and
+   ``spatialcpav15/runtime.py``) — (the complete pipeline of
    ``spatialcpa_v15_idea.md``: type embedding -> structure completion -> marked
    point process -> latent-diffusion expression -> provenance), and
    **SpatialCPA-v8** at its production defaults;
@@ -28,6 +31,7 @@ Other datasets
     python run_spatialcpa_v15.py --data <any>.h5ad --holdouts S2,S3,S4
     python run_spatialcpa_v15.py --synthetic events     # non-monotone z events
     python run_spatialcpa_v15.py --synthetic drift      # drifting niches
+    python run_spatialcpa_v15.py --synthetic imc --registration rigid   # IMC-like
 
 The dataset needs ``obs['section']``, ``obsm['spatial']`` (x, y, z) and, ideally,
 ``obs['cell_type']``; without labels v15 falls back to Phase 1.3 joint typing.
@@ -110,6 +114,7 @@ def build_synthetic(kind: str, out: Path) -> Path:
 
 def run_one(data_path: Path, holdout: str, method: str, out_dir: Path,
             registration: str, extra=()) -> dict:
+    """One method x one holdout, through the real leakage-safe pipeline."""
     out_dir.mkdir(parents=True, exist_ok=True)
     full = ad.read_h5ad(str(data_path))
     train, _held = lg.split_holdout(full, [holdout])
@@ -126,7 +131,8 @@ def run_one(data_path: Path, holdout: str, method: str, out_dir: Path,
     cmd = [sys.executable, str(WRAPPERS[method]),
            "--input", str(train_path),
            "--target-section", holdout, "--target-z", str(z),
-           "--output", str(pred), "--seed", "42", *extra]
+           "--output", str(pred), "--seed", "42",
+           *(extra if method == "v15" else ())]
     t0 = time.time()
     proc = subprocess.run(cmd, capture_output=True, text=True)
     wall = time.time() - t0
@@ -204,8 +210,9 @@ def main():
     ap.add_argument("--data", default=None,
                     help="h5ad with obs['section'] + obsm['spatial'] "
                          "(default: a block of the bundled STARmap 3D cortex)")
-    ap.add_argument("--synthetic", choices=["events", "drift"], default=None,
-                    help="use a synthetic stack instead of the STARmap block")
+    ap.add_argument("--synthetic", choices=["events", "drift", "imc"], default=None,
+                    help="use a synthetic stack instead of the STARmap block "
+                         "('imc' is the continuous-intensity / rigid-registration path)")
     ap.add_argument("--holdouts", default=None,
                     help="comma-separated held-out sections (default: 3 interior ones)")
     ap.add_argument("--methods", default="v15,v8",
@@ -217,7 +224,18 @@ def main():
     ap.add_argument("--output", default=str(REPO / "results_v15"))
     ap.add_argument("--tolerance", type=float, default=0.01,
                     help="relative margin within which a difference counts as a tie")
+    # GPU: v15 uses one automatically when present. These pass through to the
+    # wrapper; v8 is training-free numpy/scipy and ignores them.
+    ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"],
+                    help="where v15's three trained models run (default: GPU if present)")
+    ap.add_argument("--gpu-memory-fraction", type=float, default=None,
+                    help="cap v15 at this fraction of the GPU so a co-tenant process "
+                         "always has the rest (e.g. 0.5); default uncapped")
     args = ap.parse_args()
+
+    v15_extra = ["--device", args.device]
+    if args.gpu_memory_fraction is not None:
+        v15_extra += ["--gpu-memory-fraction", str(args.gpu_memory_fraction)]
 
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -252,7 +270,8 @@ def main():
     for h in holdouts:
         for m in methods:
             print(f"[{m} | holdout {h}] running...", flush=True)
-            res = run_one(data_path, h, m, out_dir, args.registration)
+            res = run_one(data_path, h, m, out_dir, args.registration,
+                          extra=v15_extra)
             for k in GEN_METRICS:
                 if res.get(k) is not None:
                     agg[m][k].append(float(res[k]))

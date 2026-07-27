@@ -40,6 +40,8 @@ check on the sign, not as a significance claim.
 python run_spatialcpa_v15.py                                   # real STARmap block
 python run_spatialcpa_v15.py --synthetic events --holdouts S3,S4,S5
 python run_spatialcpa_v15.py --synthetic drift  --holdouts S3,S4,S5
+python run_spatialcpa_v15.py --synthetic imc --registration rigid \
+    --holdouts ROI1,ROI2,ROI3,ROI4                             # intensity path
 ```
 
 Both methods run at their production defaults (no tuning flags are passed).
@@ -143,20 +145,81 @@ limitation of the current Phase 2 model on nine sections with one event, not a
 property of the design — and the gate refusing to ship a completion it cannot
 justify is the specified behaviour, not a bug.
 
-### Summary across the three stacks
+## 4. Synthetic — continuous intensities, IMC-like (`make_synth_imc.py`)
 
-| stack | wins | ties | losses |
-|---|---|---|---|
-| STARmap 3D cortex (real) | **8** | 2 | **0** |
-| synthetic, drifting niches | 5 | 1 | 4 |
-| synthetic, non-monotone events | 6 | 0 | 4 |
+The count path and the *continuous-intensity* path are different code: protein
+panels (IMC and similar) go through a Gaussian likelihood in Phase 3.1 rather
+than NB, and their sections are not cross-registered by the provider, so the
+benchmark applies `rigid` re-registration. This stack exercises that path — 35
+strictly-positive log-normal channels, six ROIs each in its own arbitrary rigid
+frame, no integers anywhere.
 
-v15's advantage is consistent and large on the **expression** side everywhere
-(co-expression, Sinkhorn, per-gene variance) and on **cell density**; where it
-loses, it loses on **tissue-tracking layout** metrics on synthetic stacks whose
-geometry is a rigid translation, which is what v8's transport morph models
-directly. On the real specimen — the only case with genuine molecular and spatial
-structure — v15 is at or above v8 on every metric.
+```bash
+python run_spatialcpa_v15.py --synthetic imc --registration rigid --holdouts ROI1,ROI2,ROI3,ROI4
+```
+
+| metric | v15 | v8 | Δ | verdict |
+|---|---|---|---|---|
+| coexpression_agreement | 0.9526 | 0.9907 | −0.0380 | lose |
+| morans_agreement | 0.8706 | 0.9504 | −0.0798 | lose |
+| sinkhorn ↓ | 0.1338 | 0.1188 | −0.0151 | lose |
+| celltype_composition | 0.9611 | 0.9582 | +0.0029 | tie (non-inferior) |
+| celltype_nhood_agreement | 0.9378 | 0.9864 | −0.0486 | lose |
+| gene_mean_pearson | 0.9221 | 0.9767 | −0.0546 | lose |
+| gene_var_pearson | 0.9743 | 0.8981 | +0.0762 | **WIN** |
+| field_pearson | 0.5833 | 0.6711 | −0.0878 | lose |
+| field_ssim | 0.2659 | 0.3940 | −0.1281 | lose |
+| density_pearson | 0.3778 | 0.2867 | +0.0911 | **WIN** |
+
+**v15: 2 wins, 1 tie, 7 losses — v8 is clearly ahead in this regime.** Stated
+plainly because it is the honest result: **v15 should not be expected to beat v8
+on an IMC-style dataset on the strength of the STARmap numbers.**
+
+Two things are going on, and only one of them was a defect:
+
+* *A real bug, now fixed.* The Gaussian branch scored its residual on the **raw
+  intensity** scale. With IMC values in the hundreds to thousands, the squared
+  error is dominated entirely by the few brightest channels and dim markers
+  contribute almost nothing to the gradient. Scoring on the log1p scale — where
+  the data is normalized and where the metrics are computed — lifted
+  co-expression 0.939 → 0.953, per-gene variance 0.928 → 0.974, Sinkhorn
+  0.147 → 0.134 and both field metrics, with no change to any count dataset.
+  (A variant that also replaced the compositional decoder with a free log-scale
+  head, with and without a learned per-gene variance, was tried and was *worse*
+  on co-expression — 0.871 and 0.857 — so the profile-times-scalar decoder was
+  kept. The per-gene variance shrinks noisy channels toward their mean, which
+  attenuates exactly the gene-gene correlations the metric measures.)
+* *A regime difference, not a defect.* This stack is a smooth radial-band disc
+  with i.i.d. log-normal noise, which is close to the best case for a method that
+  copies real profiles from an adjacent section and morphs them: v8 reaches 0.991
+  co-expression, near the ceiling. There is little for a generative model to add.
+
+**This is a surrogate, not real IMC data**, which is not bundled here. It is
+built to exercise the continuous-intensity and rigid-registration code paths,
+not to predict the leaderboard on `imc_breast_cancer`. Real IMC tumour tissue is
+far more heterogeneous than a radial disc, so the true margin could go either
+way — but nothing here supports claiming v15 wins that dataset.
+
+### Summary across the four stacks
+
+| stack | regime | wins | ties | losses |
+|---|---|---|---|---|
+| STARmap 3D cortex (real) | counts, volumetric | **8** | 2 | **0** |
+| synthetic, drifting niches | counts, rigid drift | 5 | 1 | 4 |
+| synthetic, non-monotone events | counts, transient/branching | 6 | 0 | 4 |
+| synthetic, IMC-like | continuous intensity, rigid | 2 | 1 | 7 |
+
+**Per-gene variance and cell density are won in all four regimes.** Everything
+else depends on the regime. On the real specimen — the only stack with genuine
+molecular and spatial structure — v15 is at or above v8 on every metric. On
+synthetic stacks whose geometry is close to a rigid translation of a smooth
+shape, v8's transport morph models that geometry directly and wins the
+tissue-tracking metrics; the IMC-like stack is the extreme of that case and v8
+wins it clearly.
+
+The claim this evidence supports is: **v15 dominates on the real densely-sectioned
+specimen, and is not uniformly better than v8 across all regimes.** It is not a
+claim that v15 wins everywhere.
 
 ### Ablation: does more Phase 2 training close the synthetic gap?
 
@@ -249,3 +312,8 @@ generators. Re-running the same command reproduces the same predictions.
 Runtime on 4 CPU cores: ≈ 90 s per holdout for v15 (three models trained per
 holdout) against ≈ 4 s for v8, which is training-free. That gap is real and worth
 stating: v15 buys its margin with computation.
+
+**All numbers above are CPU numbers.** v15 uses a GPU automatically when one is
+visible, but this machine has none (`torch.cuda.is_available()` is `False`), so
+the CUDA path is unexercised and no GPU timing is claimed. See the GPU section of
+`spatialcpav15/README.md` for the sharing policy and what is and is not tested.

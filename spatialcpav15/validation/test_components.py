@@ -13,11 +13,13 @@ regression in any of them would silently change what the method claims to be:
 * the deterministic sampler makes ``t -> I_t`` continuous under fixed noise
   (Phase 2.4);
 * the layout point process reproduces the intensity it was given (Phase 4.3);
-* generation is **reproducible** and carries provenance (Phase 4.7).
+* generation is **reproducible** and carries provenance (Phase 4.7);
+* the GPU-sharing policy is applied and every stage honours the device setting.
 
 Run:  python spatialcpav15/validation/test_components.py
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -25,8 +27,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
 
-from spatialcpav15 import SpatialCPAv15, SpatialCPAv15Config, build_stack_from_arrays
-from spatialcpav15.config import FieldConfig, LayoutConfig, TypeConfig
+from spatialcpav15 import (SpatialCPAv15, SpatialCPAv15Config, runtime,
+                           build_stack_from_arrays)
+from spatialcpav15.config import (FieldConfig, LayoutConfig, RuntimeConfig,
+                                  TypeConfig)
 from spatialcpav15.phase1_types import (classify_label_vocabulary, encode_types_prior,
                                         identify_markers, load_gene_encoder)
 from spatialcpav15.phase2_field import fit_compressor, rasterize_section
@@ -228,6 +232,52 @@ def test_end_to_end_reproducibility():
           "phase2_structure" in g1.diagnostics and "phase3_gate" in g1.diagnostics)
 
 
+def test_runtime_policy():
+    print("Runtime — device selection and the GPU-sharing policy")
+    import torch
+
+    cpu = runtime.configure(RuntimeConfig(device="cpu"))
+    check("device='cpu' is honoured", cpu.type == "cpu")
+    auto = runtime.configure(RuntimeConfig(device="auto"))
+    expected = "cuda" if torch.cuda.is_available() else "cpu"
+    check(f"device='auto' resolves to {expected}", auto.type == expected)
+    check("release() is safe on any device", runtime.release(auto) is None)
+
+    if torch.cuda.is_available():
+        dev = runtime.configure(RuntimeConfig(device="cuda", memory_fraction=0.5))
+        check("cuda requested and returned", dev.type == "cuda")
+        check("expandable segments requested of the allocator",
+              "expandable_segments" in os.environ.get("PYTORCH_CUDA_ALLOC_CONF", ""),
+              os.environ.get("PYTORCH_CUDA_ALLOC_CONF", "<unset>"))
+        check("peak reserved memory is reported",
+              runtime.peak_memory_gib(dev) is not None)
+    else:
+        # No GPU here: check the policy is *requested* correctly, and that asking
+        # for CUDA explicitly fails loudly rather than silently running on CPU.
+        cfg = RuntimeConfig(device="cuda")
+        try:
+            runtime.configure(cfg)
+            check("explicit device='cuda' without a GPU raises", False)
+        except RuntimeError:
+            check("explicit device='cuda' without a GPU raises", True)
+        print("       (no CUDA device here — the GPU branch is not exercised)")
+
+    # Every trained stage must take its device from the one runtime config.
+    stack, genes, names = toy_stack(n_sections=4, n_per=80)
+    cfg = _fast_cfg()
+    cfg.runtime.device = "cpu"
+    gen = SpatialCPAv15(stack, gene_names=genes, cell_type_names=names, cfg=cfg)
+    devs = {str(gen.device), str(gen.space.device)}
+    if gen.structure.device is not None:
+        devs.add(str(gen.structure.device))
+    if gen.expr.device is not None:
+        devs.add(str(gen.expr.device))
+    check("all three trained stages share one device", devs == {"cpu"}, str(devs))
+    check("runtime policy recorded in diagnostics",
+          gen.diagnostics["runtime"]["expandable_segments"] is True
+          and gen.diagnostics["runtime"]["release_cache_between_stages"] is True)
+
+
 def _fast_cfg():
     cfg = SpatialCPAv15Config()
     cfg.verbose = False
@@ -245,7 +295,7 @@ def main():
     for fn in (test_label_kind, test_encoder_order_invariance, test_shrinkage_blend,
                test_field_properties, test_brackets,
                test_deterministic_query_continuity, test_point_process,
-               test_end_to_end_reproducibility):
+               test_end_to_end_reproducibility, test_runtime_policy):
         fn()
     print()
     if FAILURES:

@@ -157,7 +157,6 @@ def run_method(adata, X_log, X_raw, targets, gene_names, args):
     cfg.structure.enabled = not args.no_structure_model
     cfg.structure.epochs = args.structure_epochs
     cfg.structure.ddim_steps = args.ddim_steps
-    cfg.structure.device = args.device
     cfg.vae.epochs = args.vae_epochs
     cfg.vae.latent_dim = args.latent_dim
     cfg.vae.min_passes = args.vae_min_passes
@@ -166,7 +165,11 @@ def run_method(adata, X_log, X_raw, targets, gene_names, args):
     cfg.diffusion.ddim_steps = args.ddim_steps
     cfg.diffusion.n_context = args.n_context
     cfg.diffusion.decoder_readout = args.readout
-    cfg.diffusion.device = args.device
+    cfg.runtime.device = args.device
+    cfg.runtime.cuda_index = args.cuda_index
+    cfg.runtime.memory_fraction = args.gpu_memory_fraction
+    cfg.runtime.expandable_segments = not args.no_expandable_segments
+    cfg.runtime.release_cache_between_stages = not args.no_gpu_cache_release
     cfg.inference.n_structure_seeds = args.structure_seeds
     cfg.inference.n_expression_samples = args.expression_samples
     cfg.inference.output_counts = not args.no_output_counts
@@ -257,7 +260,20 @@ def main():
                         help="ablation: skip the latent diffusion")
     # Shared.
     parser.add_argument("--ddim-steps", type=int, default=20)
-    parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
+    parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"],
+                        help="where the three trained models run; 'auto' uses the "
+                             "GPU when one is available")
+    parser.add_argument("--cuda-index", type=int, default=0,
+                        help="which GPU to use when several are visible")
+    parser.add_argument("--gpu-memory-fraction", type=float, default=None,
+                        help="hard cap on this process's share of the GPU (e.g. 0.5) "
+                             "so a co-tenant is never crowded out; default uncapped")
+    parser.add_argument("--no-expandable-segments", action="store_true",
+                        help="do NOT ask the CUDA allocator for growable segments "
+                             "(not recommended on a shared GPU)")
+    parser.add_argument("--no-gpu-cache-release", action="store_true",
+                        help="do NOT return cached GPU blocks between training "
+                             "stages (not recommended on a shared GPU)")
     parser.add_argument("--no-output-counts", action="store_true",
                         help="emit log1p-normalized expression instead of counts")
     args = parser.parse_args()
@@ -295,6 +311,8 @@ def main():
         "n_context": args.n_context,
         "ddim_steps": args.ddim_steps,
         "readout": args.readout,
+        "device": diagnostics.get("runtime", {}).get("device"),
+        "gpu_peak_reserved_gib": diagnostics.get("runtime", {}).get("peak_reserved_gib"),
         "structure_learned": bool(
             diagnostics.get("phase2_structure", {}).get("passed", False)),
         "expression_diffusion": bool(
