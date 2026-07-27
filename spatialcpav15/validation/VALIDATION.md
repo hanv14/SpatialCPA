@@ -250,13 +250,61 @@ Two supporting observations:
   the grid clips at 56x56 and Moran's agreement falls to 0.815 against v8's
   0.980, with `field_ssim` 0.43 against 0.97. `--max-grid` now exposes this.
 
-### What is *not* yet explained
+### Root cause found: the >24-type channel collapse
 
-None of the four surrogates in this file reproduces the real failure: the
-irregular-tissue IMC stack gives v15 co-expression **0.963** and Moran's
-**0.850**, against **0.798 / 0.441** on the real data. So the resolution cap is a
-*contributing* cause, not the whole story, and the remaining gap is not yet
-diagnosed. It is recorded here as an open defect rather than explained away.
+The maintainer's `method_log.txt` gave it away in one line:
+
+```
+[phase1.2] 26 types (numbered) ...
+[phase2.1] field 56x56 x 21 channels (12 group + 8 embedding)
+```
+
+**26 types, 12 group channels.** `FieldConfig.max_group_channels` was 24, so a
+26-type panel fell past the threshold in `build_field_spec` and the per-type
+density channels collapsed to the 12-subclass hierarchy level. Every type inside
+a subclass then had to be recovered from the *blurred, density-weighted mean
+embedding* channel via a prototype softmax — at a 56x56 grid with a 1-voxel KDE,
+that is an average over neighbouring cells of different types.
+
+This is exactly why STARmap was unaffected: 19 types, under the threshold, so it
+kept one channel per type. The failure is a **threshold effect at C > 24**, not a
+gradual degradation.
+
+Reproduced and quantified on a 29-type, 4000-cell/section IMC-like stack (one
+holdout, same wrapper, only the threshold changed — the `12 group` line is
+reproduced exactly):
+
+| metric | 24 -> 12 group channels (old) | 48 -> 29 group channels (new) |
+|---|---|---|
+| celltype_composition | 0.870 | **0.999** |
+| celltype_nhood_agreement | 0.941 | **0.982** |
+| morans_agreement | 0.752 | 0.769 |
+| coexpression_agreement | 0.938 | 0.942 |
+| gene_var_pearson | 0.965 | 0.965 |
+| field_pearson | 0.835 | 0.832 |
+
+`max_group_channels` is now **48** by default. Per-type channels are cheap — the
+interpolator sees `4x(1+C+E)` input channels — so the budget belongs where the
+cost starts to matter, not at the proposal's illustrative "~10-20 channels".
+Datasets with <= 24 types (including STARmap) are unaffected: the code path is
+identical.
+
+This directly targets two of the metrics v15 loses on the real dataset
+(`celltype_composition` 0.820 vs v8's 0.914, `celltype_nhood_agreement` 0.329 vs
+0.369). **It is a real defect, found, fixed and verified.**
+
+### What is *still* not explained
+
+The channel collapse does **not** account for the headline gap. On the 29-type
+surrogate co-expression is 0.938 -> 0.942 and Moran's 0.752 -> 0.769: the fix
+moves composition and neighbourhood structure, not those two. The real dataset
+sits at co-expression **0.798** and Moran's **0.441**, and no surrogate here
+reproduces that.
+
+So two causes are now identified and fixed (the Gaussian loss scale, the channel
+collapse) and a third remains open. The honest status is that v15's deficit on
+`imc_breast_cancer` is **partly diagnosed, not resolved**; whether the fixes
+close the leaderboard gap can only be settled by re-running the real dataset.
 
 ### Summary across the four synthetic/real stacks
 

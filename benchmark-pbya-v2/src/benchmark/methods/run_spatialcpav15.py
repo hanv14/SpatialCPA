@@ -151,6 +151,7 @@ def run_method(adata, X_log, X_raw, targets, gene_names, args):
     cfg.types.shrinkage_kappa = args.shrinkage_kappa
     cfg.field_.bin_spacings = args.bin_spacings
     cfg.field_.kde_bandwidth_bins = args.kde_bandwidth
+    cfg.field_.max_group_channels = args.max_group_channels
     cfg.field_.max_grid = args.max_grid
     cfg.field_.min_grid = min(args.min_grid, args.max_grid)
     cfg.layout.softmax_tau = args.softmax_tau
@@ -234,6 +235,11 @@ def main():
                         help="field voxel size in units of median cell spacing")
     parser.add_argument("--kde-bandwidth", type=float, default=1.0,
                         help="Gaussian rasterization kernel K_h, in voxels")
+    parser.add_argument("--max-group-channels", type=int, default=48,
+                        help="use one density channel per type while the type count "
+                             "is <= this; above it the channels collapse to the "
+                             "Phase 1.3 hierarchy and within-group identity has to "
+                             "be recovered from the blurred embedding field")
     parser.add_argument("--max-grid", type=int, default=56,
                         help="cap on the in-plane field resolution. Dense sections "
                              "with fine structure hit this cap, and the resulting "
