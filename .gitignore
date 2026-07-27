@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .venv/
 scratchpad_*.py
+
+# v15 benchmark outputs (regenerate with `python run_spatialcpa_v15.py`)
+results_v15/
