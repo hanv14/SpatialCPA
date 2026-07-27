@@ -151,6 +151,8 @@ def run_method(adata, X_log, X_raw, targets, gene_names, args):
     cfg.types.shrinkage_kappa = args.shrinkage_kappa
     cfg.field_.bin_spacings = args.bin_spacings
     cfg.field_.kde_bandwidth_bins = args.kde_bandwidth
+    cfg.field_.max_grid = args.max_grid
+    cfg.field_.min_grid = min(args.min_grid, args.max_grid)
     cfg.layout.softmax_tau = args.softmax_tau
     cfg.layout.hardcore_beta = args.hardcore_beta
     cfg.layout.mark_sharpness = args.mark_sharpness
@@ -232,6 +234,13 @@ def main():
                         help="field voxel size in units of median cell spacing")
     parser.add_argument("--kde-bandwidth", type=float, default=1.0,
                         help="Gaussian rasterization kernel K_h, in voxels")
+    parser.add_argument("--max-grid", type=int, default=56,
+                        help="cap on the in-plane field resolution. Dense sections "
+                             "with fine structure hit this cap, and the resulting "
+                             "blur costs the spatial-organization metrics; raise it "
+                             "for large ROIs (cost is quadratic in the U-Net)")
+    parser.add_argument("--min-grid", type=int, default=24,
+                        help="floor on the in-plane field resolution")
     parser.add_argument("--softmax-tau", type=float, default=0.35,
                         help="temperature of the within-group type posterior")
     parser.add_argument("--hardcore-beta", type=float, default=0.55,

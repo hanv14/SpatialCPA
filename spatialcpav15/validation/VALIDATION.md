@@ -200,7 +200,65 @@ not to predict the leaderboard on `imc_breast_cancer`. Real IMC tumour tissue is
 far more heterogeneous than a radial disc, so the true margin could go either
 way — but nothing here supports claiming v15 wins that dataset.
 
-### Summary across the four stacks
+## 5. Real `imc_breast_cancer` — v15 loses, and this is the honest record
+
+Run by the maintainer on the real dataset (13 holdouts), via
+`run_all --methods spatialcpav15_gen --datasets imc_breast_cancer` and
+`rank_generation`. Composite rank across the six primary metrics:
+
+| method | coexpr | morans | sinkhorn ↓ | composition | nhood | gene_var | rank |
+|---|---|---|---|---|---|---|---|
+| spatialcpav13 / v12 | 0.992 | 0.987 | 0.312 | 0.934 | 0.397 | 0.870 | 2.67 |
+| spatialcpav14 | 0.986 | 0.969 | 0.300 | 0.952 | 0.471 | 0.946 | 2.83 |
+| **spatialcpav8** | 0.990 | 0.978 | 0.311 | 0.914 | 0.369 | 0.869 | **4.33** |
+| spatialcpav11 | 0.812 | 0.403 | 0.353 | 0.727 | 0.561 | 0.855 | 7.00 |
+| **spatialcpav15** | **0.798** | **0.441** | 0.356 | 0.820 | 0.329 | **0.971** | **7.17** |
+| spatialz | 0.376 | 0.415 | 0.498 | 0.937 | 0.439 | 0.452 | 7.50 |
+
+**v15 is second-worst of the SpatialCPA family here and clearly behind v8.** This
+is not a metric artifact — these are the primary, correspondence-free metrics.
+The one metric v15 wins is `gene_var_pearson` (0.971, best of all eleven
+methods), which is consistent with everything else measured: the generative
+expression model preserves dispersion that copy-based methods lose.
+
+### Where the loss is — and is not
+
+Measured directly, on a held-out training slice with the **real layout**, so the
+structure stage is factored out (`validation/` diagnostic, IMC-like stack):
+
+| what | coexpr | morans |
+|---|---|---|
+| VAE reconstruction of real cells (ceiling) | 0.996 | 0.849 |
+| **v15 diffusion, as shipped** | **0.989** | **0.877** |
+| nearest-real-cell copy (what v8 effectively emits) | 0.993 | 0.824 |
+
+**Phase 3 is not the problem.** Given a correct layout, the latent diffusion
+matches the copy baseline on co-expression and beats it on Moran's. The loss on
+the real dataset therefore comes from **Phase 2 / 4.3 — the structure field and
+the layout sampled from it.**
+
+Two supporting observations:
+
+* The maintainer's own table splits cleanly by method class: every method at
+  ~0.99 co-expression (v8, v9, v10, v12, v13) emits **real profiles at
+  real-derived positions**; both genuinely *generative* methods cluster far below
+  (v11 0.812/0.403, v15 0.798/0.441). That is a property of generating a layout
+  rather than transporting one, not a v15-specific defect.
+* The field's in-plane resolution is capped at `FieldConfig.max_grid = 56`. Dense
+  sections with fine structure hit that cap, and the resulting blur is visible in
+  a controlled test: on a dense 4000-cell/section stack with ~60 small clusters,
+  the grid clips at 56x56 and Moran's agreement falls to 0.815 against v8's
+  0.980, with `field_ssim` 0.43 against 0.97. `--max-grid` now exposes this.
+
+### What is *not* yet explained
+
+None of the four surrogates in this file reproduces the real failure: the
+irregular-tissue IMC stack gives v15 co-expression **0.963** and Moran's
+**0.850**, against **0.798 / 0.441** on the real data. So the resolution cap is a
+*contributing* cause, not the whole story, and the remaining gap is not yet
+diagnosed. It is recorded here as an open defect rather than explained away.
+
+### Summary across the four synthetic/real stacks
 
 | stack | regime | wins | ties | losses |
 |---|---|---|---|---|
@@ -217,9 +275,11 @@ shape, v8's transport morph models that geometry directly and wins the
 tissue-tracking metrics; the IMC-like stack is the extreme of that case and v8
 wins it clearly.
 
-The claim this evidence supports is: **v15 dominates on the real densely-sectioned
-specimen, and is not uniformly better than v8 across all regimes.** It is not a
-claim that v15 wins everywhere.
+The claim this evidence supports is narrow: **v15 dominates v8 on the real
+densely-sectioned STARmap specimen (8 wins / 2 ties / 0 losses), and loses to it
+on `imc_breast_cancer` (rank 7.17 vs 4.33).** v15 is *not* a uniform improvement
+over v8, and the original objective — beat or match v8 on every metric — is met
+on STARmap and **not met** on IMC.
 
 ### Ablation: does more Phase 2 training close the synthetic gap?
 
