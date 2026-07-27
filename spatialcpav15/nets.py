@@ -230,18 +230,32 @@ def _mlp(dims, out_act=False):
 class ExpressionVAE(nn.Module):
     """NB / ZINB / Gaussian VAE over single-cell profiles.
 
-    The decoder emits a **library-free** profile (a softmax over genes): total
-    counts are technical depth, not biology, so the library size enters only as
-    an explicit scalar — both as a decoder input and as the multiplier that turns
-    the profile into a rate.  The KL weight is deliberately tiny: this stage is a
-    likelihood and a coordinate system, and over-regularizing it would throw away
-    exactly the resolution the diffusion prior is there to model.
+    For **count** data (NB / ZINB) the decoder emits a **library-free** profile
+    (a softmax over genes): total counts are technical depth, not biology, so the
+    library size enters only as an explicit scalar — both as a decoder input and
+    as the multiplier that turns the profile into a rate.
+
+    For **continuous** data (Gaussian — protein intensities from IMC, and any
+    panel that does not ship counts) the same profile-times-scalar decoder is
+    kept: a per-cell shared scale plus a composition is a good description of
+    intensity too, and it is a useful structural prior. What changes is the
+    *scale the error is measured on*. Squared error on raw intensity is dominated
+    entirely by the few brightest channels — with IMC values in the hundreds to
+    thousands, dim markers contribute essentially nothing to the gradient — so
+    the Gaussian branch scores the residual on the **log1p scale**, which is
+    where the data is normalized and where the benchmark's metrics are computed.
+
+    The KL weight is deliberately tiny either way: this stage is a likelihood and
+    a coordinate system, and over-regularizing it would throw away exactly the
+    resolution the diffusion prior is there to model.
     """
 
     def __init__(self, n_genes: int, latent_dim: int = 24, hidden: int = 128,
-                 n_layers: int = 2, likelihood: str = "nb"):
+                 n_layers: int = 2, likelihood: str = "nb",
+                 per_gene_variance: bool = False):
         super().__init__()
         self.likelihood = likelihood
+        self.per_gene_variance = per_gene_variance
         self.n_genes = n_genes
         enc_dims = [n_genes + 1] + [hidden] * n_layers
         self.enc = _mlp(enc_dims, out_act=True)
@@ -251,24 +265,55 @@ class ExpressionVAE(nn.Module):
         self.dec = _mlp(dec_dims, out_act=True)
         self.to_rate = nn.Linear(hidden, n_genes)
         self.log_theta = nn.Parameter(torch.zeros(n_genes))
+        # Gaussian: per-gene observation noise, so channels are weighted by how
+        # informative they are rather than by how bright they happen to be.
+        self.log_sigma = nn.Parameter(torch.zeros(n_genes))
         if likelihood == "zinb":
             self.to_drop = nn.Linear(hidden, n_genes)
         self.latent_dim = latent_dim
+
+    @property
+    def is_continuous(self) -> bool:
+        return self.likelihood == "gaussian"
 
     def encode(self, x_log: torch.Tensor, log_lib: torch.Tensor):
         h = self.enc(torch.cat([x_log, log_lib[:, None]], dim=-1))
         return self.to_mu(h), self.to_lv(h).clamp(-8, 4)
 
     def decode(self, z: torch.Tensor, log_lib: torch.Tensor):
+        """Return ``(mu, profile, dropout_logits)``.
+
+        ``mu`` is on the scale the likelihood is evaluated on: counts for NB /
+        ZINB, log1p-intensity for Gaussian.  Use :meth:`to_data_scale` to get
+        back to the caller's original units.
+        """
         h = self.dec(torch.cat([z, log_lib[:, None]], dim=-1))
         rho = torch.softmax(self.to_rate(h), dim=-1)         # library-free profile
         mu = rho * log_lib.exp()[:, None]
         drop = self.to_drop(h) if self.likelihood == "zinb" else None
         return mu, rho, drop
 
-    def nll(self, x_counts, mu, drop=None):
-        if self.likelihood == "gaussian":
-            return ((x_counts - mu) ** 2).sum(-1)
+    def to_data_scale(self, mu: torch.Tensor) -> torch.Tensor:
+        """Decoder output -> the caller's original units (already there)."""
+        return mu
+
+    def nll(self, x_target, mu, drop=None):
+        """Negative log-likelihood of ``x_target`` under the decoder output.
+
+        ``x_target`` is in data units for every likelihood; the Gaussian branch
+        compares on the log1p scale so bright channels cannot dominate.
+        """
+        if self.is_continuous:
+            r = torch.log1p(x_target.clamp_min(0)) - torch.log1p(mu.clamp_min(0))
+            if not self.per_gene_variance:
+                # Homoscedastic on purpose: a learned per-gene variance shrinks
+                # noisy channels toward their mean, which attenuates exactly the
+                # gene-gene correlations the structural metrics measure.  Every
+                # channel is weighted equally, as the evaluation weights them.
+                return (r ** 2).sum(-1)
+            log_sigma = self.log_sigma.clamp(-6, 6)
+            return (0.5 * (r ** 2) * torch.exp(-2 * log_sigma) + log_sigma).sum(-1)
+        x_counts = x_target
         theta = self.log_theta.exp().clamp(1e-4, 1e6)
         eps = 1e-8
         lt = torch.log(theta + eps)

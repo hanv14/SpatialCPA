@@ -92,7 +92,8 @@ def train_expression_vae(counts: np.ndarray, log_expr: np.ndarray,
     LL = torch.from_numpy(log_lib.astype(np.float32)).to(device)
 
     vae = ExpressionVAE(G, latent_dim=cfg.latent_dim, hidden=cfg.hidden,
-                        n_layers=cfg.n_layers, likelihood=likelihood).to(device)
+                        n_layers=cfg.n_layers, likelihood=likelihood,
+                        per_gene_variance=cfg.gaussian_per_gene_variance).to(device)
     opt = torch.optim.AdamW(vae.parameters(), lr=cfg.lr, weight_decay=1e-5)
     g = torch.Generator().manual_seed(seed)
 
@@ -134,21 +135,25 @@ def train_expression_vae(counts: np.ndarray, log_expr: np.ndarray,
 
 def decode_latents(space: LatentSpace, Z: np.ndarray, log_lib: np.ndarray,
                    readout: str, rng: np.random.Generator) -> np.ndarray:
-    """Latents -> counts through the frozen decoder (Phase 4.6).
+    """Latents -> expression in the caller's units, through the frozen decoder.
 
-    ``mean`` returns the NB rate (a denoised profile); ``sample`` draws from the
-    fitted NB, which restores realistic per-gene dispersion.  Which one is used
-    is decided by the Phase 3.3 gate, not by hand.
+    ``mean`` returns the fitted rate (a denoised profile); ``sample`` draws from
+    the fitted NB, which restores realistic per-gene dispersion.  Which one is
+    used is decided by the Phase 3.3 gate, not by hand.  A Gaussian head models
+    the log1p scale, so its output is mapped back to the data scale and the
+    ``sample`` readout does not apply.
     """
     import torch
 
     with torch.no_grad():
         z = torch.from_numpy(np.asarray(Z, dtype=np.float32)).to(space.device)
         ll = torch.from_numpy(np.asarray(log_lib, dtype=np.float32)).to(space.device)
-        mu, rho, _ = space.vae.decode(z, ll)
-        mu = mu.cpu().numpy()
+        mu_t, _, _ = space.vae.decode(z, ll)
+        mu = np.clip(mu_t.cpu().numpy(), 0.0, None)
+        if space.vae.is_continuous:
+            return mu          # continuous data has no count draw to take
         theta = space.vae.log_theta.exp().clamp(1e-4, 1e6).cpu().numpy()
-    if readout == "mean" or space.likelihood == "gaussian":
+    if readout == "mean":
         return np.clip(mu, 0.0, None)
     p = theta / (theta + np.maximum(mu, 1e-8))
     lam = rng.gamma(shape=np.broadcast_to(theta, mu.shape),
@@ -501,12 +506,14 @@ def expression_gate(model: ExpressionDiffusion, space: LatentSpace,
 
 
 def _log_norm(space: LatentSpace, idx: np.ndarray) -> np.ndarray:
+    """VAE reconstruction of real cells, on the comparison (log-normalized) scale."""
     import torch
     with torch.no_grad():
         z = torch.from_numpy(space.latents[idx].astype(np.float32)).to(space.device)
         ll = torch.from_numpy(space.log_lib[idx].astype(np.float32)).to(space.device)
         mu, _, _ = space.vae.decode(z, ll)
-    X = mu.cpu().numpy()
+        X = space.vae.to_data_scale(mu).cpu().numpy()
+    X = np.clip(X, 0.0, None)
     return np.log1p(X / np.maximum(X.sum(1, keepdims=True), 1e-9) * 1e4)
 
 

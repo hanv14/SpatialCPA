@@ -228,6 +228,11 @@ class ExprVAEConfig:
     batch_size: int = 256
     lr: float = 2e-3
 
+    gaussian_per_gene_variance: bool = False
+    """Gaussian head only: learn a per-gene observation variance. Off by default —
+    it is the statistically natural choice but it shrinks noisy channels toward
+    their mean, attenuating the gene-gene correlations the benchmark measures."""
+
     min_active_units: float = 0.25
     """Posterior-collapse check: fraction of latent dims that must stay active."""
 

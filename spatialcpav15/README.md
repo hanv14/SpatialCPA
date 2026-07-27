@@ -244,8 +244,24 @@ Registered in `benchmark-pbya-v2` as `spatialcpav15_gen`:
 
 ```bash
 cd benchmark-pbya-v2
+python -m src.benchmark.run_all --methods spatialcpav15_gen --datasets imc_breast_cancer
 python -m src.benchmark.run_benchmark --method spatialcpav15_gen --dataset starmap_visual_cortex
 ```
+
+Both entry points work; `run_all` sweeps every leave-one-out holdout of the
+dataset. The full campaign path (training-only re-registration → wrapper →
+`evaluate` + `evaluate_generation` → `metrics.json`) was exercised end to end on
+an IMC-like surrogate covering the cases that differ from STARmap: **continuous
+intensity** rather than counts, **`rigid`** re-registration, missing
+`obs['cell_type']` (leiden fallback), and stacks with as few as three sections.
+
+Two notes for intensity datasets such as `imc_breast_cancer`:
+
+* Phase 3.1 selects the **Gaussian** likelihood automatically (the input is not
+  count-like) and scores its residual on the log1p scale.
+* On an IMC-like surrogate **v8 is ahead of v15** (2 wins / 1 tie / 7 losses) —
+  see `validation/VALIDATION.md` §4. The STARmap result does not transfer to this
+  regime, and no claim is made that it does.
 
 The harness passes only the shared generation-only interface
 (`--input/--target-section/--target-z/--output/--seed`), and every default in

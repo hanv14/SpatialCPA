@@ -31,6 +31,7 @@ Other datasets
     python run_spatialcpa_v15.py --data <any>.h5ad --holdouts S2,S3,S4
     python run_spatialcpa_v15.py --synthetic events     # non-monotone z events
     python run_spatialcpa_v15.py --synthetic drift      # drifting niches
+    python run_spatialcpa_v15.py --synthetic imc --registration rigid   # IMC-like
 
 The dataset needs ``obs['section']``, ``obsm['spatial']`` (x, y, z) and, ideally,
 ``obs['cell_type']``; without labels v15 falls back to Phase 1.3 joint typing.
@@ -209,8 +210,9 @@ def main():
     ap.add_argument("--data", default=None,
                     help="h5ad with obs['section'] + obsm['spatial'] "
                          "(default: a block of the bundled STARmap 3D cortex)")
-    ap.add_argument("--synthetic", choices=["events", "drift"], default=None,
-                    help="use a synthetic stack instead of the STARmap block")
+    ap.add_argument("--synthetic", choices=["events", "drift", "imc"], default=None,
+                    help="use a synthetic stack instead of the STARmap block "
+                         "('imc' is the continuous-intensity / rigid-registration path)")
     ap.add_argument("--holdouts", default=None,
                     help="comma-separated held-out sections (default: 3 interior ones)")
     ap.add_argument("--methods", default="v15,v8",
