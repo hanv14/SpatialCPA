@@ -120,10 +120,19 @@ class FieldConfig:
     kde_bandwidth_bins: float = 1.0
     """Gaussian smoothing kernel K_h, in voxels."""
 
-    max_group_channels: int = 24
+    max_group_channels: int = 48
     """Per-type density channels are used while the number of types is <= this;
     above it the channels drop to the coarser hierarchy level (Phase 2.1,
-    'many types' note) and the embedding field carries within-group identity."""
+    'many types' note) and the embedding field carries within-group identity.
+
+    This threshold is load-bearing and was originally set far too low (24).  A
+    panel with 26 types then collapsed to the 12-subclass level, and every type
+    within a subclass had to be recovered from the *blurred* mean-embedding
+    channel — measured cost on a 29-type stack: cell-type composition 0.870 vs
+    0.999 and neighbourhood agreement 0.941 vs 0.982.  Per-type channels are
+    cheap (the interpolator sees 4x(1+C+E) input channels), so the budget is now
+    set where the cost actually starts to matter rather than at the proposal's
+    illustrative '~10-20 channels'."""
 
     embedding_channels: int = 8
     """Number of density-weighted mean type-embedding channels (Phase 2.1(b))."""
