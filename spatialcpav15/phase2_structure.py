@@ -35,15 +35,9 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
-from .config import StructureConfig
+from . import runtime
+from .config import RuntimeConfig, StructureConfig
 from .phase2_field import FieldSpec, linear_field
-
-
-def _pick_device(name: str):
-    import torch
-    if name == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return torch.device(name)
 
 
 @dataclass
@@ -189,7 +183,8 @@ class StructureModel:
 
 def train_structure_model(fields: np.ndarray, z: np.ndarray, spec: FieldSpec,
                           cfg: StructureConfig, seed: int = 0,
-                          verbose: bool = True, compressor=None) -> StructureModel:
+                          verbose: bool = True, compressor=None,
+                          rt: RuntimeConfig = None) -> StructureModel:
     """Train the Phase 2.3 interpolator and run the Phase 2.5 gate.
 
     ``fields`` are already in the Phase 2.2 representation (compressed or not);
@@ -216,7 +211,8 @@ def train_structure_model(fields: np.ndarray, z: np.ndarray, spec: FieldSpec,
     from .nets import CosineSchedule, QueryUNet
 
     torch.manual_seed(seed)
-    device = _pick_device(cfg.device)
+    rt = rt or RuntimeConfig()
+    device = runtime.configure(rt)
     C, H, W = fields.shape[1:]
     net = QueryUNet(C, hidden=cfg.hidden).to(device)
     sched = CosineSchedule(cfg.n_timesteps, device=device)
@@ -278,6 +274,8 @@ def train_structure_model(fields: np.ndarray, z: np.ndarray, spec: FieldSpec,
     model.use_learned = bool(gate["passed"])
     model.diagnostics = {"trained": True, "final_loss": float(np.mean(losses[-20:])),
                          "n_tuples": len(tuples), **gate}
+    if rt.release_cache_between_stages:
+        runtime.release(device)
     if verbose:
         verdict = "PASS -> learned completion" if model.use_learned else \
                   "FAIL -> falling back to linear field"

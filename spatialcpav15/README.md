@@ -180,11 +180,63 @@ real slice's tissue move to?"*, v15 answers *"what is the tissue at this depth?"
 | `phase2_structure.py` | query-based VFI diffusion, deterministic multi-query, the Phase 2.5 gate, reslice diagnostic |
 | `phase2_layout.py` | marked spatial point process (stratified intensity sampling, hardcore, marks, composition repair) |
 | `phase3_expression.py` | NB VAE, conditional latent diffusion with context cross-attention, the Phase 3.3 gate |
+| `runtime.py` | device selection and the co-operative GPU-memory policy shared by all three trained models |
 | `nets.py` | `QueryUNet`, `ExpressionVAE`, `ContextDenoiser`, cosine-schedule DDPM/DDIM |
 | `generator.py` | Phase 4 orchestration and provenance |
 | `validation/` | head-to-head against v8 through the real benchmark evaluator |
 
 ---
+
+## GPU
+
+v15 trains three models (the structure interpolator, the expression VAE, the
+latent diffusion) and **uses a GPU automatically whenever one is visible** —
+`RuntimeConfig.device` defaults to `auto`. All three take their device from that
+single setting; there is no per-stage device to get out of sync.
+
+**The GPU is shared co-operatively by default.** PyTorch's caching allocator
+never returns memory to the driver on its own, so a process that briefly peaks
+holds that peak for its whole lifetime and a co-tenant sees a full card even
+while this run is idle. `spatialcpav15/runtime.py` sets three things so that
+doesn't happen:
+
+| default | what it does |
+|---|---|
+| `expandable_segments = True` | asks the CUDA allocator to back its pools with expandable virtual-memory segments, so they **grow and shrink with demand** instead of reserving fixed blocks that are never given back |
+| `release_cache_between_stages = True` | returns cached blocks to the driver after each training stage and again before inference, so the memory is free during all of Phase 1, the rasterization and the point process (numpy-only), and between the three models |
+| `memory_fraction = None` | optional **hard cap** on this process's share of the card; off by default, because a cap that is too tight turns a slow run into a crashed one |
+
+```bash
+# default: GPU if present, memory grows and shrinks, cache released between stages
+python run_spatialcpa_v15.py
+
+# shared GPU: additionally cap this process at half the card
+python run_spatialcpa_v15.py --gpu-memory-fraction 0.5
+
+# force CPU
+python run_spatialcpa_v15.py --device cpu
+```
+
+The wrapper exposes the same controls plus `--cuda-index` for multi-GPU hosts,
+and `--no-expandable-segments` / `--no-gpu-cache-release` to turn the sharing
+policy off (not recommended on a shared card). The chosen device and the peak
+reserved memory are printed (`[runtime] …`, `[fit] … peak GPU N.NN GiB`) and
+stored in `diagnostics["runtime"]` and in the prediction's `method_params`.
+
+Note that `expandable_segments` must be in place before the CUDA allocator
+initializes, which is why the policy is applied once at the start of the fit,
+before any tensor is created. If CUDA was already initialized by the caller, the
+runtime API is used instead and a failure there is non-fatal — it costs sharing
+friendliness, not correctness.
+
+**Honest status:** the GPU path has not been executed — the machine this was
+developed and benchmarked on has no CUDA device (`torch.cuda.is_available()` is
+`False`), so every number in `validation/VALIDATION.md` is from CPU. The device
+selection, the failure mode when CUDA is requested without a GPU, and the
+single-device invariant across all three stages are covered by
+`validation/test_components.py`; the CUDA-only branch (allocator settings, the
+memory cap, peak reporting) is guarded but unexercised. Results should be
+identical on GPU up to floating-point non-determinism.
 
 ## Running it in the benchmark
 

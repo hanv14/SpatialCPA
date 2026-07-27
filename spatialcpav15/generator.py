@@ -32,6 +32,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+from . import runtime
 from .config import SpatialCPAv15Config
 from .data import SliceStack, VirtualSlice
 from .phase1_frame import build_common_frame, build_neighbor_graph
@@ -57,6 +58,20 @@ class SpatialCPAv15:
             [f"gene_{i}" for i in range(stack.n_genes)]
         self.diagnostics: Dict = {}
         t0 = time.time()
+
+        # Device + GPU-sharing policy, decided once for the whole fit.  The GPU
+        # is used automatically when present; see ``runtime.py`` for why the
+        # allocator is configured to grow and shrink rather than hold its peak.
+        self.device = runtime.configure(self.cfg.runtime)
+        self.diagnostics["runtime"] = {
+            "device": str(self.device),
+            "description": runtime.describe(),
+            "expandable_segments": self.cfg.runtime.expandable_segments,
+            "release_cache_between_stages":
+                self.cfg.runtime.release_cache_between_stages,
+            "memory_fraction": self.cfg.runtime.memory_fraction,
+        }
+        self._log(f"  [runtime] {runtime.describe()}")
 
         # ── Phase 1.1 — QC (per section, so batch structure stays visible) ──
         self.stack, qc = section_qc(stack, self.cfg.qc)
@@ -144,7 +159,7 @@ class SpatialCPAv15:
         self.structure = train_structure_model(
             fields, self.stack.z_positions, self.spec, self.cfg.structure,
             seed=self.cfg.seed, verbose=self.cfg.verbose,
-            compressor=self.compressor)
+            compressor=self.compressor, rt=self.cfg.runtime)
         self.diagnostics["phase2_structure"] = self.structure.diagnostics
 
         # ── Phase 3.1 — the expression VAE ──────────────────────────────────
@@ -154,7 +169,8 @@ class SpatialCPAv15:
             counts = np.expm1(np.clip(log_expr, 0, 30))
         self.space = train_expression_vae(counts, log_expr, self.cfg.vae,
                                           seed=self.cfg.seed,
-                                          verbose=self.cfg.verbose)
+                                          verbose=self.cfg.verbose,
+                                          rt=self.cfg.runtime)
         self.diagnostics["phase3_vae"] = self.space.diagnostics
 
         # ── Phase 3.2 — conditional latent diffusion ────────────────────────
@@ -164,7 +180,7 @@ class SpatialCPAv15:
         self.expr = train_expression_diffusion(
             self.index, self.type_rep, self.stack, self.space,
             self.cfg.diffusion, self.dz_unit, seed=self.cfg.seed,
-            verbose=self.cfg.verbose)
+            verbose=self.cfg.verbose, rt=self.cfg.runtime)
         self.diagnostics["phase3_diffusion"] = self.expr.diagnostics
 
         # ── Phase 3.3 — the gate (also selects the decoder readout) ─────────
@@ -177,10 +193,19 @@ class SpatialCPAv15:
             readout = gate.get("chosen_readout", "mean") if gate.get("ran") else "mean"
         self.expr.readout = readout
 
+        # Training is over: hand the cached GPU blocks back before inference, so
+        # the card is free for other processes for as long as this run is idle.
+        if self.cfg.runtime.release_cache_between_stages:
+            runtime.release(self.device)
+        peak = runtime.peak_memory_gib(self.device)
+        if peak is not None:
+            self.diagnostics["runtime"]["peak_reserved_gib"] = peak
+
         self.diagnostics["fit_seconds"] = time.time() - t0
         self._log(f"  [fit] {self.diagnostics['fit_seconds']:.1f}s "
                   f"(structure learned={self.structure.use_learned}, "
-                  f"expression diffusion={self.expr.trained}, readout={readout})")
+                  f"expression diffusion={self.expr.trained}, readout={readout}"
+                  + (f", peak GPU {peak:.2f} GiB" if peak is not None else "") + ")")
 
     # ── Phase 4 ─────────────────────────────────────────────────────────────
     def generate_virtual_slice(self, z: float,

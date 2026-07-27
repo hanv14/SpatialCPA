@@ -32,14 +32,8 @@ import numpy as np
 from scipy.spatial import cKDTree
 from scipy.stats import pearsonr
 
-from .config import ExprDiffusionConfig, ExprVAEConfig
-
-
-def _pick_device(name: str):
-    import torch
-    if name == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return torch.device(name)
+from . import runtime
+from .config import ExprDiffusionConfig, ExprVAEConfig, RuntimeConfig
 
 
 def _looks_like_counts(X: np.ndarray) -> bool:
@@ -68,14 +62,16 @@ class LatentSpace:
 
 def train_expression_vae(counts: np.ndarray, log_expr: np.ndarray,
                          cfg: ExprVAEConfig, seed: int = 0,
-                         verbose: bool = True) -> LatentSpace:
+                         verbose: bool = True,
+                         rt: RuntimeConfig = None) -> LatentSpace:
     """Phase 3.1 — fit the VAE on all cells pooled and cache their latents."""
     import torch
 
     from .nets import ExpressionVAE
 
     torch.manual_seed(seed)
-    device = _pick_device("auto")
+    rt = rt or RuntimeConfig()
+    device = runtime.configure(rt)
     n, G = log_expr.shape
 
     likelihood = cfg.likelihood
@@ -118,6 +114,9 @@ def train_expression_vae(counts: np.ndarray, log_expr: np.ndarray,
     with torch.no_grad():
         mu, lv = vae.encode(X_log, LL)
         Z = mu.cpu().numpy()
+
+    if rt.release_cache_between_stages:
+        runtime.release(device)
 
     active = float(np.mean(Z.std(axis=0) > 0.1 * Z.std()))
     diag = {"likelihood": likelihood, "latent_dim": cfg.latent_dim,
@@ -239,7 +238,8 @@ class ExpressionDiffusion:
 def train_expression_diffusion(index: CellIndex, type_rep, stack,
                                space: LatentSpace, cfg: ExprDiffusionConfig,
                                dz_unit: float, seed: int = 0,
-                               verbose: bool = True) -> ExpressionDiffusion:
+                               verbose: bool = True,
+                               rt: RuntimeConfig = None) -> ExpressionDiffusion:
     """Phase 3.2 — train the conditional latent diffusion."""
     model = ExpressionDiffusion(cfg=cfg)
     n_sections = stack.n_slices
@@ -254,7 +254,8 @@ def train_expression_diffusion(index: CellIndex, type_rep, stack,
     from .nets import ContextDenoiser, CosineSchedule
 
     torch.manual_seed(seed)
-    device = _pick_device(cfg.device)
+    rt = rt or RuntimeConfig()
+    device = runtime.configure(rt)
     L = space.latent_dim
     hier = type_rep.hierarchical(index.types).astype(np.float32)
     T = hier.shape[1]
@@ -344,6 +345,8 @@ def train_expression_diffusion(index: CellIndex, type_rep, stack,
     model.schedule = sched
     model.device = device
     model.trained = True
+    if rt.release_cache_between_stages:
+        runtime.release(device)
     model.diagnostics = {"trained": True, "final_loss": float(np.mean(losses[-30:])),
                          "latent_scale_median": float(np.median(lat_scale)),
                          "type_dim": T}

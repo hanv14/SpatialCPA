@@ -249,3 +249,8 @@ generators. Re-running the same command reproduces the same predictions.
 Runtime on 4 CPU cores: ≈ 90 s per holdout for v15 (three models trained per
 holdout) against ≈ 4 s for v8, which is training-free. That gap is real and worth
 stating: v15 buys its margin with computation.
+
+**All numbers above are CPU numbers.** v15 uses a GPU automatically when one is
+visible, but this machine has none (`torch.cuda.is_available()` is `False`), so
+the CUDA path is unexercised and no GPU timing is claimed. See the GPU section of
+`spatialcpav15/README.md` for the sharing policy and what is and is not tested.

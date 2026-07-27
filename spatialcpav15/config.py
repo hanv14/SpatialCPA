@@ -19,6 +19,7 @@ dataclass               proposal section
 ``ExprVAEConfig``       Phase 3.1 — NB/ZINB expression VAE (used as a likelihood)
 ``ExprDiffusionConfig`` Phase 3.2/3.3 — conditional latent diffusion + gate
 ``InferenceConfig``     Phase 4 — seeds, provenance, output
+``RuntimeConfig``       device selection and GPU-sharing policy
 ======================  ==========================================================
 """
 
@@ -170,8 +171,6 @@ class StructureConfig:
     of the field by this margin (in relative MSE) on internal held-out slices,
     otherwise the linear field is used and the fact is reported."""
 
-    device: str = "auto"
-
 
 @dataclass
 class LayoutConfig:
@@ -267,7 +266,40 @@ class ExprDiffusionConfig:
     """How latents become counts: ``mean`` (NB mean), ``sample`` (NB draw), or
     ``auto`` — chosen by the leakage-safe Phase 3.3 internal gate."""
 
+
+# ── Runtime ───────────────────────────────────────────────────────────────────
+
+@dataclass
+class RuntimeConfig:
+    """Where the three trained models run, and how the GPU is shared.
+
+    SpatialCPA-v15 uses the GPU automatically when one is present. The defaults
+    are deliberately **co-operative**: the process lets its memory grow and
+    shrink with demand and hands cached blocks back between stages, so another
+    process can use the same card at the same time.
+    """
+
     device: str = "auto"
+    """``auto`` (GPU when available), ``cuda`` or ``cpu``. Applies to all three
+    trained models — there is no per-stage device."""
+
+    cuda_index: int = 0
+    """Which GPU to use when several are visible."""
+
+    expandable_segments: bool = True
+    """Back the CUDA caching allocator with expandable virtual-memory segments,
+    so its pools grow and shrink instead of reserving fixed blocks that are never
+    returned. This is what keeps the card usable by other processes."""
+
+    release_cache_between_stages: bool = True
+    """Return cached GPU blocks to the driver after each training stage, so the
+    memory is free during the numpy-only parts of the pipeline and between the
+    structure model, the VAE and the latent diffusion."""
+
+    memory_fraction: Optional[float] = None
+    """Optional hard cap on this process's share of the card (e.g. ``0.5``).
+    ``None`` = uncapped. Set it when the GPU is genuinely shared and a peak must
+    never crowd out a co-tenant; leave it off when the run has the card."""
 
 
 # ── Phase 4 ───────────────────────────────────────────────────────────────────
@@ -310,3 +342,4 @@ class SpatialCPAv15Config:
     vae: ExprVAEConfig = field(default_factory=ExprVAEConfig)
     diffusion: ExprDiffusionConfig = field(default_factory=ExprDiffusionConfig)
     inference: InferenceConfig = field(default_factory=InferenceConfig)
+    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
