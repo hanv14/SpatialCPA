@@ -190,11 +190,27 @@ def main():
     gt_type_idx = np.array([lut.get(t, 0) for t in gt_types], dtype=np.int64)
 
     # v15's normalized coordinates for the GT positions
-    u_gt, _ = gen.frame.to_normalized(gt_xyz[:, :2], gt_xyz[:, 2], None)
-    z_norm = np.full(gt.n_obs, gen.frame.z_to_normalized(z_q))
     idx = gen.index
     a_out, a, b, b_out = gen.stack.brackets(z_q)
     allowed = np.array(sorted({a_out, a, b, b_out}))
+
+    # Put the GT coordinates in the SAME frame the model was fitted in.  Phase
+    # 1.4 may have applied a per-section drift stabilization (it does on this
+    # dataset), in which case the training cells in ``idx.u`` are shifted and raw
+    # GT coordinates are not — comparing the two directly would offset every
+    # lookup by the drift and blame the model for a frame error.  The held-out
+    # section has no shift of its own, so the interpolated bracket shift is used,
+    # exactly as ``generate_virtual_slice`` does when mapping output back.
+    shift = np.zeros(2)
+    if gen.frame.applied:
+        t_gap, _ = gen.stack.interp_fraction(z_q)
+        sa = gen.frame.shifts.get(gen.stack.slices[a].section_id, np.zeros(2))
+        sb = gen.frame.shifts.get(gen.stack.slices[b].section_id, np.zeros(2))
+        shift = (1.0 - t_gap) * sa + t_gap * sb
+        print(f"frame    : stabilization applied, GT shifted by "
+              f"({shift[0]:.2f}, {shift[1]:.2f}) into the model frame")
+    u_gt, _ = gen.frame.to_normalized(gt_xyz[:, :2] + shift, gt_xyz[:, 2], None)
+    z_norm = np.full(gt.n_obs, gen.frame.z_to_normalized(z_q))
     rng = np.random.default_rng(args.seed)
     lib_mean = float(idx.log_lib.mean())
 
@@ -211,6 +227,27 @@ def main():
             types, log_lib, allowed, z_q, gen.dz_unit, lib_mean, seed=args.seed)
 
     rows = {}
+
+    # A0 — the VAE's own reconstruction of the GT cells.  This is the ceiling the
+    # latent space imposes: no diffusion, no layout, just encode->decode.  If it
+    # is already low, the Phase 3.1 decoder cannot represent this data and no
+    # amount of work on the sampler or the layout will help.
+    import torch
+    gt_log = np.log1p(np.clip(gt_raw, 0, None)) if et in (
+        "fluorescence_intensity", "mean_intensity") else np.log1p(
+        np.clip(gt_raw, 0, None) / np.maximum(
+            np.clip(gt_raw, 0, None).sum(1, keepdims=True), 1e-9) * 1e4)
+    gt_loglib = np.log(np.maximum(np.clip(gt_raw, 0, None).sum(axis=1), 1.0))
+    with torch.no_grad():
+        dev = gen.space.device
+        mu_z, _ = gen.space.vae.encode(
+            torch.from_numpy(gt_log.astype(np.float32)).to(dev),
+            torch.from_numpy(gt_loglib.astype(np.float32)).to(dev))
+        mu_r, _, _ = gen.space.vae.decode(
+            mu_z, torch.from_numpy(gt_loglib.astype(np.float32)).to(dev))
+        recon = np.clip(gen.space.vae.to_data_scale(mu_r).cpu().numpy(), 0.0, None)
+    rows["A0 VAE recon of GT cells"] = _score(
+        gt_xyz, recon, gt_types, holdout, genes, args.data, wd, "A0")
 
     # A — copy baseline at the GT layout (what a transport method effectively emits)
     pool = np.where(np.isin(idx.section, allowed))[0]
