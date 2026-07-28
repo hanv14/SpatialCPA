@@ -294,6 +294,150 @@ This directly targets two of the metrics v15 loses on the real dataset
 (`celltype_composition` 0.820 vs v8's 0.914, `celltype_nhood_agreement` 0.329 vs
 0.369). **It is a real defect, found, fixed and verified.**
 
+### Re-run on the real dataset after the fix
+
+Maintainer's re-run (13 holdouts, same command). The channel-collapse fix lands
+almost exactly where the surrogate predicted:
+
+| metric | before | after | Δ | v8 | |
+|---|---|---|---|---|---|
+| celltype_composition | 0.820 | **0.941** | +0.121 | 0.914 | **ahead of v8** |
+| celltype_nhood_agreement | 0.329 | **0.433** | +0.104 | 0.369 | **ahead of v8** |
+| morans_agreement | 0.441 | 0.512 | +0.071 | 0.978 | behind |
+| coexpression_agreement | 0.798 | 0.806 | +0.008 | 0.990 | behind |
+| sinkhorn ↓ | 0.356 | 0.354 | −0.002 | 0.311 | behind |
+| gene_var_pearson | 0.971 | 0.971 | 0.000 | 0.869 | **ahead of v8** |
+
+v15 now leads v8 on **three of the six** primary metrics. (The composite rank
+moved 7.17 → 4.17, but that number is not comparable across the two runs: v12 and
+v13 are absent from the second table, and the composite is a rank among whichever
+methods are present.)
+
+### The remaining gap looks like a ceiling for generative methods
+
+The three methods that *synthesize* expression land within 0.006 of each other on
+co-expression — v15 **0.806**, isoST **0.808**, v11 **0.812** — while every
+method that emits **real profiles** (v8, v9, v10, v14) sits at 0.986–0.990. That
+split is far too clean to be a v15-specific defect.
+
+A staged measurement on a surrogate built with **correlated channels** (shared
+latent factors driving all 38 proteins — the property real panels have and every
+earlier surrogate lacked, which used i.i.d. per-channel noise) locates the cost
+inside the generative path rather than the latent space:
+
+| stage | coexpr | morans |
+|---|---|---|
+| VAE reconstruction of real cells (ceiling) | 0.998 | 0.999 |
+| **diffusion, 1 sample — as shipped** | **0.940** | 0.890 |
+| nearest-real-cell copy (v8-like) | 0.980 | 0.917 |
+
+The VAE latent is not the bottleneck (0.998). The conditional diffusion sampler
+costs ~0.04 against a copy. That is the price of sampling rather than copying,
+and it is the intended trade — it is also why v15 wins `gene_var_pearson` on
+every stack tested. It does **not** reach the 0.806 seen on the real data, so the
+real dataset has a further factor none of the five surrogates here reproduces.
+
+### Bug found while measuring this: never average expression samples
+
+`InferenceConfig.n_expression_samples > 1` used to **average** the decoded
+samples into the output. Averaging in data space shrinks each cell toward the
+conditional mean and flattens exactly the gene-gene covariance the metric
+measures — on the correlated-channel panel, co-expression falls **0.940 → 0.864
+(4 samples) → 0.709 (8 samples)**. The output is now the first *coherent* sample
+and the extra samples only supply the spread, mirroring Phase 2.4 where each seed
+gives one coherent volume. The default (1 sample) was unaffected, so no published
+number changes — but anyone enabling the uncertainty feature was silently
+degrading the result.
+
+### `pearson_median` ~ 0.045 — what it does and does not tell us
+
+The maintainer also reports the cell-matched `pearson_median` (per-gene Pearson
+across nearest-neighbour-matched cells, median over genes) at 0.040 before the
+fixes and 0.045 after. It is computed on **raw, unnormalized** values in
+`evaluate.py`, and benchmark-pbya-v2 explicitly deprecates it for generation.
+
+A hypothesis was tested and **rejected**: that v15's per-cell total ("library"),
+which `_sample_library` draws at random from real flanking cells of the same
+type, injects a shared random factor. Measured on the correlated-channel stack
+with the **real layout**, varying only the library:
+
+| library source | coexpr | raw per-gene Pearson (median) |
+|---|---|---|
+| real library (oracle, not available at inference) | 0.940 | 0.216 |
+| random within type — **as shipped** | 0.940 | 0.103 |
+| nearest real cell in the bracketing slices | 0.940 | 0.112 |
+
+Two conclusions, both negative:
+
+* the library choice has **no effect on co-expression** (0.940 either way), so it
+  is not the cause of the 0.806 deficit;
+* it does explain roughly half the per-gene correlation (0.216 -> 0.103), but
+  **there is no available fix**: the real library is not knowable at inference,
+  and the spatially nearest real cell's library barely helps (0.112) because
+  total intensity varies mostly *within* type rather than across space
+  (`corr(sampled, real) = 0.19`, `corr(nearest, real) = 0.19`).
+
+The more useful number is the first row. **Even with a perfect layout and oracle
+libraries, this architecture reaches only ~0.22 on that metric.** It scores
+whether each individual cell's deviation was reproduced, which a conditional
+*sampler* does not attempt by construction — it draws a plausible profile for
+"type X at position p", not the specific profile that particular cell had. A
+method that copies real cells retains that per-cell structure for free. A low
+`pearson_median` is therefore the expected signature of generation, not evidence
+of a defect; only the value for a copy-based method on the *same* dataset would
+make it interpretable, and that comparison has not been obtained.
+
+### Correction: this is not "the signature of generation"
+
+v8's `pearson_median` on the same dataset is **0.261**; v15's is **0.045**. The
+earlier reading in this file — that a low value is what a sampler necessarily
+scores — was **wrong**, and the oracle measurement above is what refutes it:
+v15's own architecture reaches ~0.216 with a correct layout, so on the real data
+v15 is running **4.8x below its own achievable ceiling**, not merely below a
+copy-based method. There is a real loss inside the pipeline on this dataset.
+
+### `diagnose_dataset.py` — locating it on data this repo does not have
+
+Five synthetic stacks failed to reproduce the failure, so the remaining work has
+to happen on the real dataset. `validation/diagnose_dataset.py` fits v15 once and
+then scores a **ladder** of predictions that swap v15's machinery in one piece at
+a time, each written as a real `prediction.h5` and scored by the **real**
+evaluators, so every number is leaderboard-comparable:
+
+| row | what it is |
+|---|---|
+| A | GT layout + nearest real cell's profile (the copy ceiling) |
+| B | GT layout + GT library + v15 diffusion (oracle expression) |
+| C | + v15's sampled library |
+| D | + v15's predicted cell types |
+| E | full v15 — everything generated (what ships) |
+
+The first large drop between consecutive rows is the stage at fault: B≪A blames
+the expression model, C≪B the library, D≪C the type assignment, E≪D the point
+process.
+
+```bash
+python spatialcpav15/validation/diagnose_dataset.py \
+    benchmark-pbya/data/processed/imc_breast_cancer/data.h5ad --registration rigid
+```
+
+On the correlated-channel surrogate the ladder already reads clearly:
+
+| variant | pearson_med | coexpr | morans | composition | nhood |
+|---|---|---|---|---|---|
+| A copy @ GT layout | 0.101 | 0.996 | 0.977 | 0.940 | 0.996 |
+| B v15 expr @ GT layout, GT lib | **0.191** | 0.963 | 0.876 | 1.000 | 1.000 |
+| C + v15 library | **0.079** | 0.963 | 0.887 | 1.000 | 1.000 |
+| D + v15 types | 0.069 | 0.963 | 0.887 | 0.941 | 0.986 |
+| E full v15 (shipped) | 0.070 | 0.962 | 0.857 | 0.998 | 0.986 |
+
+Two things stand out even here. v15's expression at a correct layout (B, 0.191)
+**beats the copy baseline** (A, 0.101) — the expression model is not the weak
+part. And the single largest loss is the **per-cell library** (B → C, −0.112),
+consistent with the separate measurement above. Co-expression never collapses on
+this stack (0.963 throughout), which is why the real dataset's 0.806 still needs
+the real data to explain.
+
 ### What is *still* not explained
 
 The channel collapse does **not** account for the headline gap. On the 29-type
