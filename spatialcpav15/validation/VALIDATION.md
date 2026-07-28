@@ -537,6 +537,33 @@ the STARmap table above is unchanged after the fix. On `imc_breast_cancer` it
 becomes 5 835 steps, 22x more training. `diagnostics["phase3_diffusion"]` now
 reports `n_steps` and `passes_over_cells` so this cannot recur silently.
 
+### `pearson_median` and the generation metrics are in direct tension
+
+An `A1` rung (cell-type-mean assignment at the GT layout — the most conservative
+possible prediction, zero within-type variation) makes the trade-off explicit.
+On the correlated-channel stack:
+
+| variant | pearson_med | coexpr | morans |
+|---|---|---|---|
+| A0 VAE recon of GT cells | 0.996 | 0.999 | 0.998 |
+| **A1 type-mean @ GT layout** | **0.391** | **0.278** | **0.085** |
+| A copy @ GT layout | 0.101 | 0.996 | 0.977 |
+| B v15 expr @ GT layout, GT lib | 0.182 | 0.904 | 0.768 |
+| E full v15 (shipped) | 0.063 | 0.902 | 0.775 |
+
+Type-mean assignment scores **0.391** on `pearson_median` — four times the copy
+baseline and six times full v15 — while its co-expression is 0.278 and its
+Moran's agreement 0.085. The metric rewards predicting the **type-conditional
+mean** and penalizes within-type variation; the generation metrics reward the
+opposite. A method cannot maximize both, and v15 is built to generate that
+variation (which is why it wins `gene_var_pearson` 0.971 against v8's 0.869
+everywhere it has been measured).
+
+This is the most likely explanation for v8's 0.261 against v15's ~0.09 on
+`imc_breast_cancer`, and it means **`pearson_median` should not be expected to
+close** without giving up the metrics v15 is designed to win. It is also the
+metric benchmark-pbya-v2 explicitly excludes from the generation ranking.
+
 ### The library fix, measured on the real dataset
 
 Row E between the two ladder runs isolates it — the only change was the spatially
@@ -570,6 +597,20 @@ training sections (`residual drift = 1.98 spacings` on this dataset), so rows
 A-D were offset from the model's frame. Row E is production and unaffected, and
 E (0.791) agrees with B (0.789), so the conclusion above survives — but the rows
 are only trustworthy after the fix.
+
+### Caveat on the training-length fix: it is not uniformly positive
+
+On the real dataset the fix is a large gain (co-expression 0.806 -> 0.9215,
+Moran's 0.512 -> 0.852 on holdout z1). On the **correlated-channel surrogate**
+the same change went the other way — co-expression 0.962 -> 0.902, Moran's
+0.857 -> 0.775 — because that stack has 21 000 cells, so the old fixed 260 steps
+was already ~3 passes and not starved; training 4.8x longer sharpened the
+conditional distribution and cost co-expression. STARmap is unaffected (the rule
+evaluates to the same 260 steps).
+
+So `min_passes = 15` is right where the model was badly undertrained and may be
+more than necessary where it was not. Worth revisiting with a sweep once the
+full IMC campaign lands.
 
 ### What is *still* not explained
 
