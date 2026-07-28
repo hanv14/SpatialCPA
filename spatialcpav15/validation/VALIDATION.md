@@ -386,6 +386,57 @@ method that copies real cells retains that per-cell structure for free. A low
 of a defect; only the value for a copy-based method on the *same* dataset would
 make it interpretable, and that comparison has not been obtained.
 
+### Correction: this is not "the signature of generation"
+
+v8's `pearson_median` on the same dataset is **0.261**; v15's is **0.045**. The
+earlier reading in this file — that a low value is what a sampler necessarily
+scores — was **wrong**, and the oracle measurement above is what refutes it:
+v15's own architecture reaches ~0.216 with a correct layout, so on the real data
+v15 is running **4.8x below its own achievable ceiling**, not merely below a
+copy-based method. There is a real loss inside the pipeline on this dataset.
+
+### `diagnose_dataset.py` — locating it on data this repo does not have
+
+Five synthetic stacks failed to reproduce the failure, so the remaining work has
+to happen on the real dataset. `validation/diagnose_dataset.py` fits v15 once and
+then scores a **ladder** of predictions that swap v15's machinery in one piece at
+a time, each written as a real `prediction.h5` and scored by the **real**
+evaluators, so every number is leaderboard-comparable:
+
+| row | what it is |
+|---|---|
+| A | GT layout + nearest real cell's profile (the copy ceiling) |
+| B | GT layout + GT library + v15 diffusion (oracle expression) |
+| C | + v15's sampled library |
+| D | + v15's predicted cell types |
+| E | full v15 — everything generated (what ships) |
+
+The first large drop between consecutive rows is the stage at fault: B≪A blames
+the expression model, C≪B the library, D≪C the type assignment, E≪D the point
+process.
+
+```bash
+python spatialcpav15/validation/diagnose_dataset.py \
+    benchmark-pbya/data/processed/imc_breast_cancer/data.h5ad --registration rigid
+```
+
+On the correlated-channel surrogate the ladder already reads clearly:
+
+| variant | pearson_med | coexpr | morans | composition | nhood |
+|---|---|---|---|---|---|
+| A copy @ GT layout | 0.101 | 0.996 | 0.977 | 0.940 | 0.996 |
+| B v15 expr @ GT layout, GT lib | **0.191** | 0.963 | 0.876 | 1.000 | 1.000 |
+| C + v15 library | **0.079** | 0.963 | 0.887 | 1.000 | 1.000 |
+| D + v15 types | 0.069 | 0.963 | 0.887 | 0.941 | 0.986 |
+| E full v15 (shipped) | 0.070 | 0.962 | 0.857 | 0.998 | 0.986 |
+
+Two things stand out even here. v15's expression at a correct layout (B, 0.191)
+**beats the copy baseline** (A, 0.101) — the expression model is not the weak
+part. And the single largest loss is the **per-cell library** (B → C, −0.112),
+consistent with the separate measurement above. Co-expression never collapses on
+this stack (0.963 throughout), which is why the real dataset's 0.806 still needs
+the real data to explain.
+
 ### What is *still* not explained
 
 The channel collapse does **not** account for the headline gap. On the 29-type
