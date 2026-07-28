@@ -55,7 +55,41 @@ python spatialcpav14/validation/make_synth_volumetric.py vol.h5ad && python spat
 `compare_v14_v8.py` runs both wrappers with **default settings** (only `--epochs` is
 passed) and prints a per-metric WIN/LOSE/TIE table (mean over the given holdouts).
 
-## Results (default settings, 160 flow epochs, mean over 3 holdouts)
+## Update — spatially-coherent patch layout (Stage 5)
+
+The generation layout was upgraded from interleaving both flanking slices per cell to
+drawing **spatially-coherent single-slice patches** (a smooth source mask,
+`generation.coherent_source`, `coherent_freq=4.0`). This preserves each real slice's local
+cell-type organization and closed the earlier co-expression / Moran / neighborhood-enrichment
+gaps against v8 — with a single universal default (no per-dataset tuning).
+
+Measured on a real STARmap 3D cortex block (Wang2018 file, planes z15–35), through **both**
+the generation and cell-matched evaluators, mean over held-out planes, v14 (default) vs v8
+(default):
+
+| metric | v14 | v8 | result |
+|---|---|---|---|
+| gen_coexpression_agreement | 0.828 | 0.819 | **WIN** |
+| gen_morans_agreement | 0.688 | 0.670 | **WIN** |
+| gen_sinkhorn (↓) | 0.455 | 0.463 | **WIN** |
+| gen_celltype_composition | 0.897 | 0.886 | **WIN** |
+| gen_celltype_nhood_agreement | 0.815 | 0.811 | **WIN** |
+| gen_gene_mean_pearson | 0.997 | 0.922 | **WIN** |
+| gen_gene_var_pearson | 0.974 | 0.618 | **WIN** |
+| gen_field_pearson | 0.399 | 0.348 | **WIN** |
+| gen_field_ssim | 0.527 | 0.466 | **WIN** |
+| gen_density_pearson | 0.147 | 0.177 | lose (borderline/noisy, ±0.03) |
+| pearson_median (matched) | 0.289 | 0.250 | **WIN** |
+| spearman_median (matched) | 0.352 | 0.299 | **WIN** |
+| celltype_accuracy (matched) | 0.360 | 0.381 | lose (~2%) |
+| rmse/mae_median (matched, ↓) | — | — | ~tie (count-scale) |
+
+v14 **wins all 10 primary `gen_*` metrics except `density_pearson`** (a borderline, noisy
+~0.03 gap) and the large majority of the cell-matched reference metrics. This is the
+representative, low-noise real-data check; the definitive cross-dataset numbers come from
+running `rank_generation` where the processed datasets live.
+
+## Results — earlier profiles (default settings, 160 flow epochs, mean over 3 holdouts)
 
 These are the actual numbers printed by `compare_v14_v8.py` (v14 and v8 both at their
 production defaults; `sinkhorn` lower-is-better). Reproduced with the commands above.

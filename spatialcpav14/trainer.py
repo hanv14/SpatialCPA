@@ -235,19 +235,31 @@ def _phase_a(m, S, encoder, dev):
             s["h"] = encoder.encode(s["e"], s["m"]) if s["e"].shape[0] else s["e"].new_zeros((0, m.cfg.encoder.joint_dim))
 
 
+def _neighbor_slices(order, pos, k_each_side):
+    """Indices of the k nearest slices on each side of position ``pos`` in z-order,
+    excluding ``pos`` itself (the held-out target during LOO flow training)."""
+    lo = [int(order[j]) for j in range(max(0, pos - k_each_side), pos)]
+    hi = [int(order[j]) for j in range(pos + 1, min(len(order), pos + 1 + k_each_side))]
+    src = lo + hi
+    if not src:  # degenerate (<2 slices): fall back to the single other slice
+        src = [int(order[j]) for j in range(len(order)) if j != pos] or [int(order[pos])]
+    return src
+
+
 def _phase_b(m, S, encoder, ctxmod, vfield, dev):
     """Conditional flow matching + biology-informed regularization."""
     cfg = m.cfg; bio = cfg.bio
     order = np.argsort(m.stack.z_centers())
     interior = order[1:-1] if len(order) >= 3 else order[:1]
+    k_side = max(cfg.attn.context_slices_each_side, 1)
 
     plan = []
     for i in interior:
         i = int(i); pos = int(np.where(order == i)[0][0])
-        lo, hi = int(order[pos - 1]), int(order[pos + 1])
-        src = [lo, hi]
+        # 3D context = the k nearest real slices on each side (wider than immediate flanking)
+        src = _neighbor_slices(order, pos, k_side)
         pool_nxy, pool_z, pool_owner = _build_pool(S, src)
-        # target-cell displacement target = offset from its flanking-neighbor centroid
+        # target-cell displacement target = offset from its context-neighbour centroid
         nbr = _knn(S[i]["nxy"], pool_nxy, min(cfg.attn.n_context, pool_nxy.shape[0]))
         cen = pool_nxy[nbr].mean(1)                          # (n_i, 2)
         disp_t = (S[i]["nxy"] - cen).astype(np.float32)
@@ -366,15 +378,44 @@ def _planes_near_identical(m, lower, upper, ratio_thresh):
     return float(np.median(d_cross) / s0) < ratio_thresh
 
 
+def _coherent_source_mask(lo_xy, hi_xy, t, freq, rng):
+    """Per-cell keep-probabilities forming spatially-coherent single-slice patches.
+
+    A smooth random field f(x,y) in [0,1] (sum of a few random sinusoids) partitions the
+    plane: where f < t the *upper* slice supplies cells, elsewhere the *lower* slice — so a
+    generated cell's neighbourhood is drawn from one real slice (coherent niche), not an
+    interleaving of both. Returns per-cell weights over the concatenated [lower; upper] pool.
+    """
+    allxy = np.vstack([lo_xy, hi_xy])
+    span = (allxy.max(0) - allxy.min(0)) + 1e-6
+    xn = (allxy - allxy.min(0)) / span                      # -> [0,1]^2
+    f = np.zeros(allxy.shape[0])
+    for _ in range(3):
+        kx, ky = rng.uniform(0.5, freq, 2)
+        ph = rng.uniform(0, 2 * np.pi)
+        f += np.sin(2 * np.pi * (kx * xn[:, 0] + ky * xn[:, 1]) + ph)
+    f = (f - f.min()) / (f.max() - f.min() + 1e-9)          # -> [0,1]
+    n_lo = lo_xy.shape[0]
+    is_lower = np.zeros(allxy.shape[0], bool); is_lower[:n_lo] = True
+    # lower supplies the f>=t region, upper the f<t region (fraction ~ t from upper)
+    keep = np.where(is_lower, (f >= t).astype(float), (f < t).astype(float))
+    keep += 1e-3                                            # small floor so no region is empty
+    return keep / keep.sum()
+
+
 def _resample_layout(m, lower, upper, t, n_target, rng):
     """Resample the flanking supports in the z-interpolated ratio. Returns the jittered
     positions AND the pool index each came from (pool = lower cells then upper cells)."""
     lo_xy = m._nxy(lower.coords_xy).astype(np.float32)
     hi_xy = m._nxy(upper.coords_xy).astype(np.float32)
     props = np.vstack([lo_xy, hi_xy])
-    w = np.concatenate([np.full(len(lo_xy), max(1 - t, 1e-3)),
-                        np.full(len(hi_xy), max(t, 1e-3))])
-    w = w / w.sum()
+    gcfg = m.cfg.generation
+    if gcfg.coherent_source:
+        w = _coherent_source_mask(lo_xy, hi_xy, t, gcfg.coherent_freq, rng)
+    else:
+        w = np.concatenate([np.full(len(lo_xy), max(1 - t, 1e-3)),
+                            np.full(len(hi_xy), max(t, 1e-3))])
+        w = w / w.sum()
     # Sample without replacement when the pool is large enough (avoids coincident cells
     # that spike local density / distort neighbourhoods); fall back to replacement only if
     # more cells are requested than the pool holds.
@@ -420,15 +461,27 @@ def generate_slice(m, z):
         anchor, anchor_src = _resample_layout(m, lower, upper, t, n_target, rng)
         use_disp = (mode == "morph")
 
-    src = [li, ui]
     lo_st, hi_st = _state_for(m, lower), _state_for(m, upper)
-    pool_nxy, pool_z, pool_owner = _build_pool(m._S, src)
-    pool_h = torch.cat([m._S[li]["h"], m._S[ui]["h"]], 0)
+    # 3D context pool = the k nearest real slices on each side of z (wider than the two
+    # flanking slices used for positions / grounding), realizing the pipeline's attention
+    # over all real slices (local + long-range).
+    order = np.argsort(m.stack.z_centers())
+    zc = m.stack.z_centers()
+    k_side = max(cfg.attn.context_slices_each_side, 1)
+    below = [int(j) for j in order if zc[j] <= z]
+    above = [int(j) for j in order if zc[j] > z]
+    ctx_src = (below[-k_side:] if below else []) + (above[:k_side] if above else [])
+    if li not in ctx_src:
+        ctx_src.append(li)
+    if ui not in ctx_src:
+        ctx_src.append(ui)
+    ctx_pool_nxy, ctx_pool_z, ctx_pool_owner = _build_pool(m._S, ctx_src)
+    ctx_pool_h = torch.cat([m._S[j]["h"] for j in ctx_src], 0)
     zn = m._nz(z)
 
     with torch.no_grad():
-        ctx = _context(m, pool_h, pool_nxy, pool_z, pool_owner, src, m._S,
-                       anchor, zn, encoder, ctxmod, dev)
+        ctx = _context(m, ctx_pool_h, ctx_pool_nxy, ctx_pool_z, ctx_pool_owner, ctx_src,
+                       m._S, anchor, zn, encoder, ctxmod, dev)
         Q = anchor.shape[0]
         zt = torch.full((Q,), float(zn), device=dev)
         # marginalize over initial noise: integrate the ODE from several noises, average
@@ -452,24 +505,33 @@ def generate_slice(m, z):
     e_hat_np = e_hat.cpu().numpy()
 
     # ---- ground each generated cell in a real training profile ----
+    # Grounding pool = the two immediate flanking slices (spatially most relevant); the
+    # anchor indices (anchor_src) index into this [lower; upper] pool.
+    pool_nxy = np.vstack([lo_st["nxy"], hi_st["nxy"]]).astype(np.float32)
     pool_expr = np.vstack([np.asarray(lower.expression), np.asarray(upper.expression)])
     pool_type = np.concatenate([
         lower.cell_type_indices if lower.cell_type_indices is not None else np.zeros(lower.n_spots, int),
         upper.cell_type_indices if upper.cell_type_indices is not None else np.zeros(upper.n_spots, int)])
     pool_e = np.vstack([lo_st["e"].cpu().numpy(), hi_st["e"].cpu().numpy()])  # standardized e
 
-    expr, ct_idx = _ground(m, anchor, anchor_src, e_hat_np, pool_nxy, pool_e, pool_expr,
-                           pool_type, gcfg, rng)
+    if gcfg.type_placement == "flow_smooth" and m.n_types >= 2 and type_logits is not None:
+        # Type from the 3D-conditioned flow, spatially label-propagated for niche coherence;
+        # expression grounded in a real local exemplar OF THAT TYPE.
+        ct_idx = _flow_smooth_types(m, anchor, type_logits.cpu().numpy(), lower, upper, t,
+                                    gcfg, rng)
+        expr = _ground_by_type(m, anchor, ct_idx, e_hat_np, pool_nxy, pool_e, pool_expr,
+                               pool_type, gcfg, rng)
+    else:
+        expr, ct_idx = _ground(m, anchor, anchor_src, e_hat_np, pool_nxy, pool_e, pool_expr,
+                               pool_type, gcfg, rng)
+        if gcfg.composition_match and m.n_types >= 2:
+            ct_idx, expr = _match_composition(m, lower, upper, t, ct_idx, expr, anchor,
+                                              pool_nxy, pool_e, e_hat_np, pool_type, pool_expr, rng)
 
     # optional blend toward the flow-decoded profile
     if gcfg.edit_weight > 0.0:
         dec = m.expr_latent.decode(e_hat_np * m._e_std + m._e_mean)
         expr = (1 - gcfg.edit_weight) * expr + gcfg.edit_weight * dec
-
-    # composition match to the interpolated flanking mix
-    if gcfg.composition_match and m.n_types >= 2:
-        ct_idx, expr = _match_composition(m, lower, upper, t, ct_idx, expr, anchor,
-                                          pool_nxy, pool_e, e_hat_np, pool_type, pool_expr, rng)
 
     expr = np.clip(expr, 0.0, None)
     if gcfg.output_counts:
@@ -480,6 +542,80 @@ def generate_slice(m, z):
               if (ct_idx is not None and m.cell_type_names)
               else (ct_idx.astype(str) if ct_idx is not None else None))
     return VirtualSlice(coords, expr, labels, ct_idx)
+
+
+def _flow_smooth_types(m, anchor, logits, lower, upper, t, gcfg, rng):
+    """Assign each generated cell a type from the flow-decoded type head, spatially
+    label-propagated (kNN averaging) for niche coherence, then nudged toward the
+    interpolated flanking composition."""
+    p = logits - logits.max(1, keepdims=True)
+    p = np.exp(p); p /= p.sum(1, keepdims=True)              # softmax -> (n, T)
+    n = anchor.shape[0]
+    if gcfg.type_smooth_iters > 0 and n > 2:
+        k = min(gcfg.type_smooth_k + 1, n)
+        _, idx = cKDTree(anchor).query(anchor, k=k)
+        if idx.ndim == 1:
+            idx = idx[:, None]
+        for _ in range(gcfg.type_smooth_iters):
+            p = p[idx].mean(1)
+            p /= p.sum(1, keepdims=True) + 1e-9
+    ct = p.argmax(1).astype(np.int64)
+    # nudge composition toward the interpolated flanking mix (types only)
+    nt = m.n_types
+    target = _interp_comp(m, lower, upper, t)
+    tgt = np.floor(target * n).astype(int)
+    rem = n - tgt.sum()
+    if rem > 0:
+        for j in np.argsort(-(target * n - tgt))[:rem]:
+            tgt[j] += 1
+    cur = np.bincount(ct, minlength=nt)
+    conf = p[np.arange(n), ct]
+    over = [c for c in range(nt) if cur[c] > tgt[c]]
+    for uc in range(nt):
+        need = tgt[uc] - cur[uc]
+        if need <= 0:
+            continue
+        # least-confident cells currently in over-represented types, most wanting uc
+        pool_cells = [i for i in range(n) if ct[i] in over]
+        pool_cells.sort(key=lambda i: p[i, uc] - conf[i], reverse=True)
+        for i in pool_cells:
+            if need <= 0:
+                break
+            oldc = ct[i]
+            if cur[oldc] <= tgt[oldc]:
+                continue
+            ct[i] = uc; cur[oldc] -= 1; cur[uc] += 1; need -= 1
+            if cur[oldc] <= tgt[oldc] and oldc in over:
+                over.remove(oldc)
+    return ct
+
+
+def _ground_by_type(m, anchor, ct_idx, e_hat, pool_nxy, pool_e, pool_expr, pool_type, gcfg, rng):
+    """Emit, per generated cell, a real profile of the ASSIGNED type: the molecularly
+    nearest (in flow-latent space) real cell of that type among the cell's spatial-local
+    candidates, falling back to the nearest real cell of that type anywhere (then any)."""
+    n = anchor.shape[0]
+    expr = np.empty((n, pool_expr.shape[1]), dtype=np.float32)
+    K = min(max(gcfg.ground_k, 4), pool_nxy.shape[0])
+    cand = _knn(anchor, pool_nxy, K)
+    by_type = {c: np.where(pool_type == c)[0] for c in np.unique(ct_idx)}
+    for i in range(n):
+        c = ct_idx[i]
+        ci = cand[i]
+        local = ci[pool_type[ci] == c]
+        if local.size:
+            d = np.linalg.norm(pool_e[local] - e_hat[i], axis=1)
+            pick = local[int(np.argmin(d))]
+        else:
+            glob = by_type.get(c, np.empty(0, int))
+            if glob.size:
+                d = np.linalg.norm(pool_e[glob] - e_hat[i], axis=1)
+                pick = glob[int(np.argmin(d))]
+            else:
+                d = np.linalg.norm(pool_e[ci] - e_hat[i], axis=1)
+                pick = ci[int(np.argmin(d))]
+        expr[i] = pool_expr[pick]
+    return expr
 
 
 def _ground(m, anchor, anchor_src, e_hat, pool_nxy, pool_e, pool_expr, pool_type, gcfg, rng):
