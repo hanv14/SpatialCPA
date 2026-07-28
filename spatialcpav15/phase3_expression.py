@@ -323,9 +323,18 @@ def train_expression_diffusion(index: CellIndex, type_rep, stack,
             ctx_dz=torch.from_numpy((dz / dz_unit)[None].astype(np.float32)).to(device),
         )
 
+    # Scale training to the size of the stack.  A fixed step count means a fixed
+    # number of *blocks*, which on a large section is a fraction of one pass over
+    # the cells: 260 steps is 17 passes on a 3.8k-cell stack but 0.67 passes on a
+    # 100k-cell one, and the denoiser is then barely trained where there is the
+    # most to learn.  (The Phase 3.1 VAE already had this rule; Phase 3.2 did
+    # not.)
+    n_steps = max(int(cfg.epochs),
+                  int(cfg.min_passes * np.ceil(index.u.shape[0]
+                                               / max(cfg.block_size, 1))))
     net.train()
     losses = []
-    for ep in range(cfg.epochs):
+    for ep in range(n_steps):
         b = make_batch()
         if b is None:
             continue
@@ -341,8 +350,8 @@ def train_expression_diffusion(index: CellIndex, type_rep, stack,
         torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
         opt.step()
         losses.append(float(loss.item()))
-        if verbose and (ep + 1) % max(cfg.epochs // 4, 1) == 0:
-            print(f"      [phase3.2] epoch {ep + 1}/{cfg.epochs} "
+        if verbose and (ep + 1) % max(n_steps // 4, 1) == 0:
+            print(f"      [phase3.2] step {ep + 1}/{n_steps} "
                   f"loss={np.mean(losses[-30:]):.4f}")
     net.eval()
 
@@ -353,6 +362,10 @@ def train_expression_diffusion(index: CellIndex, type_rep, stack,
     if rt.release_cache_between_stages:
         runtime.release(device)
     model.diagnostics = {"trained": True, "final_loss": float(np.mean(losses[-30:])),
+                         "n_steps": n_steps,
+                         "passes_over_cells": round(
+                             n_steps / max(np.ceil(index.u.shape[0]
+                                                   / max(cfg.block_size, 1)), 1), 2),
                          "latent_scale_median": float(np.median(lat_scale)),
                          "type_dim": T}
     return model

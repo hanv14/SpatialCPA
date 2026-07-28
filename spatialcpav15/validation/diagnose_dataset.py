@@ -216,7 +216,8 @@ def main():
 
     # per-cell library: GT (oracle) vs v15's sampler
     gt_lib = np.log(np.maximum(gt_raw.sum(axis=1), 1.0))
-    v15_lib = gen._sample_library(gt_type_idx, allowed, np.random.default_rng(args.seed))
+    v15_lib = gen._sample_library(gt_type_idx, allowed,
+                                  np.random.default_rng(args.seed), u=u_gt)
 
     def diffuse(u, types, log_lib):
         if not gen.expr.trained:
