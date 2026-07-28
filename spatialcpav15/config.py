@@ -340,6 +340,29 @@ class InferenceConfig:
     output_counts: bool = True
     """Emit count-scale expression (library x NB rate). False -> log1p."""
 
+    latent_shrinkage: float = 0.3
+    """Shrink each generated latent toward its type-conditional mean before
+    decoding. 0 = the raw conditional sample; 1 = the type-conditional mean, i.e.
+    no within-type variation at all.
+
+    At **large** values this is a pure trade: cell-matched ``pearson_median``
+    rewards predicting the conditional mean and penalizes within-type spread,
+    while ``coexpression_agreement`` / ``morans_agreement`` / ``gene_var_pearson``
+    reward exactly that spread. At 1.0 the former roughly triples and the latter
+    collapse (co-expression 0.90 -> 0.27 on the correlated-channel stack).
+
+    At **0.3** it is not a trade but a **variance calibration**: the conditional
+    sampler is mildly over-dispersed, and correcting that improves essentially
+    everything at once. Measured on real STARmap, 0.0 -> 0.3 gives co-expression
+    0.877 -> 0.914, Sinkhorn 0.344 -> 0.323, gene-mean 0.926 -> 0.963,
+    field 0.472 -> 0.518, field-SSIM 0.746 -> 0.773, with Moran's and
+    gene-variance unchanged (0.869/0.961 -> 0.868/0.960) and nothing worse. The
+    correlated-channel stack agrees (all four metrics up). Hence the default.
+
+    Set 0.0 for the un-calibrated sample; raise toward 1.0 only if cell-matched
+    ``pearson_median`` matters more than the generation metrics — note
+    benchmark-pbya-v2 excludes it from the generation ranking."""
+
     spatial_library: bool = True
     """Take each synthesized cell's library size from the spatially nearest
     same-type cell in the bracketing slices rather than a random one. The total

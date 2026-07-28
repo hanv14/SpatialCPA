@@ -250,6 +250,22 @@ def main():
     rows["A0 VAE recon of GT cells"] = _score(
         gt_xyz, recon, gt_types, holdout, genes, args.data, wd, "A0")
 
+    # A1 — cell-type-mean assignment at the GT layout.  This is the most
+    # *conservative* possible prediction: every cell of a type gets that type's
+    # average profile, with zero within-type variation.  It is the reference for
+    # whether `pearson_median` rewards predicting the conditional mean — if a
+    # model that deliberately generates within-type spread scores below it, the
+    # two are measuring opposite things and cannot both be maximized.
+    train_raw_all = X_raw if X_raw is not None else np.expm1(np.clip(X_log, 0, 30))
+    tmean = np.zeros((gt.n_obs, train_raw_all.shape[1]), dtype=np.float32)
+    for c in np.unique(gt_type_idx):
+        m_tr = idx.types == c
+        prof = (train_raw_all[m_tr].mean(axis=0) if m_tr.any()
+                else train_raw_all.mean(axis=0))
+        tmean[gt_type_idx == c] = prof
+    rows["A1 type-mean @ GT layout"] = _score(
+        gt_xyz, tmean, gt_types, holdout, genes, args.data, wd, "A1")
+
     # A — copy baseline at the GT layout (what a transport method effectively emits)
     pool = np.where(np.isin(idx.section, allowed))[0]
     _, nn = cKDTree(idx.u[pool]).query(u_gt, k=1)

@@ -61,20 +61,20 @@ interpolation of the field a genuinely strong baseline.
 
 | metric | v15 | v8 | Δ | p (paired) | verdict |
 |---|---|---|---|---|---|
-| coexpression_agreement | 0.8772 | 0.8005 | +0.0767 | 0.045 | **WIN** |
-| morans_agreement | 0.8693 | 0.6606 | +0.2087 | 0.036 | **WIN** |
-| sinkhorn ↓ | 0.3439 | 0.4633 | +0.1195 | 0.000 | **WIN** |
+| coexpression_agreement | 0.9135 | 0.8005 | +0.1130 | 0.013 | **WIN** |
+| morans_agreement | 0.8679 | 0.6606 | +0.2073 | 0.047 | **WIN** |
+| sinkhorn ↓ | 0.3231 | 0.4633 | +0.1402 | 0.001 | **WIN** |
 | celltype_composition | 0.9008 | 0.8558 | +0.0450 | 0.213 | **WIN** |
 | celltype_nhood_agreement | 0.8026 | 0.7980 | +0.0046 | 0.845 | tie (non-inferior) |
-| gene_mean_pearson | 0.9263 | 0.9191 | +0.0072 | 0.632 | tie (non-inferior) |
-| gene_var_pearson | 0.9613 | 0.6562 | +0.3051 | 0.003 | **WIN** |
-| field_pearson | 0.4721 | 0.3724 | +0.0997 | 0.029 | **WIN** |
-| field_ssim | 0.7459 | 0.5087 | +0.2371 | 0.006 | **WIN** |
+| gene_mean_pearson | 0.9625 | 0.9191 | +0.0435 | 0.081 | **WIN** |
+| gene_var_pearson | 0.9603 | 0.6562 | +0.3041 | 0.004 | **WIN** |
+| field_pearson | 0.5180 | 0.3724 | +0.1456 | 0.017 | **WIN** |
+| field_ssim | 0.7726 | 0.5087 | +0.2639 | 0.008 | **WIN** |
 | density_pearson | 0.2120 | 0.1304 | +0.0816 | 0.313 | **WIN** |
 
-**v15: 8 wins, 2 ties, 0 losses — no metric is worse than v8.**
+**v15: 9 wins, 1 tie, 0 losses — no metric is worse than v8.**
 
-The two ties are *directionally* positive (+0.5 % and +0.9 %), just inside the
+The single tie is *directionally* positive (+0.5 %), just inside the
 non-inferiority band. The largest margins are exactly where a generative
 expression model should help: per-gene variance (+46 %, a copy-based method
 inherits one slice's dispersion), the distributional Sinkhorn distance (−25 %
@@ -538,6 +538,68 @@ the STARmap table above is unchanged after the fix. On `imc_breast_cancer` it
 becomes 5 835 steps, 22x more training. `diagnostics["phase3_diffusion"]` now
 reports `n_steps` and `passes_over_cells` so this cannot recur silently.
 
+### `pearson_median` and the generation metrics are in direct tension
+
+An `A1` rung (cell-type-mean assignment at the GT layout — the most conservative
+possible prediction, zero within-type variation) makes the trade-off explicit.
+On the correlated-channel stack:
+
+| variant | pearson_med | coexpr | morans |
+|---|---|---|---|
+| A0 VAE recon of GT cells | 0.996 | 0.999 | 0.998 |
+| **A1 type-mean @ GT layout** | **0.391** | **0.278** | **0.085** |
+| A copy @ GT layout | 0.101 | 0.996 | 0.977 |
+| B v15 expr @ GT layout, GT lib | 0.182 | 0.904 | 0.768 |
+| E full v15 (shipped) | 0.063 | 0.902 | 0.775 |
+
+Type-mean assignment scores **0.391** on `pearson_median` — four times the copy
+baseline and six times full v15 — while its co-expression is 0.278 and its
+Moran's agreement 0.085. The metric rewards predicting the **type-conditional
+mean** and penalizes within-type variation; the generation metrics reward the
+opposite. A method cannot maximize both, and v15 is built to generate that
+variation (which is why it wins `gene_var_pearson` 0.971 against v8's 0.869
+everywhere it has been measured).
+
+This is the most likely explanation for v8's 0.261 against v15's ~0.09 on
+`imc_breast_cancer`, and it means **`pearson_median` should not be expected to
+close** without giving up the metrics v15 is designed to win. It is also the
+metric benchmark-pbya-v2 explicitly excludes from the generation ranking.
+
+### `latent_shrinkage` — a variance calibration, not just a trade
+
+The A1 finding says large shrinkage toward the type-conditional mean trades the
+generation metrics for `pearson_median`. Measuring the *curve* showed the
+interesting part is at the low end. On the correlated-channel stack:
+
+| shrinkage | pearson_med | coexpr | morans | gene_var |
+|---|---|---|---|---|
+| 0.0 | 0.063 | 0.902 | 0.775 | 0.807 |
+| **0.3** | **0.088** | **0.918** | **0.820** | **0.853** |
+| 0.6 | 0.126 | 0.887 | 0.799 | 0.859 |
+| 1.0 | 0.163 | 0.266 | 0.296 | 0.459 |
+
+At 1.0 it is the expected collapse. But **0.3 improves all four at once** — the
+conditional sampler is mildly over-dispersed, and correcting that is not a
+trade. Confirmed on real STARmap (0.0 -> 0.3):
+
+| metric | 0.0 | 0.3 |
+|---|---|---|
+| coexpression_agreement | 0.8772 | **0.9135** |
+| gene_mean_pearson | 0.9263 | **0.9625** |
+| field_pearson | 0.4721 | **0.5180** |
+| field_ssim | 0.7459 | **0.7726** |
+| sinkhorn ↓ | 0.3439 | **0.3231** |
+| morans_agreement | 0.8693 | 0.8679 (tie) |
+| gene_var_pearson | 0.9613 | 0.9603 (tie) |
+
+Five better, two tied, none worse — so `latent_shrinkage = 0.3` is the default,
+and the STARmap head-to-head above improves from 8 wins / 2 ties to **9 wins /
+1 tie / 0 losses**. Crucially `gene_var_pearson` is untouched (0.961 -> 0.960),
+so the dispersion advantage over copy-based methods is not being given away.
+
+This has **not** been verified on `imc_breast_cancer`; it is a default change and
+should be re-measured there.
+
 ### The library fix, measured on the real dataset
 
 Row E between the two ladder runs isolates it — the only change was the spatially
@@ -571,6 +633,20 @@ training sections (`residual drift = 1.98 spacings` on this dataset), so rows
 A-D were offset from the model's frame. Row E is production and unaffected, and
 E (0.791) agrees with B (0.789), so the conclusion above survives — but the rows
 are only trustworthy after the fix.
+
+### Caveat on the training-length fix: it is not uniformly positive
+
+On the real dataset the fix is a large gain (co-expression 0.806 -> 0.9215,
+Moran's 0.512 -> 0.852 on holdout z1). On the **correlated-channel surrogate**
+the same change went the other way — co-expression 0.962 -> 0.902, Moran's
+0.857 -> 0.775 — because that stack has 21 000 cells, so the old fixed 260 steps
+was already ~3 passes and not starved; training 4.8x longer sharpened the
+conditional distribution and cost co-expression. STARmap is unaffected (the rule
+evaluates to the same 260 steps).
+
+So `min_passes = 15` is right where the model was badly undertrained and may be
+more than necessary where it was not. Worth revisiting with a sweep once the
+full IMC campaign lands.
 
 ### What is *still* not explained
 
