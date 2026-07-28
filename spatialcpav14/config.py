@@ -45,6 +45,8 @@ class AttnConfig:
     n_heads: int = 4
     n_context: int = 16             # local flanking cells attended per query (local context)
     n_global_tokens: int = 1        # per-slice summary tokens (long-range 3D context)
+    context_slices_each_side: int = 1  # neighbouring real slices per side feeding the 3D context
+                                       # (1 = immediate flanking only; >1 = wider 3D context)
     fourier_bands: int = 6          # Fourier bands for (x, y, z) positional encoding
     dropout: float = 0.05
 
@@ -99,6 +101,19 @@ class GenerationConfig:
     edit_weight: float = 0.25       # blend toward the flow-decoded profile (0 = pure real exemplar)
     output_counts: bool = True      # emit count-like (expm1) expression for the evaluator
     composition_match: bool = True  # match cell-type composition to the interpolated flanking mix
+    # Cell-type placement. "flow_smooth" assigns each cell's type from the flow-decoded
+    # latent (type head), spatially label-propagated for niche coherence, then grounds
+    # expression in a real local exemplar OF THAT TYPE — decoupling type placement (from the
+    # 3D-conditioned flow) from expression (real biology), which sharpens spatial cell-type
+    # organization. "exemplar" inherits the type of the grounded profile (legacy).
+    type_placement: str = "exemplar"  # "exemplar" (real-cell types, coherent) | "flow_smooth"
+    type_smooth_k: int = 8          # kNN for spatial label propagation of predicted types
+    type_smooth_iters: int = 3      # label-propagation iterations (0 = raw flow prediction)
+    # Draw each flanking slice's contribution as spatially-coherent patches (a smooth
+    # spatial source mask) instead of interleaving cells from both slices — preserves each
+    # slice's real local cell-type organization (Moran / niche coherence).
+    coherent_source: bool = True
+    coherent_freq: float = 4.0      # spatial frequency of the source mask (higher = smaller patches)
     # Position layout for the generated sheet. "morph" resamples the flanking supports in
     # the z-interpolated ratio then applies the flow-decoded continuous displacement field
     # (a learned deformation — NOT optimal transport); "flanking" uses the resample only;

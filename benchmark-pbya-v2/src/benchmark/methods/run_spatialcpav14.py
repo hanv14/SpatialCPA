@@ -124,6 +124,14 @@ def run_method(adata, targets, gene_names, args):
     cfg.generation.ground_blend_flow = args.ground_blend_flow
     cfg.generation.edit_weight = args.edit_weight
     cfg.generation.ground_expression = not args.no_ground
+    if args.context_slices is not None:
+        cfg.attn.context_slices_each_side = args.context_slices
+    if args.type_placement is not None:
+        cfg.generation.type_placement = args.type_placement
+    if args.no_coherent_source:
+        cfg.generation.coherent_source = False
+    if args.coherent_freq is not None:
+        cfg.generation.coherent_freq = args.coherent_freq
     cfg.generation.output_counts = not args.no_output_counts
     cfg.generation.composition_match = not args.no_composition_match
     if args.no_bio:
@@ -135,7 +143,9 @@ def run_method(adata, targets, gene_names, args):
     print(f"  epochs(A={cfg.train.pretrain_epochs},B={cfg.train.epochs}), "
           f"latent(d_e={cfg.latent.expr_latent_dim},h={cfg.encoder.joint_dim}), "
           f"flow(steps={cfg.flow.n_ode_steps},ens={cfg.flow.n_ensemble}), "
-          f"pos={cfg.generation.position_mode}, bio={not args.no_bio}, "
+          f"pos={cfg.generation.position_mode}, ctx_slices={cfg.attn.context_slices_each_side}, "
+          f"coherent_src={cfg.generation.coherent_source}(f={cfg.generation.coherent_freq}), "
+          f"types={cfg.generation.type_placement}, bio={not args.no_bio}, "
           f"ground={cfg.generation.ground_expression}")
 
     gen = SpatialCPAv14(stack, gene_names=gene_names, cell_type_names=cell_type_names, cfg=cfg)
@@ -177,6 +187,13 @@ def main():
                         help="fraction of cells re-grounded to the flow-latent pick")
     parser.add_argument("--edit-weight", type=float, default=0.25,
                         help="blend toward the flow-decoded profile (0 = pure real exemplar)")
+    parser.add_argument("--context-slices", type=int, default=None,
+                        help="neighbouring real slices per side feeding the 3D context")
+    parser.add_argument("--type-placement", default=None, choices=["exemplar", "flow_smooth"])
+    parser.add_argument("--no-coherent-source", action="store_true",
+                        help="interleave both flanking slices instead of coherent patches")
+    parser.add_argument("--coherent-freq", type=float, default=None,
+                        help="spatial frequency of the coherent source mask")
     parser.add_argument("--no-ground", action="store_true", help="disable real-profile grounding")
     parser.add_argument("--no-bio", action="store_true", help="ablate biology-informed losses")
     parser.add_argument("--no-attention", action="store_true", help="ablate 3D attention (local-only)")
