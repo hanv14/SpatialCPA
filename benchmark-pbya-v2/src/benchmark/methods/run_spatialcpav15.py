@@ -181,8 +181,10 @@ def run_method(adata, X_log, X_raw, targets, gene_names, args):
           f"structure(epochs={cfg.structure.epochs}, seeds="
           f"{cfg.inference.n_structure_seeds}), "
           f"vae(latent={cfg.vae.latent_dim}, epochs={cfg.vae.epochs}), "
-          f"expr_diffusion(epochs={cfg.diffusion.epochs}, "
-          f"ctx={cfg.diffusion.n_context}), readout={cfg.diffusion.decoder_readout}")
+          f"expr_diffusion(min_steps={cfg.diffusion.epochs}, "
+          f"min_passes={cfg.diffusion.min_passes}, "
+          f"ctx={cfg.diffusion.n_context}), readout={cfg.diffusion.decoder_readout}, "
+          f"spatial_library={cfg.inference.spatial_library})")
 
     gen = SpatialCPAv15(stack, gene_names=gene_names,
                         cell_type_names=cell_type_names, cfg=cfg)
