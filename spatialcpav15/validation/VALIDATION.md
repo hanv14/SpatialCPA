@@ -348,6 +348,44 @@ gives one coherent volume. The default (1 sample) was unaffected, so no publishe
 number changes — but anyone enabling the uncertainty feature was silently
 degrading the result.
 
+### `pearson_median` ~ 0.045 — what it does and does not tell us
+
+The maintainer also reports the cell-matched `pearson_median` (per-gene Pearson
+across nearest-neighbour-matched cells, median over genes) at 0.040 before the
+fixes and 0.045 after. It is computed on **raw, unnormalized** values in
+`evaluate.py`, and benchmark-pbya-v2 explicitly deprecates it for generation.
+
+A hypothesis was tested and **rejected**: that v15's per-cell total ("library"),
+which `_sample_library` draws at random from real flanking cells of the same
+type, injects a shared random factor. Measured on the correlated-channel stack
+with the **real layout**, varying only the library:
+
+| library source | coexpr | raw per-gene Pearson (median) |
+|---|---|---|
+| real library (oracle, not available at inference) | 0.940 | 0.216 |
+| random within type — **as shipped** | 0.940 | 0.103 |
+| nearest real cell in the bracketing slices | 0.940 | 0.112 |
+
+Two conclusions, both negative:
+
+* the library choice has **no effect on co-expression** (0.940 either way), so it
+  is not the cause of the 0.806 deficit;
+* it does explain roughly half the per-gene correlation (0.216 -> 0.103), but
+  **there is no available fix**: the real library is not knowable at inference,
+  and the spatially nearest real cell's library barely helps (0.112) because
+  total intensity varies mostly *within* type rather than across space
+  (`corr(sampled, real) = 0.19`, `corr(nearest, real) = 0.19`).
+
+The more useful number is the first row. **Even with a perfect layout and oracle
+libraries, this architecture reaches only ~0.22 on that metric.** It scores
+whether each individual cell's deviation was reproduced, which a conditional
+*sampler* does not attempt by construction — it draws a plausible profile for
+"type X at position p", not the specific profile that particular cell had. A
+method that copies real cells retains that per-cell structure for free. A low
+`pearson_median` is therefore the expected signature of generation, not evidence
+of a defect; only the value for a copy-based method on the *same* dataset would
+make it interpretable, and that comparison has not been obtained.
+
 ### What is *still* not explained
 
 The channel collapse does **not** account for the headline gap. On the 29-type
