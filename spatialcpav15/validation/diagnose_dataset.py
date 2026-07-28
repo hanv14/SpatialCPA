@@ -37,18 +37,49 @@ For the benchmark's own copy of a dataset:
 
     python spatialcpav15/validation/diagnose_dataset.py \\
         benchmark-pbya/data/processed/imc_breast_cancer/data.h5ad --registration rigid
+
+The `spatialcpav15` package and `benchmark-pbya-v2` are found by walking up from
+this file, so it works whether the package sits at `<root>/spatialcpav15` or
+`<root>/src/spatialcpav15`.  Override with $SPATIALCPAV15_ROOT / $BENCH_V2_ROOT
+if they live somewhere unrelated.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import tempfile
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / "benchmark-pbya-v2" / "src"))
+
+def _locate(relative: str, env: str) -> Path:
+    """Find a directory containing ``relative`` by walking up from this file.
+
+    The package is not always a direct child of the repository root — it may sit
+    under ``src/``, or be installed elsewhere entirely — so nothing here assumes
+    a fixed depth.  ``$<env>`` overrides the search.
+    """
+    override = os.environ.get(env)
+    candidates = ([Path(override)] if override else []) + \
+        list(Path(__file__).resolve().parents) + [Path.cwd()] + list(Path.cwd().parents)
+    seen = []
+    for cand in candidates:
+        seen.append(str(cand))
+        if (cand / relative).exists():
+            return cand
+    raise SystemExit(
+        f"Could not find '{relative}' above {Path(__file__).resolve()}.\n"
+        f"Set ${env} to the directory that contains it, e.g.\n"
+        f"    {env}=/path/to/repo python {Path(__file__).name} <data.h5ad>\n"
+        f"Looked in:\n  " + "\n  ".join(dict.fromkeys(seen)))
+
+
+# spatialcpav15 may live at <root>/spatialcpav15 or <root>/src/spatialcpav15.
+PKG_ROOT = _locate("spatialcpav15/__init__.py", "SPATIALCPAV15_ROOT")
+BENCH_ROOT = _locate("benchmark-pbya-v2/src/benchmark/__init__.py", "BENCH_V2_ROOT")
+sys.path.insert(0, str(PKG_ROOT))
+sys.path.insert(0, str(BENCH_ROOT / "benchmark-pbya-v2" / "src"))
 
 import numpy as np                                     # noqa: E402
 import anndata as ad                                   # noqa: E402
