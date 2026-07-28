@@ -333,6 +333,12 @@ class InferenceConfig:
     output_counts: bool = True
     """Emit count-scale expression (library x NB rate). False -> log1p."""
 
+    spatial_library: bool = True
+    """Take each synthesized cell's library size from the spatially nearest
+    same-type cell in the bracketing slices rather than a random one. The total
+    multiplies every channel, so a spatially random draw dilutes every gene's
+    spatial autocorrelation at once."""
+
     sub_nyquist_flag: bool = True
     """Flag structures whose z-extent is < 2*dz as unresolved (Phase 4.7)."""
 

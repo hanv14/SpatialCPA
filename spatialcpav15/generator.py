@@ -229,7 +229,7 @@ class SpatialCPAv15:
 
         # library size: drawn per cell from the real flanking cells of the same
         # type — technical depth, so it is sampled, never modelled.
-        log_lib = self._sample_library(layout.types, allowed, rng)
+        log_lib = self._sample_library(layout.types, allowed, rng, u=layout.u)
 
         # 5/6 — expression: joint-block latent diffusion, then decode.
         if self.expr.trained:
@@ -310,7 +310,24 @@ class SpatialCPAv15:
 
     # ── helpers ─────────────────────────────────────────────────────────────
     def _sample_library(self, types: np.ndarray, allowed: np.ndarray,
-                        rng: np.random.Generator) -> np.ndarray:
+                        rng: np.random.Generator,
+                        u: Optional[np.ndarray] = None) -> np.ndarray:
+        """Per-cell library size, taken from the real bracketing slices.
+
+        Library size is technical depth, so it is *sampled* rather than modelled
+        (Phase 3.1).  But "sampled" must not mean "spatially random": in a real
+        section the per-cell total is strongly spatially autocorrelated — cell
+        size, staining depth and tissue compaction all vary smoothly across the
+        slice — and drawing a random same-type cell throws that structure away.
+        Because the total multiplies every channel, destroying it dilutes the
+        spatial autocorrelation of *every* gene at once; on real IMC this halves
+        Moran's agreement (0.708 -> 0.307 measured with the layout held fixed).
+
+        When positions are available the library is therefore taken from the
+        **spatially nearest** cell of the same type in the bracketing slices,
+        which keeps the field's own smooth variation. Without positions it falls
+        back to the type-conditional random draw.
+        """
         pool = np.where(np.isin(self.index.section, allowed))[0]
         if pool.size == 0:
             pool = np.arange(self.index.log_lib.shape[0])
@@ -320,8 +337,13 @@ class SpatialCPAv15:
             m = types == c
             same = pool[pool_types == c]
             src = same if same.size else pool
-            out[m] = self.index.log_lib[rng.choice(src, size=int(m.sum()),
-                                                   replace=True)]
+            if u is not None and self.cfg.inference.spatial_library and src.size:
+                from scipy.spatial import cKDTree
+                _, nn = cKDTree(self.index.u[src]).query(u[m], k=1)
+                out[m] = self.index.log_lib[src[np.atleast_1d(nn)]]
+            else:
+                out[m] = self.index.log_lib[rng.choice(src, size=int(m.sum()),
+                                                       replace=True)]
         return out
 
     def _latent_fallback(self, layout, allowed: np.ndarray,

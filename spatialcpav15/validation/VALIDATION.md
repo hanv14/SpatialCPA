@@ -61,15 +61,15 @@ interpolation of the field a genuinely strong baseline.
 
 | metric | v15 | v8 | Δ | p (paired) | verdict |
 |---|---|---|---|---|---|
-| coexpression_agreement | 0.8736 | 0.8005 | +0.0732 | 0.092 | **WIN** |
-| morans_agreement | 0.7925 | 0.6606 | +0.1319 | 0.091 | **WIN** |
-| sinkhorn ↓ | 0.3467 | 0.4633 | +0.1166 | 0.000 | **WIN** |
+| coexpression_agreement | 0.8772 | 0.8005 | +0.0767 | 0.045 | **WIN** |
+| morans_agreement | 0.8693 | 0.6606 | +0.2087 | 0.036 | **WIN** |
+| sinkhorn ↓ | 0.3439 | 0.4633 | +0.1195 | 0.000 | **WIN** |
 | celltype_composition | 0.9008 | 0.8558 | +0.0450 | 0.213 | **WIN** |
 | celltype_nhood_agreement | 0.8026 | 0.7980 | +0.0046 | 0.845 | tie (non-inferior) |
-| gene_mean_pearson | 0.9273 | 0.9191 | +0.0082 | 0.593 | tie (non-inferior) |
-| gene_var_pearson | 0.9604 | 0.6562 | +0.3042 | 0.003 | **WIN** |
-| field_pearson | 0.3852 | 0.3724 | +0.0128 | 0.489 | **WIN** |
-| field_ssim | 0.5909 | 0.5087 | +0.0821 | 0.031 | **WIN** |
+| gene_mean_pearson | 0.9263 | 0.9191 | +0.0072 | 0.632 | tie (non-inferior) |
+| gene_var_pearson | 0.9613 | 0.6562 | +0.3051 | 0.003 | **WIN** |
+| field_pearson | 0.4721 | 0.3724 | +0.0997 | 0.029 | **WIN** |
+| field_ssim | 0.7459 | 0.5087 | +0.2371 | 0.006 | **WIN** |
 | density_pearson | 0.2120 | 0.1304 | +0.0816 | 0.313 | **WIN** |
 
 **v15: 8 wins, 2 ties, 0 losses — no metric is worse than v8.**
@@ -437,6 +437,75 @@ part. And the single largest loss is the **per-cell library** (B → C, −0.112
 consistent with the separate measurement above. Co-expression never collapses on
 this stack (0.963 throughout), which is why the real dataset's 0.806 still needs
 the real data to explain.
+
+### The ladder on the real dataset — the answer
+
+Maintainer ran `diagnose_dataset.py` on `imc_breast_cancer` (holdout z7, 15
+sections, 99 501 training cells, 26 types, H200):
+
+| variant | pearson_med | coexpr | morans | composition | nhood |
+|---|---|---|---|---|---|
+| A copy @ GT layout | 0.034 | **0.991** | 0.944 | 0.939 | 0.389 |
+| B v15 expr @ GT layout, GT lib | 0.098 | **0.789** | 0.708 | 1.000 | 1.000 |
+| C   + v15 library | 0.017 | 0.782 | **0.307** | 1.000 | 1.000 |
+| D   + v15 types | 0.015 | 0.790 | 0.289 | 0.689 | 0.587 |
+| E full v15 (shipped) | 0.045 | 0.791 | 0.537 | 0.919 | 0.334 |
+
+Two distinct losses, both large, and **the earlier conclusion drawn from the
+synthetic stacks was wrong**:
+
+1. **A -> B: co-expression 0.991 -> 0.789.** With the layout held at ground
+   truth *and* the real library, v15's expression model already produces the
+   0.79 that ships (E = 0.791) and that the leaderboard reports (0.806). On this
+   dataset the **expression model is the problem**, not the layout — the opposite
+   of what every surrogate indicated.
+2. **B -> C: Moran's 0.708 -> 0.307.** Swapping the real per-cell library for
+   v15's sampled one halves Moran's agreement.
+
+Note also that the copy baseline reaches only `pearson_median` 0.034 at *exact*
+GT coordinates — adjacent sections of this specimen simply do not predict each
+other cell-for-cell, which is worth remembering before reading much into that
+metric here.
+
+### Fixed: the library is now spatially coherent
+
+Cause of loss 2. Library size is technical depth and so is *sampled* rather than
+modelled (Phase 3.1) — but "sampled" must not mean "spatially random". In a real
+section the per-cell total is strongly spatially autocorrelated (cell size,
+staining depth, tissue compaction all vary smoothly), and because the total
+multiplies *every* channel, randomising it dilutes the spatial autocorrelation of
+every gene at once. The library is now taken from the **spatially nearest**
+same-type cell in the bracketing slices (`InferenceConfig.spatial_library`).
+
+Measured on the real STARmap block, this improves things there too — the STARmap
+table above is post-fix, and against the previous numbers:
+
+| metric | before | after |
+|---|---|---|
+| morans_agreement | 0.7925 | **0.8693** |
+| field_ssim | 0.5909 | **0.7459** |
+| field_pearson | 0.3852 | **0.4721** |
+| coexpression_agreement | 0.8736 | 0.8772 |
+
+Still 8 wins / 2 ties / 0 losses against v8 on STARmap, with no metric regressed.
+
+### Still open: co-expression 0.789 at the ground-truth layout
+
+Loss 1 is **not** fixed and not yet explained. The remaining question is whether
+the Phase 3.1 VAE can represent this data at all, or whether the Phase 3.2
+sampler is at fault — `diagnose_dataset.py` now emits an **A0** row (the VAE's own
+encode->decode reconstruction of the held-out cells) which separates the two:
+A0 ~ 0.79 indicts the decoder, A0 ~ 0.99 indicts the diffusion. Both decoder
+variants (compositional `softmax x library`, and a free per-channel log-scale
+head) reconstruct the correlated-channel surrogate at 0.999, so the question
+cannot be settled here.
+
+A flaw in the diagnostic itself was also found and fixed: it passed ground-truth
+coordinates **unshifted** while Phase 1.4 had applied a drift stabilization to the
+training sections (`residual drift = 1.98 spacings` on this dataset), so rows
+A-D were offset from the model's frame. Row E is production and unaffected, and
+E (0.791) agrees with B (0.789), so the conclusion above survives — but the rows
+are only trustworthy after the fix.
 
 ### What is *still* not explained
 
