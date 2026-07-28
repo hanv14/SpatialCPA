@@ -293,6 +293,61 @@ This directly targets two of the metrics v15 loses on the real dataset
 (`celltype_composition` 0.820 vs v8's 0.914, `celltype_nhood_agreement` 0.329 vs
 0.369). **It is a real defect, found, fixed and verified.**
 
+### Re-run on the real dataset after the fix
+
+Maintainer's re-run (13 holdouts, same command). The channel-collapse fix lands
+almost exactly where the surrogate predicted:
+
+| metric | before | after | Δ | v8 | |
+|---|---|---|---|---|---|
+| celltype_composition | 0.820 | **0.941** | +0.121 | 0.914 | **ahead of v8** |
+| celltype_nhood_agreement | 0.329 | **0.433** | +0.104 | 0.369 | **ahead of v8** |
+| morans_agreement | 0.441 | 0.512 | +0.071 | 0.978 | behind |
+| coexpression_agreement | 0.798 | 0.806 | +0.008 | 0.990 | behind |
+| sinkhorn ↓ | 0.356 | 0.354 | −0.002 | 0.311 | behind |
+| gene_var_pearson | 0.971 | 0.971 | 0.000 | 0.869 | **ahead of v8** |
+
+v15 now leads v8 on **three of the six** primary metrics. (The composite rank
+moved 7.17 → 4.17, but that number is not comparable across the two runs: v12 and
+v13 are absent from the second table, and the composite is a rank among whichever
+methods are present.)
+
+### The remaining gap looks like a ceiling for generative methods
+
+The three methods that *synthesize* expression land within 0.006 of each other on
+co-expression — v15 **0.806**, isoST **0.808**, v11 **0.812** — while every
+method that emits **real profiles** (v8, v9, v10, v14) sits at 0.986–0.990. That
+split is far too clean to be a v15-specific defect.
+
+A staged measurement on a surrogate built with **correlated channels** (shared
+latent factors driving all 38 proteins — the property real panels have and every
+earlier surrogate lacked, which used i.i.d. per-channel noise) locates the cost
+inside the generative path rather than the latent space:
+
+| stage | coexpr | morans |
+|---|---|---|
+| VAE reconstruction of real cells (ceiling) | 0.998 | 0.999 |
+| **diffusion, 1 sample — as shipped** | **0.940** | 0.890 |
+| nearest-real-cell copy (v8-like) | 0.980 | 0.917 |
+
+The VAE latent is not the bottleneck (0.998). The conditional diffusion sampler
+costs ~0.04 against a copy. That is the price of sampling rather than copying,
+and it is the intended trade — it is also why v15 wins `gene_var_pearson` on
+every stack tested. It does **not** reach the 0.806 seen on the real data, so the
+real dataset has a further factor none of the five surrogates here reproduces.
+
+### Bug found while measuring this: never average expression samples
+
+`InferenceConfig.n_expression_samples > 1` used to **average** the decoded
+samples into the output. Averaging in data space shrinks each cell toward the
+conditional mean and flattens exactly the gene-gene covariance the metric
+measures — on the correlated-channel panel, co-expression falls **0.940 → 0.864
+(4 samples) → 0.709 (8 samples)**. The output is now the first *coherent* sample
+and the extra samples only supply the spread, mirroring Phase 2.4 where each seed
+gives one coherent volume. The default (1 sample) was unaffected, so no published
+number changes — but anyone enabling the uncertainty feature was silently
+degrading the result.
+
 ### What is *still* not explained
 
 The channel collapse does **not** account for the headline gap. On the 29-type
