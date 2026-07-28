@@ -264,6 +264,13 @@ class ExprDiffusionConfig:
     ddim_steps: int = 20
 
     epochs: int = 260
+    """Minimum optimizer steps. The actual number is
+    ``max(epochs, min_passes * ceil(n_cells / block_size))`` — a fixed step count
+    is a fixed number of *blocks*, which on a large section is a fraction of one
+    pass over the cells."""
+
+    min_passes: int = 15
+
     block_size: int = 256
     """Target cells generated jointly per block (attention runs across the whole
     block, including across z — never independent per-slice)."""

@@ -489,7 +489,72 @@ table above is post-fix, and against the previous numbers:
 
 Still 8 wins / 2 ties / 0 losses against v8 on STARmap, with no metric regressed.
 
-### Still open: co-expression 0.789 at the ground-truth layout
+### Located: the Phase 3.2 diffusion was undertrained on large stacks
+
+The **A0** row settles it. On the real dataset:
+
+| variant | pearson_med | coexpr | morans | composition | nhood |
+|---|---|---|---|---|---|
+| **A0 VAE recon of GT cells** | **0.996** | **0.962** | **0.955** | 1.000 | 1.000 |
+| A copy @ GT layout | 0.028 | 0.991 | 0.952 | 0.936 | 0.387 |
+| B v15 expr @ GT layout, GT lib | 0.099 | **0.784** | 0.700 | 1.000 | 1.000 |
+| C   + v15 library | 0.012 | 0.779 | 0.288 | 1.000 | 1.000 |
+| D   + v15 types | 0.014 | 0.787 | 0.267 | 0.696 | 0.590 |
+| E full v15 (shipped) | 0.114 | 0.812 | 0.829 | 0.919 | 0.334 |
+
+The Phase 3.1 VAE reconstructs the held-out cells at **0.962 co-expression and
+0.996 per-gene Pearson** — the latent space and the decoder are not the
+bottleneck, and the compositional decoder is *not* the problem. The entire loss
+is **A0 -> B**: the Phase 3.2 conditional diffusion.
+
+The cause is in the training log of that run:
+
+```
+[phase3.1] step 1458/5835 ...        <- VAE, scaled to the stack
+[phase3.2] epoch 65/260 loss=0.6056  <- diffusion, FIXED at 260 steps
+[phase3.2] epoch 130/260 loss=0.4281
+[phase3.2] epoch 195/260 loss=0.3620
+[phase3.2] epoch 260/260 loss=0.4474 <- still rising: nowhere near converged
+```
+
+Phase 3.2 trained a **fixed 260 steps** regardless of stack size. A step is one
+*block* of `block_size` cells, so that is:
+
+| stack | cells | blocks/pass | 260 steps = |
+|---|---|---|---|
+| STARmap | 3 779 | 15 | **17.3 passes** |
+| imc_breast_cancer | 99 501 | 389 | **0.67 passes** |
+
+Two-thirds of a single pass over the data. The denoiser was barely trained
+exactly where there was the most to learn — and this is why no synthetic stack
+reproduced the failure: every one of them is small enough that 260 steps is
+plenty. The Phase 3.1 VAE already had a `min_passes` rule (added earlier for the
+same reason); Phase 3.2 was simply missed.
+
+Fixed: `n_steps = max(epochs, min_passes * ceil(n_cells / block_size))`, the same
+rule the VAE uses, with `min_passes = 15`. On STARmap this evaluates to
+`max(260, 225) = 260` — **identical by construction**, and confirmed empirically:
+the STARmap table above is unchanged after the fix. On `imc_breast_cancer` it
+becomes 5 835 steps, 22x more training. `diagnostics["phase3_diffusion"]` now
+reports `n_steps` and `passes_over_cells` so this cannot recur silently.
+
+### The library fix, measured on the real dataset
+
+Row E between the two ladder runs isolates it — the only change was the spatially
+coherent library:
+
+| metric (row E) | random library | spatial library |
+|---|---|---|
+| morans_agreement | 0.537 | **0.829** |
+| pearson_median | 0.045 | **0.114** |
+| coexpression_agreement | 0.791 | 0.812 |
+
+Moran's agreement went from 0.537 to 0.829 against v8's 0.978, and the
+cell-matched per-gene correlation more than doubled. (Rows C/D in the run above
+still used the random draw — the diagnostic passed no positions to
+`_sample_library`; that is fixed too, so C/D now reflect what ships.)
+
+### Previously open, now attributed: co-expression 0.789 at the ground-truth layout
 
 Loss 1 is **not** fixed and not yet explained. The remaining question is whether
 the Phase 3.1 VAE can represent this data at all, or whether the Phase 3.2
