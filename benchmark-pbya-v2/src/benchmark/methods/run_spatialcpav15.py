@@ -175,6 +175,7 @@ def run_method(adata, X_log, X_raw, targets, gene_names, args):
     cfg.runtime.release_cache_between_stages = not args.no_gpu_cache_release
     cfg.inference.n_structure_seeds = args.structure_seeds
     cfg.inference.n_expression_samples = args.expression_samples
+    cfg.inference.latent_shrinkage = args.latent_shrinkage
     cfg.inference.output_counts = not args.no_output_counts
 
     print(f"  config: type_dim={cfg.types.n_components}, "
@@ -270,6 +271,11 @@ def main():
     parser.add_argument("--n-context", type=int, default=16,
                         help="context cells cross-attended per target cell")
     parser.add_argument("--expression-samples", type=int, default=1)
+    parser.add_argument("--latent-shrinkage", type=float, default=0.3,
+                        help="0 = conditional sample (default, the proposal's "
+                             "estimand); 1 = type-conditional mean. Raises "
+                             "cell-matched pearson_median at the cost of "
+                             "co-expression / Moran's / gene-variance agreement")
     parser.add_argument("--readout", default="auto",
                         choices=["auto", "mean", "sample"],
                         help="decoder readout; 'auto' lets the Phase 3.3 gate choose")

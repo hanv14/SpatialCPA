@@ -239,6 +239,7 @@ class SpatialCPAv15:
                 float(self.index.log_lib.mean()), seed=cfg.seed)
         else:
             Z = self._latent_fallback(layout, allowed, rng)
+        Z = self._shrink_to_type_mean(Z, layout.types, allowed)
         X = decode_latents(self.space, Z, log_lib, self.expr.readout, rng)
 
         expr_spread = None
@@ -344,6 +345,29 @@ class SpatialCPAv15:
             else:
                 out[m] = self.index.log_lib[rng.choice(src, size=int(m.sum()),
                                                        replace=True)]
+        return out
+
+    def _shrink_to_type_mean(self, Z: np.ndarray, types: np.ndarray,
+                             allowed: np.ndarray) -> np.ndarray:
+        """Optionally pull generated latents toward their type-conditional mean.
+
+        Identity at the default ``latent_shrinkage = 0``.  See the config note:
+        this trades the within-type variation the generation metrics reward for
+        the conditional-mean accuracy the cell-matched metric rewards.
+        """
+        s = float(self.cfg.inference.latent_shrinkage)
+        if s <= 0.0:
+            return Z
+        pool = np.where(np.isin(self.index.section, allowed))[0]
+        if pool.size == 0:
+            pool = np.arange(self.index.latents.shape[0])
+        out = Z.copy()
+        pool_types = self.index.types[pool]
+        for c in np.unique(types):
+            m = types == c
+            same = pool[pool_types == c]
+            src = same if same.size else pool
+            out[m] = (1.0 - s) * Z[m] + s * self.index.latents[src].mean(axis=0)
         return out
 
     def _latent_fallback(self, layout, allowed: np.ndarray,
