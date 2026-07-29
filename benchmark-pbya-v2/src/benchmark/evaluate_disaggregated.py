@@ -20,14 +20,20 @@ Outputs (per method x dataset x holdout)
 ----------------------------------------
 * ``per_gene_matched.csv`` — one row per gene, over the cell-matched pairs
   (exactly the pairs ``evaluate.py`` reduces to ``pearson_median`` etc.):
-  ``pearson``, ``spearman``, ``rmse``, ``mae``. Cell-matched, correspondence
+  ``pearson``, ``spearman``, ``rmse``, ``mae``, plus ``rmse_norm`` / ``mae_norm``
+  (the same errors on log-normalized expression, so they are comparable across
+  methods that emit different output scales; the un-suffixed pair reproduces
+  ``evaluate.py`` exactly and is scale-dependent). Cell-matched, correspondence
   dependent — kept for reference, like the matched block in ``evaluate.py``.
 * ``per_gene_generation.csv`` — one row per (held-out section, gene), the
   correspondence-free per-gene quantities ``evaluate_generation.py`` reduces to
   ``gen_gene_mean_pearson`` / ``gen_gene_var_pearson`` / ``gen_morans_agreement``
-  / ``gen_field_pearson``: per-gene mean & variance (pred and GT, log-normalized),
-  per-gene Moran's I (pred and GT, rank-normalized), and per-gene binned field
-  Pearson. These are the PRIMARY (scale-fair) quantities for generation.
+  / ``gen_field_pearson`` / ``gen_coexpression_agreement``: per-gene mean &
+  variance (pred and GT, log-normalized), per-gene Moran's I (pred and GT,
+  rank-normalized), per-gene binned field Pearson, and per-gene co-expression
+  agreement. These are the PRIMARY (scale-fair) quantities for generation;
+  ``coexpression_agreement`` is the only one that is both scale-fair AND
+  alignment-free.
 * ``per_cell.csv`` — one row per held-out GT cell (per section): nearest
   predicted cell and distance (disaggregates ``matching_rate``), cell-type of
   GT and nearest prediction with an agreement flag (disaggregates
@@ -132,6 +138,58 @@ def _per_gene_field_pearson(pred_xy, pred_X, gt_xy, gt_X, grid=20):
     return out
 
 
+def _cross_correlation(X, cols):
+    """Pearson correlation of every column of ``X`` against ``X[:, cols]``.
+
+    Returns (n_genes, len(cols)); zero-variance genes give NaN rows/columns.
+    """
+    Z = np.asarray(X, dtype=np.float64)
+    Z = Z - Z.mean(axis=0, keepdims=True)
+    sd = Z.std(axis=0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        Zn = np.where(sd > 0, Z / sd, np.nan)
+    return (Zn.T @ Zn[:, cols]) / Z.shape[0]
+
+
+def _per_gene_coexpression(pred_X, gt_X, max_partners=200):
+    """Per-gene co-expression agreement: one value per gene.
+
+    The per-gene counterpart of ``evaluate_generation.coexpression_agreement``,
+    which reduces the whole gene-gene correlation matrix to a single number. For
+    gene g we correlate its row of the correlation matrix in the prediction with
+    the same row in GT: "does this gene co-vary with the other genes the way it
+    does in the real slice?"
+
+    Like the scalar version this is **alignment-free** (no coordinates involved)
+    and, fed rank-normalized expression, **scale-fair** — the combination none of
+    the other per-gene columns has.
+
+    Partners are subsampled to ``max_partners`` for tractability on large panels
+    (the scalar version subsamples genes for the same reason), but every gene
+    still gets a row. The self-correlation is excluded: it is 1.0 on both sides
+    and would inflate the agreement.
+    """
+    G = pred_X.shape[1]
+    out = np.full(G, np.nan)
+    if G < 4 or pred_X.shape[0] < 3 or gt_X.shape[0] < 3:
+        return out
+
+    partners = (np.linspace(0, G - 1, max_partners).astype(int)
+                if G > max_partners else np.arange(G))
+    Cp = _cross_correlation(pred_X, partners)
+    Cg = _cross_correlation(gt_X, partners)
+
+    for g in range(G):
+        p, q = Cp[g], Cg[g]
+        valid = (partners != g) & ~(np.isnan(p) | np.isnan(q))
+        if valid.sum() < 3:
+            continue
+        pv, qv = p[valid], q[valid]
+        if pv.std() > 0 and qv.std() > 0:
+            out[g] = np.corrcoef(pv, qv)[0, 1]
+    return out
+
+
 def _rowwise_pearson(P, T):
     """Per-row (per-cell) Pearson across columns (genes). Returns (n,) array."""
     Pc = P - P.mean(axis=1, keepdims=True)
@@ -183,6 +241,13 @@ def disaggregate(prediction_path, h5ad_path, grid=20, moran_k=10,
         gt_Xm = _dense(gt.X[gt_idx][:, ggi])
         corr = _gene_correlations(pred_Xm, gt_Xm)
         err = _expression_error(pred_Xm, gt_Xm)
+        # rmse/mae above are on the raw output, reproducing evaluate.py's
+        # rmse_median/mae_median exactly — which makes them scale-dependent, so
+        # a method emitting raw counts and one emitting log1p are not on the
+        # same axis. The *_norm pair repeats them on log-normalized expression
+        # (as cell_mae already does) for a comparable cross-method number.
+        err_norm = _expression_error(_normalize_counts(pred_Xm),
+                                     _normalize_counts(gt_Xm))
         for gi, gene in enumerate(common):
             per_gene_matched_rows.append({
                 **ids,
@@ -192,6 +257,8 @@ def disaggregate(prediction_path, h5ad_path, grid=20, moran_k=10,
                 "spearman": _f(corr["spearman_per_gene"][gi]),
                 "rmse": _f(err["rmse_per_gene"][gi]),
                 "mae": _f(err["mae_per_gene"][gi]),
+                "rmse_norm": _f(err_norm["rmse_per_gene"][gi]),
+                "mae_norm": _f(err_norm["mae_per_gene"][gi]),
             })
     per_gene_matched = pd.DataFrame(per_gene_matched_rows)
 
@@ -223,6 +290,7 @@ def disaggregate(prediction_path, h5ad_path, grid=20, moran_k=10,
         mi_pred = _morans_i(pred_xy, pR, k=moran_k)
         mi_gt = _morans_i(gt_xy, gR, k=moran_k)
         field_r = _per_gene_field_pearson(pred_xy_al, pR, gt_xy, gR, grid=grid)
+        coexpr = _per_gene_coexpression(pR, gR)
 
         pmean, gmean = pL.mean(axis=0), gL.mean(axis=0)
         pvar, gvar = pL.var(axis=0), gL.var(axis=0)
@@ -239,6 +307,7 @@ def disaggregate(prediction_path, h5ad_path, grid=20, moran_k=10,
                 "morans_i_pred": _f(mi_pred[gi]),
                 "morans_i_gt": _f(mi_gt[gi]),
                 "field_pearson": _f(field_r[gi]),
+                "coexpression_agreement": _f(coexpr[gi]),
             })
 
         # ---- per-cell: every GT cell -> nearest predicted cell -------------
