@@ -13,18 +13,34 @@ from matplotlib.colors import LinearSegmentedColormap
 
 from .config import SUMMARY_DIR, FIGURES_DIR
 
-# Heatmap ramp: neutral light grey (low) → deep red (high). Sequential data, so
-# one light→dark ramp rather than a red/green diverging scale — the previous
-# RdYlGn implied a midpoint that "median Pearson r" does not have, and its
-# red/green poles are the worst case for red-green color blindness.
+# Heatmap ramp: blue (negative) → neutral light grey (zero) → deep red (positive).
+# Correlation is signed and 0 is a real midpoint, so this is a diverging scale
+# with a neutral grey centre — not the old RdYlGn, whose red/green poles are the
+# worst case for red-green colour blindness. #2166AC is the ColorBrewer RdBu
+# counterpart of #B2182B, so the two poles are matched in lightness and chroma.
 HEATMAP_COLOR_LOW = "#E8E8E8"
 HEATMAP_COLOR_HIGH = "#B2182B"
+HEATMAP_COLOR_NEG = "#2166AC"
+
+# Correlations live in [-1, 1]; fixing the range keeps colour comparable across
+# figures and puts 0 exactly on the neutral midpoint.
+HEATMAP_VMIN = -1.0
+HEATMAP_VMAX = 1.0
 
 
-def heatmap_cmap(color_low=HEATMAP_COLOR_LOW, color_high=HEATMAP_COLOR_HIGH):
-    """Continuous colormap interpolating ``color_low`` → ``color_high``."""
+def heatmap_cmap(color_low=HEATMAP_COLOR_LOW, color_high=HEATMAP_COLOR_HIGH,
+                 color_neg=HEATMAP_COLOR_NEG):
+    """Diverging colormap ``color_neg`` → ``color_low`` → ``color_high``.
+
+    ``color_low`` is the neutral midpoint (zero), not the bottom of the scale.
+    Pass ``color_neg=None`` for a plain sequential ``color_low`` → ``color_high``
+    ramp instead.
+    """
+    if color_neg is None:
+        return LinearSegmentedColormap.from_list(
+            "benchmark_sequential", [color_low, color_high])
     return LinearSegmentedColormap.from_list(
-        "benchmark_sequential", [color_low, color_high])
+        "benchmark_diverging", [color_neg, color_low, color_high])
 
 
 def _annotation_ink(rgba):
@@ -126,7 +142,8 @@ def method_list(df):
 
 
 def plot_heatmap(df, output_dir=None, color_low=HEATMAP_COLOR_LOW,
-                 color_high=HEATMAP_COLOR_HIGH):
+                 color_high=HEATMAP_COLOR_HIGH, color_neg=HEATMAP_COLOR_NEG,
+                 vmin=HEATMAP_VMIN, vmax=HEATMAP_VMAX):
     """Heatmap: methods x datasets, cell = median Pearson r."""
     if output_dir is None:
         output_dir = FIGURES_DIR
@@ -141,16 +158,18 @@ def plot_heatmap(df, output_dir=None, color_low=HEATMAP_COLOR_LOW,
 
     fig, ax = plt.subplots(figsize=(max(8, len(pivot.columns) * 1.2),
                                      max(4, len(pivot.index) * 0.8)))
-    cmap = heatmap_cmap(color_low, color_high)
-    sns.heatmap(pivot, annot=True, fmt=".3f", cmap=cmap, vmin=0, vmax=1,
+    cmap = heatmap_cmap(color_low, color_high, color_neg)
+    sns.heatmap(pivot, annot=True, fmt=".3f", cmap=cmap, vmin=vmin, vmax=vmax,
+                center=0 if color_neg is not None else None,
                 ax=ax, linewidths=0.5)
-    # Re-ink the annotations per cell (vmin/vmax are 0/1, so value == cmap position).
+    # Re-ink the annotations per cell, at the value's position on the ramp.
     for label in ax.texts:
         try:
             value = float(label.get_text())
         except ValueError:
             continue
-        label.set_color(_annotation_ink(cmap(np.clip(value, 0.0, 1.0))))
+        position = (value - vmin) / (vmax - vmin) if vmax > vmin else 0.5
+        label.set_color(_annotation_ink(cmap(np.clip(position, 0.0, 1.0))))
 
     # Method names read horizontally. seaborn auto-rotates tick labels when its
     # pre-layout overlap check trips, which stands the method names on end and
