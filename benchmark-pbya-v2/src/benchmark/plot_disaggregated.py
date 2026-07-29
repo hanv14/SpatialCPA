@@ -91,29 +91,69 @@ def set_nature_style():
 # ── Metric registry: which disaggregated columns to plot ──────────────────────
 # table: master CSV basename; column: value column; label: axis/figure title;
 # ylim: fixed y-range or None (auto); zero_line: draw a y=0 reference.
+# ``tier`` groups metrics by what they can support (select with --tier):
+#   paper      — scale-fair and/or directly interpretable; safe to publish
+#   diagnostic — informative but conditioned/one-sided; read alongside another
+#                panel, don't headline
+#   reference  — the v1 cell-matched family, kept for continuity
+# ``caveat`` is rendered under the figure title so a panel can't be read out of
+# context once it leaves this repo.
 METRICS = [
-    # per-gene, cell-matched (correspondence-dependent; behind pearson_median etc.)
-    dict(table="per_gene_matched", column="pearson",
-         label="Per-gene Pearson r (cell-matched)", ylim=(-1, 1), zero_line=True),
-    dict(table="per_gene_matched", column="spearman",
-         label="Per-gene Spearman ρ (cell-matched)", ylim=(-1, 1), zero_line=True),
-    dict(table="per_gene_matched", column="rmse",
-         label="Per-gene RMSE (cell-matched)", ylim=(0, None), zero_line=False),
-    dict(table="per_gene_matched", column="mae",
-         label="Per-gene MAE (cell-matched)", ylim=(0, None), zero_line=False),
-    # per-gene, correspondence-free generation primaries
+    # ── paper ────────────────────────────────────────────────────────────────
     dict(table="per_gene_generation", column="field_pearson",
-         label="Per-gene spatial-field Pearson r", ylim=(-1, 1), zero_line=True),
-    dict(table="per_gene_generation", column="morans_i_pred",
-         label="Per-gene Moran's I (prediction)", ylim=None, zero_line=True),
-    # per-cell
-    dict(table="per_cell", column="cell_pearson",
-         label="Per-cell expression Pearson r (matched)", ylim=(-1, 1), zero_line=True),
-    dict(table="per_cell", column="cell_mae",
-         label="Per-cell expression MAE (matched)", ylim=(0, None), zero_line=False),
+         label="Per-gene spatial-field Pearson r", ylim=(-1, 1), zero_line=True,
+         tier="paper",
+         caveat="rank-normalized (scale-fair); alignment-dependent — "
+                "trustworthy on asymmetric tissue"),
+    dict(table="per_gene_generation", column="morans_i_delta",
+         label="Per-gene Moran's I, prediction − GT", ylim=None, zero_line=True,
+         tier="paper",
+         caveat="0 = prediction matches GT spatial autocorrelation; "
+                ">0 over-structured, <0 under-structured"),
     dict(table="per_cell", column="nn_dist_um",
-         label="Per-cell nearest-prediction distance (µm)", ylim=(0, None), zero_line=False),
+         label="Per-cell nearest-prediction distance (µm)", ylim=(0, None),
+         zero_line=False, tier="paper",
+         caveat="one-directional (GT → prediction): over-generating cells "
+                "shortens it — read with the predicted cell count"),
+    # ── diagnostic ───────────────────────────────────────────────────────────
+    dict(table="per_cell", column="cell_pearson",
+         label="Per-cell expression Pearson r (matched)", ylim=(-1, 1),
+         zero_line=True, tier="diagnostic",
+         caveat="matched cells only (see % per violin) — a method that places "
+                "few cells is scored on its best ones"),
+    dict(table="per_cell", column="cell_mae",
+         label="Per-cell expression MAE (matched)", ylim=(0, None),
+         zero_line=False, tier="diagnostic",
+         caveat="matched cells only (see % per violin); log-normalized"),
+    # ── reference ────────────────────────────────────────────────────────────
+    dict(table="per_gene_matched", column="pearson",
+         label="Per-gene Pearson r (cell-matched)", ylim=(-1, 1), zero_line=True,
+         tier="reference",
+         caveat="cell-matched: manufactures a correspondence generation does "
+                "not produce — not the primary measure for generation"),
+    dict(table="per_gene_matched", column="spearman",
+         label="Per-gene Spearman ρ (cell-matched)", ylim=(-1, 1), zero_line=True,
+         tier="reference",
+         caveat="cell-matched: manufactures a correspondence generation does "
+                "not produce — not the primary measure for generation"),
+    dict(table="per_gene_matched", column="rmse",
+         label="Per-gene RMSE (cell-matched)", ylim=(0, None), zero_line=False,
+         tier="reference",
+         caveat="computed on RAW output — compares output scales as much as "
+                "accuracy; not comparable across methods"),
+    dict(table="per_gene_matched", column="mae",
+         label="Per-gene MAE (cell-matched)", ylim=(0, None), zero_line=False,
+         tier="reference",
+         caveat="computed on RAW output — compares output scales as much as "
+                "accuracy; not comparable across methods"),
+    dict(table="per_gene_generation", column="morans_i_pred",
+         label="Per-gene Moran's I (prediction)", ylim=None, zero_line=True,
+         tier="reference",
+         caveat="prediction only — not an agreement with GT; "
+                "prefer morans_i_delta"),
 ]
+
+TIERS = ("paper", "diagnostic", "reference")
 
 
 # ── Data loading ──────────────────────────────────────────────────────────────
@@ -127,6 +167,24 @@ def load_tables(input_dir):
             df = pd.read_csv(path)
             if not df.empty:
                 tables[name] = df
+    return tables
+
+
+def _derive_columns(tables):
+    """Add columns computed from the stored ones.
+
+    ``morans_i_delta`` = prediction − GT Moran's I, per gene. The stored
+    ``morans_i_pred`` alone says only that the prediction is spatially
+    structured, not that it is structured *like GT* — a method that overshoots
+    GT's autocorrelation scores higher on it. The signed difference is the
+    agreement statement, and both inputs are already in the table.
+    """
+    gen = tables.get("per_gene_generation")
+    if gen is not None and {"morans_i_pred", "morans_i_gt"} <= set(gen.columns):
+        gen = gen.copy()
+        gen["morans_i_delta"] = (pd.to_numeric(gen["morans_i_pred"], errors="coerce")
+                                 - pd.to_numeric(gen["morans_i_gt"], errors="coerce"))
+        tables["per_gene_generation"] = gen
     return tables
 
 
@@ -159,15 +217,19 @@ def _method_color_map(tables, methods=None):
 def _draw_panel(ax, sub, column, methods, color_map, kind, ylim, zero_line,
                 labels=None):
     """Draw the per-method distribution of ``column`` for one dataset."""
-    positions, data, colors, present = [], [], [], []
+    positions, data, colors, present, coverage = [], [], [], [], []
     for i, m in enumerate(methods):
-        vals = pd.to_numeric(sub.loc[sub["method"] == m, column],
-                             errors="coerce").to_numpy()
-        vals = vals[np.isfinite(vals)]
+        col = pd.to_numeric(sub.loc[sub["method"] == m, column],
+                            errors="coerce").to_numpy()
+        vals = col[np.isfinite(col)]
         positions.append(i)
         data.append(vals)
         colors.append(color_map.get(m, "#777777"))
         present.append(len(vals) > 0)
+        # Share of this method's rows the violin actually rests on. For the
+        # per-cell metrics the dropped rows are the unmatched cells, so this is
+        # the match rate — the survivorship the distribution is conditioned on.
+        coverage.append(len(vals) / len(col) if len(col) else 0.0)
 
     if zero_line:
         ax.axhline(0, color="0.7", lw=0.5, ls="--", zorder=0)
@@ -204,6 +266,15 @@ def _draw_panel(ax, sub, column, methods, color_map, kind, ylim, zero_line,
             ax.scatter(np.full(len(vals), i) + jitter, vals, s=3,
                        color=c, alpha=0.6, linewidths=0)
 
+    # Flag any violin resting on less than all of its rows, so a distribution
+    # conditioned on a small matched subset can't be misread as the whole slice.
+    for i, cov in enumerate(coverage):
+        if present[i] and cov < 0.995:
+            ax.annotate(f"{cov * 100:.0f}%", xy=(i, 1.0),
+                        xycoords=("data", "axes fraction"),
+                        xytext=(0, -1), textcoords="offset points",
+                        ha="center", va="top", fontsize=4.5, color="0.35")
+
     labels = labels or {}
     ax.set_xticks(range(len(methods)))
     ax.set_xticklabels([labels.get(m, m) for m in methods], rotation=45, ha="right")
@@ -219,11 +290,13 @@ def plot_metric(df, metric, methods, color_map, output_dir, kind="violin",
     column = metric["column"]
     if column not in df.columns:
         return False
-    df = df[np.isfinite(pd.to_numeric(df[column], errors="coerce"))]
-    if df.empty:
+    finite = np.isfinite(pd.to_numeric(df[column], errors="coerce"))
+    if not finite.any():
         return False
 
-    present = set(df["dataset"].dropna().unique())
+    # Non-finite rows are kept: _draw_panel needs them to report the share of
+    # rows each violin rests on. Presence checks use the finite rows only.
+    present = set(df.loc[finite, "dataset"].dropna().unique())
     if dataset_order:
         # keep the user's chosen datasets, in the given order
         datasets = [d for d in dataset_order if d in present]
@@ -235,11 +308,17 @@ def plot_metric(df, metric, methods, color_map, output_dir, kind="violin",
 
     ncols = min(n, 4)
     nrows = math.ceil(n / ncols)
+    # The title (+ caveat) gets its own strip added to the figure height rather
+    # than carved out of the panels, so panel size doesn't depend on how long
+    # the metric's caveat is.
+    caveat = metric.get("caveat")
+    header_in = 0.52 if caveat else 0.26
+    fig_h = max(2.0 * nrows, 2.2) + header_in
     fig, axes = plt.subplots(nrows, ncols, squeeze=False,
-                             figsize=(max(2.1 * ncols, 3.2), max(2.0 * nrows, 2.2)))
+                             figsize=(max(2.1 * ncols, 3.2), fig_h))
 
     methods_present = [m for m in methods
-                       if m in set(df["method"].dropna().unique())]
+                       if m in set(df.loc[finite, "method"].dropna().unique())]
 
     for idx in range(nrows * ncols):
         r, c = divmod(idx, ncols)
@@ -266,8 +345,15 @@ def plot_metric(df, metric, methods, color_map, output_dir, kind="violin",
         fig.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.0),
                    ncol=min(len(handles), 6), title="method", title_fontsize=6)
 
-    fig.suptitle(metric["label"], y=0.99, fontsize=9)
-    fig.tight_layout(rect=(0, 0.06 if handles else 0.0, 1.0, 0.95))
+    # Header offsets in inches, converted to figure fractions: the figure height
+    # varies with the panel-grid rows, so a fixed fraction would put the caveat
+    # on top of the title on short figures.
+    fig.suptitle(metric["label"], y=1 - 0.13 / fig_h, fontsize=9, va="top")
+    if caveat:
+        fig.text(0.5, 1 - 0.32 / fig_h, caveat, ha="center", va="top",
+                 fontsize=5, color="0.35", wrap=True)
+    fig.tight_layout(rect=(0, 0.06 if handles else 0.0, 1.0,
+                           1 - header_in / fig_h))
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -311,12 +397,12 @@ def _order_methods(present, method_order, include_unlisted=False):
 
 def generate_all(input_dir=None, output_dir=None, metrics=None, kind="violin",
                  method_order=None, method_labels=None, datasets=None,
-                 include_unlisted=False):
+                 include_unlisted=False, tiers=None):
     set_nature_style()
     input_dir = Path(input_dir) if input_dir else (SUMMARY_DIR / "disaggregated")
     output_dir = Path(output_dir) if output_dir else (FIGURES_DIR / "disaggregated")
 
-    tables = load_tables(input_dir)
+    tables = _derive_columns(load_tables(input_dir))
     if not tables:
         print(f"No disaggregated master CSVs found in {input_dir}.\n"
               f"Run:  python -m src.benchmark.evaluate_disaggregated --all")
@@ -342,9 +428,12 @@ def generate_all(input_dir=None, output_dir=None, metrics=None, kind="violin",
             return
 
     wanted = set(metrics) if metrics else None
+    wanted_tiers = set(tiers) if tiers else None
     made = 0
     for metric in METRICS:
         if wanted and metric["column"] not in wanted and metric["label"] not in wanted:
+            continue
+        if wanted_tiers and metric.get("tier") not in wanted_tiers:
             continue
         df = tables.get(metric["table"])
         if df is None:
@@ -382,6 +471,12 @@ def main():
                     help="dir for figures (default: results/summary/figures/disaggregated)")
     ap.add_argument("--metrics", nargs="+",
                     help="only plot these metric columns (e.g. pearson field_pearson)")
+    ap.add_argument("--tier", nargs="+", choices=TIERS, metavar="TIER",
+                    help="only plot metrics in these tiers: "
+                         "paper (scale-fair / directly interpretable), "
+                         "diagnostic (conditioned or one-sided — read alongside "
+                         "another panel), reference (v1 cell-matched family). "
+                         "Default: every tier")
     ap.add_argument("--datasets", nargs="+", metavar="DATASET",
                     help="only plot these datasets, in this order "
                          "(e.g. cosmx_nsclc_3d imc_breast_cancer); "
@@ -405,7 +500,8 @@ def main():
                  method_order=args.method_order,
                  method_labels=_parse_method_names(args.method_names),
                  datasets=args.datasets,
-                 include_unlisted=args.include_unlisted)
+                 include_unlisted=args.include_unlisted,
+                 tiers=args.tier)
 
 
 if __name__ == "__main__":
