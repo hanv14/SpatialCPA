@@ -26,6 +26,7 @@ from .config import (
     REGISTRATION, RESULTS_DIR, SUMMARY_DIR,
 )
 from .design import build_designs, describe
+from .preflight import probe_method, report
 from .run_benchmark import build_input, run_single
 
 
@@ -53,6 +54,10 @@ def main():
     ap.add_argument("--no-eval", action="store_true",
                     help="predictions only; evaluate later with evaluate_all")
     ap.add_argument("--no-umap", action="store_true")
+    ap.add_argument("--no-preflight", action="store_true",
+                    help="skip the per-method environment check (see preflight.py). "
+                         "The check costs seconds and catches a broken or stale "
+                         "method package before hours of campaign are spent on it.")
     ap.add_argument("--continue-on-error", action="store_true", default=True,
                     help="keep going when a method fails (default)")
     ap.add_argument("extra_args", nargs="*",
@@ -73,6 +78,28 @@ def main():
     print(f"  total runs: {len(methods) * len(configs)}")
     if args.extra_args:
         print(f"  wrapper extra args: {' '.join(args.extra_args)}")
+
+    # Environment check first: a method whose package is missing or broken will
+    # fail every holdout, so find that out in seconds rather than after the run.
+    # Methods that fail are dropped and named again at the end; a method that
+    # merely resolves outside the checkout is reported but still run, because
+    # that is a legitimate setup, not an error.
+    skipped_preflight = []
+    if not args.dry_run and not args.no_preflight:
+        print("\nPreflight (skip with --no-preflight)...")
+        results = [probe_method(m) for m in methods]
+        report(results)
+        skipped_preflight = [r["method"] for r in results if not r["ok"]]
+        if skipped_preflight:
+            methods = [m for m in methods if m not in skipped_preflight]
+            if not methods:
+                raise SystemExit(
+                    "\nEvery method failed preflight — nothing to run. Fix the "
+                    "environments above, or re-run with --no-preflight to try "
+                    "anyway.")
+            print(f"\nSkipping {len(skipped_preflight)} method(s) that failed "
+                  f"preflight: {', '.join(skipped_preflight)}")
+            print(f"Continuing with: {', '.join(methods)}")
 
     # Build every shared input up front so a method failure never leaves a
     # half-built input, and so the cost is paid once and visibly.
@@ -120,6 +147,10 @@ def main():
             if not r.get("success") and not r.get("dry_run"):
                 print(f"  FAILED {r['method']} | {r['holdout_id']}: "
                       f"{r.get('error')}  (log: {r.get('log_path', 'n/a')})")
+    if skipped_preflight:
+        print(f"  NOT RUN (failed preflight): {', '.join(skipped_preflight)}\n"
+              f"    diagnose with: python -m src.bench3.preflight --methods "
+              f"{' '.join(skipped_preflight)}")
 
     if not args.dry_run:
         log_path = Path(SUMMARY_DIR) / f"run_log_{args.design}.json"

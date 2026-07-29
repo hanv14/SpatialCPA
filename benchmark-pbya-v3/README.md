@@ -221,6 +221,9 @@ python -m src.bench3.design
 # 3. validate the harness without any conda env
 python -m src.bench3.selftest
 
+# 3b. check every method's environment (run_all does this automatically)
+python -m src.bench3.preflight
+
 # 4. run the campaign (all 7 methods, shared input)
 python -m src.bench3.run_all
 python -m src.bench3.run_all --dry-run              # print the plan first
@@ -239,6 +242,44 @@ decoupled):
 ```bash
 python -m src.bench3.evaluate_all --force
 ```
+
+### Preflight — catching a stale or broken method before the campaign
+
+Four of the seven methods import their package through a per-wrapper rule:
+`$SPATIALCPAV8_ROOT` / `$SPATIALCPAV11_ROOT` / … first, then a walk up the
+wrapper's own parent directories. That is flexible, and it is exactly how a run
+ends up executing a *stale copy* — the wrapper asks for a configuration the
+installed package doesn't have and the run dies partway through, or an older
+package quietly produces a plausible-but-wrong number.
+
+`run_all` therefore preflights every method first (seconds, vs. hours of
+campaign), and `preflight` can be run on its own. Per method, in that method's
+own conda env, it reports whether the wrapper imports, which package **file** was
+actually loaded, whether the wrapper's own `check_environment()` passes, and —
+for the SpatialCPA variants — whether the resolved package is the copy in this
+checkout:
+
+```
+method               env                status   version  package
+spatialcpav8_gen     bench_spatialcpa   WARN     8.0.0    …/elsewhere/src/spatialcpav8/__init__.py
+                     └─ resolved OUTSIDE this checkout
+                        loaded:   /elsewhere/src/spatialcpav8
+                        checkout: /repo/spatialcpav8
+                        if unintended: unset SPATIALCPAV8_ROOT, or sync that copy from the checkout
+spatialcpav15_gen    bench_spatialcpa   FAIL     15.0.0   …/repo/spatialcpav15/__init__.py
+                     └─ ERROR: failed to import spatialcpav15 (needs torch>=2.0): No module named 'torch'
+```
+
+FAIL methods are dropped from the campaign and named again in the closing
+summary; WARN methods still run, because resolving outside the checkout is a
+legitimate setup, not an error. `--no-preflight` skips the check entirely.
+
+**Discovery is never re-implemented here.** `_env_probe.py` loads the wrapper as
+a module — running the wrapper's own resolution code — and calls the wrapper's
+own `check_environment()`, so the probe cannot disagree with what a real run
+does. Note the `version` column is reported but is *not* a reliable staleness
+signal: package versions are not always bumped when behavior changes, so the
+resolved **path** is the thing to check.
 
 ### Environments
 
@@ -272,6 +313,8 @@ src/bench3/
   evaluate_paper.py      the paper's validation strategy, as metrics
   evaluate_all.py        re-evaluate predictions without re-running methods
   aggregate_results.py   all_metrics / per_section_metrics / summary_by_method CSVs
+  preflight.py           per-method env check (stale/broken package) — run_all does it
+  _env_probe.py          runs inside each method env; reuses the wrapper's own checks
   rank_methods.py        rank by criterion + composite
   plot_paper_figures.py  UMAP, marker maps, Moran/Geary scatter, summary heatmap
   selftest.py            validate the harness with known-quality reconstructions
