@@ -100,6 +100,11 @@ def set_nature_style():
 # context once it leaves this repo.
 METRICS = [
     # ── paper ────────────────────────────────────────────────────────────────
+    dict(table="per_gene_generation", column="coexpression_agreement",
+         label="Per-gene co-expression agreement", ylim=(-1, 1), zero_line=True,
+         tier="paper",
+         caveat="scale-fair AND alignment-free — does each gene co-vary with "
+                "the others as it does in GT"),
     dict(table="per_gene_generation", column="field_pearson",
          label="Per-gene spatial-field Pearson r", ylim=(-1, 1), zero_line=True,
          tier="paper",
@@ -136,16 +141,26 @@ METRICS = [
          tier="reference",
          caveat="cell-matched: manufactures a correspondence generation does "
                 "not produce — not the primary measure for generation"),
+    dict(table="per_gene_matched", column="rmse_norm",
+         label="Per-gene RMSE (cell-matched, log-normalized)", ylim=(0, None),
+         zero_line=False, tier="diagnostic",
+         caveat="log-normalized, so comparable across methods; still "
+                "cell-matched (correspondence-dependent)"),
+    dict(table="per_gene_matched", column="mae_norm",
+         label="Per-gene MAE (cell-matched, log-normalized)", ylim=(0, None),
+         zero_line=False, tier="diagnostic",
+         caveat="log-normalized, so comparable across methods; still "
+                "cell-matched (correspondence-dependent)"),
     dict(table="per_gene_matched", column="rmse",
-         label="Per-gene RMSE (cell-matched)", ylim=(0, None), zero_line=False,
-         tier="reference",
+         label="Per-gene RMSE (cell-matched, raw)", ylim=(0, None),
+         zero_line=False, tier="reference",
          caveat="computed on RAW output — compares output scales as much as "
-                "accuracy; not comparable across methods"),
+                "accuracy; use rmse_norm to compare methods"),
     dict(table="per_gene_matched", column="mae",
-         label="Per-gene MAE (cell-matched)", ylim=(0, None), zero_line=False,
-         tier="reference",
+         label="Per-gene MAE (cell-matched, raw)", ylim=(0, None),
+         zero_line=False, tier="reference",
          caveat="computed on RAW output — compares output scales as much as "
-                "accuracy; not comparable across methods"),
+                "accuracy; use mae_norm to compare methods"),
     dict(table="per_gene_generation", column="morans_i_pred",
          label="Per-gene Moran's I (prediction)", ylim=None, zero_line=True,
          tier="reference",
