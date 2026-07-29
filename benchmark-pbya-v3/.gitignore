@@ -1,0 +1,8 @@
+# Built dataset — regenerate with `python -m src.bench3.prepare_starmap`
+data/
+
+# Predictions, metrics, figures — regenerate with `python -m src.bench3.run_all`
+results/
+
+__pycache__/
+*.pyc
