@@ -150,6 +150,15 @@ DATASETS = {
 # ``wrapper`` points into benchmark-pbya-v2 on purpose. The wrappers are plain
 # CLI scripts over the stable ``methods/_v2_io.py`` contract, so reusing them
 # (rather than forking) guarantees v3 and v2 exercise the *same* method code.
+#
+# The stable part of that contract is the ``_v2_io`` argument set (``--input``,
+# ``--target-section``, ``--target-z``, ``--output``, ``--seed``) — *not* the
+# per-wrapper ablation flags, whose defaults track whichever variant v2 was last
+# tuning. ``wrapper_args`` therefore lets a method pin the configuration v3 runs
+# it in, so a v3 run is reproducible from this file and cannot silently change
+# (or break) when a v2 default moves. ``run_benchmark`` appends these after the
+# shared arguments and before any user-supplied extras, so an explicit extra on
+# the command line still wins.
 def _v2_wrapper(name):
     return V2_ROOT / "src" / "benchmark" / "methods" / name
 
@@ -161,6 +170,15 @@ METHODS = {
         "available": True,
         "family": "spatialcpa",
         "notes": "training-free symmetric entropic-OT / McCann bridge",
+        # Pin v8's production configuration — the defaults of
+        # ``SpatialCPAv8Config`` (placement ``smooth_morph``: the coherent
+        # smoothed-OT deformation of the nearest clean slice; expression
+        # ``endpoint``: the source cell's real profile). The v2 wrapper's own CLI
+        # defaults are ablation settings for placements the packaged v8 does not
+        # implement, and passing them aborts every holdout with
+        # ``ValueError: Unknown bridge mode``.
+        "wrapper_args": ["--placement", "smooth_morph",
+                         "--expression-mode", "endpoint"],
     },
     "spatialcpav11_gen": {
         "wrapper": _v2_wrapper("run_spatialcpav11.py"),

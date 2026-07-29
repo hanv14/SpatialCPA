@@ -182,6 +182,9 @@ def run_single(method, holdout_config, dataset_path=DATASET_PATH,
         "--output", str(prediction_path),
         "--seed", str(seed),
     ]
+    # Method-pinned wrapper configuration (see METHODS in config.py), then the
+    # caller's extras last so an explicit command-line flag overrides the pin.
+    cmd.extend(str(a) for a in info.get("wrapper_args", ()))
     if extra_args:
         cmd.extend(extra_args)
     print(f"  cmd: {' '.join(cmd)}")
