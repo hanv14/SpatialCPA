@@ -219,12 +219,10 @@ def main():
     parser.add_argument("--placement", default="diffeo_morph",
                         choices=["smooth_morph", "diffeo_morph", "diffeo", "adaptive", "coherent_mix", "symmetric",
                                  "morph", "interpolate", "backbone"],
-                        help="diffeo_morph (default — diffeomorphic morphogenesis of "
-                             "the single nearest clean slice: advect its cells along a "
-                             "continuous regularized velocity-field flow to the target "
-                             "depth), smooth_morph (one-shot coherent smoothed-OT "
-                             "deformation of that slice), diffeo (two-sided "
-                             "diffeomorphic velocity-field bridge; ablation), "
+                        help="smooth_morph (default — coherent smoothed-OT deformation "
+                             "of the single nearest clean slice: inherits a single "
+                             "slice's structure/density fidelity while its non-rigid "
+                             "warp adds the interpolated field the copy lacks), "
                              "adaptive (pick the placement per dataset by leakage-safe "
                              "internal cross-validation on a held-out training slice; "
                              "logs the CV scores), coherent_mix (both-slice expression "
@@ -292,12 +290,8 @@ def main():
     # Expression.
     parser.add_argument("--expression-mode", default="fusion",
                         choices=["endpoint", "fusion", "transfer", "blend"],
-                        help="fusion (default — two-slice OT fusion on the deformed "
-                             "single-slice backbone: each cell takes its OT-matched "
-                             "other-slice profile with probability w; needs "
-                             "--placement diffeo_morph), endpoint (copy real profile; "
-                             "max variance), transfer (nearest same-type training "
-                             "cell), or blend")
+                        help="endpoint (copy real profile; max variance, default), "
+                             "transfer (nearest same-type training cell), or blend")
     parser.add_argument("--transfer-alpha", type=float, default=0.5,
                         help="blend weight on the transferred profile (blend mode)")
     args = parser.parse_args()
