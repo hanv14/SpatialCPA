@@ -176,12 +176,13 @@ class SpatialCPAv8:
     # ------------------------------------------------------------------ #
     def _place_by_mode(self, mode, lower, upper, lo_e, up_e, lo_xy, up_xy,
                        lo_lab, up_lab, t, z, n_target, has_ct, rng, cfg):
-        if mode == "smooth_morph":
+        if mode in ("smooth_morph", "diffeo_morph"):
             return self._place_smooth_morph(lower, upper, lo_e, up_e, lo_lab, up_lab,
-                                            t, z, has_ct, cfg)
-        if mode == "symmetric":
-            br = tp.symmetric_bridge(lo_xy, up_xy, lo_e, up_e, t, n_target,
-                                     cfg.transport, cfg.bridge, seed=cfg.synthesis.seed)
+                                            t, z, has_ct, cfg, svf=(mode == "diffeo_morph"))
+        if mode in ("symmetric", "diffeo"):
+            bridge_fn = tp.svf_bridge if mode == "diffeo" else tp.symmetric_bridge
+            br = bridge_fn(lo_xy, up_xy, lo_e, up_e, t, n_target,
+                           cfg.transport, cfg.bridge, seed=cfg.synthesis.seed)
             self._last_dissimilarity = br.dissimilarity
             coords_xy = br.coords_xy.astype(np.float64)
             expr, q_embed, init_types = self._gather_sources(
@@ -291,18 +292,48 @@ class SpatialCPAv8:
             br, lower, upper, lo_e, up_e, lo_lab, up_lab, has_ct)
         return br.coords_xy.astype(np.float64), expr, q_embed, init_types
 
-    def _place_smooth_morph(self, lower, upper, lo_e, up_e, lo_lab, up_lab, t, z, has_ct, cfg):
+    def _place_smooth_morph(self, lower, upper, lo_e, up_e, lo_lab, up_lab, t, z,
+                            has_ct, cfg, svf=False):
         if abs(lower.z_center - z) <= abs(upper.z_center - z):
             anchor, other, ae, oe, w, a_lab = lower, upper, lo_e, up_e, t, lo_lab
         else:
             anchor, other, ae, oe, w, a_lab = upper, lower, up_e, lo_e, 1.0 - t, up_lab
-        coords_xy, a_idx, disp = tp.smooth_morph(
-            anchor.coords_xy.astype(np.float64), other.coords_xy.astype(np.float64),
-            ae, oe, w, cfg.transport, cfg.bridge, seed=cfg.synthesis.seed)
+        if svf:
+            coords_xy, a_idx, disp, match_other = tp.svf_morph(
+                anchor.coords_xy.astype(np.float64), other.coords_xy.astype(np.float64),
+                ae, oe, w, cfg.transport, cfg.bridge, seed=cfg.synthesis.seed)
+        else:
+            coords_xy, a_idx, disp = tp.smooth_morph(
+                anchor.coords_xy.astype(np.float64), other.coords_xy.astype(np.float64),
+                ae, oe, w, cfg.transport, cfg.bridge, seed=cfg.synthesis.seed)
+            match_other = None
         self._last_dissimilarity = disp
+
         expr = anchor.expression[a_idx].astype(np.float32)
-        q_embed = ae[a_idx]
+        q_embed = np.asarray(ae[a_idx], dtype=np.float32)
         init_types = a_lab[a_idx] if has_ct else None
+
+        # ---- two-slice OT expression fusion on the single-slice backbone ------ #
+        # Each cell, with probability w (the depth fraction toward the OTHER slice),
+        # takes the real profile/type/embedding of its OT-matched cell in the other
+        # slice, so the population is a genuine (1-w):w mixture of both slices' real
+        # cells on a coherent single-slice deformation — a hybrid slice, not a copy.
+        # Gate: only fuse when the flanking slices genuinely differ. On near-
+        # identical planes the two-slice mixture ≈ a single slice, so a hard OT swap
+        # only injects match noise; there, plain single-slice deformation is better.
+        do_fuse = (svf and match_other is not None
+                   and cfg.synthesis.expression_mode == "fusion"
+                   and disp is not None and disp > cfg.bridge.adaptive_threshold)
+        if do_fuse:
+            rng = np.random.default_rng(cfg.synthesis.seed + 7)
+            swap = rng.random(len(a_idx)) < float(w)
+            if swap.any():
+                mo = match_other[swap]
+                expr = expr.copy(); expr[swap] = other.expression[mo].astype(np.float32)
+                q_embed = q_embed.copy(); q_embed[swap] = np.asarray(oe[mo], dtype=np.float32)
+                if has_ct:
+                    o_lab = other.cell_type_indices
+                    init_types = init_types.copy(); init_types[swap] = o_lab[mo]
         return coords_xy, expr, q_embed, init_types
 
     def _place_morph(self, lower, upper, lo_e, up_e, lo_lab, up_lab, t, z, has_ct, cfg):
