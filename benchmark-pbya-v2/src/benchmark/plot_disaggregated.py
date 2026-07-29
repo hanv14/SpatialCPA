@@ -124,12 +124,12 @@ METRICS = [
     dict(table="per_cell", column="cell_pearson",
          label="Per-cell expression Pearson r (matched)", ylim=(-1, 1),
          zero_line=True, tier="diagnostic",
-         caveat="matched cells only (see % per violin) — a method that places "
-                "few cells is scored on its best ones"),
+         caveat="matched cells only — a method that places few cells is scored "
+                "on its best ones; read with nn_dist_um"),
     dict(table="per_cell", column="cell_mae",
          label="Per-cell expression MAE (matched)", ylim=(0, None),
          zero_line=False, tier="diagnostic",
-         caveat="matched cells only (see % per violin); log-normalized"),
+         caveat="matched cells only; log-normalized; read with nn_dist_um"),
     # ── reference ────────────────────────────────────────────────────────────
     dict(table="per_gene_matched", column="pearson",
          label="Per-gene Pearson r (cell-matched)", ylim=(-1, 1), zero_line=True,
@@ -232,19 +232,15 @@ def _method_color_map(tables, methods=None):
 def _draw_panel(ax, sub, column, methods, color_map, kind, ylim, zero_line,
                 labels=None):
     """Draw the per-method distribution of ``column`` for one dataset."""
-    positions, data, colors, present, coverage = [], [], [], [], []
+    positions, data, colors, present = [], [], [], []
     for i, m in enumerate(methods):
-        col = pd.to_numeric(sub.loc[sub["method"] == m, column],
-                            errors="coerce").to_numpy()
-        vals = col[np.isfinite(col)]
+        vals = pd.to_numeric(sub.loc[sub["method"] == m, column],
+                             errors="coerce").to_numpy()
+        vals = vals[np.isfinite(vals)]
         positions.append(i)
         data.append(vals)
         colors.append(color_map.get(m, "#777777"))
         present.append(len(vals) > 0)
-        # Share of this method's rows the violin actually rests on. For the
-        # per-cell metrics the dropped rows are the unmatched cells, so this is
-        # the match rate — the survivorship the distribution is conditioned on.
-        coverage.append(len(vals) / len(col) if len(col) else 0.0)
 
     if zero_line:
         ax.axhline(0, color="0.7", lw=0.5, ls="--", zorder=0)
@@ -281,15 +277,6 @@ def _draw_panel(ax, sub, column, methods, color_map, kind, ylim, zero_line,
             ax.scatter(np.full(len(vals), i) + jitter, vals, s=3,
                        color=c, alpha=0.6, linewidths=0)
 
-    # Flag any violin resting on less than all of its rows, so a distribution
-    # conditioned on a small matched subset can't be misread as the whole slice.
-    for i, cov in enumerate(coverage):
-        if present[i] and cov < 0.995:
-            ax.annotate(f"{cov * 100:.0f}%", xy=(i, 1.0),
-                        xycoords=("data", "axes fraction"),
-                        xytext=(0, -1), textcoords="offset points",
-                        ha="center", va="top", fontsize=4.5, color="0.35")
-
     labels = labels or {}
     ax.set_xticks(range(len(methods)))
     ax.set_xticklabels([labels.get(m, m) for m in methods], rotation=45, ha="right")
@@ -305,13 +292,11 @@ def plot_metric(df, metric, methods, color_map, output_dir, kind="violin",
     column = metric["column"]
     if column not in df.columns:
         return False
-    finite = np.isfinite(pd.to_numeric(df[column], errors="coerce"))
-    if not finite.any():
+    df = df[np.isfinite(pd.to_numeric(df[column], errors="coerce"))]
+    if df.empty:
         return False
 
-    # Non-finite rows are kept: _draw_panel needs them to report the share of
-    # rows each violin rests on. Presence checks use the finite rows only.
-    present = set(df.loc[finite, "dataset"].dropna().unique())
+    present = set(df["dataset"].dropna().unique())
     if dataset_order:
         # keep the user's chosen datasets, in the given order
         datasets = [d for d in dataset_order if d in present]
@@ -333,7 +318,7 @@ def plot_metric(df, metric, methods, color_map, output_dir, kind="violin",
                              figsize=(max(2.1 * ncols, 3.2), fig_h))
 
     methods_present = [m for m in methods
-                       if m in set(df.loc[finite, "method"].dropna().unique())]
+                       if m in set(df["method"].dropna().unique())]
 
     for idx in range(nrows * ncols):
         r, c = divmod(idx, ncols)
