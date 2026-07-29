@@ -66,8 +66,14 @@ def resolve_raw_starmap():
 RAW_STARMAP = resolve_raw_starmap()
 
 # The v3-built, paper-protocol dataset (produced by ``prepare_starmap.py``).
-DATA_DIR = Path(os.environ.get("BENCH_V3_DATA", PROJECT_ROOT / "data"))
-DATASET_NAME = "starmap_visual_cortex_7sec"
+# Laid out as ``data/processed/<dataset>/data.h5ad``, the same convention v1 and
+# v2 use, so the tree is navigable the same way — but under benchmark-pbya-v3,
+# because this is a *differently partitioned* view of the STARmap volume (seven
+# paper sections, not the raw 89 z-planes) and must not be confused with, or
+# written over, v1's processed copy. Which protocol produced a given result stays
+# visible in the holdout id (``paper_2_4_6``) and in ``uns['paper_protocol']``.
+DATA_DIR = Path(os.environ.get("BENCH_V3_DATA", PROJECT_ROOT / "data" / "processed"))
+DATASET_NAME = "starmap_visual_cortex"
 DATASET_PATH = DATA_DIR / DATASET_NAME / "data.h5ad"
 
 RESULTS_DIR = Path(os.environ.get("BENCH_V3_RESULTS", PROJECT_ROOT / "results"))

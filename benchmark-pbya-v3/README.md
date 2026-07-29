@@ -276,9 +276,16 @@ src/bench3/
   plot_paper_figures.py  UMAP, marker maps, Moran/Geary scatter, summary heatmap
   selftest.py            validate the harness with known-quality reconstructions
 
-data/starmap_visual_cortex_7sec/data.h5ad    built by prepare_starmap (gitignored)
-results/                                     predictions, metrics, figures (gitignored)
+data/processed/starmap_visual_cortex/data.h5ad   built by prepare_starmap (gitignored)
+results/                                         predictions, metrics, figures (gitignored)
 ```
+
+The dataset follows v1/v2's `data/processed/<dataset>/data.h5ad` convention but
+lives under `benchmark-pbya-v3/`, because it is a *differently partitioned* view
+of the same volume — seven paper sections rather than the raw 89 z-planes — and
+must not be confused with, or written over, v1's processed copy. Which protocol
+produced a result stays visible in the holdout id (`paper_2_4_6`) and in
+`uns['paper_protocol']`. Override the location with `BENCH_V3_DATA`.
 
 The package is `bench3`, not `benchmark`, on purpose: v2's package *is* `benchmark`
 and v3 imports it, so the two must not shadow each other.
