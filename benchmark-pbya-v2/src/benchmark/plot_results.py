@@ -9,8 +9,39 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from matplotlib.colors import LinearSegmentedColormap
 
 from .config import SUMMARY_DIR, FIGURES_DIR
+
+# Heatmap ramp: neutral light grey (low) → deep red (high). Sequential data, so
+# one light→dark ramp rather than a red/green diverging scale — the previous
+# RdYlGn implied a midpoint that "median Pearson r" does not have, and its
+# red/green poles are the worst case for red-green color blindness.
+HEATMAP_COLOR_LOW = "#E8E8E8"
+HEATMAP_COLOR_HIGH = "#B2182B"
+
+
+def heatmap_cmap(color_low=HEATMAP_COLOR_LOW, color_high=HEATMAP_COLOR_HIGH):
+    """Continuous colormap interpolating ``color_low`` → ``color_high``."""
+    return LinearSegmentedColormap.from_list(
+        "benchmark_sequential", [color_low, color_high])
+
+
+def _annotation_ink(rgba):
+    """Ink color for a cell annotation: whichever of black/white contrasts more.
+
+    seaborn's own choice is a fixed threshold on the colormap range, which flips
+    to white halfway up a light ramp and leaves mid cells at ~2.5:1. This picks
+    per cell by WCAG relative luminance instead.
+    """
+    def channel(c):
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (channel(c) for c in rgba[:3])
+    luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    on_black = (luminance + 0.05) / 0.05
+    on_white = 1.05 / (luminance + 0.05)
+    return "#1A1A1A" if on_black >= on_white else "#FFFFFF"
 
 
 def load_results(csv_path=None):
@@ -94,7 +125,8 @@ def method_list(df):
     return sorted(col.unique())
 
 
-def plot_heatmap(df, output_dir=None):
+def plot_heatmap(df, output_dir=None, color_low=HEATMAP_COLOR_LOW,
+                 color_high=HEATMAP_COLOR_HIGH):
     """Heatmap: methods x datasets, cell = median Pearson r."""
     if output_dir is None:
         output_dir = FIGURES_DIR
@@ -109,8 +141,16 @@ def plot_heatmap(df, output_dir=None):
 
     fig, ax = plt.subplots(figsize=(max(8, len(pivot.columns) * 1.2),
                                      max(4, len(pivot.index) * 0.8)))
-    sns.heatmap(pivot, annot=True, fmt=".3f", cmap="RdYlGn", vmin=0, vmax=1,
+    cmap = heatmap_cmap(color_low, color_high)
+    sns.heatmap(pivot, annot=True, fmt=".3f", cmap=cmap, vmin=0, vmax=1,
                 ax=ax, linewidths=0.5)
+    # Re-ink the annotations per cell (vmin/vmax are 0/1, so value == cmap position).
+    for label in ax.texts:
+        try:
+            value = float(label.get_text())
+        except ValueError:
+            continue
+        label.set_color(_annotation_ink(cmap(np.clip(value, 0.0, 1.0))))
     ax.set_title("Median Pearson r (per-gene) — Methods vs Datasets")
     ax.set_ylabel("Method")
     ax.set_xlabel("Dataset")
