@@ -130,13 +130,28 @@ def load_tables(input_dir):
     return tables
 
 
-def _method_color_map(tables):
-    """Stable method -> colour map (NPG palette) across every table/figure."""
+def _methods_in_tables(tables):
+    """Every method id appearing in any loaded table."""
     methods = set()
     for df in tables.values():
         if "method" in df.columns:
             methods |= set(df["method"].dropna().unique())
-    methods = sorted(methods)
+    return methods
+
+
+def _method_color_map(tables, methods=None):
+    """Method -> colour map (NPG palette), consistent across table/figure.
+
+    Colours are assigned over ``methods`` when given (i.e. over the selection
+    being plotted) rather than over everything in the tables — the palette has
+    only 10 entries, so assigning across a dozen-plus method ids wraps and hands
+    two plotted methods the same colour.
+    """
+    if methods is None:
+        methods = sorted(_methods_in_tables(tables))
+    if len(methods) > len(NPG_PALETTE):
+        print(f"  note: {len(methods)} methods but {len(NPG_PALETTE)} palette "
+              f"colours — some colours repeat; narrow --method-order to avoid it")
     return {m: NPG_PALETTE[i % len(NPG_PALETTE)] for i, m in enumerate(methods)}
 
 
@@ -263,13 +278,14 @@ def plot_metric(df, metric, methods, color_map, output_dir, kind="violin",
     return True
 
 
-def _order_methods(present, method_order):
-    """Left-to-right method order: listed ones first, then the rest (sorted).
+def _order_methods(present, method_order, include_unlisted=False):
+    """Left-to-right method order, and which methods appear at all.
 
     ``present`` is the set of method ids in the data. Anything in
-    ``method_order`` that isn't present is dropped (with a note); anything
-    present but not listed is appended in sorted order so nothing silently
-    vanishes from the figures.
+    ``method_order`` that isn't present is dropped (with a note). By default
+    ``--method-order`` is also a *selection*: methods present but unlisted are
+    excluded, so the figures show exactly what was asked for (same semantics as
+    ``plot_results``). Pass ``include_unlisted`` to append them instead.
     """
     present = set(present)
     if not method_order:
@@ -278,15 +294,24 @@ def _order_methods(present, method_order):
     if missing:
         print(f"  note: --method-order names not in data (ignored): {missing}")
     ordered = [m for m in method_order if m in present]
+    if not ordered:
+        raise SystemExit(
+            "--method-order matched no methods in the data "
+            f"(available: {', '.join(sorted(present))})")
     rest = sorted(present - set(ordered))
-    if rest:
+    if rest and include_unlisted:
         print(f"  note: methods present but not in --method-order "
               f"(appended after): {rest}")
-    return ordered + rest
+        return ordered + rest
+    if rest:
+        print(f"  note: excluding {len(rest)} method(s) not in --method-order: "
+              f"{', '.join(rest)}")
+    return ordered
 
 
 def generate_all(input_dir=None, output_dir=None, metrics=None, kind="violin",
-                 method_order=None, method_labels=None, datasets=None):
+                 method_order=None, method_labels=None, datasets=None,
+                 include_unlisted=False):
     set_nature_style()
     input_dir = Path(input_dir) if input_dir else (SUMMARY_DIR / "disaggregated")
     output_dir = Path(output_dir) if output_dir else (FIGURES_DIR / "disaggregated")
@@ -297,11 +322,13 @@ def generate_all(input_dir=None, output_dir=None, metrics=None, kind="violin",
               f"Run:  python -m src.benchmark.evaluate_disaggregated --all")
         return
 
-    color_map = _method_color_map(tables)          # colours keyed by method id
-    methods = _order_methods(color_map.keys(), method_order)
+    present = _methods_in_tables(tables)
+    methods = _order_methods(present, method_order,
+                             include_unlisted=include_unlisted)
+    color_map = _method_color_map(tables, methods)  # colours keyed by method id
 
     method_labels = method_labels or {}
-    unknown = [k for k in method_labels if k not in color_map]
+    unknown = [k for k in method_labels if k not in present]
     if unknown:
         print(f"  note: --method-names for methods not in data (ignored): {unknown}")
 
@@ -362,9 +389,13 @@ def main():
     ap.add_argument("--kind", choices=["violin", "box", "strip"], default="violin",
                     help="per-method distribution style (default: violin+box)")
     ap.add_argument("--method-order", nargs="+", metavar="METHOD",
-                    help="left-to-right order of methods, e.g. "
+                    help="methods to plot, left-to-right, e.g. "
                          "--method-order spatialcpav8_gen spatialz feast isost "
-                         "(methods present but unlisted are appended after)")
+                         "(methods present but unlisted are EXCLUDED; pass "
+                         "--include-unlisted to append them instead)")
+    ap.add_argument("--include-unlisted", action="store_true",
+                    help="with --method-order, keep methods that aren't listed "
+                         "and append them (sorted) after the listed ones")
     ap.add_argument("--method-names", nargs="+", metavar="KEY=LABEL",
                     help="display names for methods, e.g. --method-names "
                          "spatialz=SpatialZ feast=FEAST spatialcpav8_gen='SpatialCPA v8' "
@@ -373,7 +404,8 @@ def main():
     generate_all(args.input_dir, args.output_dir, args.metrics, args.kind,
                  method_order=args.method_order,
                  method_labels=_parse_method_names(args.method_names),
-                 datasets=args.datasets)
+                 datasets=args.datasets,
+                 include_unlisted=args.include_unlisted)
 
 
 if __name__ == "__main__":
