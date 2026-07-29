@@ -151,6 +151,12 @@ def plot_heatmap(df, output_dir=None, color_low=HEATMAP_COLOR_LOW,
         except ValueError:
             continue
         label.set_color(_annotation_ink(cmap(np.clip(value, 0.0, 1.0))))
+
+    # Method names read horizontally. seaborn auto-rotates tick labels when its
+    # pre-layout overlap check trips, which stands the method names on end and
+    # makes neighbours collide ("FEAST"/"SpatialZ"); one row per method is tall
+    # enough for horizontal text, so pin it.
+    plt.setp(ax.get_yticklabels(), rotation=0, va="center")
     ax.set_title("Median Pearson r (per-gene) — Methods vs Datasets")
     ax.set_ylabel("Method")
     ax.set_xlabel("Dataset")
