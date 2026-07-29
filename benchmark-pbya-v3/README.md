@@ -174,6 +174,40 @@ invoked unchanged.
 
 ## Usage
 
+### Input data
+
+`prepare_starmap` resolves the STARmap volume itself, trying in order:
+
+```
+$BENCH_V3_RAW_STARMAP
+../data/starmap/STARmap_Wang2018three_data_3D_data.h5ad
+../benchmark-pbya/data/raw/starmap_visual_cortex/STARmap_Wang2018three_data_3D_data.h5ad
+../benchmark-pbya/data/processed/starmap_visual_cortex/data.h5ad
+../benchmark-pbya/data/processed/starmap_visual_cortex.h5ad
+```
+
+So if the raw file sits in v1's standard `data/raw/` location, `prepare_starmap`
+needs no arguments. Otherwise point it at the file:
+
+```bash
+python -m src.bench3.prepare_starmap --raw /path/to/STARmap_Wang2018three_data_3D_data.h5ad
+# or
+export BENCH_V3_RAW_STARMAP=/path/to/STARmap_Wang2018three_data_3D_data.h5ad
+```
+
+**Either the raw volume or the v1-*processed* `data.h5ad` works** — they are the
+same cells and the same 89 z-planes, differing only in whether coordinates have
+been converted to micrometres. `prepare_starmap` determines the units from the
+file (native `obs['x','y','z']` are voxel indices; an obsm-only file is trusted
+when `uns['spatial_metadata']['coordinate_units']` says micrometres), prints
+which it used, and converts at most once. *Verified: raw, v1-processed, and an
+obsm-only µm variant all produce bit-identical output.* Getting this wrong would
+be silent — re-applying the 0.859 µm/voxel calibration to micrometres shrinks x
+and y while leaving z alone — hence the explicit detection rather than an
+assumption.
+
+### Pipeline
+
 ```bash
 cd benchmark-pbya-v3
 
@@ -181,6 +215,7 @@ cd benchmark-pbya-v3
 python -m src.bench3.prepare_starmap
 
 # 2. inspect the design
+
 python -m src.bench3.design
 
 # 3. validate the harness without any conda env

@@ -36,12 +36,34 @@ V1_ROOT = REPO_ROOT / "benchmark-pbya"                    # shared tools/ + envs
 V2_ROOT = REPO_ROOT / "benchmark-pbya-v2"                 # shared method wrappers
 V2_SRC = V2_ROOT / "src"                                  # importable `benchmark` pkg
 
-# Raw STARmap volume (Wang et al. 2018). Tracked in the repo under data/starmap;
-# override with $BENCH_V3_RAW_STARMAP.
-RAW_STARMAP = Path(os.environ.get(
-    "BENCH_V3_RAW_STARMAP",
-    REPO_ROOT / "data" / "starmap" / "STARmap_Wang2018three_data_3D_data.h5ad",
-))
+# Raw STARmap volume (Wang et al. 2018). Different checkouts keep it in
+# different places, so resolve against the known locations rather than hard-coding
+# one; $BENCH_V3_RAW_STARMAP wins outright, and --raw overrides per invocation.
+#
+# The v1-processed file is an accepted input too: it is the same cells and the
+# same 89 z-planes, just with coordinates already converted to micrometres —
+# ``prepare_starmap`` detects that and skips the voxel conversion.
+_RAW_STARMAP_NAME = "STARmap_Wang2018three_data_3D_data.h5ad"
+RAW_STARMAP_CANDIDATES = (
+    REPO_ROOT / "data" / "starmap" / _RAW_STARMAP_NAME,
+    V1_ROOT / "data" / "raw" / "starmap_visual_cortex" / _RAW_STARMAP_NAME,
+    V1_ROOT / "data" / "processed" / "starmap_visual_cortex" / "data.h5ad",
+    V1_ROOT / "data" / "processed" / "starmap_visual_cortex.h5ad",
+)
+
+
+def resolve_raw_starmap():
+    """First existing candidate, else the preferred path (for the error message)."""
+    env = os.environ.get("BENCH_V3_RAW_STARMAP")
+    if env:
+        return Path(env)
+    for cand in RAW_STARMAP_CANDIDATES:
+        if cand.exists():
+            return cand
+    return RAW_STARMAP_CANDIDATES[0]
+
+
+RAW_STARMAP = resolve_raw_starmap()
 
 # The v3-built, paper-protocol dataset (produced by ``prepare_starmap.py``).
 DATA_DIR = Path(os.environ.get("BENCH_V3_DATA", PROJECT_ROOT / "data"))

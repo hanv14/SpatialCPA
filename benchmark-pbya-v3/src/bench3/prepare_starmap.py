@@ -49,37 +49,51 @@ import scipy.sparse as sp
 
 from .config import (
     DATASET_NAME, DATASET_PATH, DROP_Z_HIGH, DROP_Z_LOW, HELD_OUT_SECTIONS,
-    INPUT_SECTIONS, MARKER_GENES, N_SECTIONS, RAW_STARMAP, VOXEL_XY_UM,
-    VOXEL_Z_UM, section_label,
+    INPUT_SECTIONS, MARKER_GENES, N_SECTIONS, RAW_STARMAP,
+    RAW_STARMAP_CANDIDATES, VOXEL_XY_UM, VOXEL_Z_UM, section_label,
 )
 
 
 # ── Raw-volume readers ────────────────────────────────────────────────────────
 
 def _extract_xyz(adata):
-    """Return raw (n, 3) voxel coordinates.
+    """Return ``(coords (n, 3), units, source)`` — units is 'voxels' or 'um'.
 
-    Priority mirrors the v1 processor: obs x/y/z columns first (the STARmap
-    distribution carries the 89 z-planes there even though ``obsm['spatial']``
-    is only 2-D), then a 3-D obsm, then 2-D obsm + an obs z column.
+    Accepts either the raw STARmap volume or the v1-*processed* file, which is
+    the same cells with coordinates already in micrometres. Getting the units
+    wrong is a silent error — re-applying the voxel calibration to micrometres
+    would shrink x/y by 0.859 while leaving z alone, distorting every spatial
+    metric — so units are determined alongside the coordinates, never assumed.
+
+    Priority mirrors the v1 processor: ``obs['x','y','z']`` first (the STARmap
+    distribution carries the 89 z-planes there even when ``obsm['spatial']`` is
+    only 2-D, and v1 leaves those columns as the original voxel indices), then a
+    3-D obsm, then 2-D obsm + an obs z column.
     """
     for xc, yc, zc in (("x", "y", "z"), ("X", "Y", "Z")):
-        if xc in adata.obs.columns and yc in adata.obs.columns and zc in adata.obs.columns:
+        if all(c in adata.obs.columns for c in (xc, yc, zc)):
             return np.column_stack([
                 adata.obs[xc].values.astype(np.float64),
                 adata.obs[yc].values.astype(np.float64),
                 adata.obs[zc].values.astype(np.float64),
-            ])
+            ]), "voxels", f"obs['{xc}','{yc}','{zc}']"
+
+    # No native voxel columns: fall back to obsm, and trust the file's own
+    # declaration of units (v1 writes 'micrometers' into spatial_metadata).
+    declared = str((adata.uns.get("spatial_metadata") or {})
+                   .get("coordinate_units", "")).lower()
+    units = "um" if declared.startswith(("micro", "um", "µm")) else "voxels"
     for key in ("spatial3d", "spatial"):
         if key in adata.obsm:
             coords = np.asarray(adata.obsm[key], dtype=np.float64)
             if coords.shape[1] == 3:
-                return coords
+                return coords, units, f"obsm['{key}']"
             if coords.shape[1] == 2:
                 for zc in ("z", "Z"):
                     if zc in adata.obs.columns:
-                        return np.column_stack(
-                            [coords, adata.obs[zc].values.astype(np.float64)])
+                        return (np.column_stack(
+                            [coords, adata.obs[zc].values.astype(np.float64)]),
+                            units, f"obsm['{key}'] + obs['{zc}']")
     raise ValueError(
         "Could not find 3-D coordinates: expected obs['x','y','z'] or a 3-D "
         "obsm['spatial']/'spatial3d'."
@@ -133,21 +147,35 @@ def build(raw_path=RAW_STARMAP, output_path=DATASET_PATH, flatten_z=True,
 
     raw_path = Path(raw_path)
     if not raw_path.exists():
+        tried = "\n".join(f"    {c}" for c in RAW_STARMAP_CANDIDATES)
         raise FileNotFoundError(
-            f"Raw STARmap volume not found: {raw_path}\n"
-            f"Download it with "
-            f"`python benchmark-pbya/src/data/download/download_starmap_visual_cortex.py`, "
-            f"or point --raw at an existing copy."
+            f"STARmap volume not found: {raw_path}\n"
+            f"  Looked in:\n{tried}\n"
+            f"  Fix by any of:\n"
+            f"    python -m src.bench3.prepare_starmap --raw /path/to/volume.h5ad\n"
+            f"    export BENCH_V3_RAW_STARMAP=/path/to/volume.h5ad\n"
+            f"    python ../benchmark-pbya/src/data/download/download_starmap_visual_cortex.py\n"
+            f"  Either the raw volume or the v1-processed data.h5ad is accepted."
         )
 
     if verbose:
         print(f"Loading {raw_path} ...")
     adata = ad.read_h5ad(str(raw_path))
     if verbose:
-        print(f"  raw: {adata.n_obs} cells x {adata.n_vars} genes")
+        print(f"  input: {adata.n_obs} cells x {adata.n_vars} genes")
 
-    coords_vox = _extract_xyz(adata)
-    planes = coords_vox[:, 2].astype(int)
+    coords, units, source = _extract_xyz(adata)
+    # Normalize to micrometres once, here, so everything downstream is in one
+    # unit regardless of whether the input was raw voxels or already processed.
+    if units == "voxels":
+        coords_um = np.column_stack([coords[:, :2] * VOXEL_XY_UM,
+                                     coords[:, 2] * VOXEL_Z_UM])
+    else:
+        coords_um = coords
+    planes = np.rint(coords_um[:, 2] / VOXEL_Z_UM).astype(int)
+    if verbose:
+        print(f"  coordinates: {source}, units={units}"
+              f"{' -> converted to um' if units == 'voxels' else ' (already um)'}")
 
     kept, assignment = partition_planes(planes, n_sections=n_sections)
     keep_mask = np.isin(planes, kept)
@@ -159,7 +187,7 @@ def build(raw_path=RAW_STARMAP, output_path=DATASET_PATH, flatten_z=True,
               f"(z {kept.min()}-{kept.max()})")
 
     out = adata[keep_mask].copy()
-    coords_vox = coords_vox[keep_mask]
+    coords_um = coords_um[keep_mask]
     planes = planes[keep_mask]
 
     # X: CSR, unmodified counts.
@@ -170,9 +198,8 @@ def build(raw_path=RAW_STARMAP, output_path=DATASET_PATH, flatten_z=True,
     sec_idx = np.array([assignment[int(p)] for p in planes], dtype=int)
     sections = np.array([section_label(i) for i in sec_idx])
 
-    # Voxels -> micrometres.
-    xy_um = coords_vox[:, :2] * VOXEL_XY_UM
-    z_um = coords_vox[:, 2] * VOXEL_Z_UM
+    xy_um = coords_um[:, :2]
+    z_um = coords_um[:, 2]
 
     # Flatten each slab onto its centre plane: the protocol treats a partition as
     # a 2-D section, and a virtual slice is a plane.
