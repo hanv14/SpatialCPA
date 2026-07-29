@@ -597,8 +597,30 @@ and the STARmap head-to-head above improves from 8 wins / 2 ties to **9 wins /
 1 tie / 0 losses**. Crucially `gene_var_pearson` is untouched (0.961 -> 0.960),
 so the dispersion advantage over copy-based methods is not being given away.
 
-This has **not** been verified on `imc_breast_cancer`; it is a default change and
-should be re-measured there.
+**Measured on `imc_breast_cancer`: a no-op for `pearson_median`.** I predicted the
+0.3 default would lift it there as it did on STARmap and the surrogate. It did
+not — 0.1340 before, 0.129579 after, on a 13-holdout mean whose per-holdout
+spread is at least 0.086–0.114. A 0.004 difference is well inside that spread.
+The prediction was wrong and is retracted; the default stands on the STARmap and
+surrogate evidence above, not on IMC.
+
+The `pearson_median` progression on that dataset:
+
+| stage | pearson_median |
+|---|---|
+| original v15 | 0.045 |
+| + `max_group_channels` 48 | 0.045 |
+| + spatial library + Phase 3.2 training | 0.134 |
+| + `latent_shrinkage` 0.3 | 0.1296 |
+| v8 | 0.286 |
+
+It has plateaued near 0.13 — 3x the original, still less than half of v8.
+Extrapolating the surrogate shrinkage curve (0.063 -> 0.163, a 2.6x lift at
+s=1.0) puts IMC at roughly 0.35 with shrinkage near 1.0, which would clear v8.
+That is not worth taking: at s=1.0 the surrogate's co-expression collapses from
+0.902 to 0.266. Closing `pearson_median` on this dataset means giving up the
+generation metrics v15 wins, which is the A1 tension stated above, now confirmed
+on real data rather than a surrogate.
 
 ### The library fix, measured on the real dataset
 
