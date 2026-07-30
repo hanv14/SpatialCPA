@@ -367,7 +367,7 @@ Nothing here modifies the checkpoint you supplied.
 | dataset | `kind` | partition | source | status |
 |---|---|---|---|---|
 | `starmap_visual_cortex` | `paper` | `planes` — trim z 6–13 / 91–94, split 77 planes into 7 × 11 | the paper's own volume | the reproduction |
-| `exseq_visual_cortex` | `analogue` | `z_width` — trim the outermost 1 % of cells by z, cut the range into 7 equal-width slabs | `benchmark-pbya/data/raw/exseq_visual_cortex` (or v1's processed h5ad) | the same protocol, a second volume |
+| `exseq_visual_cortex` | `analogue` | `z_width` — cut the z range into 7 equal-width slabs (0.2 % outlier clip, not a noise trim) | `benchmark-pbya/data/raw/exseq_visual_cortex` (or v1's processed h5ad) | the same protocol, a second volume |
 | `imc_breast_cancer` | `analogue` | `sections` — 15 real serial sections at 10 µm; keep the centred window of 7 | `benchmark-pbya/data/raw/imc_breast_cancer` (15 h5ads, or v1's processed) | protein panel, human tumour |
 
 ```bash
@@ -409,11 +409,12 @@ what a second dataset is *for*.
 **About the IMC dataset.** It is the one case where the metrics change meaning, so
 read its rows differently from the other two:
 
-* *Protein, not RNA.* The panel is ~30 antibody channels, so the cortex markers do
-  not apply. `config.DATASET_SPECS` lists candidate channel names (Ecad, panCK,
-  CD31, SMA, Ki67, HER2, CD45, across the usual spellings); the build keeps the
-  intersection with the real panel and prints it. **Confirm that list against your
-  panel before quoting `paper_marker_*`.**
+* *Protein, not RNA.* The markers are **panCK** (tumour/epithelial compartment)
+  and **CD3** (T-cell infiltrate). Matching ignores case and punctuation, so
+  `panCK` finds `PanCK` or `pan-CK`; it is deliberately *not* a prefix match,
+  because `CD3` would then silently select `CD31`. If a marker does not match, the
+  build says so and suggests the closest panel names — check that line, since an
+  unmatched marker means one fewer scored criterion.
 * *No laminar axis.* A tumour has none, so the layer genes are deliberately empty
   and `laminar_axis` falls back to the gradient of the most spatially structured
   channel. `paper_marker_depth_r` therefore reads as "profile along the dominant
@@ -429,9 +430,23 @@ read its rows differently from the other two:
 * *Half the volume is unused.* The paper design needs 7 consecutive sections and
   the dataset has 15, so the centred window is kept and 8 sections are dropped.
 
-**Two honest caveats.** ExSeq's z is continuous, so there are no planes to trim by
-number; the trim is a stated v3 choice (outermost 1 % of cells at each end), not
-the paper's. And `kind=analogue` is not decoration: the SpatialZ paper validated
+### Trimming
+
+Only STARmap's trim is protocol. Dropping `z = 6–13` and `91–94` comes from the
+SpatialZ paper's own analysis of that volume, so it is always applied and
+`--no-trim` is refused for it. The analogue datasets have no published trim and v3
+does not invent one:
+
+* `exseq_visual_cortex` clips 0.2 % of cells at each end of z — not to remove
+  noise, but because equal-width binning takes its edges from `min(z)`/`max(z)`,
+  where a few segmentation outliers would skew all seven slab boundaries.
+  `--no-trim` uses the raw range; `--z-trim-quantile` sets it.
+* `imc_breast_cancer` keeps a *window* of 7 of its 15 sections, because the design
+  needs exactly 7 and something has to choose. Centre is the default since the
+  first and last sections of a cut block are the ones most often damaged or
+  incompletely stained; `--section-trim low|high` moves it.
+
+**One more caveat.** `kind=analogue` is not decoration: the SpatialZ paper validated
 this protocol on STARmap, so an ExSeq row is v3's extension of it. Report the two
 separately and never pool their ranks.
 

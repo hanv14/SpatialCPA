@@ -188,12 +188,16 @@ DATASET_SPECS = {
         # v1's ExSeq processor writes micrometres into obsm['spatial'] but records
         # no coordinate_units, so state it here rather than let detection guess.
         "source_units": "um",
-        # The paper's trim removes the noisy top and bottom of the STARmap block.
-        # There is no published equivalent for ExSeq, so rather than invent plane
-        # numbers this drops the outermost 1% of cells by z at each end: it clears
-        # the stragglers that would otherwise leave the end sections nearly empty,
-        # and it is a stated v3 choice, not a claim about the paper.
-        "z_trim_quantile": 0.01,
+        # NOT the paper's trim. The paper drops STARmap's noisiest planes from its
+        # own analysis of that volume; nothing equivalent has been established for
+        # ExSeq, so no noise trim is applied here. What remains is a much smaller
+        # thing with a different job: equal-width binning takes its edges from
+        # min(z) and max(z), so a handful of segmentation outliers at the extremes
+        # would stretch the range and skew all seven slab boundaries. Clipping
+        # 0.2 % of cells at each end makes the binning robust to that while
+        # keeping essentially the whole volume. Set 0, or pass --no-trim, to use
+        # the raw min/max.
+        "z_trim_quantile": 0.002,
         "voxel_xy_um": 1.0,          # already micrometres
         "voxel_z_um": 1.0,
         "n_sections": N_SECTIONS,
@@ -228,9 +232,13 @@ DATASET_SPECS = {
         ),
         "source_units": "um",
         # 15 physically cut sections at 10 um. Each one already *is* a section, so
-        # they are used as-is and a centred window of 7 is kept — the analogue of
-        # the paper dropping the uppermost and lowermost planes. Merging them into
-        # slabs would invent sections no microtome produced.
+        # they are used as-is and a centred window of 7 is kept. This is not the
+        # paper's noise trim either — the protocol needs exactly 7 consecutive
+        # sections and the block has 15, so *something* has to choose which 7.
+        # Centre is the defensible default: the first and last sections of a cut
+        # block are the ones most often damaged, folded or incompletely stained.
+        # --section-trim low|high moves the window; --n-sections 15 would use them
+        # all, but that is no longer the paper's design.
         "partition": "sections",
         "section_trim": "center",
         "n_sections": N_SECTIONS,
@@ -241,13 +249,14 @@ DATASET_SPECS = {
         # does for this dataset — the first v3 dataset where registration is not
         # the identity.
         "registration": "rigid",
-        # A protein panel, so the cortex genes do not apply. These are candidate
-        # channel names across the common IMC spellings; ``prepare_dataset`` keeps
-        # the intersection with the real panel, prints it, and warns when empty —
-        # so an absent channel is never silently scored. CONFIRM against the panel
-        # before quoting paper_marker_* for this dataset.
-        "marker_genes": ("Ecad", "E-Cadherin", "ECadherin", "panCK", "Pan-Cytokeratin",
-                         "CD31", "SMA", "aSMA", "Ki67", "HER2", "CD45"),
+        # A protein panel, so the cortex genes do not apply. panCK marks the
+        # tumour/epithelial compartment and CD3 the T-cell infiltrate — two
+        # channels whose spatial patterns are structured and biologically distinct,
+        # which is what the marker metrics need. Name matching ignores case and
+        # punctuation (``prepare_dataset.resolve_markers``), so panCK / PanCK /
+        # pan-CK all resolve to whatever the panel calls it; the build prints what
+        # it matched and warns when nothing does.
+        "marker_genes": ("panCK", "CD3"),
         # No laminar axis in a tumour. Left empty on purpose: ``laminar_axis`` then
         # falls back to the gradient of the most spatially structured channel, so
         # paper_marker_depth_r reads as "profile along the dominant spatial

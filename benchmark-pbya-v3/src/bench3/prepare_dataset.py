@@ -26,9 +26,21 @@ Steps 2 and 3 come in two flavours, because volumes come in two shapes.
     ``np.unique(z)`` is just the cell list. Splitting *those* evenly would make
     sections of equal cell count and unequal thickness, which is not what
     "consecutive sections" means. Instead the z range is cut into equal-width
-    slabs — the same construction, expressed in the only unit available. The trim
-    is a quantile of cells at each end rather than named planes, since no
-    published trim exists for these volumes.
+    slabs — the same construction, expressed in the only unit available.
+
+``partition="sections"`` — real serial sections
+    Each source slice already *is* a section (3-D IMC: 15 of them, 10 um apart),
+    so they are used as-is and a consecutive window of ``n_sections`` is kept.
+
+A note on trimming
+------------------
+Only STARmap's trim is protocol. Dropping z 6-13 and 91-94 comes from the paper's
+own analysis of that volume, so it is applied always and ``--no-trim`` is refused
+for it. The analogue datasets have no published trim and none is invented:
+``z_width`` clips a very small quantile purely so that a few outlying z values
+cannot stretch the equal-width bin edges, and ``sections`` picks a window only
+because the design needs exactly ``n_sections`` of the available slices.
+``--no-trim``, ``--z-trim-quantile`` and ``--section-trim`` make both optional.
 
 Usage:
     python -m src.bench3.prepare_dataset --dataset exseq_visual_cortex
@@ -102,6 +114,40 @@ def cell_type_series(adata):
             if len(np.unique(vals)) > 1 or col == "cell_type":
                 return vals, col
     return np.array(["unannotated"] * adata.n_obs), "none"
+
+
+def _canon(name):
+    return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+
+def resolve_markers(requested, panel):
+    """Map requested marker names onto the panel's own spelling.
+
+    Antibody channels are written a dozen ways — panCK / PanCK / pan-CK /
+    Pan_Cytokeratin — and an exact-match intersection would silently return an
+    empty marker set and drop a whole metric group without anyone noticing.
+    Matching ignores case and punctuation and returns the panel's spelling, so
+    what is recorded is what the data actually calls the channel.
+    """
+    lookup = {}
+    for name in panel:
+        lookup.setdefault(_canon(name), str(name))
+    out = []
+    for want in requested:
+        # Exact match after canonicalization — deliberately NOT a prefix match,
+        # which would make "CD3" silently select "CD31".
+        hit = lookup.get(_canon(want))
+        if hit is not None and hit not in out:
+            out.append(hit)
+    return out
+
+
+def suggest_markers(missing, panel, n=4):
+    """Panel names a missing marker was probably meant to be, for the warning."""
+    import difflib
+    canon = {_canon(v): str(v) for v in panel}
+    hits = difflib.get_close_matches(_canon(missing), list(canon), n=n, cutoff=0.6)
+    return [canon[h] for h in hits]
 
 
 # ── Partition ─────────────────────────────────────────────────────────────────
@@ -180,13 +226,29 @@ def partition_sections(labels_by_z, n_sections, trim="center"):
 # ── Build ─────────────────────────────────────────────────────────────────────
 
 def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
-          n_sections=None, verbose=True):
-    """Build and write a dataset's paper-protocol view. Returns the AnnData."""
+          n_sections=None, verbose=True, trim=True, z_trim_quantile=None,
+          section_trim=None):
+    """Build and write a dataset's paper-protocol view. Returns the AnnData.
+
+    ``trim=False`` disables the dataset's trim where one is optional. STARmap's
+    is not: dropping z 6-13 and 91-94 is part of the published protocol, so it is
+    applied regardless and ``trim=False`` is refused for it.
+    """
     s = spec(dataset)
     raw_path = Path(raw_path or resolve_raw(dataset))
     if output_path is None:
         output_path = dataset_path(dataset)
     n_sections = int(n_sections or s["n_sections"])
+    if not trim and s["kind"] == "paper":
+        raise ValueError(
+            f"{dataset}: the trim is part of the published protocol (drop "
+            f"z {s['drop_z_low'][0]}-{s['drop_z_low'][1]} and "
+            f"{s['drop_z_high'][0]}-{s['drop_z_high'][1]}); refusing --no-trim. "
+            f"Use a different dataset if you want an untrimmed volume.")
+    q = s.get("z_trim_quantile", 0.0) if z_trim_quantile is None else z_trim_quantile
+    if not trim:
+        q = 0.0
+    window = section_trim or s.get("section_trim", "center")
     held_out = tuple(section_label(i) for i in s["held_out"])
 
     if not raw_path.exists():
@@ -240,26 +302,24 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
                      f"{s['drop_z_high'][0]}-{s['drop_z_high'][1]}")
         extra = (f"; {len(kept)} planes remain (z {kept.min()}-{kept.max()})")
     elif s["partition"] == "z_width":
-        keep_mask, sec_idx_all, edges = partition_z_width(
-            z_um_all, n_sections, s.get("z_trim_quantile", 0.0))
+        keep_mask, sec_idx_all, edges = partition_z_width(z_um_all, n_sections, q)
         planes_all = np.rint(z_um_all).astype(int)
-        q = s.get("z_trim_quantile", 0.0)
-        trim_desc = f"outermost {q:.1%} of cells by z at each end"
+        trim_desc = (f"outermost {q:.2%} of cells by z at each end (outlier guard)"
+                     if q else "none (full z range)")
         extra = (f"; z {edges[0]:.1f}-{edges[-1]:.1f} um cut into {n_sections} "
                  f"slabs of {np.diff(edges)[0]:.2f} um")
     elif s["partition"] == "sections":
         secs_all = adata.obs["section"].values.astype(str)
         by_z = sorted(np.unique(secs_all),
                       key=lambda lab: float(np.median(z_um_all[secs_all == lab])))
-        keep_labels, assignment = partition_sections(
-            by_z, n_sections, s.get("section_trim", "center"))
+        keep_labels, assignment = partition_sections(by_z, n_sections, window)
         keep_mask = np.isin(secs_all, keep_labels)
         sec_idx_all = np.array([assignment.get(lab, 0) for lab in secs_all])
         planes_all = np.rint(z_um_all).astype(int)
         keep_labels = [str(l) for l in keep_labels]
         dropped_labels = [str(l) for l in by_z if str(l) not in keep_labels]
         trim_desc = (f"{len(dropped_labels)} of {len(by_z)} source sections "
-                     f"({s.get('section_trim', 'center')} window): {dropped_labels}")
+                     f"({window} window): {dropped_labels}")
         extra = f"; kept {keep_labels}"
     else:
         raise ValueError(f"unknown partition mode {s['partition']!r}")
@@ -316,7 +376,7 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
                                        int(planes[sec_idx == i].max())]
                     for i in range(1, n_sections + 1)}
 
-    panel = set(map(str, out.var_names))
+    panel = [str(v) for v in out.var_names]
     out.uns["expression_type"] = adata.uns.get("expression_type", "raw_counts")
     out.uns["dataset_name"] = dataset
     out.uns["spatial_metadata"] = {
@@ -348,9 +408,10 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
                            if section_label(i) not in held_out],
         "flattened_z": bool(flatten_z),
         "cell_type_source": ct_source,
-        "marker_genes": [g for g in s["marker_genes"] if g in panel],
-        "layer_superficial": [g for g in s["layer_superficial"] if g in panel],
-        "layer_deep": [g for g in s["layer_deep"] if g in panel],
+        "marker_genes": resolve_markers(s["marker_genes"], panel),
+        "marker_genes_requested": [str(g) for g in s["marker_genes"]],
+        "layer_superficial": resolve_markers(s["layer_superficial"], panel),
+        "layer_deep": resolve_markers(s["layer_deep"], panel),
     }
 
     verify(out, n_sections=n_sections, held_out=held_out, verbose=verbose)
@@ -393,7 +454,16 @@ def verify(adata, n_sections, held_out, verbose=True):
             zr = pp["z_ranges_um"][s_]
             print(f"    {s_}  z {zr[0]:7.2f}-{zr[1]:<7.2f}  centre={zc:7.2f} um  "
                   f"n={n:5d}  {role}")
-        print(f"  marker genes present: {pp['marker_genes']}")
+        req = [str(g) for g in pp.get("marker_genes_requested", [])]
+        print(f"  marker genes present: {pp['marker_genes']}"
+              + (f"   (requested: {', '.join(req)})" if req else ""))
+        matched = {_canon(g) for g in pp["marker_genes"]}
+        for want in req:
+            if _canon(want) not in matched:
+                near = suggest_markers(want, list(adata.var_names))
+                print(f"  WARNING: no channel matched {want!r}"
+                      + (f" — closest panel names: {', '.join(near)}" if near
+                         else " and nothing in the panel is close"))
         print(f"  laminar axis genes:   superficial={pp['layer_superficial']} "
               f"deep={pp['layer_deep']}")
         if not pp["marker_genes"]:
@@ -414,12 +484,24 @@ def main():
     ap.add_argument("--no-flatten-z", action="store_true",
                     help="keep each cell's original z instead of collapsing each "
                          "section onto its centre plane (not the paper protocol)")
+    ap.add_argument("--no-trim", action="store_true",
+                    help="skip the optional trim (analogue datasets only). "
+                         "STARmap's trim is part of the published protocol and "
+                         "cannot be skipped")
+    ap.add_argument("--z-trim-quantile", type=float, default=None,
+                    help="z_width datasets: fraction of cells clipped at each end "
+                         "before equal-width binning (default: the dataset's)")
+    ap.add_argument("--section-trim", choices=["low", "center", "high"], default=None,
+                    help="sections datasets: which consecutive window of the "
+                         "source sections to keep (default: the dataset's)")
     ap.add_argument("--print-protocol", action="store_true",
                     help="print the resolved protocol as JSON and exit")
     args = ap.parse_args()
 
     adata = build(dataset=args.dataset, raw_path=args.raw, output_path=args.output,
-                  flatten_z=not args.no_flatten_z, n_sections=args.n_sections)
+                  flatten_z=not args.no_flatten_z, n_sections=args.n_sections,
+                  trim=not args.no_trim, z_trim_quantile=args.z_trim_quantile,
+                  section_trim=args.section_trim)
     if args.print_protocol:
         print(json.dumps(adata.uns["paper_protocol"], indent=2, default=str))
     return 0
