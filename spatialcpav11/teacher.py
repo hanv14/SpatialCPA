@@ -136,6 +136,123 @@ def resolve_symbols(gene_names, gene_symbols=None, symbol_map_path=None):
 
 
 # --------------------------------------------------------------------------- #
+# Checkpoint loading (torch >= 2.6 weights_only)                                #
+# --------------------------------------------------------------------------- #
+
+def _is_weights_only_error(e):
+    s = str(e)
+    return ("Weights only load failed" in s or "WeightsUnpickler" in s
+            or "weights_only" in s)
+
+
+def _numpy_safe_globals():
+    """The numpy globals a torch *training* checkpoint legitimately contains.
+
+    OmiCLIP ships ``checkpoint.pt`` — an open_clip training checkpoint, so next to
+    the tensors it pickles numpy scalars (epoch/step bookkeeping). Allowlisting
+    just those keeps ``weights_only=True``'s guarantee that nothing executable is
+    unpickled.
+    """
+    out = []
+    for path in ("core.multiarray.scalar", "core.multiarray._reconstruct",
+                 "dtype", "ndarray"):
+        obj = np
+        try:
+            for part in path.split("."):
+                obj = getattr(obj, part)
+        except AttributeError:
+            continue
+        out.append(obj)
+    dtypes = getattr(np, "dtypes", None)          # numpy >= 2
+    if dtypes is not None:
+        out.extend(v for k, v in vars(dtypes).items()
+                   if k.endswith("DType") and isinstance(v, type))
+    return out
+
+
+def _create_open_clip(open_clip, arch, weights_path, trust_checkpoint=False):
+    """Build an open_clip model from ``weights_path``, tolerating torch >= 2.6.
+
+    torch 2.6 flipped ``torch.load(weights_only=)`` to ``True``, which rejects the
+    numpy scalars in a training checkpoint — so a plain
+    ``create_model_and_transforms(arch, pretrained=checkpoint.pt)`` raises
+    ``UnpicklingError`` on an otherwise perfectly good OmiCLIP checkpoint.
+
+    Attempts, most restrictive first:
+      1. open_clip's default (``weights_only=True``) — fine for safetensors and
+         for a plain tensor ``state_dict``;
+      2. the same, with the numpy scalar/dtype globals allowlisted — still no
+         arbitrary code, and this is what an OmiCLIP ``checkpoint.pt`` needs;
+      3. full pickle (``weights_only=False``) — only with ``trust_checkpoint``,
+         since that *can* execute code from the file.
+    """
+    import inspect
+    import torch
+
+    def _build(**kw):
+        return open_clip.create_model_and_transforms(
+            arch, pretrained=weights_path, **kw)[0]
+
+    try:
+        return _build()
+    except Exception as first:
+        if not weights_path or not _is_weights_only_error(first):
+            raise
+
+        safe_globals = getattr(torch.serialization, "safe_globals", None)
+        if safe_globals is not None:
+            try:
+                with safe_globals(_numpy_safe_globals()):
+                    model = _build()
+                print("[spatialcpav11] checkpoint contains numpy scalars; loaded "
+                      "with those allowlisted (weights_only stays on).")
+                return model
+            except Exception as e:
+                if not _is_weights_only_error(e):
+                    raise
+                first = e
+
+        if not trust_checkpoint:
+            raise RuntimeError(
+                f"cannot load the OmiCLIP checkpoint {weights_path!r} under torch's "
+                f"weights_only=True ({first}). Either re-run with "
+                f"--teacher-trust-checkpoint (loads the full pickle — do this only "
+                f"for a checkpoint you trust), or convert it once to a plain "
+                f"state_dict:\n"
+                f"    import torch\n"
+                f"    ck = torch.load({weights_path!r}, map_location='cpu', weights_only=False)\n"
+                f"    sd = ck.get('state_dict', ck)\n"
+                f"    torch.save({{k.removeprefix('module.'): v for k, v in sd.items()}}, "
+                f"'omiclip_state_dict.pt')\n"
+                f"and point --teacher-weights at the converted file."
+            ) from first
+
+        # Trusted: disable weights_only. The kwarg is `weights_only` in open_clip
+        # >= 3.0 and `load_weights_only` in 2.30-2.32; both versions also accept
+        # **model_kwargs, so pick by signature rather than by trial.
+        params = inspect.signature(open_clip.create_model_and_transforms).parameters
+        for name in ("weights_only", "load_weights_only"):
+            if name in params:
+                model = _build(**{name: False})
+                print(f"[spatialcpav11] checkpoint loaded with {name}=False "
+                      f"(--teacher-trust-checkpoint).")
+                return model
+
+        orig_load = torch.load                     # open_clip too old for the kwarg
+        def _patched(*a, **k):
+            k["weights_only"] = False
+            return orig_load(*a, **k)
+        torch.load = _patched
+        try:
+            model = _build()
+        finally:
+            torch.load = orig_load
+        print("[spatialcpav11] checkpoint loaded with weights_only=False "
+              "(--teacher-trust-checkpoint).")
+        return model
+
+
+# --------------------------------------------------------------------------- #
 # Real teacher 1: OmiCLIP (gene-sentence -> CLIP/CoCa text tower)               #
 # --------------------------------------------------------------------------- #
 class OmiCLIPTeacher:
@@ -153,8 +270,9 @@ class OmiCLIPTeacher:
         syms = resolve_symbols(gene_names, gene_symbols, cfg.symbol_map_path)
         self.genes = [str(g).upper() for g in syms]
         self.dev = _teacher_device(cfg)
-        model, _, _ = open_clip.create_model_and_transforms(
-            cfg.model_arch, pretrained=cfg.weights_path)
+        model = _create_open_clip(
+            open_clip, cfg.model_arch, cfg.weights_path,
+            trust_checkpoint=getattr(cfg, "trust_checkpoint", False))
         self.model = model.to(self.dev).eval()
         self.tokenizer = open_clip.get_tokenizer(cfg.model_arch)
         for p in self.model.parameters():

@@ -81,6 +81,11 @@ class TeacherConfig:
     # OmiCLIP: expression -> "sentence" of the top-N expressed gene symbols -> the
     # CLIP/CoCa text tower (open_clip). These control that pipeline.
     model_arch: str = "coca_ViT-L-14"   # open_clip architecture for OmiCLIP
+    # torch >= 2.6 loads checkpoints with weights_only=True. OmiCLIP's
+    # checkpoint.pt is a training checkpoint whose numpy scalars that rejects;
+    # the loader allowlists those globals automatically (still no arbitrary
+    # code). Set this only if a checkpoint needs the *full* pickle to load.
+    trust_checkpoint: bool = False
     top_genes: int = 50                 # genes per spot in the OmiCLIP gene-sentence
     encode_batch: int = 256             # spots per forward pass on the FM
     device: str = "auto"                # teacher inference device (auto|cpu|cuda)

@@ -133,6 +133,7 @@ def run_method(adata, targets, gene_names, args):
     cfg.teacher.weights_path = args.teacher_weights
     cfg.teacher.gene_embedding_path = args.gene_embedding
     cfg.teacher.model_arch = args.teacher_arch
+    cfg.teacher.trust_checkpoint = args.teacher_trust_checkpoint
     cfg.teacher.top_genes = args.teacher_top_genes
     cfg.teacher.symbol_map_path = args.teacher_symbol_map
     cfg.inference.expr_decode = args.expr_decode
@@ -146,7 +147,14 @@ def run_method(adata, targets, gene_names, args):
     gene_symbols = args._gene_symbols  # resolved in main() from adata.var
     gen = SpatialCPAv11(stack, gene_names=gene_names, cell_type_names=cell_type_names,
                         cfg=cfg, gene_symbols=gene_symbols)
+    args._trained = bool(gen.trained)
     print(f"  neural fields trained: {gen.trained}")
+    if not gen.trained and not args.allow_untrained_fallback:
+        print("ERROR: the neural fields did not train (see the traceback above) — this "
+              "output would be v11's OT-morph fallback, not SpatialCPA-v11, so it is "
+              "not written. Fix the cause, or pass --allow-untrained-fallback to "
+              "benchmark the fallback deliberately.", file=sys.stderr)
+        sys.exit(2)
 
     results = {}
     for sec, z in targets:
@@ -188,6 +196,16 @@ def main():
                              "for --teacher path2space/gene_embedding")
     parser.add_argument("--teacher-arch", default="coca_ViT-L-14",
                         help="open_clip architecture for the OmiCLIP text tower")
+    parser.add_argument("--teacher-trust-checkpoint", action="store_true",
+                        help="load --teacher-weights with torch weights_only=False. "
+                             "Only needed if the checkpoint does not load with the "
+                             "numpy globals the loader already allowlists, and only "
+                             "for a checkpoint you trust (full pickle = arbitrary code)")
+    parser.add_argument("--allow-untrained-fallback", action="store_true",
+                        help="write a prediction even when the neural fields failed to "
+                             "train and the run degraded to the OT-morph fallback. Off by "
+                             "default: a fallback slice is not SpatialCPA-v11, and scoring "
+                             "one as if it were silently corrupts a benchmark table")
     parser.add_argument("--teacher-top-genes", type=int, default=50,
                         help="genes per spot in the OmiCLIP gene-sentence")
     parser.add_argument("--teacher-symbol-map", default=None,
@@ -220,8 +238,13 @@ def main():
 
     method_params = {
         "seed": args.seed, "epochs": args.epochs, "teacher": args.teacher,
+        "teacher_weights": args.teacher_weights or "",
         "expr_decode": args.expr_decode, "residual_weight": args.residual_weight,
-        "z_marginalize": args.z_marginalize, "learned": True, "generation_only": True,
+        "z_marginalize": args.z_marginalize,
+        # Whether the neural fields actually trained. Hardcoding this True made a
+        # fallback run indistinguishable from a real one in the results tree.
+        "learned": bool(getattr(args, "_trained", False)),
+        "generation_only": True,
     }
     _v2_io.write_prediction_h5(results, gene_names, target_sections,
                                method_params, wall_time, args.output,
