@@ -311,15 +311,6 @@ explicit flag still overrides the pin:
 python -m src.bench3.run_benchmark --method spatialcpav8_gen -- --placement backbone
 ```
 
-The same applies to *which copy* of a SpatialCPA package a wrapper imports. The
-wrappers discover it at run time (`$<PKG>_ROOT`, else the first parent directory
-of the wrapper file containing the package), so with two checkouts on disk —
-`<repo>/spatialcpav8` and `<repo>/src/spatialcpav8`, say — the code a run
-measures depends on the shell it was launched from. A method may name its
-`package` in `config.METHODS`; `run_benchmark` then resolves it next to the
-benchmark and passes it as `<PKG>_ROOT` to the wrapper, logging the path it
-picked. Exporting `<PKG>_ROOT` yourself still overrides the pin.
-
 ## Reading the results next to v2
 
 v3 and v2 answer different questions and their numbers are not interchangeable:
