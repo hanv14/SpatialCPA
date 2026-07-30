@@ -173,10 +173,12 @@ METHODS = {
         # Pin v8's production configuration — the defaults of
         # ``SpatialCPAv8Config`` (placement ``smooth_morph``: the coherent
         # smoothed-OT deformation of the nearest clean slice; expression
-        # ``endpoint``: the source cell's real profile). The v2 wrapper's own CLI
-        # defaults are ablation settings for placements the packaged v8 does not
-        # implement, and passing them aborts every holdout with
-        # ``ValueError: Unknown bridge mode``.
+        # ``endpoint``: the source cell's real profile). The v2 wrapper now
+        # defaults to the same pair, so this pin is currently a no-op; it stays
+        # so that a v3 run remains reproducible from this file if a v2 default
+        # moves again. (It previously defaulted to ``diffeo_morph``/``fusion``,
+        # which are v10's modes — the packaged v8 implements neither, so every
+        # holdout aborted with ``ValueError: Unknown bridge mode``.)
         "wrapper_args": ["--placement", "smooth_morph",
                          "--expression-mode", "endpoint"],
     },

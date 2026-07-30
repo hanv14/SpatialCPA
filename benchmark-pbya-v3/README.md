@@ -303,7 +303,9 @@ whichever variant v2 was last tuning, so inheriting them would let a v3 run chan
 — or fail outright — because of an unrelated edit in v2. A method may therefore
 pin the configuration v3 runs it in via `wrapper_args` in `config.METHODS`
 (`spatialcpav8_gen` pins `--placement smooth_morph --expression-mode endpoint`,
-the packaged v8's own defaults). `run_benchmark` appends those after the shared
+the packaged v8's own defaults — which v2's wrapper now also defaults to, so the
+pin is a no-op that simply keeps the run reproducible from `config.py` if that
+default moves again). `run_benchmark` appends those after the shared
 `_v2_io` arguments and before any extras you pass on the command line, so an
 explicit flag still overrides the pin:
 
