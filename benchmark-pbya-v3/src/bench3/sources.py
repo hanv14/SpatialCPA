@@ -183,7 +183,74 @@ def read_imc_zstack(path, verbose=True):
     return adata
 
 
-READERS = {"exseq_csv": read_exseq_csv, "imc_zstack": read_imc_zstack}
+DEEP_STARMAP_FILES = ("Brain_Deep_STARmap_expression_matrix.csv",
+                      "Brain_Deep_STARmap_spatial.csv")
+DEEP_STARMAP_VOXEL_XY_UM = 0.32
+DEEP_STARMAP_VOXEL_Z_UM = 0.70
+
+
+def read_deep_starmap_csv(path, verbose=True):
+    """Read the raw Deep-STARmap distribution (Sui et al. 2025) as AnnData.
+
+    Expression and spatial CSVs, positionally aligned. Voxel indices become
+    micrometres with the paper's calibration (0.32 x 0.32 x 0.70 um), cell types
+    come from the spatial file's FUSEmap annotation, and the z value doubles as
+    the section label — exactly what v1's processor does.
+    """
+    import anndata as ad
+    import pandas as pd
+
+    path = Path(path)
+    raw_dir = path if path.is_dir() else path.parent
+    expr_path, spatial_path = (raw_dir / f for f in DEEP_STARMAP_FILES)
+    missing = [f for f in DEEP_STARMAP_FILES if not (raw_dir / f).exists()]
+    if missing:
+        raise FileNotFoundError(
+            f"Deep-STARmap source incomplete under {raw_dir}: missing {missing}")
+
+    if verbose:
+        print(f"  reading {expr_path.name} + {spatial_path.name} ...")
+    expr = pd.read_csv(expr_path, index_col=0)
+    spatial = pd.read_csv(spatial_path, index_col=0)
+    if len(expr) != len(spatial):
+        raise ValueError(
+            f"Deep-STARmap files disagree on cell count: expression {len(expr)} "
+            f"vs spatial {len(spatial)} (they are positionally aligned)")
+
+    coords = np.column_stack([
+        spatial["x"].values.astype(np.float64) * DEEP_STARMAP_VOXEL_XY_UM,
+        spatial["y"].values.astype(np.float64) * DEEP_STARMAP_VOXEL_XY_UM,
+        spatial["z"].values.astype(np.float64) * DEEP_STARMAP_VOXEL_Z_UM,
+    ])
+    ct_col = next((c for c in ("FUSEmap_sub_level", "Harmony_labels",
+                               "FUSEmap_main_level", "cell_type")
+                   if c in spatial.columns), None)
+    cell_types = (spatial[ct_col].values.astype(str) if ct_col
+                  else np.array(["unannotated"] * len(spatial)))
+    if verbose:
+        print(f"  cell types from {ct_col or 'nothing (unannotated)'}: "
+              f"{len(np.unique(cell_types))} types")
+
+    adata = ad.AnnData(
+        X=sp.csr_matrix(expr.values.astype(np.float32)),
+        obs=pd.DataFrame({"section": spatial["z"].values.astype(str),
+                          "cell_type": cell_types},
+                         index=[f"cell_{i}" for i in range(len(expr))]),
+        var=pd.DataFrame(index=pd.Index(expr.columns, name=None)))
+    adata.obsm["spatial"] = coords
+    adata.uns["expression_type"] = "raw_counts"
+    adata.uns["dataset_name"] = "deep_starmap"
+    adata.uns["spatial_metadata"] = {
+        "technology": "Deep-STARmap", "species": "mouse",
+        "tissue": "brain (thick blocks)", "coordinate_units": "micrometers",
+        "expression_type": "raw_counts",
+        "source": "Zenodo 10.5281/zenodo.16783354 (raw, read by bench3.sources)",
+    }
+    return adata
+
+
+READERS = {"exseq_csv": read_exseq_csv, "imc_zstack": read_imc_zstack,
+           "deep_starmap_csv": read_deep_starmap_csv}
 
 
 def load_source(path, spec, verbose=True):

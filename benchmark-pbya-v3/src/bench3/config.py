@@ -272,6 +272,78 @@ DATASET_SPECS = {
         "layer_deep": ("panCK",),           # tumour pole
         "protocol": "SpatialZ protocol applied to 3D IMC (analogue, not the paper)",
     },
+    "cosmx_nsclc_3d": {
+        "kind": "analogue",
+        "technology": "CosMx SMI",
+        "species": "human",
+        "tissue": "NSCLC tumour",
+        "source": "Pentimalli et al. 2025 Cell Systems; Zenodo 15240431",
+        "env_var": "BENCH_V3_RAW_COSMX",
+        # v1's processed file only: the raw distribution is two zips whose
+        # coordinates have to be rebuilt from per-section flat files, which is
+        # v1's processor's job. Run it once if this file is missing.
+        "raw_candidates": (
+            V1_ROOT / "data" / "processed" / "cosmx_nsclc_3d" / "data.h5ad",
+            V1_ROOT / "data" / "processed" / "cosmx_nsclc_3d.h5ad",
+        ),
+        "source_units": "um",
+        # Six real cryosections, 30 um apart (every 6th 5-um section). All of them
+        # are used; "alternate" then holds out 2 and 4, leaving 1/3/5/6 as input.
+        # That 30 um gap is the widest in the benchmark and the reason this dataset
+        # is worth having: it is a genuinely hard interpolation, where STARmap's
+        # 11 um spacing leaves a copy baseline near ceiling.
+        "partition": "sections",
+        "n_sections": None,
+        "section_trim": "center",
+        "held_out": "alternate",
+        # Serial cryosections, imaged independently and not cross-registered —
+        # v2 classifies this dataset "not-aligned" for exactly that reason.
+        "registration": "rigid",
+        # A 960-plex panel on tumour tissue: the same tumour/immune contrast the
+        # IMC dataset uses, in RNA. EPCAM marks the epithelial tumour compartment,
+        # PTPRC (CD45) the immune infiltrate, and their signed difference gives a
+        # tumour-immune axis for paper_marker_depth_r.
+        "marker_genes": ("EPCAM", "PTPRC"),
+        "layer_superficial": ("PTPRC",),     # immune pole
+        "layer_deep": ("EPCAM",),            # tumour pole
+        "protocol": "SpatialZ protocol applied to CosMx serial sections (analogue)",
+    },
+    "deep_starmap": {
+        "kind": "analogue",
+        "technology": "Deep-STARmap",
+        "species": "mouse",
+        "tissue": "brain (thick blocks)",
+        "source": "Sui et al. 2025 Nat Methods; Zenodo 10.5281/zenodo.16783354",
+        "env_var": "BENCH_V3_RAW_DEEP_STARMAP",
+        "reader": "deep_starmap_csv",
+        "raw_candidates": (
+            V1_ROOT / "data" / "raw" / "deep_starmap",
+            V1_ROOT / "data" / "processed" / "deep_starmap" / "data.h5ad",
+            V1_ROOT / "data" / "processed" / "deep_starmap.h5ad",
+        ),
+        "source_units": "um",
+        # A dense optical volume like STARmap, not serial sections: 0.70 um
+        # z-steps, so the planes must be grouped into slabs. No published trim
+        # exists for it, so none is applied (drop ranges are None) — the section
+        # count is the only choice, and 7 is a starting point the cells/section
+        # guard will reject if the block is too shallow to support it.
+        "partition": "planes",
+        "drop_z_low": None,
+        "drop_z_high": None,
+        "voxel_xy_um": 0.32,
+        "voxel_z_um": 0.70,
+        "n_sections": 7,
+        "held_out": "alternate",
+        # One 3-D imaging block, inherently co-registered.
+        "registration": "none",
+        # Mouse brain, so the cortex panel is the right family to try; whichever
+        # of these the FUSEmap panel carries is used, and the build warns about
+        # the rest rather than scoring an empty set.
+        "marker_genes": MARKER_GENES,
+        "layer_superficial": LAYER_SUPERFICIAL,
+        "layer_deep": LAYER_DEEP,
+        "protocol": "SpatialZ protocol applied to Deep-STARmap (analogue)",
+    },
 }
 
 

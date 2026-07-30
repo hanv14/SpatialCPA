@@ -340,12 +340,17 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
 
     if s["partition"] == "planes":
         planes_all = np.rint(z_um_all / s["voxel_z_um"]).astype(int)
-        kept, assignment = partition_planes(planes_all, n_sections,
-                                            s.get("drop_z_low"), s.get("drop_z_high"))
+        kept, assignment = partition_planes(
+            planes_all, n_sections,
+            s.get("drop_z_low") if trim else None,
+            s.get("drop_z_high") if trim else None)
         keep_mask = np.isin(planes_all, kept)
         sec_idx_all = np.array([assignment.get(int(p), 0) for p in planes_all])
-        trim_desc = (f"z {s['drop_z_low'][0]}-{s['drop_z_low'][1]} and "
-                     f"{s['drop_z_high'][0]}-{s['drop_z_high'][1]}")
+        # a plane-partitioned dataset need not have a published trim (only
+        # STARmap does); None means "keep every plane"
+        parts = [f"z {r[0]}-{r[1]}" for r in (s.get("drop_z_low"),
+                                              s.get("drop_z_high")) if r]
+        trim_desc = " and ".join(parts) if parts else "none (all planes kept)"
         extra = (f"; {len(kept)} planes remain (z {kept.min()}-{kept.max()})")
     elif s["partition"] == "z_width":
         keep_mask, sec_idx_all, edges = partition_z_width(z_um_all, n_sections, q)
