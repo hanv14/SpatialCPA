@@ -279,10 +279,13 @@ DATASET_SPECS = {
         "tissue": "NSCLC tumour",
         "source": "Pentimalli et al. 2025 Cell Systems; Zenodo 15240431",
         "env_var": "BENCH_V3_RAW_COSMX",
-        # v1's processed file only: the raw distribution is two zips whose
-        # coordinates have to be rebuilt from per-section flat files, which is
-        # v1's processor's job. Run it once if this file is missing.
+        # The raw distribution is read directly: the shipped h5ad has expression
+        # and cell types but STIM coordinates in arbitrary units, so
+        # ``sources.read_cosmx_raw`` joins it to the per-section flat files for
+        # physical positions. v1's processed h5ad is accepted too.
+        "reader": "cosmx_raw",
         "raw_candidates": (
+            V1_ROOT / "data" / "raw" / "cosmx_nsclc_3d",
             V1_ROOT / "data" / "processed" / "cosmx_nsclc_3d" / "data.h5ad",
             V1_ROOT / "data" / "processed" / "cosmx_nsclc_3d.h5ad",
         ),

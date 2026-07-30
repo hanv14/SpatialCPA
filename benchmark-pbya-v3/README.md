@@ -369,7 +369,7 @@ Nothing here modifies the checkpoint you supplied.
 | `starmap_visual_cortex` | `paper` | `planes` — trim z 6–13 / 91–94, split 77 planes into 7 × 11 | the paper's own volume | the reproduction |
 | `exseq_visual_cortex` | `analogue` | `z_width` — cut the z range into 7 equal-width slabs (0.2 % outlier clip, not a noise trim) | `benchmark-pbya/data/raw/exseq_visual_cortex` (or v1's processed h5ad) | the same protocol, a second volume |
 | `imc_breast_cancer` | `analogue` | `sections` — all 15 real serial sections at 10 µm, used as-is | `benchmark-pbya/data/raw/imc_breast_cancer` (15 h5ads, or v1's processed) | protein panel, human tumour |
-| `cosmx_nsclc_3d` | `analogue` | `sections` — all 6 real cryosections, **30 µm** apart | `benchmark-pbya/data/processed/cosmx_nsclc_3d` (run v1's processor first) | widest gaps in the benchmark |
+| `cosmx_nsclc_3d` | `analogue` | `sections` — all 6 real cryosections, **30 µm** apart | `benchmark-pbya/data/raw/cosmx_nsclc_3d` (2 zips, or v1's processed) | widest gaps in the benchmark |
 | `deep_starmap` | `analogue` | `planes` — 0.70 µm optical planes grouped into 7 slabs, no trim | `benchmark-pbya/data/raw/deep_starmap` (3 CSVs, or v1's processed) | dense volume, mouse brain |
 
 ```bash
@@ -401,6 +401,14 @@ python -m src.bench3.plot_paper_figures # results/summary/figures/<dataset>/…
 stage that has it. Ranks are **within** a dataset: a composite is a position among the methods run on
 that volume, so averaging STARmap's and ExSeq's composites would compare places in
 two different races. Restrict any stage to one dataset with `--dataset-name`.
+
+**Every dataset builds from `data/raw/`.** v1's processed files are accepted as an
+alternative, but none is required: `sources.py` reads each raw distribution in its
+own form — ExSeq's cell-by-gene CSV, IMC's per-section h5ads, Deep-STARmap's
+expression/spatial CSVs, and CosMx's two zips (the shipped h5ad carries STIM
+coordinates in arbitrary units, so it is joined to the per-section flat files for
+physical micrometres). Those readers mirror v1's processors rather than calling
+them, so v3 stays self-contained.
 
 **Why ExSeq.** Same tissue as STARmap — mouse visual cortex — so the marker genes
 and the laminar-axis composite carry over unchanged, and it is the only candidate

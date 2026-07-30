@@ -249,8 +249,144 @@ def read_deep_starmap_csv(path, verbose=True):
     return adata
 
 
+COSMX_PREPROCESSED_ZIP = "preprocessed_objects.zip"
+COSMX_FLAT_ZIP = "cosmx_flat_files.zip"
+COSMX_SECTIONS = (4, 10, 16, 22, 28, 34)      # every 6th 5-um cryosection
+COSMX_SECTION_RUN = {4: "Run1129", 10: "Run1129", 16: "Run1129",
+                     22: "Run1129", 28: "Run1129", 34: "Run1129"}
+COSMX_PIXEL_UM = 0.18                          # Nanostring SMI, 20x
+COSMX_SECTION_SPACING_UM = 30.0
+
+
+def read_cosmx_raw(path, verbose=True):
+    """Read the raw CosMx NSCLC 3-D distribution (two zips) as AnnData.
+
+    The shipped h5ad carries expression and cell types but STIM-registered
+    coordinates in arbitrary [0, 1000] units, which are useless for a benchmark
+    measured in micrometres. The physical positions live in the per-section flat
+    files, keyed by (section, fov, cell_ID) — the same key encoded in the h5ad's
+    obs_names — so the two have to be joined. Mirrors v1's processor: pixels to um
+    at 0.18 um/px, each section shifted to its own origin (the stage offset is
+    meaningless and differs per section), z from section order at 30 um.
+    """
+    import tempfile
+    import zipfile
+    import re
+
+    import anndata as ad
+    import pandas as pd
+
+    path = Path(path)
+    raw_dir = path if path.is_dir() else path.parent
+    pre_zip, flat_zip = raw_dir / COSMX_PREPROCESSED_ZIP, raw_dir / COSMX_FLAT_ZIP
+    missing = [z.name for z in (pre_zip, flat_zip) if not z.exists()]
+    if missing:
+        raise FileNotFoundError(
+            f"CosMx source incomplete under {raw_dir}: missing {missing}")
+
+    # ── expression + cell types ──
+    with zipfile.ZipFile(pre_zip) as zf:
+        members = [n for n in zf.namelist() if n.endswith(".h5ad")]
+        if not members:
+            raise ValueError(f"no .h5ad inside {pre_zip.name}")
+        target = next((m for m in members if m.endswith("cosmx.h5ad")), members[0])
+        if verbose:
+            print(f"  extracting {target} ...")
+        with tempfile.TemporaryDirectory() as tmp:
+            zf.extract(target, path=tmp)
+            adata = ad.read_h5ad(Path(tmp) / target)
+    if verbose:
+        print(f"  {adata.n_obs} cells x {adata.n_vars} genes")
+
+    if "celltypes" in adata.obs.columns:
+        adata.obs = adata.obs.rename(columns={"celltypes": "cell_type"})
+    elif "cell_type" not in adata.obs.columns:
+        adata.obs["cell_type"] = "unknown"
+
+    # ── physical coordinates from the flat files ──
+    coords = {}
+    with zipfile.ZipFile(flat_zip) as zf:
+        for sec in COSMX_SECTIONS:
+            run = COSMX_SECTION_RUN[sec]
+            member = (f"cosmx_flat_files/Section_{sec:02d}/"
+                      f"{run}_Section_{sec:02d}_metadata_file.csv")
+            try:
+                with zf.open(member) as f:
+                    df = pd.read_csv(f, usecols=["fov", "cell_ID",
+                                                 "CenterX_global_px",
+                                                 "CenterY_global_px"])
+            except KeyError:
+                if verbose:
+                    print(f"  WARNING: {member} not in {flat_zip.name}; "
+                          f"section {sec} will have no coordinates")
+                continue
+            for fov, cid, cx, cy in zip(df["fov"].astype(int),
+                                        df["cell_ID"].astype(int),
+                                        df["CenterX_global_px"],
+                                        df["CenterY_global_px"]):
+                coords[(sec, fov, cid)] = (cx, cy)
+    if verbose:
+        print(f"  {len(coords)} flat-file coordinates")
+
+    key_re = re.compile(r"section_(\d+)_fov_(\d+)_ID_(\d+)")
+    sec_to_z = {sec: float(i) * COSMX_SECTION_SPACING_UM
+                for i, sec in enumerate(COSMX_SECTIONS)}
+
+    spatial = np.zeros((adata.n_obs, 3), dtype=np.float64)
+    per_section, sections = {}, np.array(["" for _ in range(adata.n_obs)], dtype=object)
+    for idx, name in enumerate(adata.obs_names):
+        m = key_re.match(str(name))
+        if not m:
+            continue
+        sec, fov, cid = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        hit = coords.get((sec, fov, cid))
+        if hit is None:
+            continue
+        per_section.setdefault(sec, []).append((idx, hit[0], hit[1]))
+        sections[idx] = f"section_{sec}"
+
+    matched = sum(len(v) for v in per_section.values())
+    if matched == 0:
+        raise ValueError(
+            "no cell matched the flat files — obs_names were expected to look "
+            "like 'section_4_fov_1_ID_5'")
+    if verbose:
+        print(f"  matched {matched}/{adata.n_obs} cells to physical coordinates")
+
+    for sec, cells in per_section.items():
+        idxs = [c[0] for c in cells]
+        xs = np.array([c[1] for c in cells], dtype=np.float64)
+        ys = np.array([c[2] for c in cells], dtype=np.float64)
+        # each section has its own arbitrary stage offset; shift to a common origin
+        spatial[idxs, 0] = (xs - xs.min()) * COSMX_PIXEL_UM
+        spatial[idxs, 1] = (ys - ys.min()) * COSMX_PIXEL_UM
+        spatial[idxs, 2] = sec_to_z[sec]
+        if verbose:
+            print(f"    section_{sec:02d}: {len(cells)} cells, extent "
+                  f"{(xs.max()-xs.min())*COSMX_PIXEL_UM:.0f} x "
+                  f"{(ys.max()-ys.min())*COSMX_PIXEL_UM:.0f} um, "
+                  f"z={sec_to_z[sec]:.0f} um")
+
+    keep = sections != ""
+    adata = adata[keep].copy()
+    adata.obsm["spatial"] = spatial[keep]
+    adata.obs["section"] = sections[keep].astype(str)
+    adata.obs["cell_type"] = adata.obs["cell_type"].astype(str)
+    adata.X = adata.X.tocsr() if sp.issparse(adata.X) else sp.csr_matrix(adata.X)
+    adata.uns["expression_type"] = "raw_counts"
+    adata.uns["dataset_name"] = "cosmx_nsclc_3d"
+    adata.uns["spatial_metadata"] = {
+        "technology": "CosMx SMI", "species": "human",
+        "tissue": "lung cancer (NSCLC)", "coordinate_units": "micrometers",
+        "expression_type": "raw_counts",
+        "source": "Zenodo 15240431 (raw, read by bench3.sources)",
+    }
+    return adata
+
+
 READERS = {"exseq_csv": read_exseq_csv, "imc_zstack": read_imc_zstack,
-           "deep_starmap_csv": read_deep_starmap_csv}
+           "deep_starmap_csv": read_deep_starmap_csv,
+           "cosmx_raw": read_cosmx_raw}
 
 
 def load_source(path, spec, verbose=True):
