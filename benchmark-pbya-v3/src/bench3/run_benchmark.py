@@ -27,12 +27,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 from pathlib import Path
 
 import numpy as np
 
+from .assets import sanitize_weight_args
 from ._v2bridge import (
     ResourceMonitor, evaluate, evaluate_generation, reregister_training,
     split_holdout, write_resources,
@@ -188,30 +188,24 @@ def run_single(method, holdout_config, dataset_path=DATASET_PATH,
     cmd.extend(str(a) for a in info.get("wrapper_args", ()))
     if extra_args:
         cmd.extend(extra_args)
-    print(f"  cmd: {' '.join(cmd)}")
-
-    # Method-pinned environment, for package knobs the v2 wrapper exposes no flag
-    # for. An existing value in this process's environment wins, so a pin can be
-    # overridden from the shell without editing config.py.
-    env = None
-    pinned = info.get("env") or {}
-    if pinned:
-        env = dict(os.environ)
-        applied = {k: v for k, v in pinned.items() if k not in os.environ}
-        env.update(applied)
-        for k, v in sorted(pinned.items()):
-            note = "" if k in applied else f"  (overridden by the environment: {env[k]!r})"
-            print(f"  env: {k}={v}{note}")
     if dry_run:
+        print(f"  cmd: {' '.join(cmd)}")
         print("  (dry run — skipping)")
         return {"success": False, "dry_run": True}
+
+    # Pretrained-weights arguments: hand the method a checkpoint this torch can
+    # actually load (same weights — see assets.py). Done before the command is
+    # logged so the log shows what really ran.
+    cmd = sanitize_weight_args(cmd, info.get("sanitize_weight_args", ()),
+                               info["conda_env"])
+    print(f"  cmd: {' '.join(cmd)}")
 
     # cwd is v2's project root so the wrapper's relative imports and package
     # discovery behave exactly as they do under v2.
     cwd = wrapper.resolve().parents[3]
     with open(log_path, "w") as log_f:
         proc = subprocess.Popen(cmd, stdout=log_f, stderr=subprocess.STDOUT,
-                                cwd=str(cwd), env=env)
+                                cwd=str(cwd))
         monitor = ResourceMonitor(proc.pid)
         monitor.start()
         returncode = proc.wait()
@@ -226,6 +220,20 @@ def run_single(method, holdout_config, dataset_path=DATASET_PATH,
         print("  FAILED: no prediction.h5 produced")
         return {"success": False, "error": "no prediction.h5",
                 "log_path": str(log_path)}
+
+    # A method can exit 0 having silently substituted a fallback for itself. Such a
+    # slice is not the method under test, so it must not be scored: move it aside
+    # (evaluate_all walks the results tree, and would otherwise pick it up later)
+    # and fail the run.
+    degraded = _degraded_marker(log_path, info.get("invalid_log_markers", ()))
+    if degraded:
+        quarantined = prediction_path.with_suffix(".h5.degraded")
+        prediction_path.replace(quarantined)
+        print(f"  FAILED: the method degraded to a fallback — its log contains "
+              f"{degraded!r}, so this is not {method}. Prediction moved to "
+              f"{quarantined.name} and left unscored; see {log_path}")
+        return {"success": False, "error": f"degraded to fallback ({degraded!r})",
+                "log_path": str(log_path), "quarantined": str(quarantined)}
 
     result = {"success": True, "prediction_path": str(prediction_path),
               "resources_path": str(resources_path)}
@@ -251,6 +259,14 @@ def run_single(method, holdout_config, dataset_path=DATASET_PATH,
         traceback.print_exc()
         result["eval_error"] = str(e)
     return result
+
+
+def _degraded_marker(log_path, markers):
+    """First ``markers`` entry present in the method log, or None."""
+    if not markers or not Path(log_path).exists():
+        return None
+    text = Path(log_path).read_text(errors="replace")
+    return next((m for m in markers if m in text), None)
 
 
 def _f(v):

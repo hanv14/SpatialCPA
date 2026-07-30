@@ -25,10 +25,7 @@ from .config import (
 from .data import Slice, SliceStack
 from .model import SpatialCPAv11, VirtualSlice
 
-# 11.1.0 — OmiCLIP checkpoints load under torch >= 2.6 (weights_only), and the
-# training-failure fallback is switchable. The wrapper banner prints this, so it
-# doubles as a check of *which* copy of the package a run actually imported.
-__version__ = "11.1.0"
+__version__ = "11.0.0"
 
 __all__ = [
     "SpatialCPAv11", "VirtualSlice", "SpatialCPAv11Config", "FourierConfig",

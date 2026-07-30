@@ -18,23 +18,7 @@ reconstruction. Cross-z consistency and biology-informed constraints regularize 
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
-
-
-def _env_flag(name, default):
-    """Read a boolean knob from the environment.
-
-    A few settings have to be reachable by a harness that drives this package
-    through a fixed command-line wrapper it does not own (benchmark-pbya-v3 runs
-    benchmark-pbya-v2's wrappers by path). Those get an environment override so
-    the harness can pin them without a new CLI flag; everything else stays
-    config-only. Accepts 1/0, true/false, yes/no, on/off.
-    """
-    raw = os.environ.get(name)
-    if raw is None or str(raw).strip() == "":
-        return default
-    return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
 @dataclass
@@ -97,13 +81,6 @@ class TeacherConfig:
     # OmiCLIP: expression -> "sentence" of the top-N expressed gene symbols -> the
     # CLIP/CoCa text tower (open_clip). These control that pipeline.
     model_arch: str = "coca_ViT-L-14"   # open_clip architecture for OmiCLIP
-    # torch >= 2.6 loads checkpoints with weights_only=True. OmiCLIP's
-    # checkpoint.pt is a training checkpoint whose numpy scalars that rejects;
-    # the loader allowlists those globals automatically (still no arbitrary
-    # code). Set this only if a checkpoint needs the *full* pickle to load —
-    # it can execute code from the file. $SPATIALCPAV11_TRUST_CHECKPOINT=1.
-    trust_checkpoint: bool = field(
-        default_factory=lambda: _env_flag("SPATIALCPAV11_TRUST_CHECKPOINT", False))
     top_genes: int = 50                 # genes per spot in the OmiCLIP gene-sentence
     encode_batch: int = 256             # spots per forward pass on the FM
     device: str = "auto"                # teacher inference device (auto|cpu|cuda)
@@ -148,11 +125,7 @@ class TrainConfig:
     device: str = "auto"          # "auto" | "cpu" | "cuda"
     seed: int = 42
     verbose: bool = True
-    # Fall back to a deterministic OT-morph layout if training fails. Set to
-    # False ($SPATIALCPAV11_FALLBACK_ON_ERROR=0) to raise instead — a benchmark
-    # wants the run to fail loudly rather than score a fallback slice as v11.
-    fallback_on_error: bool = field(
-        default_factory=lambda: _env_flag("SPATIALCPAV11_FALLBACK_ON_ERROR", True))
+    fallback_on_error: bool = True    # fall back to a deterministic layout if training fails
     # Cap this process to a fraction of the GPU (0<f<=1) so it coexists with others;
     # None = no cap. Combine with PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True.
     gpu_mem_fraction: float | None = None

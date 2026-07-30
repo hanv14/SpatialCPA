@@ -80,6 +80,7 @@ RESULTS_DIR = Path(os.environ.get("BENCH_V3_RESULTS", PROJECT_ROOT / "results"))
 SUMMARY_DIR = RESULTS_DIR / "summary"
 FIGURES_DIR = SUMMARY_DIR / "figures"
 INPUTS_CACHE = RESULTS_DIR / "_inputs"   # training-only inputs, one per holdout
+ASSETS_CACHE = RESULTS_DIR / "_assets"   # method assets v3 prepares (see assets.py)
 
 
 # ── The SpatialZ-paper STARmap protocol ───────────────────────────────────────
@@ -160,10 +161,15 @@ DATASETS = {
 # shared arguments and before any user-supplied extras, so an explicit extra on
 # the command line still wins.
 #
-# ``env`` is the same idea for knobs that live in the *method package* and have no
-# wrapper flag: v3 pins them in the subprocess environment rather than editing v2.
-# ``run_benchmark`` merges them in, and a value already set in the caller's
-# environment wins, so an operator can override a pin without editing this file.
+# Two more per-method fields keep v3 self-sufficient, so that making a method run
+# correctly here never requires editing benchmark-pbya-v2 or a method package:
+#   ``sanitize_weight_args``  — CLI flags whose value is a torch checkpoint. v3
+#       checks each one loads under this torch and substitutes a tensors-only copy
+#       when it does not (``assets.py``).
+#   ``invalid_log_markers``   — strings whose presence in the method log means the
+#       run silently degraded to a fallback. v3 fails the run instead of scoring
+#       it. Log matching is a blunt instrument, but it is the only signal a method
+#       that "succeeds" by design exposes across the subprocess boundary.
 def _v2_wrapper(name):
     return V2_ROOT / "src" / "benchmark" / "methods" / name
 
@@ -193,13 +199,17 @@ METHODS = {
         "available": True,
         "family": "spatialcpa",
         "notes": "teacher-distilled conditional generator",
+        # The OmiCLIP teacher loads its checkpoint through torch.load, which since
+        # torch 2.6 defaults to weights_only=True and rejects the numpy scalars in
+        # a training checkpoint. v3 hands over a tensors-only copy instead (same
+        # weights; see assets.py) so the teacher builds.
+        "sanitize_weight_args": ("--teacher-weights",),
         # v11 degrades to a deterministic OT-morph layout when training fails —
         # sensible for a library, wrong for a benchmark: the fallback is not v11,
-        # yet it still writes a prediction the harness would score and rank. (It
-        # is also easy to miss: a failed OmiCLIP teacher aborts training, and the
-        # fallback still returns plausible-looking numbers.) Make training
-        # failures fail the run instead.
-        "env": {"SPATIALCPAV11_FALLBACK_ON_ERROR": "0"},
+        # yet it still writes a prediction that would be scored and ranked beside
+        # the real methods, with numbers plausible enough not to look wrong. If
+        # the log says it degraded, v3 fails the run.
+        "invalid_log_markers": ("neural fields trained: False", "OT-morph fallback."),
     },
     "spatialcpav14_gen": {
         "wrapper": _v2_wrapper("run_spatialcpav14.py"),

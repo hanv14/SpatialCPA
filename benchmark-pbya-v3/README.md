@@ -267,6 +267,8 @@ src/bench3/
   prepare_starmap.py     raw volume -> the 7-section paper dataset
   design.py              the paper holdout (2/4/6) and the LOO robustness check
   _v2bridge.py           imports v2's leakage guard / evaluators / resource monitor
+  assets.py              method assets v3 prepares (torch checkpoints it can load)
+  sanitize_checkpoint.py runs in the method's conda env; tensors-only rewrite
   run_benchmark.py       one method: shared input -> wrapper -> merged metrics.json
   run_all.py             the 7-method campaign
   evaluate_paper.py      the paper's validation strategy, as metrics
@@ -313,16 +315,15 @@ explicit flag still overrides the pin:
 python -m src.bench3.run_benchmark --method spatialcpav8_gen -- --placement backbone
 ```
 
-`env` in `config.METHODS` does the same job for knobs that live in the *method
-package* and have no wrapper flag, so v3 configures a run without editing v2.
-`spatialcpav11_gen` pins `SPATIALCPAV11_FALLBACK_ON_ERROR=0`: v11 degrades to a
-deterministic OT-morph layout when training fails, which is reasonable for a
-library and wrong for a benchmark — the fallback is not v11, but it still writes
-a prediction, and its numbers look plausible enough to be ranked without anyone
-noticing. With the pin, a training failure fails the run. A value already set in
-your shell wins over the pin, so `SPATIALCPAV11_FALLBACK_ON_ERROR=1 python -m
-src.bench3.run_all …` restores the old behaviour if you want to benchmark the
-fallback deliberately.
+Two more per-method fields keep v3 self-sufficient, so that making a method run
+correctly here never means editing v2 or a method package:
+
+* **`sanitize_weight_args`** — flags whose value is a torch checkpoint. Before the
+  wrapper runs, v3 checks the file loads under the method env's torch and, if not,
+  substitutes a tensors-only copy in `results/_assets/` (same weights; `assets.py`).
+* **`invalid_log_markers`** — strings in the method log that mean the run silently
+  degraded to a fallback. v3 renames the prediction to `prediction.h5.degraded`,
+  skips evaluation and fails the run.
 
 ### Running spatialcpav11_gen with the real OmiCLIP teacher
 
@@ -333,14 +334,26 @@ python -m src.bench3.run_all --methods spatialcpav11_gen \
      --gpu-mem-fraction 0.4
 ```
 
-OmiCLIP ships an open_clip *training* checkpoint, which pickles numpy scalars
-alongside the tensors; torch ≥ 2.6 loads with `weights_only=True` and rejects
-those. The teacher loader allowlists exactly those numpy globals and retries, so
-this works unattended — you should see `checkpoint contains numpy scalars; loaded
-with those allowlisted` followed by `neural fields trained: True`. If a checkpoint
-needs the *full* pickle, set `SPATIALCPAV11_TRUST_CHECKPOINT=1` (it can execute
-code from the file), or convert it once to a plain `state_dict` and point
-`--teacher-weights` at that.
+OmiCLIP ships an open_clip *training* checkpoint: it pickles numpy scalars and
+optimizer state next to the tensors, and torch ≥ 2.6 loads with
+`weights_only=True`, which refuses those globals (`Unsupported global: GLOBAL
+numpy.core.multiarray.scalar`). open_clip loads through `torch.load` with that
+default, so the teacher never builds — and v11 then quietly degrades to its
+OT-morph fallback and still writes a prediction.
+
+v3 handles both halves without touching the method. It writes a tensors-only copy
+of the checkpoint (identical weights, nothing executable pickled, cached per
+file+mtime) and passes *that* to the wrapper, so you should see:
+
+```
+  weights: converted tensors=… -> results/_assets/checkpoint.safe.<hash>.pt
+```
+
+followed by `teacher: real omiclip` and `neural fields trained: True` in the
+method log. If the teacher still fails for some other reason, the second half
+catches it: the run fails instead of contributing fallback numbers to the table.
+
+Nothing here modifies the checkpoint you supplied.
 
 ## Reading the results next to v2
 
