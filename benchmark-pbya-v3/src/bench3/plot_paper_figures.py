@@ -36,7 +36,7 @@ import scipy.sparse as sp
 from ._v2bridge import align_prediction_to_gt, load_ground_truth, load_prediction
 from .config import (
     DATASET_NAME, EMBED_NEIGHBORS, FIGURES_DIR, MARKER_GENES, METHOD_ORDER,
-    RANDOM_SEED, RESULTS_DIR, SPATIAL_K, dataset_path,
+    RANDOM_SEED, RESULTS_DIR, SPATIAL_K, dataset_path, resolve_dataset_arg,
 )
 from .evaluate_paper import gearys_c
 from benchmark.evaluate_generation import _morans_i, _rank_normalize  # noqa: E402
@@ -383,8 +383,8 @@ def main():
     ap = argparse.ArgumentParser(description="Draw the v3 paper figures")
     ap.add_argument("--results-dir", default=str(RESULTS_DIR))
     ap.add_argument("--dataset", default=None,
-                    help="ground-truth h5ad. Default: resolve each dataset found "
-                         "in the results tree via config.dataset_path")
+                    help="ground-truth dataset NAME or h5ad path. Default: resolve "
+                         "each dataset found in the results tree")
     ap.add_argument("--dataset-name", default=None,
                     help="draw only this dataset (default: every one present)")
     ap.add_argument("--out-dir", default=str(FIGURES_DIR))
@@ -413,7 +413,8 @@ def main():
                 if args.holdout_id in paths}
         if not runs:
             continue
-        gt_path = Path(args.dataset) if args.dataset else dataset_path(ds_name)
+        gt_path = (resolve_dataset_arg(args.dataset) if args.dataset
+                   else dataset_path(ds_name))
         if not Path(gt_path).exists():
             print(f"\n[{ds_name}] SKIP: ground truth not found at {gt_path} — "
                   f"build it with `python -m src.bench3.prepare_dataset "

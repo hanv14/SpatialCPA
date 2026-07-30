@@ -23,7 +23,8 @@ from pathlib import Path
 
 from .config import (
     DATASET_NAME, DATASET_PATH, METHOD_ORDER, METHODS, RANDOM_SEED,
-    REGISTRATION, RESULTS_DIR, SUMMARY_DIR,
+    REGISTRATION, RESULTS_DIR, SUMMARY_DIR, dataset_not_found_message,
+    resolve_dataset_arg,
 )
 from .design import build_designs, describe
 from .run_benchmark import build_input, dataset_meta, run_single
@@ -43,8 +44,9 @@ def main():
     ap.add_argument("--methods", nargs="+", default=None,
                     help="methods to run (default: all available, in METHOD_ORDER)")
     ap.add_argument("--design", default="paper", choices=["paper", "loo"])
-    ap.add_argument("--dataset", default=str(DATASET_PATH),
-                    help="built dataset h5ad (default: the STARmap paper dataset)")
+    ap.add_argument("--dataset", default=None,
+                    help="dataset NAME (e.g. exseq_visual_cortex) or a path to a "
+                         "built data.h5ad (default: the STARmap paper dataset)")
     ap.add_argument("--registration", default=None,
                     choices=["none", "rigid", "paste"],
                     help="default: the dataset's own policy (config.DATASET_SPECS)")
@@ -61,10 +63,10 @@ def main():
                     help="extra args forwarded to every method wrapper")
     args = ap.parse_args()
 
-    if not Path(args.dataset).exists():
-        raise SystemExit(
-            f"dataset not found: {args.dataset}\n"
-            f"Build it first:  python -m src.bench3.prepare_dataset --dataset <name>")
+    resolved = resolve_dataset_arg(args.dataset)
+    if not resolved.exists():
+        raise SystemExit(dataset_not_found_message(args.dataset, resolved))
+    args.dataset = str(resolved)
 
     methods = resolve_methods(args.methods)
     configs = build_designs(args.dataset, design=args.design)
@@ -74,21 +76,36 @@ def main():
     print(f"benchmark-pbya-v3 campaign — design={args.design}, dataset={dataset_name} "
           f"(registration={registration})")
     print(describe(configs))
+    total = len(methods) * len(configs)
     print(f"\n  methods ({len(methods)}): {', '.join(methods)}")
-    print(f"  total runs: {len(methods) * len(configs)}")
+    print(f"  total runs: {total}")
     if args.extra_args:
         print(f"  wrapper extra args: {' '.join(args.extra_args)}")
 
-    # Build every shared input up front so a method failure never leaves a
-    # half-built input, and so the cost is paid once and visibly.
-    if not args.dry_run:
+    # Which (holdout, method) pairs will actually run? Needed before the inputs
+    # are built: re-registering a whole volume to then skip every run is pure
+    # waste, and it is what --skip-existing on a finished campaign used to do.
+    def _pending(cfg):
+        return [m for m in methods
+                if not (args.skip_existing
+                        and (Path(RESULTS_DIR) / m / dataset_name
+                             / cfg["holdout_id"] / "prediction.h5").exists())]
+
+    todo = {cfg["holdout_id"]: _pending(cfg) for cfg in configs}
+    n_todo = sum(len(v) for v in todo.values())
+    if args.skip_existing and n_todo < total:
+        print(f"  already done: {total - n_todo} (--skip-existing)")
+
+    # Build the shared input up front for the holdouts that need one, so a method
+    # failure never leaves a half-built input and the cost is paid once, visibly.
+    if not args.dry_run and n_todo:
         print("\nBuilding shared training-only inputs...")
         for cfg in configs:
-            build_input(cfg, dataset_path=args.dataset,
-                        registration=registration, dataset_name=dataset_name)
+            if todo[cfg["holdout_id"]]:
+                build_input(cfg, dataset_path=args.dataset,
+                            registration=registration, dataset_name=dataset_name)
 
     log, t0 = [], time.time()
-    total = len(methods) * len(configs)
     i = 0
     for cfg in configs:
         for method in methods:

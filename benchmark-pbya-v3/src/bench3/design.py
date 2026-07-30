@@ -29,7 +29,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import DATASET_PATH, HELD_OUT_SECTIONS
+from .config import DATASET_PATH, HELD_OUT_SECTIONS, resolve_dataset_arg
 
 
 def sorted_sections(adata):
@@ -104,7 +104,7 @@ def build_designs(h5ad_path=DATASET_PATH, design="paper"):
     if not h5ad_path.exists():
         raise FileNotFoundError(
             f"dataset not found: {h5ad_path}\n"
-            f"Build it first: python -m src.bench3.prepare_starmap"
+            f"Build it first: python -m src.bench3.prepare_dataset --dataset <name>"
         )
     if design not in DESIGNS:
         raise ValueError(f"unknown design {design!r}; choose from {sorted(DESIGNS)}")
@@ -129,12 +129,13 @@ def describe(configs):
 
 def main():
     ap = argparse.ArgumentParser(description="Emit v3 holdout designs")
-    ap.add_argument("--input", default=str(DATASET_PATH))
+    ap.add_argument("--input", default=None,
+                    help="dataset NAME or a path to a built data.h5ad")
     ap.add_argument("--design", default="paper", choices=sorted(DESIGNS))
     ap.add_argument("--output", help="write JSON here (default: print)")
     args = ap.parse_args()
 
-    configs = build_designs(args.input, design=args.design)
+    configs = build_designs(resolve_dataset_arg(args.input), design=args.design)
     print(describe(configs))
     if args.output:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)

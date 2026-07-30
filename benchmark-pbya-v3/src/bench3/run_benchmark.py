@@ -39,7 +39,8 @@ from ._v2bridge import (
 )
 from .config import (
     DATASET_NAME, DATASET_PATH, INPUTS_CACHE, METHODS, RANDOM_SEED,
-    REGISTRATION, RESULTS_DIR, spec,
+    REGISTRATION, RESULTS_DIR, dataset_not_found_message, resolve_dataset_arg,
+    spec,
 )
 from .design import build_designs
 from .evaluate_paper import evaluate_paper
@@ -311,7 +312,8 @@ def main():
     ap.add_argument("--design", default="paper", choices=["paper", "loo"])
     ap.add_argument("--holdout-id", default=None,
                     help="run only this holdout (relevant for --design loo)")
-    ap.add_argument("--dataset", default=str(DATASET_PATH))
+    ap.add_argument("--dataset", default=None,
+                    help="dataset NAME or a path to a built data.h5ad")
     ap.add_argument("--registration", default=None,
                     choices=["none", "rigid", "paste"],
                     help="training-only re-registration policy (default: the "
@@ -325,6 +327,10 @@ def main():
                     help="extra args forwarded to the method wrapper")
     args = ap.parse_args()
 
+    resolved = resolve_dataset_arg(args.dataset)
+    if not resolved.exists():
+        raise SystemExit(dataset_not_found_message(args.dataset, resolved))
+    args.dataset = str(resolved)
     configs = build_designs(args.dataset, design=args.design)
     if args.holdout_id:
         configs = [c for c in configs if c["holdout_id"] == args.holdout_id]

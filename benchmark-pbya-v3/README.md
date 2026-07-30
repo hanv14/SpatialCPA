@@ -371,7 +371,7 @@ Nothing here modifies the checkpoint you supplied.
 
 ```bash
 python -m src.bench3.prepare_dataset --dataset exseq_visual_cortex
-python -m src.bench3.run_all --dataset data/processed/exseq_visual_cortex/data.h5ad
+python -m src.bench3.run_all --dataset exseq_visual_cortex
 ```
 
 Both write to `benchmark-pbya-v3/data/processed/<dataset>/data.h5ad` (override with
@@ -394,7 +394,8 @@ python -m src.bench3.rank_methods       # one ranking table per dataset — neve
 python -m src.bench3.plot_paper_figures # results/summary/figures/<dataset>/…
 ```
 
-Ranks are **within** a dataset: a composite is a position among the methods run on
+`--dataset` takes a registered **name** or a path to a built `data.h5ad`, on every
+stage that has it. Ranks are **within** a dataset: a composite is a position among the methods run on
 that volume, so averaging STARmap's and ExSeq's composites would compare places in
 two different races. Restrict any stage to one dataset with `--dataset-name`.
 

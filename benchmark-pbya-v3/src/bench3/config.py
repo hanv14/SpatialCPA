@@ -244,6 +244,41 @@ DATASETS = {name: {**s, "path": dataset_path(name)}
             for name, s in DATASET_SPECS.items()}
 
 
+def resolve_dataset_arg(value, default=None):
+    """Accept either a registered dataset NAME or a path to a built ``data.h5ad``.
+
+    ``prepare_dataset --dataset`` takes a name while the run/evaluate/plot stages
+    historically took a path, so passing the name to the latter is the obvious
+    mistake — and it used to fail with a "not found" that pointed at building a
+    dataset that may well already exist. Both spellings now work.
+    """
+    if value is None:
+        return Path(default) if default is not None else DATASET_PATH
+    text = str(value)
+    if text in DATASET_SPECS:
+        return dataset_path(text)
+    return Path(text)
+
+
+def dataset_not_found_message(value, resolved):
+    """Actionable text for a --dataset that does not resolve to an existing file."""
+    lines = [f"dataset not found: {resolved}"]
+    name = str(value) if value is not None else DATASET_NAME
+    if name in DATASET_SPECS:
+        lines.append(f"  read {name!r} as a registered dataset name")
+        lines.append(f"  build it:  python -m src.bench3.prepare_dataset "
+                     f"--dataset {name}")
+    elif value is not None:
+        lines.append(f"  {name!r} is neither a registered dataset name nor an "
+                     f"existing file")
+    lines.append("")
+    lines.append("  registered datasets:")
+    for n in DATASET_SPECS:
+        p = dataset_path(n)
+        lines.append(f"    {n:<24s} {'built' if p.exists() else 'NOT built'}  {p}")
+    return "\n".join(lines)
+
+
 # ── Methods ───────────────────────────────────────────────────────────────────
 # Generation-only, exactly as in v2: each method receives a training-only,
 # re-registered input plus a scalar target z per held-out section, and

@@ -41,7 +41,7 @@ from pathlib import Path
 import numpy as np
 import scipy.sparse as sp
 
-from .config import DATASET_PATH, RANDOM_SEED, SUMMARY_DIR
+from .config import DATASET_PATH, RANDOM_SEED, SUMMARY_DIR, resolve_dataset_arg
 from .design import build_designs
 from .evaluate_paper import evaluate_paper
 from .run_benchmark import build_input
@@ -132,7 +132,8 @@ CHECKS = [
 
 def main():
     ap = argparse.ArgumentParser(description="Validate the v3 harness end to end")
-    ap.add_argument("--dataset", default=str(DATASET_PATH))
+    ap.add_argument("--dataset", default=None,
+                    help="dataset NAME or a path to a built data.h5ad")
     ap.add_argument("--design", default="paper", choices=["paper", "loo"])
     ap.add_argument("--probes", nargs="+", default=list(PROBES), choices=list(PROBES))
     ap.add_argument("--no-umap", action="store_true")
@@ -141,6 +142,7 @@ def main():
 
     import anndata as ad
 
+    args.dataset = str(resolve_dataset_arg(args.dataset))
     cfg = build_designs(args.dataset, design=args.design)[0]
     print(f"design={args.design} holdout={cfg['holdout_id']} "
           f"held out={cfg['holdout_sections']}")
