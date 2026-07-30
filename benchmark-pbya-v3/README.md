@@ -433,6 +433,21 @@ read its rows differently from the other two:
 * *Half the volume is unused.* The paper design needs 7 consecutive sections and
   the dataset has 15, so the centred window is kept and 8 sections are dropped.
 
+### Sections have to be big enough to run
+
+The build refuses a dataset with a section under 50 cells (`--min-cells-per-section`,
+or `--allow-small-sections` to force it), and prints `cells/section: min/median/max`
+with an imbalance warning otherwise. This is not a metric threshold — it is what the
+*task* needs. A section that thin is useless as a method input (SpatialZ's
+flanking-slice PCA asks for 20 components and fails below 20 cells; every
+interpolation method needs a neighbourhood) and useless as ground truth (the binned
+field, the depth profile and the per-type OT all become noise).
+
+It matters most for `z_width`, where equal-width slabs on a volume whose cell
+density falls off toward one end can leave the last slab nearly empty. The error
+names the offending sections and suggests concrete `--z-trim-quantile` /
+`--n-sections` combinations that would work.
+
 ### Trimming
 
 Only STARmap's trim is protocol. Dropping `z = 6–13` and `91–94` comes from the

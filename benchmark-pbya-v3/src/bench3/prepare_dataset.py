@@ -198,6 +198,40 @@ def partition_z_width(z, n_sections, trim_quantile=0.0):
     return keep, sec, edges
 
 
+MIN_CELLS_PER_SECTION = 50
+"""Below this a section cannot carry the protocol.
+
+It is not a metric threshold — it is what the *task* needs. A section that thin is
+useless as a method input (SpatialZ's flanking-slice PCA needs more cells than
+components; every interpolation method needs a neighbourhood), and useless as
+ground truth (the binned field, the depth profile and the per-type OT all become
+noise). Building such a dataset only defers the failure to a confusing crash
+inside a method wrapper, so the build refuses instead.
+"""
+
+
+def suggest_partition(z, n_sections, min_cells, mode="z_width"):
+    """(trim, n_sections) combinations that would give every section enough cells.
+
+    Reported in the build error so the fix is a command, not a search.
+    """
+    z = np.asarray(z, dtype=np.float64)
+    out = []
+    for q in (0.0, 0.005, 0.01, 0.02, 0.05, 0.10):
+        for n in sorted({n_sections, 5, 3}, reverse=True):
+            if n < 3:
+                continue
+            try:
+                keep, sec, _ = partition_z_width(z, n, q)
+            except ValueError:
+                continue
+            counts = [int((sec == i).sum()) for i in range(1, n + 1)]
+            if min(counts) >= min_cells:
+                out.append((q, n, min(counts), max(counts)))
+                break                      # the largest n that works at this trim
+    return out
+
+
 def partition_sections(labels_by_z, n_sections, trim="center"):
     """Keep a consecutive window of ``n_sections`` of the dataset's own sections.
 
@@ -228,7 +262,8 @@ def partition_sections(labels_by_z, n_sections, trim="center"):
 
 def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
           n_sections=None, verbose=True, trim=True, z_trim_quantile=None,
-          section_trim=None):
+          section_trim=None, min_cells=MIN_CELLS_PER_SECTION,
+          allow_small=False):
     """Build and write a dataset's paper-protocol view. Returns the AnnData.
 
     ``trim=False`` disables the dataset's trim where one is optional. STARmap's
@@ -428,7 +463,17 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
         "layer_deep": resolve_markers(s["layer_deep"], panel),
     }
 
-    verify(out, n_sections=n_sections, held_out=held_out, verbose=verbose)
+    hint = ""
+    if s["partition"] == "z_width":
+        # the *untrimmed* z: suggestions are (trim, n) pairs to apply from
+        # scratch, so computing them on already-trimmed z would double the clip
+        opts = suggest_partition(z_um_all, n_sections, min_cells)
+        if opts:
+            hint = ".\n  These would work: " + "; ".join(
+                f"--z-trim-quantile {q:g} --n-sections {n} "
+                f"(cells/section {lo}-{hi})" for q, n, lo, hi in opts[:3])
+    verify(out, n_sections=n_sections, held_out=held_out, verbose=verbose,
+           min_cells=min_cells, allow_small=allow_small, hint=hint)
 
     if output_path is not None:
         output_path = Path(output_path)
@@ -439,7 +484,8 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
     return out
 
 
-def verify(adata, n_sections, held_out, verbose=True):
+def verify(adata, n_sections, held_out, verbose=True,
+           min_cells=MIN_CELLS_PER_SECTION, allow_small=False, hint=""):
     """Assert the built dataset satisfies the benchmark + protocol contract."""
     assert sp.issparse(adata.X) and adata.X.format == "csr", "X must be CSR sparse"
     assert "spatial" in adata.obsm, "missing obsm['spatial']"
@@ -458,6 +504,20 @@ def verify(adata, n_sections, held_out, verbose=True):
     missing = [s for s in held_out if s not in uniq]
     assert not missing, f"held-out sections absent from the build: {missing}"
 
+    counts = {s_: int((labels == s_).sum()) for s_ in uniq}
+    thin = {s_: n for s_, n in counts.items() if n < min_cells}
+    if thin and not allow_small:
+        raise ValueError(
+            f"sections too thin to run the protocol (< {min_cells} cells): "
+            f"{thin}\n"
+            f"  all sections: {counts}\n"
+            f"  A section this small breaks methods (a flanking-slice PCA cannot "
+            f"ask for more components than cells) and makes the field, depth and "
+            f"localization metrics noise.\n"
+            f"  Fix by trimming the sparse end of the volume or asking for fewer "
+            f"sections{hint}\n"
+            f"  or pass --allow-small-sections to build it anyway.")
+
     pp = adata.uns["paper_protocol"]
     if verbose:
         print(f"  verified: {adata.n_obs} cells x {adata.n_vars} genes, "
@@ -469,6 +529,11 @@ def verify(adata, n_sections, held_out, verbose=True):
             print(f"    {s_:<12s} z {zr[0]:7.2f}-{zr[1]:<7.2f}  centre={zc:7.2f} um  "
                   f"n={n:5d}  {role}")
         req = [str(g) for g in pp.get("marker_genes_requested", [])]
+        cts = [int((labels == s_).sum()) for s_ in uniq]
+        print(f"  cells/section: min={min(cts)} median={int(np.median(cts))} "
+              f"max={max(cts)}"
+              + (f"   (imbalance {max(cts) / max(min(cts), 1):.1f}x — check the "
+                 f"sparse end)" if max(cts) > 3 * max(min(cts), 1) else ""))
         print(f"  marker genes present: {pp['marker_genes']}"
               + (f"   (requested: {', '.join(req)})" if req else ""))
         matched = {_canon(g) for g in pp["marker_genes"]}
@@ -508,6 +573,11 @@ def main():
     ap.add_argument("--section-trim", choices=["low", "center", "high"], default=None,
                     help="sections datasets: which consecutive window of the "
                          "source sections to keep (default: the dataset's)")
+    ap.add_argument("--allow-small-sections", action="store_true",
+                    help="build even when a section has too few cells to run the "
+                         "protocol (it will break methods and make metrics noise)")
+    ap.add_argument("--min-cells-per-section", type=int,
+                    default=MIN_CELLS_PER_SECTION)
     ap.add_argument("--print-protocol", action="store_true",
                     help="print the resolved protocol as JSON and exit")
     args = ap.parse_args()
@@ -515,7 +585,9 @@ def main():
     adata = build(dataset=args.dataset, raw_path=args.raw, output_path=args.output,
                   flatten_z=not args.no_flatten_z, n_sections=args.n_sections,
                   trim=not args.no_trim, z_trim_quantile=args.z_trim_quantile,
-                  section_trim=args.section_trim)
+                  section_trim=args.section_trim,
+                  min_cells=args.min_cells_per_section,
+                  allow_small=args.allow_small_sections)
     if args.print_protocol:
         print(json.dumps(adata.uns["paper_protocol"], indent=2, default=str))
     return 0
