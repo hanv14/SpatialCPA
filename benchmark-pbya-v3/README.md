@@ -313,6 +313,35 @@ explicit flag still overrides the pin:
 python -m src.bench3.run_benchmark --method spatialcpav8_gen -- --placement backbone
 ```
 
+`env` in `config.METHODS` does the same job for knobs that live in the *method
+package* and have no wrapper flag, so v3 configures a run without editing v2.
+`spatialcpav11_gen` pins `SPATIALCPAV11_FALLBACK_ON_ERROR=0`: v11 degrades to a
+deterministic OT-morph layout when training fails, which is reasonable for a
+library and wrong for a benchmark — the fallback is not v11, but it still writes
+a prediction, and its numbers look plausible enough to be ranked without anyone
+noticing. With the pin, a training failure fails the run. A value already set in
+your shell wins over the pin, so `SPATIALCPAV11_FALLBACK_ON_ERROR=1 python -m
+src.bench3.run_all …` restores the old behaviour if you want to benchmark the
+fallback deliberately.
+
+### Running spatialcpav11_gen with the real OmiCLIP teacher
+
+```bash
+python -m src.bench3.run_all --methods spatialcpav11_gen \
+  -- --teacher omiclip \
+     --teacher-weights /path/to/omiclip/checkpoint.pt \
+     --gpu-mem-fraction 0.4
+```
+
+OmiCLIP ships an open_clip *training* checkpoint, which pickles numpy scalars
+alongside the tensors; torch ≥ 2.6 loads with `weights_only=True` and rejects
+those. The teacher loader allowlists exactly those numpy globals and retries, so
+this works unattended — you should see `checkpoint contains numpy scalars; loaded
+with those allowlisted` followed by `neural fields trained: True`. If a checkpoint
+needs the *full* pickle, set `SPATIALCPAV11_TRUST_CHECKPOINT=1` (it can execute
+code from the file), or convert it once to a plain `state_dict` and point
+`--teacher-weights` at that.
+
 ## Reading the results next to v2
 
 v3 and v2 answer different questions and their numbers are not interchangeable:

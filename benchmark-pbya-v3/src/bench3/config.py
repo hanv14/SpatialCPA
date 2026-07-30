@@ -159,6 +159,11 @@ DATASETS = {
 # (or break) when a v2 default moves. ``run_benchmark`` appends these after the
 # shared arguments and before any user-supplied extras, so an explicit extra on
 # the command line still wins.
+#
+# ``env`` is the same idea for knobs that live in the *method package* and have no
+# wrapper flag: v3 pins them in the subprocess environment rather than editing v2.
+# ``run_benchmark`` merges them in, and a value already set in the caller's
+# environment wins, so an operator can override a pin without editing this file.
 def _v2_wrapper(name):
     return V2_ROOT / "src" / "benchmark" / "methods" / name
 
@@ -188,6 +193,13 @@ METHODS = {
         "available": True,
         "family": "spatialcpa",
         "notes": "teacher-distilled conditional generator",
+        # v11 degrades to a deterministic OT-morph layout when training fails —
+        # sensible for a library, wrong for a benchmark: the fallback is not v11,
+        # yet it still writes a prediction the harness would score and rank. (It
+        # is also easy to miss: a failed OmiCLIP teacher aborts training, and the
+        # fallback still returns plausible-looking numbers.) Make training
+        # failures fail the run instead.
+        "env": {"SPATIALCPAV11_FALLBACK_ON_ERROR": "0"},
     },
     "spatialcpav14_gen": {
         "wrapper": _v2_wrapper("run_spatialcpav14.py"),

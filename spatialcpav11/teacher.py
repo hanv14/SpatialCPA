@@ -216,9 +216,9 @@ def _create_open_clip(open_clip, arch, weights_path, trust_checkpoint=False):
             raise RuntimeError(
                 f"cannot load the OmiCLIP checkpoint {weights_path!r} under torch's "
                 f"weights_only=True ({first}). Either re-run with "
-                f"--teacher-trust-checkpoint (loads the full pickle — do this only "
-                f"for a checkpoint you trust), or convert it once to a plain "
-                f"state_dict:\n"
+                f"SPATIALCPAV11_TRUST_CHECKPOINT=1 in the environment (loads the "
+                f"full pickle — do this only for a checkpoint you trust), or "
+                f"convert it once to a plain state_dict:\n"
                 f"    import torch\n"
                 f"    ck = torch.load({weights_path!r}, map_location='cpu', weights_only=False)\n"
                 f"    sd = ck.get('state_dict', ck)\n"
@@ -235,7 +235,7 @@ def _create_open_clip(open_clip, arch, weights_path, trust_checkpoint=False):
             if name in params:
                 model = _build(**{name: False})
                 print(f"[spatialcpav11] checkpoint loaded with {name}=False "
-                      f"(--teacher-trust-checkpoint).")
+                      f"(SPATIALCPAV11_TRUST_CHECKPOINT).")
                 return model
 
         orig_load = torch.load                     # open_clip too old for the kwarg
@@ -248,7 +248,7 @@ def _create_open_clip(open_clip, arch, weights_path, trust_checkpoint=False):
         finally:
             torch.load = orig_load
         print("[spatialcpav11] checkpoint loaded with weights_only=False "
-              "(--teacher-trust-checkpoint).")
+              "(SPATIALCPAV11_TRUST_CHECKPOINT).")
         return model
 
 

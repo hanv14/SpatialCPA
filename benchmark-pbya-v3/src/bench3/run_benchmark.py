@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -188,6 +189,19 @@ def run_single(method, holdout_config, dataset_path=DATASET_PATH,
     if extra_args:
         cmd.extend(extra_args)
     print(f"  cmd: {' '.join(cmd)}")
+
+    # Method-pinned environment, for package knobs the v2 wrapper exposes no flag
+    # for. An existing value in this process's environment wins, so a pin can be
+    # overridden from the shell without editing config.py.
+    env = None
+    pinned = info.get("env") or {}
+    if pinned:
+        env = dict(os.environ)
+        applied = {k: v for k, v in pinned.items() if k not in os.environ}
+        env.update(applied)
+        for k, v in sorted(pinned.items()):
+            note = "" if k in applied else f"  (overridden by the environment: {env[k]!r})"
+            print(f"  env: {k}={v}{note}")
     if dry_run:
         print("  (dry run — skipping)")
         return {"success": False, "dry_run": True}
@@ -197,7 +211,7 @@ def run_single(method, holdout_config, dataset_path=DATASET_PATH,
     cwd = wrapper.resolve().parents[3]
     with open(log_path, "w") as log_f:
         proc = subprocess.Popen(cmd, stdout=log_f, stderr=subprocess.STDOUT,
-                                cwd=str(cwd))
+                                cwd=str(cwd), env=env)
         monitor = ResourceMonitor(proc.pid)
         monitor.start()
         returncode = proc.wait()
