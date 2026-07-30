@@ -55,6 +55,26 @@ def held_out_for(adata):
     return tuple(held) if held else HELD_OUT_SECTIONS
 
 
+def holdout_id_for(holdout_sections, n_sections):
+    """Stable directory name for a hold-out set.
+
+    Spelling the indices out keeps STARmap's id exactly ``paper_2_4_6`` — the
+    published split, and the name existing results already live under. A dataset
+    that holds out more sections than that would make an unwieldy directory name,
+    so it gets a summary form instead.
+    """
+    idx = []
+    for sec in holdout_sections:
+        try:
+            idx.append(int(str(sec).rsplit("_", 1)[1]))
+        except (IndexError, ValueError):
+            idx = []
+            break
+    if idx and len(idx) <= 3:
+        return "paper_" + "_".join(str(i) for i in sorted(idx))
+    return f"paper_alt{len(holdout_sections)}of{n_sections}"
+
+
 def paper_design(adata):
     """The SpatialZ-paper design: hold out sections 2, 4 and 6 together."""
     labels, z_by = sorted_sections(adata)
@@ -68,7 +88,7 @@ def paper_design(adata):
     holdout = [s for s in labels if s in HELD_OUT_SECTIONS]
     remaining = [s for s in labels if s not in HELD_OUT_SECTIONS]
     return [{
-        "holdout_id": "paper_2_4_6",
+        "holdout_id": holdout_id_for(holdout, len(labels)),
         "design": "paper",
         "holdout_sections": holdout,
         "remaining_sections": remaining,
@@ -120,7 +140,9 @@ def describe(configs):
     for c in configs:
         held = ", ".join(c["holdout_sections"])
         keep = ", ".join(c["remaining_sections"])
-        zs = ", ".join(f"{s}@z={z:.1f}" for s, z in sorted(c["holdout_z"].items()))
+        # order by depth, not by label: section_10 sorts before section_2 as text
+        zs = ", ".join(f"{s}@z={z:.1f}"
+                       for s, z in sorted(c["holdout_z"].items(), key=lambda kv: kv[1]))
         lines.append(f"{c['holdout_id']:>14s}  held out: [{held}]\n"
                      f"{'':>14s}  input   : [{keep}]\n"
                      f"{'':>14s}  targets : {zs}")

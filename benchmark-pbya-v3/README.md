@@ -368,7 +368,7 @@ Nothing here modifies the checkpoint you supplied.
 |---|---|---|---|---|
 | `starmap_visual_cortex` | `paper` | `planes` — trim z 6–13 / 91–94, split 77 planes into 7 × 11 | the paper's own volume | the reproduction |
 | `exseq_visual_cortex` | `analogue` | `z_width` — cut the z range into 7 equal-width slabs (0.2 % outlier clip, not a noise trim) | `benchmark-pbya/data/raw/exseq_visual_cortex` (or v1's processed h5ad) | the same protocol, a second volume |
-| `imc_breast_cancer` | `analogue` | `sections` — 15 real serial sections at 10 µm; keep the centred window of 7 | `benchmark-pbya/data/raw/imc_breast_cancer` (15 h5ads, or v1's processed) | protein panel, human tumour |
+| `imc_breast_cancer` | `analogue` | `sections` — all 15 real serial sections at 10 µm, used as-is | `benchmark-pbya/data/raw/imc_breast_cancer` (15 h5ads, or v1's processed) | protein panel, human tumour |
 
 ```bash
 python -m src.bench3.prepare_dataset --dataset exseq_visual_cortex
@@ -441,10 +441,28 @@ does not invent one:
   noise, but because equal-width binning takes its edges from `min(z)`/`max(z)`,
   where a few segmentation outliers would skew all seven slab boundaries.
   `--no-trim` uses the raw range; `--z-trim-quantile` sets it.
-* `imc_breast_cancer` keeps a *window* of 7 of its 15 sections, because the design
-  needs exactly 7 and something has to choose. Centre is the default since the
-  first and last sections of a cut block are the ones most often damaged or
-  incompletely stained; `--section-trim low|high` moves it.
+* `imc_breast_cancer` trims nothing: it uses all 15 of its sections. Pass
+  `--n-sections` to take a smaller window, and `--section-trim low|center|high` to
+  choose which.
+
+### Section count and hold-out pattern
+
+**Seven sections and the 2/4/6 split are STARmap's, because they are the paper's.**
+They are pinned for that dataset and derived for every other one:
+
+| dataset | sections | held out | holdout id |
+|---|---|---|---|
+| `starmap_visual_cortex` | 7 (pinned — the published design) | 2, 4, 6 | `paper_2_4_6` |
+| `exseq_visual_cortex` | 7 (a choice: ≈11 µm slabs over its ~76 µm, like a cryosection) | 2, 4, 6 | `paper_2_4_6` |
+| `imc_breast_cancer` | 15 (all it has) | 2, 4, …, 14 | `paper_alt7of15` |
+
+What actually carries over from the paper is the **alternating hold-out**, not the
+number seven: hold out every even section, keep the first and last as input. At
+n = 7 that is exactly 2/4/6; at n = 15 it is 2/4/…/14. Either way every held-out
+section is bracketed by two input sections — so the task stays well-posed — and
+about half the volume is missing, which is what makes it hard. Set `held_out` to an
+explicit tuple in `config.DATASET_SPECS` to pin a different split, and
+`--n-sections` to change the count.
 
 **One more caveat.** `kind=analogue` is not decoration: the SpatialZ paper validated
 this protocol on STARmap, so an ExSeq row is v3's extension of it. Report the two

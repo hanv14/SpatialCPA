@@ -58,7 +58,8 @@ import numpy as np
 import scipy.sparse as sp
 
 from .config import (
-    DATASET_NAME, dataset_path, resolve_raw, section_label, spec,
+    DATASET_NAME, dataset_path, held_out_indices, resolve_raw, section_label,
+    spec,
 )
 from .sources import load_source
 
@@ -238,7 +239,13 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
     raw_path = Path(raw_path or resolve_raw(dataset))
     if output_path is None:
         output_path = dataset_path(dataset)
-    n_sections = int(n_sections or s["n_sections"])
+    n_sections = n_sections if n_sections is not None else s["n_sections"]
+    if n_sections is not None:
+        n_sections = int(n_sections)
+    elif s["partition"] != "sections":
+        raise ValueError(
+            f"{dataset}: n_sections must be set for partition={s['partition']!r} "
+            f"(only 'sections' can take it from the data)")
     if not trim and s["kind"] == "paper":
         raise ValueError(
             f"{dataset}: the trim is part of the published protocol (drop "
@@ -249,7 +256,6 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
     if not trim:
         q = 0.0
     window = section_trim or s.get("section_trim", "center")
-    held_out = tuple(section_label(i) for i in s["held_out"])
 
     if not raw_path.exists():
         tried = "\n".join(f"    {c}" for c in s["raw_candidates"])
@@ -292,6 +298,11 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
 
     z_um_all = coords_um[:, 2]
 
+    # For real serial sections the count can come from the data itself.
+    if s["partition"] == "sections" and n_sections is None:
+        n_sections = int(len(np.unique(adata.obs["section"].values.astype(str))))
+    held_out = tuple(section_label(i) for i in held_out_indices(s, n_sections))
+
     if s["partition"] == "planes":
         planes_all = np.rint(z_um_all / s["voxel_z_um"]).astype(int)
         kept, assignment = partition_planes(planes_all, n_sections,
@@ -313,13 +324,16 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
         by_z = sorted(np.unique(secs_all),
                       key=lambda lab: float(np.median(z_um_all[secs_all == lab])))
         keep_labels, assignment = partition_sections(by_z, n_sections, window)
+        window_note = "" if len(keep_labels) == len(by_z) else f" ({window} window)"
         keep_mask = np.isin(secs_all, keep_labels)
         sec_idx_all = np.array([assignment.get(lab, 0) for lab in secs_all])
         planes_all = np.rint(z_um_all).astype(int)
         keep_labels = [str(l) for l in keep_labels]
         dropped_labels = [str(l) for l in by_z if str(l) not in keep_labels]
-        trim_desc = (f"{len(dropped_labels)} of {len(by_z)} source sections "
-                     f"({window} window): {dropped_labels}")
+        trim_desc = (f"none — all {len(by_z)} source sections kept"
+                     if not dropped_labels else
+                     f"{len(dropped_labels)} of {len(by_z)} source sections"
+                     f"{window_note}: {dropped_labels}")
         extra = f"; kept {keep_labels}"
     else:
         raise ValueError(f"unknown partition mode {s['partition']!r}")
@@ -452,7 +466,7 @@ def verify(adata, n_sections, held_out, verbose=True):
             n = int((labels == s_).sum())
             role = "HELD OUT" if s_ in held_out else "input   "
             zr = pp["z_ranges_um"][s_]
-            print(f"    {s_}  z {zr[0]:7.2f}-{zr[1]:<7.2f}  centre={zc:7.2f} um  "
+            print(f"    {s_:<12s} z {zr[0]:7.2f}-{zr[1]:<7.2f}  centre={zc:7.2f} um  "
                   f"n={n:5d}  {role}")
         req = [str(g) for g in pp.get("marker_genes_requested", [])]
         print(f"  marker genes present: {pp['marker_genes']}"

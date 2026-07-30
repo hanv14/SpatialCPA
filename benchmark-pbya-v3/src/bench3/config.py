@@ -158,6 +158,8 @@ DATASET_SPECS = {
         "drop_z_high": DROP_Z_HIGH,
         "voxel_xy_um": VOXEL_XY_UM,
         "voxel_z_um": VOXEL_Z_UM,
+        # Both pinned: 7 sections and the 2/4/6 split are the published design,
+        # not a v3 preference. Only this dataset is constrained that way.
         "n_sections": N_SECTIONS,
         "held_out": HELD_OUT_SECTION_INDICES,
         "registration": "none",
@@ -200,8 +202,13 @@ DATASET_SPECS = {
         "z_trim_quantile": 0.002,
         "voxel_xy_um": 1.0,          # already micrometres
         "voxel_z_um": 1.0,
-        "n_sections": N_SECTIONS,
-        "held_out": HELD_OUT_SECTION_INDICES,
+        # A continuous volume, so the slab count is a free choice rather than a
+        # given. 7 over this ~76 um extent puts each slab near 11 um — the
+        # thickness of a real cryosection, and close to STARmap's 11-plane
+        # sections, which keeps the two cortex datasets comparable. It is a
+        # judgement call, not a requirement: --n-sections changes it.
+        "n_sections": 7,
+        "held_out": "alternate",
         # Same tissue as STARmap, so the cortical markers and the laminar-axis
         # composite carry over unchanged — whichever of them the ExSeq panel
         # actually contains. ``prepare_dataset`` records the intersection in
@@ -231,18 +238,16 @@ DATASET_SPECS = {
             V1_ROOT / "data" / "processed" / "imc_breast_cancer.h5ad",
         ),
         "source_units": "um",
-        # 15 physically cut sections at 10 um. Each one already *is* a section, so
-        # they are used as-is and a centred window of 7 is kept. This is not the
-        # paper's noise trim either — the protocol needs exactly 7 consecutive
-        # sections and the block has 15, so *something* has to choose which 7.
-        # Centre is the defensible default: the first and last sections of a cut
-        # block are the ones most often damaged, folded or incompletely stained.
-        # --section-trim low|high moves the window; --n-sections 15 would use them
-        # all, but that is no longer the paper's design.
+        # 15 physically cut sections at 10 um, and each one already *is* a
+        # section, so all of them are used: ``n_sections: None`` means "however
+        # many the data has". There is no reason to discard two thirds of a
+        # serial block to match STARmap's count — the design that matters is the
+        # alternating hold-out, which scales to any number of sections. Set
+        # --n-sections to take a smaller window (then --section-trim picks which).
         "partition": "sections",
+        "n_sections": None,
         "section_trim": "center",
-        "n_sections": N_SECTIONS,
-        "held_out": HELD_OUT_SECTION_INDICES,
+        "held_out": "alternate",
         # NOT a single imaging volume: serial sections are cut, mounted and imaged
         # independently, so they are not co-registered and interpolation is
         # ill-posed without aligning them. Training-only rigid ICP, exactly what v2
@@ -266,6 +271,25 @@ DATASET_SPECS = {
         "protocol": "SpatialZ protocol applied to 3D IMC (analogue, not the paper)",
     },
 }
+
+
+def held_out_indices(dataset_spec, n_sections):
+    """1-based indices of the held-out sections for a dataset of ``n_sections``.
+
+    ``held_out`` is either an explicit tuple — STARmap pins (2, 4, 6) because that
+    is the published split — or the rule ``"alternate"``: hold out every even
+    section, keeping the first and last as input. At n = 7 the rule reproduces the
+    paper exactly (2, 4, 6); at n = 15 it gives 2, 4, ..., 14. Either way every
+    held-out section is bracketed by two input sections, which is what makes the
+    task well-posed for an interpolation method, and roughly half the volume is
+    missing, which is what makes it hard.
+    """
+    rule = dataset_spec.get("held_out", "alternate")
+    if isinstance(rule, str):
+        if rule != "alternate":
+            raise ValueError(f"unknown held_out rule {rule!r}")
+        return tuple(range(2, int(n_sections), 2))
+    return tuple(int(i) for i in rule)
 
 
 def spec(dataset_name=DATASET_NAME):
