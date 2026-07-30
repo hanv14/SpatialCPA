@@ -11,8 +11,9 @@ Methods benchmarked: **spatialcpav8_gen, spatialcpav11_gen, spatialcpav14_gen,
 spatialcpav15_gen, SpatialZ, FEAST, isoST**.
 
 Datasets: **STARmap visual cortex** (the paper's, `kind=paper`), plus **ExSeq
-visual cortex**, **3-D IMC breast cancer**, **CosMx NSCLC** and **Deep-STARmap**
-(the same protocol on other volumes, `kind=analogue` — see [Datasets](#datasets)).
+visual cortex**, **3-D IMC breast cancer**, **CosMx NSCLC**, **Deep-STARmap**,
+**MERFISH hypothalamus** and **Open-ST lymph node** (the same protocol on other
+volumes, `kind=analogue` — see [Datasets](#datasets)).
 
 v3 does not modify v1 or v2; all three coexist.
 
@@ -371,6 +372,8 @@ Nothing here modifies the checkpoint you supplied.
 | `imc_breast_cancer` | `analogue` | `sections` — all 15 real serial sections at 10 µm, used as-is | `benchmark-pbya/data/raw/imc_breast_cancer` (15 h5ads, or v1's processed) | protein panel, human tumour |
 | `cosmx_nsclc_3d` | `analogue` | `sections` — all 6 real cryosections, **30 µm** apart | `benchmark-pbya/data/raw/cosmx_nsclc_3d` (2 zips, or v1's processed) | widest gaps in the benchmark |
 | `deep_starmap` | `analogue` | `planes` — 0.70 µm optical planes grouped into 7 slabs, no trim | `benchmark-pbya/data/raw/deep_starmap` (3 CSVs, or v1's processed) | dense volume, mouse brain |
+| `merfish_hypothalamus` | `analogue` | `sections` — 12 coronal sections, **50 µm** apart (animal 1) | `benchmark-pbya/data/raw/merfish_hypothalamus` (one CSV, all animals) | new tissue, wide gaps |
+| `openst_lymph_node` | `analogue` | `sections` — 19 cryosections, 10 µm apart | `benchmark-pbya/data/raw/openst_lymph_node` (19 h5ad.gz) | human lymphoid tissue |
 
 ```bash
 python -m src.bench3.prepare_dataset --dataset exseq_visual_cortex
@@ -485,6 +488,8 @@ They are pinned for that dataset and derived for every other one:
 | `imc_breast_cancer` | 15 (all it has) | 2, 4, …, 14 | `paper_alt7of15` |
 | `cosmx_nsclc_3d` | 6 (all it has) | 2, 4 | `paper_2_4` |
 | `deep_starmap` | 7 (a choice: ~14 µm slabs of 0.70 µm planes) | 2, 4, 6 | `paper_2_4_6` |
+| `merfish_hypothalamus` | 12 (all animal 1 has) | 2, 4, …, 10 | `paper_alt5of12` |
+| `openst_lymph_node` | 19 (all it has) | 2, 4, …, 18 | `paper_alt9of19` |
 
 What actually carries over from the paper is the **alternating hold-out**, not the
 number seven: hold out every even section, keep the first and last as input. At

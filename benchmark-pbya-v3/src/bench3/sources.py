@@ -384,9 +384,188 @@ def read_cosmx_raw(path, verbose=True):
     return adata
 
 
+MOFFITT_CSV = "Moffitt2018_MERFISH_hypothalamus_full.csv"
+MOFFITT_META_COLS = ("Cell_ID", "Animal_ID", "Animal_sex", "Behavior",
+                     "Bregma", "Centroid_X", "Centroid_Y",
+                     "Cell_class", "Neuron_cluster_ID")
+MOFFITT_DEFAULT_ANIMAL = 1      # animals 1, 2, 7 have the full 12-section coverage
+
+
+def read_merfish_hypothalamus_csv(path, animal_id=MOFFITT_DEFAULT_ANIMAL,
+                                  verbose=True):
+    """Read one animal out of the Moffitt 2018 MERFISH hypothalamus CSV.
+
+    The distribution is a single ~1 GB table of 1M cells across 36 animals in
+    four behavioural conditions. A benchmark volume has to be *one* animal — the
+    sections of different animals are different tissue — so one naive animal is
+    selected and its Bregma values become the sections. Animals 1, 2 and 7 carry
+    the full 12-section anterior-posterior coverage; the rest have 5-6.
+
+    Mirrors v1's processor: Centroid_X/Y are already micrometres, z is Bregma in
+    mm scaled to um, cell types are ``Cell_class``, and the Blank control and
+    all-NaN gene columns are dropped.
+    """
+    import anndata as ad
+    import pandas as pd
+
+    path = Path(path)
+    csv_path = path / MOFFITT_CSV if path.is_dir() else path
+    if not csv_path.exists():
+        raise FileNotFoundError(f"MERFISH hypothalamus CSV not found: {csv_path}")
+
+    if verbose:
+        print(f"  reading {csv_path.name} (~1 GB, all animals) ...")
+    df = pd.read_csv(csv_path)
+    if "Animal_ID" not in df.columns:
+        raise ValueError(f"{csv_path.name} has no Animal_ID column")
+
+    sel = df[df["Animal_ID"] == int(animal_id)].copy()
+    if sel.empty:
+        raise ValueError(
+            f"animal {animal_id} not in {csv_path.name}; "
+            f"available: {sorted(df['Animal_ID'].unique())[:12]}")
+    sel = sel.sort_values("Bregma")
+
+    genes = [c for c in df.columns
+             if c not in MOFFITT_META_COLS and not str(c).startswith("Blank")]
+    genes = [g for g in genes if not sel[g].isna().all()]
+    if not genes:
+        raise ValueError("no usable gene columns after dropping Blank/all-NaN")
+
+    bregmas = sorted(sel["Bregma"].unique())
+    if verbose:
+        print(f"  animal {animal_id}: {len(sel)} cells, {len(genes)} genes, "
+              f"{len(bregmas)} sections (Bregma "
+              f"{bregmas[0]:+.2f}..{bregmas[-1]:+.2f} mm)")
+
+    X = sp.csr_matrix(np.nan_to_num(sel[genes].values.astype(np.float32)))
+    coords = np.column_stack([
+        sel["Centroid_X"].values.astype(np.float64),
+        sel["Centroid_Y"].values.astype(np.float64),
+        sel["Bregma"].values.astype(np.float64) * 1000.0,       # mm -> um
+    ])
+    cell_types = (sel["Cell_class"].astype(str).values if "Cell_class" in sel
+                  else np.array(["unannotated"] * len(sel)))
+
+    adata = ad.AnnData(
+        X=X,
+        obs=pd.DataFrame(
+            {"section": [f"bregma_{b:+.2f}" for b in sel["Bregma"].values],
+             "cell_type": cell_types},
+            index=[str(v) for v in (sel["Cell_ID"] if "Cell_ID" in sel
+                                    else range(len(sel)))]),
+        var=pd.DataFrame(index=pd.Index(genes, name=None)))
+    adata.obs_names_make_unique()
+    adata.obsm["spatial"] = coords
+    adata.uns["expression_type"] = "normalized"
+    adata.uns["dataset_name"] = "merfish_hypothalamus"
+    adata.uns["spatial_metadata"] = {
+        "technology": "MERFISH", "species": "mouse", "tissue": "hypothalamus",
+        "coordinate_units": "micrometers", "expression_type": "normalized",
+        "animal_id": int(animal_id),
+        "source": "Moffitt et al. 2018 Science; Dryad (raw, read by bench3.sources)",
+    }
+    return adata
+
+
+OPENST_PIXEL_UM = 0.345          # Keyence BZ-X810 20x, Open-ST docs
+OPENST_SECTION_UM = 10.0         # 10 um cryosections (Schott et al. 2024)
+
+
+def read_openst_lymph_node(path, verbose=True):
+    """Read the Open-ST metastatic lymph-node serial sections.
+
+    One ``.h5ad(.gz)`` per 10 um cryosection, named ``..._S<n>.h5ad``; the section
+    number sets z. Coordinates are pixels at 0.345 um. Only the metastatic
+    lymph-node sections are used — the GEO series also carries unrelated
+    specimens, and mixing them would not be one volume.
+    """
+    import gzip
+    import re
+    import shutil
+    import tempfile
+
+    import anndata as ad
+    import pandas as pd
+
+    path = Path(path)
+    raw_dir = path if path.is_dir() else path.parent
+    files = [f for f in sorted(raw_dir.glob("*metastatic_lymph_node_S*.h5ad*"))
+             if f.suffix in (".h5ad", ".gz")]
+    if not files:
+        raise FileNotFoundError(
+            f"no Open-ST lymph-node sections under {raw_dir}\n"
+            f"  expected e.g. GSM7990100_metastatic_lymph_node_S2.h5ad(.gz); "
+            f"extract GSE251926_RAW.tar first")
+
+    def _sec_num(f):
+        m = re.search(r"_S(\d+)\.h5ad", f.name)
+        return int(m.group(1)) if m else -1
+
+    files = sorted({_sec_num(f): f for f in files}.items())
+    if verbose:
+        print(f"  reading {len(files)} Open-ST sections from {raw_dir.name}")
+
+    slices = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for sec_num, f in files:
+            if f.suffix == ".gz":
+                plain = Path(tmp) / f.with_suffix("").name
+                with gzip.open(f, "rb") as fi, open(plain, "wb") as fo:
+                    shutil.copyfileobj(fi, fo)
+                f = plain
+            a = ad.read_h5ad(str(f))
+
+            xy = None
+            if "spatial" in a.obsm:
+                xy = np.asarray(a.obsm["spatial"], dtype=np.float64)[:, :2]
+            else:
+                for xc, yc in (("x", "y"), ("X", "Y"), ("centroid_x", "centroid_y")):
+                    if xc in a.obs.columns and yc in a.obs.columns:
+                        xy = np.column_stack([a.obs[xc].values.astype(np.float64),
+                                              a.obs[yc].values.astype(np.float64)])
+                        break
+            if xy is None:
+                raise ValueError(f"{f.name}: no spatial coordinates")
+
+            xy = xy * OPENST_PIXEL_UM
+            a.obsm["spatial"] = np.column_stack(
+                [xy, np.full(len(xy), sec_num * OPENST_SECTION_UM)])
+            a.obs["section"] = f"S{sec_num}"
+            ct = next((c for c in ("cell_type", "celltype", "CellType", "cluster",
+                                   "leiden", "louvain", "annotation")
+                       if c in a.obs.columns), None)
+            a.obs["cell_type"] = (a.obs[ct].astype(str) if ct else "unannotated")
+            a.obs = a.obs[["section", "cell_type"]]
+            a.X = a.X.tocsr() if sp.issparse(a.X) else sp.csr_matrix(a.X)
+            a.var_names_make_unique()
+            a.obs_names = [f"S{sec_num}_{n}" for n in a.obs_names]
+            slices.append(a)
+
+    adata = ad.concat(slices, join="outer", merge="first")
+    adata.obs_names_make_unique()
+    adata.X = adata.X.tocsr() if sp.issparse(adata.X) else sp.csr_matrix(adata.X)
+    adata.obs["section"] = adata.obs["section"].astype(str)
+    adata.obs["cell_type"] = adata.obs["cell_type"].astype(str)
+    adata.uns["expression_type"] = "raw_counts"
+    adata.uns["dataset_name"] = "openst_lymph_node"
+    adata.uns["spatial_metadata"] = {
+        "technology": "Open-ST", "species": "human",
+        "tissue": "metastatic lymph node", "coordinate_units": "micrometers",
+        "expression_type": "raw_counts",
+        "source": "GEO GSE251926 (raw, read by bench3.sources)",
+    }
+    if verbose:
+        print(f"  {adata.n_obs} cells x {adata.n_vars} genes, "
+              f"{adata.obs['section'].nunique()} sections")
+    return adata
+
+
 READERS = {"exseq_csv": read_exseq_csv, "imc_zstack": read_imc_zstack,
            "deep_starmap_csv": read_deep_starmap_csv,
-           "cosmx_raw": read_cosmx_raw}
+           "cosmx_raw": read_cosmx_raw,
+           "merfish_hypothalamus_csv": read_merfish_hypothalamus_csv,
+           "openst_lymph_node": read_openst_lymph_node}
 
 
 def load_source(path, spec, verbose=True):

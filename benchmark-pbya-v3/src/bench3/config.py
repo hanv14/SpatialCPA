@@ -347,6 +347,66 @@ DATASET_SPECS = {
         "layer_deep": LAYER_DEEP,
         "protocol": "SpatialZ protocol applied to Deep-STARmap (analogue)",
     },
+    "merfish_hypothalamus": {
+        "kind": "analogue",
+        "technology": "MERFISH",
+        "species": "mouse",
+        "tissue": "hypothalamus (preoptic region)",
+        "source": "Moffitt et al. 2018 Science; Dryad",
+        "env_var": "BENCH_V3_RAW_MERFISH_HYPO",
+        "reader": "merfish_hypothalamus_csv",
+        "raw_candidates": (
+            V1_ROOT / "data" / "raw" / "merfish_hypothalamus",
+            V1_ROOT / "data" / "processed" / "merfish_hypothalamus" / "animal_1" / "data.h5ad",
+        ),
+        "source_units": "um",
+        # 12 real sections spanning Bregma -0.29..+0.26 mm, 50 um apart — five
+        # times STARmap's spacing, so a copy baseline has much further to fall.
+        # One animal only: sections from different animals are different tissue.
+        "partition": "sections",
+        "n_sections": None,
+        "section_trim": "center",
+        "held_out": "alternate",
+        # Independently cut and imaged coronal sections, not one imaging block.
+        "registration": "rigid",
+        # Hypothalamic preoptic region. Gad1/Slc17a6 separate the inhibitory and
+        # excitatory populations, which is this tissue's dominant spatial
+        # contrast, and their difference gives the depth axis. Mbp marks the
+        # fibre tracts. All are in the 155-gene panel.
+        "marker_genes": ("Gad1", "Slc17a6", "Mbp"),
+        "layer_superficial": ("Slc17a6",),    # excitatory pole
+        "layer_deep": ("Gad1",),              # inhibitory pole
+        "protocol": "SpatialZ protocol applied to MERFISH hypothalamus (analogue)",
+    },
+    "openst_lymph_node": {
+        "kind": "analogue",
+        "technology": "Open-ST",
+        "species": "human",
+        "tissue": "metastatic lymph node",
+        "source": "Schott et al. 2024 Cell; GEO GSE251926",
+        "env_var": "BENCH_V3_RAW_OPENST",
+        "reader": "openst_lymph_node",
+        "raw_candidates": (
+            V1_ROOT / "data" / "raw" / "openst_lymph_node",
+            V1_ROOT / "data" / "processed" / "openst_lymph_node" / "data.h5ad",
+            V1_ROOT / "data" / "processed" / "openst_lymph_node.h5ad",
+        ),
+        "source_units": "um",
+        # 19 consecutive 10 um cryosections through one metastatic lymph node.
+        "partition": "sections",
+        "n_sections": None,
+        "section_trim": "center",
+        "held_out": "alternate",
+        "registration": "rigid",
+        # Tumour metastasis in lymphoid tissue: EPCAM marks the metastatic
+        # epithelial deposit, PTPRC the lymphocyte background — the same
+        # tumour/immune contrast used for CosMx and IMC, so the three tumour
+        # datasets are read the same way.
+        "marker_genes": ("EPCAM", "PTPRC"),
+        "layer_superficial": ("PTPRC",),
+        "layer_deep": ("EPCAM",),
+        "protocol": "SpatialZ protocol applied to Open-ST serial sections (analogue)",
+    },
 }
 
 
