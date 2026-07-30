@@ -254,20 +254,22 @@ DATASET_SPECS = {
         # does for this dataset — the first v3 dataset where registration is not
         # the identity.
         "registration": "rigid",
-        # A protein panel, so the cortex genes do not apply. panCK marks the
-        # tumour/epithelial compartment and CD3 the T-cell infiltrate — two
-        # channels whose spatial patterns are structured and biologically distinct,
-        # which is what the marker metrics need. Name matching ignores case and
-        # punctuation (``prepare_dataset.resolve_markers``), so panCK / PanCK /
-        # pan-CK all resolve to whatever the panel calls it; the build prints what
-        # it matched and warns when nothing does.
+        # A protein panel, so the cortex genes do not apply. panCK (tumour /
+        # epithelial compartment) and CD3 (T-cell infiltrate) follow the published
+        # analysis of this volume. Name matching ignores case and punctuation
+        # (``prepare_dataset.resolve_markers``) so panCK / PanCK / pan-CK all
+        # resolve to the panel's own spelling — but it is an exact match after
+        # canonicalization, never a prefix, so CD3 cannot capture CD31.
         "marker_genes": ("panCK", "CD3"),
-        # No laminar axis in a tumour. Left empty on purpose: ``laminar_axis`` then
-        # falls back to the gradient of the most spatially structured channel, so
-        # paper_marker_depth_r reads as "profile along the dominant spatial
-        # gradient", NOT as cortical depth.
-        "layer_superficial": (),
-        "layer_deep": (),
+        # A tumour has no laminar axis, but it does have a *compartment* axis, and
+        # these two markers define it: the signed score is z(CD3) - z(panCK), so
+        # its in-plane gradient points from tumour toward immune infiltrate. That
+        # makes paper_marker_depth_r "profile across the tumour-immune axis" —
+        # meaningful, and derived from the ground truth like the cortical version.
+        # Emptying both lists reverts to the generic fallback (the gradient of
+        # whichever channel is most spatially structured).
+        "layer_superficial": ("CD3",),      # immune pole
+        "layer_deep": ("panCK",),           # tumour pole
         "protocol": "SpatialZ protocol applied to 3D IMC (analogue, not the paper)",
     },
 }

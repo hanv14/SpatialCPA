@@ -410,15 +410,18 @@ what a second dataset is *for*.
 read its rows differently from the other two:
 
 * *Protein, not RNA.* The markers are **panCK** (tumour/epithelial compartment)
-  and **CD3** (T-cell infiltrate). Matching ignores case and punctuation, so
-  `panCK` finds `PanCK` or `pan-CK`; it is deliberately *not* a prefix match,
-  because `CD3` would then silently select `CD31`. If a marker does not match, the
-  build says so and suggests the closest panel names — check that line, since an
-  unmatched marker means one fewer scored criterion.
-* *No laminar axis.* A tumour has none, so the layer genes are deliberately empty
-  and `laminar_axis` falls back to the gradient of the most spatially structured
-  channel. `paper_marker_depth_r` therefore reads as "profile along the dominant
-  spatial gradient", not cortical depth.
+  and **CD3** (T-cell infiltrate), following the published analysis of this volume.
+  Matching ignores case and punctuation, so `panCK` finds `PanCK` or `pan-CK`; it
+  is deliberately *not* a prefix match, because `CD3` would then silently select
+  `CD31`. If a marker does not match, the build says so and suggests the closest
+  panel names.
+* *A compartment axis, not a laminar one.* A tumour has no cortical layers, but
+  those same two markers define the axis that matters: the signed score is
+  `z(CD3) − z(panCK)`, so its in-plane gradient points from tumour toward immune
+  infiltrate. `paper_marker_depth_r` therefore reads as **"profile across the
+  tumour–immune axis"** — derived from the ground truth exactly as the cortical
+  version is. Empty both layer lists in `config.DATASET_SPECS` to fall back to the
+  generic axis (the gradient of whichever channel is most spatially structured).
 * *Real serial sections, so registration matters.* These are cut, mounted and
   imaged independently — not one imaging block — so the policy is `rigid`, not
   `none`. The training slices move into a common frame while the held-out ground
