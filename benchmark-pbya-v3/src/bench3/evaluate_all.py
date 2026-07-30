@@ -16,14 +16,19 @@ import argparse
 import traceback
 from pathlib import Path
 
-from .config import DATASET_PATH, RESULTS_DIR
+from .config import DATASET_NAME, RESULTS_DIR, dataset_path
 from .run_benchmark import evaluate_prediction
 
 
 def main():
     ap = argparse.ArgumentParser(description="Evaluate all v3 predictions")
     ap.add_argument("--results-dir", default=str(RESULTS_DIR))
-    ap.add_argument("--dataset", default=str(DATASET_PATH))
+    ap.add_argument("--dataset", default=None,
+                    help="ground-truth h5ad to score against. Default: resolve it "
+                         "per prediction from the dataset in its results path, so a "
+                         "multi-dataset tree is never scored against one volume")
+    ap.add_argument("--dataset-name", default=None,
+                    help="restrict to predictions of this dataset")
     ap.add_argument("--methods", nargs="+", default=None,
                     help="restrict to these methods")
     ap.add_argument("--force", action="store_true",
@@ -40,14 +45,23 @@ def main():
             continue
         if args.methods and method not in args.methods:
             continue
+        ds_name = "/".join(rel[1:-2]) or DATASET_NAME
+        if args.dataset_name and ds_name != args.dataset_name:
+            continue
+        gt_path = Path(args.dataset) if args.dataset else dataset_path(ds_name)
+        if not Path(gt_path).exists():
+            print(f"SKIP {'/'.join(rel[:-1])}: ground truth for {ds_name!r} not "
+                  f"found at {gt_path}")
+            n_skip += 1
+            continue
         metrics_path = pred_path.parent / "metrics.json"
         if metrics_path.exists() and not args.force:
             n_skip += 1
             continue
         label = "/".join(rel[:-1])
-        print(f"Evaluating {label} ...")
+        print(f"Evaluating {label} (gt={Path(gt_path).name}) ...")
         try:
-            m = evaluate_prediction(pred_path, dataset_path=args.dataset,
+            m = evaluate_prediction(pred_path, dataset_path=str(gt_path),
                                     metrics_path=metrics_path,
                                     use_umap=not args.no_umap)
             print(f"  umap_mixing={m.get('paper_umap_mixing')} "

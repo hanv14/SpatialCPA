@@ -84,7 +84,13 @@ def aggregate(results_dir=None):
 
 
 def summarize(df):
-    """Average each metric per method across holdouts."""
+    """Average each metric per (dataset, method) across holdouts.
+
+    Grouping includes the dataset on purpose. Averaging a method's STARmap and
+    ExSeq scores into one number would report a quantity that describes neither
+    volume — and the paper's protocol is defined on STARmap alone, so a pooled
+    row could not be quoted as the reproduction either.
+    """
     if len(df) == 0:
         return pd.DataFrame()
     metric_cols = [m for m in METRIC_NAMES if m in df.columns]
@@ -92,10 +98,15 @@ def summarize(df):
     agg["holdout_id"] = "count"
     if "wall_time_s" in df.columns:
         agg["wall_time_s"] = "sum"
-    out = df.groupby(["method", "family"], dropna=False).agg(agg).reset_index()
+    keys = ["dataset", "method", "family"] if "dataset" in df.columns \
+        else ["method", "family"]
+    out = df.groupby(keys, dropna=False).agg(agg).reset_index()
     out.rename(columns={"holdout_id": "n_runs"}, inplace=True)
-    return out.sort_values("method", key=lambda c: c.map(_method_sort_key),
-                           ignore_index=True)
+    sort_cols = [c for c in ("dataset", "method") if c in out.columns]
+    return out.sort_values(
+        sort_cols,
+        key=lambda c: c.map(_method_sort_key) if c.name == "method" else c,
+        ignore_index=True)
 
 
 def main():
@@ -126,8 +137,13 @@ def main():
                 "paper_marker_depth_r", "paper_celltype_localization"]
     cols = [c for c in headline if c in summary.columns]
     if cols:
-        print("\n── headline paper metrics (mean over holdouts) ──")
-        print(summary.set_index("method")[cols].round(3).to_string())
+        if "dataset" in summary.columns:
+            for ds, sub in summary.groupby("dataset"):
+                print(f"\n── headline paper metrics — {ds} (mean over holdouts) ──")
+                print(sub.set_index("method")[cols].round(3).to_string())
+        else:
+            print("\n── headline paper metrics (mean over holdouts) ──")
+            print(summary.set_index("method")[cols].round(3).to_string())
 
 
 if __name__ == "__main__":

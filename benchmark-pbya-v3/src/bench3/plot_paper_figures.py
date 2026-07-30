@@ -35,8 +35,8 @@ import scipy.sparse as sp
 
 from ._v2bridge import align_prediction_to_gt, load_ground_truth, load_prediction
 from .config import (
-    DATASET_PATH, EMBED_NEIGHBORS, FIGURES_DIR, MARKER_GENES, METHOD_ORDER,
-    RANDOM_SEED, RESULTS_DIR, SPATIAL_K,
+    DATASET_NAME, EMBED_NEIGHBORS, FIGURES_DIR, MARKER_GENES, METHOD_ORDER,
+    RANDOM_SEED, RESULTS_DIR, SPATIAL_K, dataset_path,
 )
 from .evaluate_paper import gearys_c
 from benchmark.evaluate_generation import _morans_i, _rank_normalize  # noqa: E402
@@ -75,8 +75,15 @@ def _mpl():
 
 # ── Loading ───────────────────────────────────────────────────────────────────
 
-def find_runs(results_dir=RESULTS_DIR, methods=None, holdout_id=None):
-    """Locate ``prediction.h5`` files: {method: {holdout_id: path}}."""
+def find_runs(results_dir=RESULTS_DIR, methods=None, holdout_id=None,
+              dataset=None):
+    """Locate ``prediction.h5`` files: {dataset: {method: {holdout_id: path}}}.
+
+    The results tree is ``<method>/<dataset>/<holdout>/``, and every dataset uses
+    the same holdout id (``paper_2_4_6``), so the dataset has to be part of the
+    key: without it a second dataset's prediction silently replaces the first's
+    and gets drawn against the wrong ground truth.
+    """
     results_dir = Path(results_dir)
     found = {}
     for p in sorted(results_dir.rglob("prediction.h5")):
@@ -84,11 +91,14 @@ def find_runs(results_dir=RESULTS_DIR, methods=None, holdout_id=None):
         if len(parts) < 3 or parts[0].startswith("_") or parts[0] == "summary":
             continue
         method, hid = parts[0], parts[-2]
+        ds = "/".join(parts[1:-2]) or DATASET_NAME
         if methods and method not in methods:
             continue
         if holdout_id and hid != holdout_id:
             continue
-        found.setdefault(method, {})[hid] = p
+        if dataset and ds != dataset:
+            continue
+        found.setdefault(ds, {}).setdefault(method, {})[hid] = p
     return found
 
 
@@ -310,7 +320,8 @@ HEATMAP_METRICS = [
 ]
 
 
-def figure_summary_heatmap(out_path, results_dir=RESULTS_DIR, methods=None):
+def figure_summary_heatmap(out_path, results_dir=RESULTS_DIR, methods=None,
+                           dataset=None):
     """Methods × headline agreement metrics. All are ↑ better with a natural
     zero (no agreement), so a diverging ramp centered on zero is the honest
     encoding — a negative cell reads as anti-correlated, not merely small."""
@@ -322,6 +333,10 @@ def figure_summary_heatmap(out_path, results_dir=RESULTS_DIR, methods=None):
         return None
     if methods:
         df = df[df["method"].isin(methods)]
+    if dataset is not None and "dataset" in df.columns:
+        df = df[df["dataset"] == dataset]      # never average two volumes into one cell
+    if len(df) == 0:
+        return None
     cols = [c for c, _ in HEATMAP_METRICS if c in df.columns]
     if not cols:
         return None
@@ -367,7 +382,11 @@ def figure_summary_heatmap(out_path, results_dir=RESULTS_DIR, methods=None):
 def main():
     ap = argparse.ArgumentParser(description="Draw the v3 paper figures")
     ap.add_argument("--results-dir", default=str(RESULTS_DIR))
-    ap.add_argument("--dataset", default=str(DATASET_PATH))
+    ap.add_argument("--dataset", default=None,
+                    help="ground-truth h5ad. Default: resolve each dataset found "
+                         "in the results tree via config.dataset_path")
+    ap.add_argument("--dataset-name", default=None,
+                    help="draw only this dataset (default: every one present)")
     ap.add_argument("--out-dir", default=str(FIGURES_DIR))
     ap.add_argument("--methods", nargs="+", default=None)
     ap.add_argument("--holdout-id", default="paper_2_4_6")
@@ -377,24 +396,41 @@ def main():
                     choices=["umap", "markers", "autocorr", "heatmap"])
     args = ap.parse_args()
 
-    runs = find_runs(args.results_dir, methods=args.methods,
-                     holdout_id=args.holdout_id)
-    runs = {m: paths[args.holdout_id] for m, paths in runs.items()
-            if args.holdout_id in paths}
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    by_dataset = find_runs(args.results_dir, methods=args.methods,
+                           holdout_id=args.holdout_id,
+                           dataset=args.dataset_name)
     want = set(args.only) if args.only else {"umap", "markers", "autocorr", "heatmap"}
 
-    if not runs:
+    if not by_dataset:
         print(f"No predictions found for holdout {args.holdout_id!r} under "
               f"{args.results_dir}.")
-    else:
-        print(f"Methods: {', '.join(_ordered(runs))}")
+        return
+
+    # One figure set per dataset, in its own directory. Ground truth is resolved
+    # per dataset, so a prediction is never drawn against another volume's cells.
+    for ds_name, ds_runs in sorted(by_dataset.items()):
+        runs = {m: paths[args.holdout_id] for m, paths in ds_runs.items()
+                if args.holdout_id in paths}
+        if not runs:
+            continue
+        gt_path = Path(args.dataset) if args.dataset else dataset_path(ds_name)
+        if not Path(gt_path).exists():
+            print(f"\n[{ds_name}] SKIP: ground truth not found at {gt_path} — "
+                  f"build it with `python -m src.bench3.prepare_dataset "
+                  f"--dataset {ds_name}`")
+            continue
+
+        out_dir = Path(args.out_dir) / ds_name
+        out_dir.mkdir(parents=True, exist_ok=True)
+        print(f"\n[{ds_name}] methods: {', '.join(_ordered(runs))}")
+        print(f"[{ds_name}] ground truth: {gt_path}")
+        print(f"[{ds_name}] figures -> {out_dir}")
+
         sections = args.sections
         if sections is None:
             pred = load_prediction(str(next(iter(runs.values()))))
             sections = [str(s) for s in pred["holdout_sections"]]
-        gt = load_ground_truth(args.dataset, sections)
+        gt = load_ground_truth(str(gt_path), sections)
 
         for section in sections:
             if "umap" in want:
@@ -412,11 +448,11 @@ def main():
                     out_dir / f"fig_spatial_autocorrelation_{section}.png")
                 print(f"  wrote {p}")
 
-    if "heatmap" in want:
-        p = figure_summary_heatmap(out_dir / "fig_summary_heatmap.png",
-                                   results_dir=args.results_dir,
-                                   methods=args.methods)
-        print(f"  wrote {p}" if p else "  (no metrics.json — skipped heatmap)")
+        if "heatmap" in want:
+            p = figure_summary_heatmap(out_dir / "fig_summary_heatmap.png",
+                                       results_dir=args.results_dir,
+                                       methods=args.methods, dataset=ds_name)
+            print(f"  wrote {p}" if p else "  (no metrics.json — skipped heatmap)")
 
 
 if __name__ == "__main__":

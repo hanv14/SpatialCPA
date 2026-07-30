@@ -384,7 +384,19 @@ beside the CSV when it is present and row-aligned; without it they stay `unknown
 and the `paper_celltype_*` group is unavailable, which the build says out loud.
 
 Results, inputs and figures are keyed by dataset (`results/<method>/<dataset>/…`),
-so the two never mix.
+so the two never mix. The summary stage handles every dataset present in one go:
+
+```bash
+python -m src.bench3.evaluate_all       # each prediction against ITS own ground truth
+python -m src.bench3.aggregate_results  # all_metrics/per_section carry a `dataset` column;
+                                        # summary_by_method is per (dataset, method)
+python -m src.bench3.rank_methods       # one ranking table per dataset — never pooled
+python -m src.bench3.plot_paper_figures # results/summary/figures/<dataset>/…
+```
+
+Ranks are **within** a dataset: a composite is a position among the methods run on
+that volume, so averaging STARmap's and ExSeq's composites would compare places in
+two different races. Restrict any stage to one dataset with `--dataset-name`.
 
 **Why ExSeq.** Same tissue as STARmap — mouse visual cortex — so the marker genes
 and the laminar-axis composite carry over unchanged, and it is the only candidate

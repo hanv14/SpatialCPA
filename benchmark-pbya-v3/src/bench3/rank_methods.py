@@ -36,7 +36,7 @@ import numpy as np
 import pandas as pd
 
 from .aggregate_results import aggregate
-from .config import METHOD_ORDER, RESULTS_DIR, SUMMARY_DIR
+from .config import DATASET_SPECS, METHOD_ORDER, RESULTS_DIR, SUMMARY_DIR
 
 # group -> [(metric, direction)] with +1 = higher better, -1 = lower better.
 GROUPS = {
@@ -82,7 +82,13 @@ DIAGNOSTICS = ["paper_cell_count_ratio"]
 
 
 def rank(df, include_gen=False):
-    """Per-method group scores + composite rank (1 = best)."""
+    """Per-method group scores + composite rank (1 = best), for ONE dataset.
+
+    Ranking is only meaningful within a dataset: the criteria are scored against
+    that volume's ground truth and its marker panel, and the composite is a rank
+    among the methods run on it. ``rank_all`` applies this per dataset; pooling
+    them would rank methods on an average of two different tasks.
+    """
     groups = dict(GROUPS)
     if include_gen:
         groups["generation"] = GEN_GROUP
@@ -121,6 +127,19 @@ def rank(df, include_gen=False):
     g["__order"] = g["method"].map(
         lambda m: METHOD_ORDER.index(m) if m in METHOD_ORDER else len(METHOD_ORDER))
     return g.sort_values(["composite_rank", "__order"]).drop(columns="__order")
+
+
+def rank_all(df, include_gen=False):
+    """Rank each dataset separately; returns one frame with a ``dataset`` column."""
+    if "dataset" not in df.columns:
+        return rank(df, include_gen=include_gen)
+    out = []
+    for ds, sub in df.groupby("dataset"):
+        r = rank(sub, include_gen=include_gen)
+        if len(r):
+            r.insert(0, "dataset", ds)
+            out.append(r)
+    return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
 
 
 def _fmt(v, width=9):
@@ -163,6 +182,8 @@ def main():
     ap.add_argument("--results-dir", default=str(RESULTS_DIR))
     ap.add_argument("--design", default=None, choices=[None, "paper", "loo"],
                     help="restrict to holdouts of this design")
+    ap.add_argument("--dataset-name", default=None,
+                    help="rank only this dataset (default: each one separately)")
     ap.add_argument("--include-gen", action="store_true",
                     help="add v2's generation metrics as a fifth criterion")
     ap.add_argument("--csv", default=str(Path(SUMMARY_DIR) / "ranking.csv"))
@@ -180,15 +201,36 @@ def main():
         print(f"No runs for design={args.design}.")
         return
 
-    ranked = rank(df, include_gen=args.include_gen)
+    if args.dataset_name:
+        df = df[df["dataset"] == args.dataset_name]
+        if len(df) == 0:
+            print(f"No runs for dataset={args.dataset_name!r}.")
+            return
+
+    ranked = rank_all(df, include_gen=args.include_gen)
     if len(ranked) == 0:
         print("No paper metrics found — run evaluate_all first.")
         return
-    print_tables(ranked)
+
+    # One table per dataset. A composite rank is a rank *among the methods run on
+    # that volume*; concatenating two datasets' ranks would compare positions in
+    # different races.
+    if "dataset" in ranked.columns:
+        for ds, sub in ranked.groupby("dataset"):
+            kind = DATASET_SPECS.get(ds, {}).get("kind")
+            tag = f"  [{kind}]" if kind else ""
+            print(f"\n{'=' * 72}\n  dataset: {ds}{tag}\n{'=' * 72}")
+            print_tables(sub)
+    else:
+        print_tables(ranked)
 
     Path(args.csv).parent.mkdir(parents=True, exist_ok=True)
     ranked.to_csv(args.csv, index=False)
     print(f"\nWrote ranking to {args.csv}")
+    if "dataset" in ranked.columns and ranked["dataset"].nunique() > 1:
+        print("Note: ranks are within a dataset. The STARmap row is the paper "
+              "reproduction; other datasets are protocol analogues (config."
+              "DATASET_SPECS['kind']). Do not average their composites.")
 
 
 if __name__ == "__main__":
