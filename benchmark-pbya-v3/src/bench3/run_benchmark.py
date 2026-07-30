@@ -39,16 +39,44 @@ from ._v2bridge import (
 )
 from .config import (
     DATASET_NAME, DATASET_PATH, INPUTS_CACHE, METHODS, RANDOM_SEED,
-    REGISTRATION, RESULTS_DIR,
+    REGISTRATION, RESULTS_DIR, spec,
 )
 from .design import build_designs
 from .evaluate_paper import evaluate_paper
 
 
+# ── Which dataset is this? ───────────────────────────────────────────────────
+
+def dataset_meta(path):
+    """``(name, registration)`` for a built dataset, read from the file itself.
+
+    v3 handles more than one dataset, and the results tree, the log lines and the
+    registration policy all have to follow the file actually being run rather than
+    a module constant. ``prepare_dataset`` writes ``uns['dataset_name']``; a file
+    predating that, or an unregistered name, falls back to the STARmap defaults.
+    """
+    import anndata as ad
+
+    name = DATASET_NAME
+    try:
+        adata = ad.read_h5ad(str(path), backed="r")
+        try:
+            name = str(adata.uns.get("dataset_name", DATASET_NAME))
+        finally:
+            adata.file.close()
+    except Exception:
+        pass
+    try:
+        return name, spec(name).get("registration", REGISTRATION)
+    except ValueError:
+        return name, REGISTRATION
+
+
 # ── Leakage-safe input, shared across methods ────────────────────────────────
 
 def build_input(holdout_config, dataset_path=DATASET_PATH,
-                registration=REGISTRATION, force=False, verbose=True):
+                registration=REGISTRATION, force=False, verbose=True,
+                dataset_name=DATASET_NAME):
     """Build (or reuse) the training-only, re-registered input for a holdout.
 
     Returns ``{"input_path": str, "targets": [(section, z), ...], "registration": str}``.
@@ -58,7 +86,7 @@ def build_input(holdout_config, dataset_path=DATASET_PATH,
     holdout_id = holdout_config["holdout_id"]
     holdout_sections = [str(s) for s in holdout_config["holdout_sections"]]
 
-    cache_dir = Path(INPUTS_CACHE) / holdout_id
+    cache_dir = Path(INPUTS_CACHE) / dataset_name / holdout_id
     cache_dir.mkdir(parents=True, exist_ok=True)
     input_path = cache_dir / "train_registered.h5ad"
     meta_path = cache_dir / "targets.json"
@@ -144,7 +172,7 @@ def evaluate_prediction(prediction_path, dataset_path=DATASET_PATH,
 
 def run_single(method, holdout_config, dataset_path=DATASET_PATH,
                extra_args=None, dry_run=False, run_eval=True,
-               registration=REGISTRATION, use_umap=True, seed=RANDOM_SEED):
+               registration=None, use_umap=True, seed=RANDOM_SEED):
     info = METHODS.get(method)
     if info is None:
         raise ValueError(f"unknown method {method!r}; known: {sorted(METHODS)}")
@@ -154,16 +182,19 @@ def run_single(method, holdout_config, dataset_path=DATASET_PATH,
         return {"success": False, "error": f"method disabled: {reason}"}
 
     holdout_id = holdout_config["holdout_id"]
-    out_dir = Path(RESULTS_DIR) / method / DATASET_NAME / holdout_id
+    dataset_name, dataset_registration = dataset_meta(dataset_path)
+    if registration is None:
+        registration = dataset_registration
+    out_dir = Path(RESULTS_DIR) / method / dataset_name / holdout_id
     out_dir.mkdir(parents=True, exist_ok=True)
     prediction_path = out_dir / "prediction.h5"
     metrics_path = out_dir / "metrics.json"
     resources_path = out_dir / "resources.json"
     log_path = out_dir / "method_log.txt"
 
-    print(f"[v3] {method} | {DATASET_NAME} | {holdout_id}")
+    print(f"[v3] {method} | {dataset_name} | {holdout_id}")
     reg_info = build_input(holdout_config, dataset_path=dataset_path,
-                           registration=registration)
+                           registration=registration, dataset_name=dataset_name)
     targets = reg_info["targets"]
     if not targets:
         return {"success": False, "error": "no target sections found"}
@@ -281,10 +312,11 @@ def main():
     ap.add_argument("--holdout-id", default=None,
                     help="run only this holdout (relevant for --design loo)")
     ap.add_argument("--dataset", default=str(DATASET_PATH))
-    ap.add_argument("--registration", default=REGISTRATION,
+    ap.add_argument("--registration", default=None,
                     choices=["none", "rigid", "paste"],
-                    help="training-only re-registration policy (default: none — "
-                         "STARmap is a single co-registered imaging volume)")
+                    help="training-only re-registration policy (default: the "
+                         "dataset's own, from config.DATASET_SPECS — 'none' for a "
+                         "single co-registered imaging volume)")
     ap.add_argument("--seed", type=int, default=RANDOM_SEED)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--no-eval", action="store_true")

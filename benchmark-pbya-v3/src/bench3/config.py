@@ -131,16 +131,113 @@ RANDOM_SEED = 42
 
 
 # ── Datasets ──────────────────────────────────────────────────────────────────
-DATASETS = {
-    DATASET_NAME: {
-        "path": DATASET_PATH,
+# STARmap is the paper's dataset and the reference implementation of the
+# protocol. Anything else is the *same protocol applied to another volume* — a
+# protocol analogue, not part of the published result — and says so in
+# ``kind``. Report the two accordingly.
+#
+# Two partition modes, because volumes come in two shapes:
+#   "planes"  discrete optical planes (STARmap: integer z = 6..94). The trim is
+#             stated in plane indices and the planes are split into equal blocks,
+#             so section boundaries land exactly where the paper puts them.
+#   "z_width" continuous z in um (ExSeq: every cell has its own float z, so
+#             "unique planes" is meaningless). The z range is cut into equal-width
+#             slabs — the same idea, expressed in the only unit available.
+DATASET_SPECS = {
+    "starmap_visual_cortex": {
+        "kind": "paper",
         "technology": "STARmap",
         "species": "mouse",
         "tissue": "visual cortex",
-        "registration": REGISTRATION,
+        "source": "Wang et al. 2018 Science; starmapresources.org",
+        "env_var": "BENCH_V3_RAW_STARMAP",
+        "raw_candidates": RAW_STARMAP_CANDIDATES,
+        "partition": "planes",
+        "source_units": "auto",     # obs x/y/z are voxel indices; obsm may be um
+        "drop_z_low": DROP_Z_LOW,
+        "drop_z_high": DROP_Z_HIGH,
+        "voxel_xy_um": VOXEL_XY_UM,
+        "voxel_z_um": VOXEL_Z_UM,
+        "n_sections": N_SECTIONS,
+        "held_out": HELD_OUT_SECTION_INDICES,
+        "registration": "none",
+        "marker_genes": MARKER_GENES,
+        "layer_superficial": LAYER_SUPERFICIAL,
+        "layer_deep": LAYER_DEEP,
         "protocol": "SpatialZ paper (7 consecutive sections, hold out 2/4/6)",
     },
+    "exseq_visual_cortex": {
+        "kind": "analogue",
+        "technology": "ExSeq",
+        "species": "mouse",
+        "tissue": "visual cortex",
+        "source": "Alon et al. 2021 Science (spacejam2); via benchmark-pbya",
+        "env_var": "BENCH_V3_RAW_EXSEQ",
+        # v1's processed file is the input: coordinates are already micrometres
+        # (obs x_um/y_um/z_um -> obsm['spatial']), one 'visual_cortex' section, and
+        # cell types transferred from the SpaceTx EDV results.
+        "raw_candidates": (
+            V1_ROOT / "data" / "processed" / "exseq_visual_cortex" / "data.h5ad",
+            V1_ROOT / "data" / "processed" / "exseq_visual_cortex.h5ad",
+        ),
+        "partition": "z_width",
+        # v1's ExSeq processor writes micrometres into obsm['spatial'] but records
+        # no coordinate_units, so state it here rather than let detection guess.
+        "source_units": "um",
+        # The paper's trim removes the noisy top and bottom of the STARmap block.
+        # There is no published equivalent for ExSeq, so rather than invent plane
+        # numbers this drops the outermost 1% of cells by z at each end: it clears
+        # the stragglers that would otherwise leave the end sections nearly empty,
+        # and it is a stated v3 choice, not a claim about the paper.
+        "z_trim_quantile": 0.01,
+        "voxel_xy_um": 1.0,          # already micrometres
+        "voxel_z_um": 1.0,
+        "n_sections": N_SECTIONS,
+        "held_out": HELD_OUT_SECTION_INDICES,
+        # Same tissue as STARmap, so the cortical markers and the laminar-axis
+        # composite carry over unchanged — whichever of them the ExSeq panel
+        # actually contains. ``prepare_dataset`` records the intersection in
+        # uns['paper_protocol'] and the evaluator uses that, so a gene the panel
+        # lacks is never silently scored.
+        "marker_genes": MARKER_GENES,
+        "layer_superficial": LAYER_SUPERFICIAL,
+        "layer_deep": LAYER_DEEP,
+        # One 3-D imaging volume, like STARmap: the z-planes are inherently
+        # co-registered and re-registering would only distort.
+        "registration": "none",
+        "protocol": "SpatialZ protocol applied to ExSeq (analogue, not the paper)",
+    },
 }
+
+
+def spec(dataset_name=DATASET_NAME):
+    """Protocol spec for a dataset."""
+    try:
+        return DATASET_SPECS[dataset_name]
+    except KeyError:
+        raise ValueError(f"unknown dataset {dataset_name!r}; known: "
+                         f"{sorted(DATASET_SPECS)}") from None
+
+
+def dataset_path(dataset_name=DATASET_NAME):
+    """Where ``prepare_dataset`` writes (and everything else reads) a dataset."""
+    return DATA_DIR / dataset_name / "data.h5ad"
+
+
+def resolve_raw(dataset_name=DATASET_NAME):
+    """First existing source for a dataset, else the preferred path."""
+    s = spec(dataset_name)
+    env = os.environ.get(s["env_var"])
+    if env:
+        return Path(env)
+    for cand in s["raw_candidates"]:
+        if Path(cand).exists():
+            return Path(cand)
+    return Path(s["raw_candidates"][0])
+
+
+DATASETS = {name: {**s, "path": dataset_path(name)}
+            for name, s in DATASET_SPECS.items()}
 
 
 # ── Methods ───────────────────────────────────────────────────────────────────

@@ -41,14 +41,29 @@ def sorted_sections(adata):
     return sorted(labels, key=lambda s: z_by[s]), z_by
 
 
+def held_out_for(adata):
+    """The held-out sections this dataset was built with.
+
+    Read from the file rather than from config, so a dataset built with a
+    different section count or split cannot be silently paired with STARmap's.
+    """
+    # h5ad round-trips a list of strings as a numpy array, so test it explicitly
+    # rather than with `or` — an ndarray has no unambiguous truth value.
+    pp = adata.uns.get("paper_protocol")
+    raw = pp.get("held_out_sections") if pp is not None else None
+    held = [str(s) for s in raw] if raw is not None and len(raw) else []
+    return tuple(held) if held else HELD_OUT_SECTIONS
+
+
 def paper_design(adata):
     """The SpatialZ-paper design: hold out sections 2, 4 and 6 together."""
     labels, z_by = sorted_sections(adata)
+    HELD_OUT_SECTIONS = held_out_for(adata)
     missing = [s for s in HELD_OUT_SECTIONS if s not in labels]
     if missing:
         raise ValueError(
             f"dataset is missing held-out sections {missing}; rebuild it with "
-            f"`python -m src.bench3.prepare_starmap`"
+            f"`python -m src.bench3.prepare_dataset --dataset <name>`"
         )
     holdout = [s for s in labels if s in HELD_OUT_SECTIONS]
     remaining = [s for s in labels if s not in HELD_OUT_SECTIONS]

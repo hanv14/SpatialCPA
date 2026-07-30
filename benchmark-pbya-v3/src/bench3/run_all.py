@@ -26,7 +26,7 @@ from .config import (
     REGISTRATION, RESULTS_DIR, SUMMARY_DIR,
 )
 from .design import build_designs, describe
-from .run_benchmark import build_input, run_single
+from .run_benchmark import build_input, dataset_meta, run_single
 
 
 def resolve_methods(requested):
@@ -43,9 +43,11 @@ def main():
     ap.add_argument("--methods", nargs="+", default=None,
                     help="methods to run (default: all available, in METHOD_ORDER)")
     ap.add_argument("--design", default="paper", choices=["paper", "loo"])
-    ap.add_argument("--dataset", default=str(DATASET_PATH))
-    ap.add_argument("--registration", default=REGISTRATION,
-                    choices=["none", "rigid", "paste"])
+    ap.add_argument("--dataset", default=str(DATASET_PATH),
+                    help="built dataset h5ad (default: the STARmap paper dataset)")
+    ap.add_argument("--registration", default=None,
+                    choices=["none", "rigid", "paste"],
+                    help="default: the dataset's own policy (config.DATASET_SPECS)")
     ap.add_argument("--seed", type=int, default=RANDOM_SEED)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--skip-existing", action="store_true",
@@ -62,12 +64,15 @@ def main():
     if not Path(args.dataset).exists():
         raise SystemExit(
             f"dataset not found: {args.dataset}\n"
-            f"Build it first:  python -m src.bench3.prepare_starmap")
+            f"Build it first:  python -m src.bench3.prepare_dataset --dataset <name>")
 
     methods = resolve_methods(args.methods)
     configs = build_designs(args.dataset, design=args.design)
+    dataset_name, dataset_registration = dataset_meta(args.dataset)
+    registration = args.registration or dataset_registration
 
-    print(f"benchmark-pbya-v3 campaign — design={args.design}, dataset={DATASET_NAME}")
+    print(f"benchmark-pbya-v3 campaign — design={args.design}, dataset={dataset_name} "
+          f"(registration={registration})")
     print(describe(configs))
     print(f"\n  methods ({len(methods)}): {', '.join(methods)}")
     print(f"  total runs: {len(methods) * len(configs)}")
@@ -80,7 +85,7 @@ def main():
         print("\nBuilding shared training-only inputs...")
         for cfg in configs:
             build_input(cfg, dataset_path=args.dataset,
-                        registration=args.registration)
+                        registration=registration, dataset_name=dataset_name)
 
     log, t0 = [], time.time()
     total = len(methods) * len(configs)
@@ -89,7 +94,7 @@ def main():
         for method in methods:
             i += 1
             holdout_id = cfg["holdout_id"]
-            pred = (Path(RESULTS_DIR) / method / DATASET_NAME / holdout_id
+            pred = (Path(RESULTS_DIR) / method / dataset_name / holdout_id
                     / "prediction.h5")
             if args.skip_existing and pred.exists():
                 print(f"\n[{i}/{total}] SKIP (exists): {method} | {holdout_id}")
@@ -100,14 +105,14 @@ def main():
                                  extra_args=args.extra_args,
                                  dry_run=args.dry_run,
                                  run_eval=not args.no_eval,
-                                 registration=args.registration,
+                                 registration=registration,
                                  use_umap=not args.no_umap, seed=args.seed)
             except Exception as e:
                 if not args.continue_on_error:
                     raise
                 print(f"  ERROR: {e}")
                 res = {"success": False, "error": str(e)}
-            res.update({"method": method, "dataset": DATASET_NAME,
+            res.update({"method": method, "dataset": dataset_name,
                         "holdout_id": holdout_id, "design": args.design})
             log.append(res)
 

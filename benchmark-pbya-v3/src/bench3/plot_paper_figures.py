@@ -195,7 +195,15 @@ def figure_umap(runs, gt_adata, section, out_path, seed=RANDOM_SEED):
 
 # ── Figure 2: marker-gene spatial maps ────────────────────────────────────────
 
-def figure_markers(runs, gt_adata, section, out_path, markers=MARKER_GENES):
+def dataset_markers(gt_adata):
+    """This dataset's marker genes, from the file rather than STARmap's globals."""
+    pp = gt_adata.uns.get("paper_protocol")
+    raw = pp.get("marker_genes") if pp is not None else None
+    genes = [str(g) for g in raw] if raw is not None and len(raw) else []
+    return genes or list(MARKER_GENES)
+
+
+def figure_markers(runs, gt_adata, section, out_path, markers=None):
     plt, cmaps = _mpl()
     methods = _ordered(runs)
 
@@ -204,7 +212,7 @@ def figure_markers(runs, gt_adata, section, out_path, markers=MARKER_GENES):
     if not loaded:
         return None
     genes = next(iter(loaded.values()))["genes"]
-    present = [g for g in markers if g in genes]
+    present = [g for g in (markers or MARKER_GENES) if g in genes]
     if not present:
         return None
 
@@ -395,7 +403,8 @@ def main():
                 print(f"  wrote {p}")
             if "markers" in want:
                 p = figure_markers(runs, gt, section,
-                                   out_dir / f"fig_markers_{section}.png")
+                                   out_dir / f"fig_markers_{section}.png",
+                                   markers=dataset_markers(gt))
                 print(f"  wrote {p}")
             if "autocorr" in want:
                 p = figure_autocorrelation(

@@ -10,6 +10,10 @@ SpatialCPA variants are measured against them on identical footing.
 Methods benchmarked: **spatialcpav8_gen, spatialcpav11_gen, spatialcpav14_gen,
 spatialcpav15_gen, SpatialZ, FEAST, isoST**.
 
+Datasets: **STARmap visual cortex** (the paper's, `kind=paper`) and **ExSeq visual
+cortex** (the same protocol on a second volume, `kind=analogue` — see
+[Datasets](#datasets)).
+
 v3 does not modify v1 or v2; all three coexist.
 
 ---
@@ -264,7 +268,8 @@ Path overrides: `BENCH_V3_RAW_STARMAP`, `BENCH_V3_DATA`, `BENCH_V3_RESULTS`.
 ```
 src/bench3/
   config.py              protocol constants, method registry, metric names
-  prepare_starmap.py     raw volume -> the 7-section paper dataset
+  prepare_dataset.py     any registered volume -> its 7-section dataset
+  prepare_starmap.py     the STARmap entry point (thin wrapper, unchanged CLI)
   design.py              the paper holdout (2/4/6) and the LOO robustness check
   _v2bridge.py           imports v2's leakage guard / evaluators / resource monitor
   assets.py              method assets v3 prepares (torch checkpoints it can load)
@@ -279,7 +284,7 @@ src/bench3/
   selftest.py            validate the harness with known-quality reconstructions
   survey_datasets.py     screen benchmark-pbya's datasets for protocol fitness
 
-data/processed/starmap_visual_cortex/data.h5ad   built by prepare_starmap (gitignored)
+data/processed/<dataset>/data.h5ad              built by prepare_dataset (gitignored)
 results/                                         predictions, metrics, figures (gitignored)
 ```
 
@@ -356,11 +361,37 @@ catches it: the run fails instead of contributing fallback numbers to the table.
 
 Nothing here modifies the checkpoint you supplied.
 
-## Could a second dataset be added?
+## Datasets
 
-v3 is one dataset because the protocol it reproduces is defined on one dataset.
-Adding others is possible, but two things decide whether a candidate is worth it,
-and `survey_datasets.py` measures both against `benchmark-pbya`'s processed tree:
+| dataset | `kind` | partition | source | status |
+|---|---|---|---|---|
+| `starmap_visual_cortex` | `paper` | `planes` — trim z 6–13 / 91–94, split 77 planes into 7 × 11 | the paper's own volume | the reproduction |
+| `exseq_visual_cortex` | `analogue` | `z_width` — trim the outermost 1 % of cells by z, cut the range into 7 equal-width slabs | `benchmark-pbya`'s processed ExSeq | the same protocol, a second volume |
+
+```bash
+python -m src.bench3.prepare_dataset --dataset exseq_visual_cortex
+python -m src.bench3.run_all --dataset data/processed/exseq_visual_cortex/data.h5ad
+```
+
+Results, inputs and figures are keyed by dataset (`results/<method>/<dataset>/…`),
+so the two never mix.
+
+**Why ExSeq.** Same tissue as STARmap — mouse visual cortex — so the marker genes
+and the laminar-axis composite carry over unchanged, and it is the only candidate
+in `benchmark-pbya` for which none of the metric definitions have to be
+reinterpreted. It is an independent technology on independent tissue, which is
+what a second dataset is *for*.
+
+**Two honest caveats.** ExSeq's z is continuous, so there are no planes to trim by
+number; the trim is a stated v3 choice (outermost 1 % of cells at each end), not
+the paper's. And `kind=analogue` is not decoration: the SpatialZ paper validated
+this protocol on STARmap, so an ExSeq row is v3's extension of it. Report the two
+separately and never pool their ranks.
+
+### Adding another one
+
+Two things decide whether a candidate is worth it, and `survey_datasets.py`
+measures both against `benchmark-pbya`'s processed tree:
 
 ```bash
 python -m src.bench3.survey_datasets                 # screen every v1 dataset
@@ -381,15 +412,18 @@ planes would land in the same place and add breadth without adding
 discrimination; a dataset with *wider* section spacing would add both. Read that
 column before anything else.
 
-One caveat that is not measured: `evaluate_paper`'s marker metrics use
-`MARKER_GENES` and the `LAYER_*` composites in `config.py`, which are mouse
-cortex. Any non-cortex dataset needs its own markers chosen before those metrics
-mean anything — the `markers` column reports how much of the current panel a
-candidate carries.
+Mechanically, adding one means a new entry in `config.DATASET_SPECS` — source
+paths, partition mode, trim, marker and layer genes, registration policy. Nothing
+else changes: `prepare_dataset` writes the resolved protocol into
+`uns['paper_protocol']`, and `design.py`, `evaluate_paper` and the figures all
+read the sections and the marker panel from the built file, so a dataset can never
+be scored against another one's genes.
 
-Whatever is added should be reported as a *protocol analogue*, not as part of the
-paper reproduction: the SpatialZ paper validated this protocol on STARmap, and a
-result on another dataset is v3's extension of it, not the paper's finding.
+The genes are the part that needs judgement: `MARKER_GENES` and the `LAYER_*`
+composites are mouse cortex, and a non-cortex dataset needs its own chosen before
+`paper_marker_*` means anything. The `markers` column reports how much of the
+current panel a candidate carries; `prepare_dataset` records the intersection and
+warns when it is empty.
 
 ## Reading the results next to v2
 

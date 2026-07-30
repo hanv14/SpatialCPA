@@ -233,7 +233,7 @@ def _zscore(M):
     return (M - mu) / np.where(sd > 0, sd, 1.0)
 
 
-def laminar_axis(gt_xy, gt_R, gene_names, k=SPATIAL_K):
+def laminar_axis(gt_xy, gt_R, gene_names, k=SPATIAL_K, layers=None):
     """In-plane unit vector pointing from deep layers toward the pial surface.
 
     Cortical marker expression is organized along one axis, so the honest
@@ -247,8 +247,9 @@ def laminar_axis(gt_xy, gt_R, gene_names, k=SPATIAL_K):
     Returns ``None`` when no usable gradient exists (e.g. a flat score).
     """
     names = list(gene_names)
-    sup = [names.index(g) for g in LAYER_SUPERFICIAL if g in names]
-    deep = [names.index(g) for g in LAYER_DEEP if g in names]
+    sup_genes, deep_genes = layers or (LAYER_SUPERFICIAL, LAYER_DEEP)
+    sup = [names.index(g) for g in sup_genes if g in names]
+    deep = [names.index(g) for g in deep_genes if g in names]
 
     if sup and deep:
         score = (_zscore(gt_R[:, sup]).mean(axis=1)
@@ -299,7 +300,7 @@ def _binned_gene_field(xy, values, xe, ye, grid):
 
 def marker_metrics(pred_xy_aligned, pred_R, gt_xy, gt_R, gene_names,
                    markers=MARKER_GENES, grid=FIELD_GRID, depth_bins=DEPTH_BINS,
-                   k=SPATIAL_K):
+                   k=SPATIAL_K, layers=None):
     """Per-marker spatial-pattern agreement (Flt1 / Pcp4 / Cux2 by default).
 
     Three complementary views of "is the marker's spatial pattern reproduced":
@@ -334,7 +335,7 @@ def marker_metrics(pred_xy_aligned, pred_R, gt_xy, gt_R, gene_names,
     xe = np.linspace(all_xy[:, 0].min(), all_xy[:, 0].max(), grid + 1)
     ye = np.linspace(all_xy[:, 1].min(), all_xy[:, 1].max(), grid + 1)
 
-    axis_u = laminar_axis(gt_xy, gt_R, names, k=k)
+    axis_u = laminar_axis(gt_xy, gt_R, names, k=k, layers=layers)
     if axis_u is not None:
         d_gt = gt_xy @ axis_u
         edges = np.linspace(d_gt.min(), d_gt.max(), depth_bins + 1)
@@ -497,8 +498,9 @@ def expression_similarity(pred_L, gt_L):
 # Driver                                                                       #
 # --------------------------------------------------------------------------- #
 def evaluate_paper(prediction_path, h5ad_path, output_path=None,
-                   markers=MARKER_GENES, k=SPATIAL_K, grid=FIELD_GRID,
-                   depth_bins=DEPTH_BINS, seed=RANDOM_SEED, use_umap=True):
+                   markers=None, k=SPATIAL_K, grid=FIELD_GRID,
+                   depth_bins=DEPTH_BINS, seed=RANDOM_SEED, use_umap=True,
+                   layers=None):
     """Compute the paper's validation metrics, per held-out section and pooled.
 
     Section-level results are kept in ``per_section`` (used by the figures and
@@ -508,6 +510,18 @@ def evaluate_paper(prediction_path, h5ad_path, output_path=None,
     pred = load_prediction(prediction_path)
     holdout_sections = [str(s) for s in pred["holdout_sections"]]
     gt = load_ground_truth(h5ad_path, holdout_sections)
+
+    # Marker and laminar-axis genes come from the dataset itself (written by
+    # ``prepare_dataset`` into uns['paper_protocol']), so a second dataset is
+    # never scored against STARmap's panel. Explicit arguments still win, and the
+    # config defaults apply to a file built before this was recorded.
+    pp = dict(gt.uns.get("paper_protocol") or {})
+    if markers is None:
+        markers = [str(g) for g in pp.get("marker_genes", [])] or MARKER_GENES
+    if layers is None:
+        sup = [str(g) for g in pp.get("layer_superficial", [])] or LAYER_SUPERFICIAL
+        deep = [str(g) for g in pp.get("layer_deep", [])] or LAYER_DEEP
+        layers = (sup, deep)
 
     common = np.intersect1d(pred["gene_names"], gt.var_names.values)
     metrics = {
@@ -557,7 +571,7 @@ def evaluate_paper(prediction_path, h5ad_path, output_path=None,
         m.update(embedding_continuity(pR, gR, seed=seed, use_umap=use_umap))
         m.update(marker_metrics(pred_xy_al, pR, gt_xy, gR, gene_names,
                                 markers=markers, grid=grid,
-                                depth_bins=depth_bins, k=k))
+                                depth_bins=depth_bins, k=k, layers=layers))
         m.update(expression_similarity(pL, gL))
         if gt_has_types:
             m.update(celltype_localization(
