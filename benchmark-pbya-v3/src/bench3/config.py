@@ -173,10 +173,14 @@ DATASET_SPECS = {
         "tissue": "visual cortex",
         "source": "Alon et al. 2021 Science (spacejam2); via benchmark-pbya",
         "env_var": "BENCH_V3_RAW_EXSEQ",
-        # v1's processed file is the input: coordinates are already micrometres
-        # (obs x_um/y_um/z_um -> obsm['spatial']), one 'visual_cortex' section, and
-        # cell types transferred from the SpaceTx EDV results.
+        # Either source works. The raw spacejam2 distribution is read directly by
+        # ``sources.read_exseq_csv`` (a cell-by-gene CSV in micrometres plus the
+        # SpaceTx EDV annotations), so v1's pipeline does not have to have been
+        # run; v1's processed h5ad is the same content and is accepted too.
+        "reader": "exseq_csv",
         "raw_candidates": (
+            V1_ROOT / "data" / "raw" / "exseq_visual_cortex",
+            V1_ROOT / "data" / "raw" / "exseq_visual_cortex" / "spacejam2_cellxgene.csv",
             V1_ROOT / "data" / "processed" / "exseq_visual_cortex" / "data.h5ad",
             V1_ROOT / "data" / "processed" / "exseq_visual_cortex.h5ad",
         ),

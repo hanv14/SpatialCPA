@@ -269,6 +269,7 @@ Path overrides: `BENCH_V3_RAW_STARMAP`, `BENCH_V3_DATA`, `BENCH_V3_RESULTS`.
 src/bench3/
   config.py              protocol constants, method registry, metric names
   prepare_dataset.py     any registered volume -> its 7-section dataset
+  sources.py             readers for source volumes (h5ad; ExSeq's raw CSV)
   prepare_starmap.py     the STARmap entry point (thin wrapper, unchanged CLI)
   design.py              the paper holdout (2/4/6) and the LOO robustness check
   _v2bridge.py           imports v2's leakage guard / evaluators / resource monitor
@@ -366,12 +367,21 @@ Nothing here modifies the checkpoint you supplied.
 | dataset | `kind` | partition | source | status |
 |---|---|---|---|---|
 | `starmap_visual_cortex` | `paper` | `planes` — trim z 6–13 / 91–94, split 77 planes into 7 × 11 | the paper's own volume | the reproduction |
-| `exseq_visual_cortex` | `analogue` | `z_width` — trim the outermost 1 % of cells by z, cut the range into 7 equal-width slabs | `benchmark-pbya`'s processed ExSeq | the same protocol, a second volume |
+| `exseq_visual_cortex` | `analogue` | `z_width` — trim the outermost 1 % of cells by z, cut the range into 7 equal-width slabs | `benchmark-pbya/data/raw/exseq_visual_cortex` (or v1's processed h5ad) | the same protocol, a second volume |
 
 ```bash
 python -m src.bench3.prepare_dataset --dataset exseq_visual_cortex
 python -m src.bench3.run_all --dataset data/processed/exseq_visual_cortex/data.h5ad
 ```
+
+Both write to `benchmark-pbya-v3/data/processed/<dataset>/data.h5ad` (override with
+`$BENCH_V3_DATA`; the build prints the destination). ExSeq needs no arguments: it
+resolves `benchmark-pbya/data/raw/exseq_visual_cortex` first, then v1's processed
+h5ad — `$BENCH_V3_RAW_EXSEQ` or `--raw` override. The raw form is the spacejam2
+cell-by-gene CSV, read directly by `sources.read_exseq_csv`, so v1's processing
+pipeline does not have to have been run. Cell types come from `results_adata.h5ad`
+beside the CSV when it is present and row-aligned; without it they stay `unknown`
+and the `paper_celltype_*` group is unavailable, which the build says out loud.
 
 Results, inputs and figures are keyed by dataset (`results/<method>/<dataset>/…`),
 so the two never mix.

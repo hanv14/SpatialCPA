@@ -1,4 +1,4 @@
-# Built dataset — regenerate with `python -m src.bench3.prepare_starmap`
+# Built datasets — regenerate with `python -m src.bench3.prepare_dataset --dataset <name>`
 data/
 
 # Predictions, metrics, figures — regenerate with `python -m src.bench3.run_all`

@@ -48,6 +48,7 @@ import scipy.sparse as sp
 from .config import (
     DATASET_NAME, dataset_path, resolve_raw, section_label, spec,
 )
+from .sources import load_source
 
 
 # ── Raw-volume readers ────────────────────────────────────────────────────────
@@ -155,8 +156,6 @@ def partition_z_width(z, n_sections, trim_quantile=0.0):
 def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
           n_sections=None, verbose=True):
     """Build and write a dataset's paper-protocol view. Returns the AnnData."""
-    import anndata as ad
-
     s = spec(dataset)
     raw_path = Path(raw_path or resolve_raw(dataset))
     if output_path is None:
@@ -177,7 +176,8 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
 
     if verbose:
         print(f"Loading {raw_path} ...")
-    adata = ad.read_h5ad(str(raw_path))
+        print(f"  output -> {Path(output_path)}")
+    adata = load_source(raw_path, s, verbose=verbose)
     if verbose:
         print(f"  input: {adata.n_obs} cells x {adata.n_vars} genes "
               f"[{dataset}, partition={s['partition']}]")
