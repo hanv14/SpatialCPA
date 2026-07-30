@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -38,7 +39,7 @@ from ._v2bridge import (
 )
 from .config import (
     DATASET_NAME, DATASET_PATH, INPUTS_CACHE, METHODS, RANDOM_SEED,
-    REGISTRATION, RESULTS_DIR,
+    REGISTRATION, REPO_ROOT, RESULTS_DIR, spatialcpa_package_root,
 )
 from .design import build_designs
 from .evaluate_paper import evaluate_paper
@@ -188,6 +189,24 @@ def run_single(method, holdout_config, dataset_path=DATASET_PATH,
     if extra_args:
         cmd.extend(extra_args)
     print(f"  cmd: {' '.join(cmd)}")
+
+    # Pin which copy of the method's package the wrapper imports, so a v3 run is
+    # determined by config.METHODS rather than by the wrapper's ambient
+    # discovery order. An exported ``<PKG>_ROOT`` still wins, so an intentional
+    # override from the shell keeps working.
+    env = dict(os.environ)
+    package = info.get("package")
+    if package:
+        var = f"{package.upper()}_ROOT"
+        root = spatialcpa_package_root(package)
+        if var in env:
+            print(f"  {var} already set to {env[var]} — leaving it alone")
+        elif root is not None:
+            env[var] = str(root)
+            print(f"  {var}={root}")
+        else:
+            print(f"  WARNING: no {package}/ next to {REPO_ROOT}; "
+                  f"falling back to the wrapper's own discovery")
     if dry_run:
         print("  (dry run — skipping)")
         return {"success": False, "dry_run": True}
@@ -197,7 +216,7 @@ def run_single(method, holdout_config, dataset_path=DATASET_PATH,
     cwd = wrapper.resolve().parents[3]
     with open(log_path, "w") as log_f:
         proc = subprocess.Popen(cmd, stdout=log_f, stderr=subprocess.STDOUT,
-                                cwd=str(cwd))
+                                cwd=str(cwd), env=env)
         monitor = ResourceMonitor(proc.pid)
         monitor.start()
         returncode = proc.wait()

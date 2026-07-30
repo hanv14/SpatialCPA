@@ -36,6 +36,28 @@ V1_ROOT = REPO_ROOT / "benchmark-pbya"                    # shared tools/ + envs
 V2_ROOT = REPO_ROOT / "benchmark-pbya-v2"                 # shared method wrappers
 V2_SRC = V2_ROOT / "src"                                  # importable `benchmark` pkg
 
+
+def spatialcpa_package_root(package):
+    """Directory holding ``<package>/__init__.py``, or None if v3 can't find it.
+
+    The v2 wrappers discover their SpatialCPA package at run time: ``$<PKG>_ROOT``
+    first, else the first of the *wrapper file's* parent directories containing
+    the package. That makes the code a method runs a property of the ambient
+    environment and the on-disk layout rather than of this benchmark — two
+    checkouts of the same package (say ``<repo>/spatialcpav8`` and
+    ``<repo>/src/spatialcpav8``) can diverge, and a run silently picks one.
+
+    v3 pins it instead: look next to the benchmark (both layouts we ship with),
+    and pass the winner to the wrapper as its ``*_ROOT`` environment variable.
+    An explicitly exported ``$<PKG>_ROOT`` still wins — see ``run_benchmark`` —
+    and if nothing is found we pass nothing and leave the wrapper's own
+    discovery untouched.
+    """
+    for cand in (REPO_ROOT, REPO_ROOT / "src"):
+        if (cand / package / "__init__.py").exists():
+            return cand
+    return None
+
 # Raw STARmap volume (Wang et al. 2018). Different checkouts keep it in
 # different places, so resolve against the known locations rather than hard-coding
 # one; $BENCH_V3_RAW_STARMAP wins outright, and --raw overrides per invocation.
@@ -170,13 +192,16 @@ METHODS = {
         "available": True,
         "family": "spatialcpa",
         "notes": "training-free symmetric entropic-OT / McCann bridge",
-        # Pin v8's production configuration — the defaults of
-        # ``SpatialCPAv8Config`` (placement ``smooth_morph``: the coherent
-        # smoothed-OT deformation of the nearest clean slice; expression
-        # ``endpoint``: the source cell's real profile). The v2 wrapper's own CLI
-        # defaults are ablation settings for placements the packaged v8 does not
-        # implement, and passing them aborts every holdout with
-        # ``ValueError: Unknown bridge mode``.
+        # Pin the package copy v3 measures (see spatialcpa_package_root) …
+        "package": "spatialcpav8",
+        # … and the configuration to that copy's own production defaults —
+        # ``SpatialCPAv8Config``'s placement ``smooth_morph`` (the coherent
+        # smoothed-OT deformation of the nearest clean slice) and expression
+        # ``endpoint`` (the source cell's real profile). The v2 wrapper's CLI
+        # defaults name a placement (``diffeo_morph``) that a *different* v8
+        # revision provides; run against this one they abort every holdout with
+        # ``ValueError: Unknown bridge mode 'diffeo_morph'`` and no cells are
+        # written. Pinning both halves keeps them consistent by construction.
         "wrapper_args": ["--placement", "smooth_morph",
                          "--expression-mode", "endpoint"],
     },
