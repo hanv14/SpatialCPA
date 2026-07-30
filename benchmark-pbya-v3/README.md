@@ -277,6 +277,7 @@ src/bench3/
   rank_methods.py        rank by criterion + composite
   plot_paper_figures.py  UMAP, marker maps, Moran/Geary scatter, summary heatmap
   selftest.py            validate the harness with known-quality reconstructions
+  survey_datasets.py     screen benchmark-pbya's datasets for protocol fitness
 
 data/processed/starmap_visual_cortex/data.h5ad   built by prepare_starmap (gitignored)
 results/                                         predictions, metrics, figures (gitignored)
@@ -354,6 +355,41 @@ method log. If the teacher still fails for some other reason, the second half
 catches it: the run fails instead of contributing fallback numbers to the table.
 
 Nothing here modifies the checkpoint you supplied.
+
+## Could a second dataset be added?
+
+v3 is one dataset because the protocol it reproduces is defined on one dataset.
+Adding others is possible, but two things decide whether a candidate is worth it,
+and `survey_datasets.py` measures both against `benchmark-pbya`'s processed tree:
+
+```bash
+python -m src.bench3.survey_datasets                 # screen every v1 dataset
+python -m src.bench3.survey_datasets --csv survey.csv
+```
+
+**Can it be cut into sections?** It must carry 3-D coordinates at single-cell
+resolution, with either enough optical planes to slab (`kind=volume`, as STARmap:
+77 planes → 7 × 11) or enough real serial sections to use directly
+(`kind=serial`). Spot-resolution and 2-D datasets are out.
+
+**Would it discriminate?** `flank_r` is the per-gene Moran's I correlation
+between the two sections flanking a held-out one — what a method scores by
+ignoring the interpolation and copying a neighbour. **STARmap measures 0.98**, so
+on the autocorrelation family this benchmark already has almost no room between a
+trivial copy and a perfect reconstruction. A second dense volume with ~1 µm
+planes would land in the same place and add breadth without adding
+discrimination; a dataset with *wider* section spacing would add both. Read that
+column before anything else.
+
+One caveat that is not measured: `evaluate_paper`'s marker metrics use
+`MARKER_GENES` and the `LAYER_*` composites in `config.py`, which are mouse
+cortex. Any non-cortex dataset needs its own markers chosen before those metrics
+mean anything — the `markers` column reports how much of the current panel a
+candidate carries.
+
+Whatever is added should be reported as a *protocol analogue*, not as part of the
+paper reproduction: the SpatialZ paper validated this protocol on STARmap, and a
+result on another dataset is v3's extension of it, not the paper's finding.
 
 ## Reading the results next to v2
 
