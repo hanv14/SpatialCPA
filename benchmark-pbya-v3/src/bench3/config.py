@@ -211,6 +211,51 @@ DATASET_SPECS = {
         "registration": "none",
         "protocol": "SpatialZ protocol applied to ExSeq (analogue, not the paper)",
     },
+    "imc_breast_cancer": {
+        "kind": "analogue",
+        "technology": "3D IMC",
+        "species": "human",
+        "tissue": "breast cancer (HER2+)",
+        "source": "Kuett et al. 2022, Zenodo 10.5281/zenodo.4752030",
+        "env_var": "BENCH_V3_RAW_IMC",
+        # Raw = one h5ad per serial section (MainHer2BreastCancerModel_zstep10_*),
+        # read by ``sources.read_imc_zstack``; v1's processed file also works.
+        "reader": "imc_zstack",
+        "raw_candidates": (
+            V1_ROOT / "data" / "raw" / "imc_breast_cancer",
+            V1_ROOT / "data" / "processed" / "imc_breast_cancer" / "data.h5ad",
+            V1_ROOT / "data" / "processed" / "imc_breast_cancer.h5ad",
+        ),
+        "source_units": "um",
+        # 15 physically cut sections at 10 um. Each one already *is* a section, so
+        # they are used as-is and a centred window of 7 is kept — the analogue of
+        # the paper dropping the uppermost and lowermost planes. Merging them into
+        # slabs would invent sections no microtome produced.
+        "partition": "sections",
+        "section_trim": "center",
+        "n_sections": N_SECTIONS,
+        "held_out": HELD_OUT_SECTION_INDICES,
+        # NOT a single imaging volume: serial sections are cut, mounted and imaged
+        # independently, so they are not co-registered and interpolation is
+        # ill-posed without aligning them. Training-only rigid ICP, exactly what v2
+        # does for this dataset — the first v3 dataset where registration is not
+        # the identity.
+        "registration": "rigid",
+        # A protein panel, so the cortex genes do not apply. These are candidate
+        # channel names across the common IMC spellings; ``prepare_dataset`` keeps
+        # the intersection with the real panel, prints it, and warns when empty —
+        # so an absent channel is never silently scored. CONFIRM against the panel
+        # before quoting paper_marker_* for this dataset.
+        "marker_genes": ("Ecad", "E-Cadherin", "ECadherin", "panCK", "Pan-Cytokeratin",
+                         "CD31", "SMA", "aSMA", "Ki67", "HER2", "CD45"),
+        # No laminar axis in a tumour. Left empty on purpose: ``laminar_axis`` then
+        # falls back to the gradient of the most spatially structured channel, so
+        # paper_marker_depth_r reads as "profile along the dominant spatial
+        # gradient", NOT as cortical depth.
+        "layer_superficial": (),
+        "layer_deep": (),
+        "protocol": "SpatialZ protocol applied to 3D IMC (analogue, not the paper)",
+    },
 }
 
 

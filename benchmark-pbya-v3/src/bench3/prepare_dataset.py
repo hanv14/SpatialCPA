@@ -151,6 +151,32 @@ def partition_z_width(z, n_sections, trim_quantile=0.0):
     return keep, sec, edges
 
 
+def partition_sections(labels_by_z, n_sections, trim="center"):
+    """Keep a consecutive window of ``n_sections`` of the dataset's own sections.
+
+    For physically cut serial sections each existing slice already *is* a section,
+    so they must not be merged into slabs — merging two 10 um IMC sections would
+    invent a 20 um "section" that no microtome produced, and would flatten two
+    separately-stained, separately-registered slices onto one plane.
+
+    The window mirrors the paper's trim of the uppermost and lowermost planes:
+    ``center`` drops the extremes symmetrically (15 sections -> keep the middle 7),
+    ``low`` / ``high`` keep the first / last ``n_sections``.
+    """
+    if len(labels_by_z) < n_sections:
+        raise ValueError(
+            f"dataset has {len(labels_by_z)} sections; need >= {n_sections}")
+    drop = len(labels_by_z) - n_sections
+    if trim == "low":
+        start = 0
+    elif trim == "high":
+        start = drop
+    else:
+        start = drop // 2
+    keep = list(labels_by_z[start:start + n_sections])
+    return keep, {lab: i for i, lab in enumerate(keep, start=1)}
+
+
 # ── Build ─────────────────────────────────────────────────────────────────────
 
 def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
@@ -221,6 +247,20 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
         trim_desc = f"outermost {q:.1%} of cells by z at each end"
         extra = (f"; z {edges[0]:.1f}-{edges[-1]:.1f} um cut into {n_sections} "
                  f"slabs of {np.diff(edges)[0]:.2f} um")
+    elif s["partition"] == "sections":
+        secs_all = adata.obs["section"].values.astype(str)
+        by_z = sorted(np.unique(secs_all),
+                      key=lambda lab: float(np.median(z_um_all[secs_all == lab])))
+        keep_labels, assignment = partition_sections(
+            by_z, n_sections, s.get("section_trim", "center"))
+        keep_mask = np.isin(secs_all, keep_labels)
+        sec_idx_all = np.array([assignment.get(lab, 0) for lab in secs_all])
+        planes_all = np.rint(z_um_all).astype(int)
+        keep_labels = [str(l) for l in keep_labels]
+        dropped_labels = [str(l) for l in by_z if str(l) not in keep_labels]
+        trim_desc = (f"{len(dropped_labels)} of {len(by_z)} source sections "
+                     f"({s.get('section_trim', 'center')} window): {dropped_labels}")
+        extra = f"; kept {keep_labels}"
     else:
         raise ValueError(f"unknown partition mode {s['partition']!r}")
 

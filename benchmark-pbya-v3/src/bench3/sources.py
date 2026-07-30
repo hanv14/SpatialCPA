@@ -27,6 +27,8 @@ EXSEQ_EDV = "results_adata.h5ad"
 EXSEQ_EDV_COLUMN = "edv_predictions_|_merged_cluster_smFISH"
 EXSEQ_COORD_COLS = ("x_um", "y_um", "z_um")
 
+IMC_Z_STEP_UM = 10.0        # fallback when the filename does not name the step
+
 
 def read_exseq_csv(path, verbose=True):
     """Read the raw ExSeq visual-cortex distribution (spacejam2) as AnnData.
@@ -104,7 +106,84 @@ def read_exseq_csv(path, verbose=True):
     return adata
 
 
-READERS = {"exseq_csv": read_exseq_csv}
+def read_imc_zstack(path, verbose=True):
+    """Read the 3-D IMC breast-cancer raw distribution: one h5ad per z-section.
+
+    Kuett et al. ship ``MainHer2BreastCancerModel_zstep10_<i>.h5ad``, one file per
+    serial section at 10 um spacing. Mirrors v1's processor: z from the file index
+    times the step, ``section = z<i>``, cell types from the file's own column (or
+    leiden, else unannotated), CSR intensities.
+
+    ``path`` may be the raw directory or one of the files in it.
+    """
+    import anndata as ad
+    import re
+
+    path = Path(path)
+    raw_dir = path if path.is_dir() else path.parent
+    files = sorted(raw_dir.glob("*zstep*_*.h5ad"),
+                   key=lambda p: int(re.search(r"_(\d+)\.h5ad$", p.name).group(1))
+                   if re.search(r"_(\d+)\.h5ad$", p.name) else 0)
+    if not files:
+        raise FileNotFoundError(
+            f"no IMC z-stack files under {raw_dir}\n"
+            f"  expected e.g. MainHer2BreastCancerModel_zstep10_0.h5ad ... _14.h5ad")
+
+    step = IMC_Z_STEP_UM
+    m = re.search(r"zstep(\d+)", files[0].name)
+    if m:
+        step = float(m.group(1))          # the step is named in the file itself
+    if verbose:
+        print(f"  reading {len(files)} IMC sections from {raw_dir.name} "
+              f"(z step {step:g} um)")
+
+    slices = []
+    for i, f in enumerate(files):
+        a = ad.read_h5ad(str(f))
+        xy = None
+        for key in ("spatial", "spatial3d"):
+            if key in a.obsm:
+                xy = np.asarray(a.obsm[key], dtype=np.float64)[:, :2]
+                break
+        if xy is None:
+            for xc, yc in (("x", "y"), ("X", "Y")):
+                if xc in a.obs.columns and yc in a.obs.columns:
+                    xy = np.column_stack([a.obs[xc].values.astype(np.float64),
+                                          a.obs[yc].values.astype(np.float64)])
+                    break
+        if xy is None:
+            raise ValueError(f"{f.name}: no spatial coordinates in obsm or obs")
+
+        a.obsm["spatial"] = np.column_stack([xy, np.full(len(xy), i * step)])
+        a.obs["section"] = f"z{i}"
+        if "cell_type" not in a.obs.columns:
+            a.obs["cell_type"] = (a.obs["leiden"].astype(str)
+                                  if "leiden" in a.obs.columns else "unannotated")
+        a.X = a.X.tocsr() if sp.issparse(a.X) else sp.csr_matrix(a.X)
+        a.var_names_make_unique()
+        a.obs_names = [f"z{i}_{n}" for n in a.obs_names]
+        slices.append(a)
+
+    adata = ad.concat(slices, join="outer", merge="first")
+    adata.obs_names_make_unique()
+    adata.X = adata.X.tocsr() if sp.issparse(adata.X) else sp.csr_matrix(adata.X)
+    adata.obs["section"] = adata.obs["section"].astype(str)
+    adata.obs["cell_type"] = adata.obs["cell_type"].astype(str)
+    adata.uns["expression_type"] = "fluorescence_intensity"
+    adata.uns["dataset_name"] = "imc_breast_cancer"
+    adata.uns["spatial_metadata"] = {
+        "technology": "3D IMC", "species": "human",
+        "tissue": "breast cancer (HER2+)", "coordinate_units": "micrometers",
+        "expression_type": "fluorescence_intensity",
+        "source": "Zenodo 10.5281/zenodo.4752030 (raw, read by bench3.sources)",
+    }
+    if verbose:
+        print(f"  {adata.n_obs} cells x {adata.n_vars} channels, "
+              f"{adata.obs['section'].nunique()} sections")
+    return adata
+
+
+READERS = {"exseq_csv": read_exseq_csv, "imc_zstack": read_imc_zstack}
 
 
 def load_source(path, spec, verbose=True):

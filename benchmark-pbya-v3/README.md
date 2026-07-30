@@ -10,9 +10,9 @@ SpatialCPA variants are measured against them on identical footing.
 Methods benchmarked: **spatialcpav8_gen, spatialcpav11_gen, spatialcpav14_gen,
 spatialcpav15_gen, SpatialZ, FEAST, isoST**.
 
-Datasets: **STARmap visual cortex** (the paper's, `kind=paper`) and **ExSeq visual
-cortex** (the same protocol on a second volume, `kind=analogue` — see
-[Datasets](#datasets)).
+Datasets: **STARmap visual cortex** (the paper's, `kind=paper`), plus **ExSeq
+visual cortex** and **3-D IMC breast cancer** (the same protocol on other volumes,
+`kind=analogue` — see [Datasets](#datasets)).
 
 v3 does not modify v1 or v2; all three coexist.
 
@@ -368,6 +368,7 @@ Nothing here modifies the checkpoint you supplied.
 |---|---|---|---|---|
 | `starmap_visual_cortex` | `paper` | `planes` — trim z 6–13 / 91–94, split 77 planes into 7 × 11 | the paper's own volume | the reproduction |
 | `exseq_visual_cortex` | `analogue` | `z_width` — trim the outermost 1 % of cells by z, cut the range into 7 equal-width slabs | `benchmark-pbya/data/raw/exseq_visual_cortex` (or v1's processed h5ad) | the same protocol, a second volume |
+| `imc_breast_cancer` | `analogue` | `sections` — 15 real serial sections at 10 µm; keep the centred window of 7 | `benchmark-pbya/data/raw/imc_breast_cancer` (15 h5ads, or v1's processed) | protein panel, human tumour |
 
 ```bash
 python -m src.bench3.prepare_dataset --dataset exseq_visual_cortex
@@ -404,6 +405,29 @@ and the laminar-axis composite carry over unchanged, and it is the only candidat
 in `benchmark-pbya` for which none of the metric definitions have to be
 reinterpreted. It is an independent technology on independent tissue, which is
 what a second dataset is *for*.
+
+**About the IMC dataset.** It is the one case where the metrics change meaning, so
+read its rows differently from the other two:
+
+* *Protein, not RNA.* The panel is ~30 antibody channels, so the cortex markers do
+  not apply. `config.DATASET_SPECS` lists candidate channel names (Ecad, panCK,
+  CD31, SMA, Ki67, HER2, CD45, across the usual spellings); the build keeps the
+  intersection with the real panel and prints it. **Confirm that list against your
+  panel before quoting `paper_marker_*`.**
+* *No laminar axis.* A tumour has none, so the layer genes are deliberately empty
+  and `laminar_axis` falls back to the gradient of the most spatially structured
+  channel. `paper_marker_depth_r` therefore reads as "profile along the dominant
+  spatial gradient", not cortical depth.
+* *Real serial sections, so registration matters.* These are cut, mounted and
+  imaged independently — not one imaging block — so the policy is `rigid`, not
+  `none`. The training slices move into a common frame while the held-out ground
+  truth stays in the original one, and the evaluation-side prediction→GT alignment
+  absorbs the difference. That makes the alignment-dependent metrics
+  (`paper_marker_field_r`, `paper_celltype_localization`) noisier here than on the
+  two co-registered volumes; the autocorrelation and distributional families are
+  unaffected.
+* *Half the volume is unused.* The paper design needs 7 consecutive sections and
+  the dataset has 15, so the centred window is kept and 8 sections are dropped.
 
 **Two honest caveats.** ExSeq's z is continuous, so there are no planes to trim by
 number; the trim is a stated v3 choice (outermost 1 % of cells at each end), not
