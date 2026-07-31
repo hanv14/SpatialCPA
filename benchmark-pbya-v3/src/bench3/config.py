@@ -238,6 +238,10 @@ DATASET_SPECS = {
             V1_ROOT / "data" / "processed" / "imc_breast_cancer.h5ad",
         ),
         "source_units": "um",
+        # The source block is a known size; the build checks it (see
+        # prepare_dataset) so a reader that silently drops sections cannot
+        # turn this into a smaller, differently-split experiment.
+        "expected_sections": 15,
         # 15 physically cut sections at 10 um, and each one already *is* a
         # section, so all of them are used: ``n_sections: None`` means "however
         # many the data has". There is no reason to discard two thirds of a
@@ -290,6 +294,10 @@ DATASET_SPECS = {
             V1_ROOT / "data" / "processed" / "cosmx_nsclc_3d.h5ad",
         ),
         "source_units": "um",
+        # The source block is a known size; the build checks it (see
+        # prepare_dataset) so a reader that silently drops sections cannot
+        # turn this into a smaller, differently-split experiment.
+        "expected_sections": 6,
         # Six real cryosections, 30 um apart (every 6th 5-um section). All of them
         # are used; "alternate" then holds out 2 and 4, leaving 1/3/5/6 as input.
         # That 30 um gap is the widest in the benchmark and the reason this dataset
@@ -360,6 +368,10 @@ DATASET_SPECS = {
             V1_ROOT / "data" / "processed" / "merfish_hypothalamus" / "animal_1" / "data.h5ad",
         ),
         "source_units": "um",
+        # The source block is a known size; the build checks it (see
+        # prepare_dataset) so a reader that silently drops sections cannot
+        # turn this into a smaller, differently-split experiment.
+        "expected_sections": 12,
         # 12 real sections spanning Bregma -0.29..+0.26 mm, 50 um apart — five
         # times STARmap's spacing, so a copy baseline has much further to fall.
         # One animal only: sections from different animals are different tissue.
@@ -392,6 +404,10 @@ DATASET_SPECS = {
             V1_ROOT / "data" / "processed" / "openst_lymph_node.h5ad",
         ),
         "source_units": "um",
+        # The source block is a known size; the build checks it (see
+        # prepare_dataset) so a reader that silently drops sections cannot
+        # turn this into a smaller, differently-split experiment.
+        "expected_sections": 19,
         # 19 consecutive 10 um cryosections through one metastatic lymph node.
         "partition": "sections",
         "n_sections": None,

@@ -387,6 +387,24 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
     # For real serial sections the count can come from the data itself.
     if s["partition"] == "sections" and n_sections is None:
         n_sections = int(len(np.unique(adata.obs["section"].values.astype(str))))
+        # Taking the count from the data is convenient but it is also blind: a
+        # reader that silently failed to place some sections produces a smaller
+        # volume, and since the hold-out pattern is derived from the count
+        # (``held_out: "alternate"``), nothing downstream can tell that apart
+        # from a dataset that genuinely has fewer sections. Where the source is a
+        # published block of known size, say so and check it.
+        expected = s.get("expected_sections")
+        if expected is not None and n_sections != int(expected):
+            raise ValueError(
+                f"{dataset}: the source is documented as {expected} sections but "
+                f"only {n_sections} arrived from the reader "
+                f"({sorted(np.unique(adata.obs['section'].values.astype(str)))}).\n"
+                f"  This changes the hold-out split, so the build stops rather "
+                f"than quietly producing a different experiment.\n"
+                f"  Check the reader's output above for sections it could not "
+                f"place, and re-download the raw archive if any are missing.\n"
+                f"  To build the smaller volume deliberately, pass "
+                f"--n-sections {n_sections}.")
     held_out = tuple(section_label(i) for i in held_out_indices(s, n_sections))
 
     if s["partition"] == "planes":

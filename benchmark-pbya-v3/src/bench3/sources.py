@@ -17,6 +17,7 @@ when they are present and row-aligned.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import numpy as np
@@ -344,10 +345,25 @@ def read_deep_starmap_csv(path, verbose=True):
 COSMX_PREPROCESSED_ZIP = "preprocessed_objects.zip"
 COSMX_FLAT_ZIP = "cosmx_flat_files.zip"
 COSMX_SECTIONS = (4, 10, 16, 22, 28, 34)      # every 6th 5-um cryosection
-COSMX_SECTION_RUN = {4: "Run1129", 10: "Run1129", 16: "Run1129",
-                     22: "Run1129", 28: "Run1129", 34: "Run1129"}
 COSMX_PIXEL_UM = 0.18                          # Nanostring SMI, 20x
 COSMX_SECTION_SPACING_UM = 30.0
+
+# The flat files are named ``<run>_Section_NN_metadata_file.csv``, and the run id
+# is NOT constant across the block — sections 4/10/16 were imaged on Run1129 and
+# 22/28/34 on Run1137. Hard-coding one run silently loses half the volume, so the
+# member is discovered from the archive instead of assumed.
+COSMX_META_RE = re.compile(
+    r"cosmx_flat_files/Section_(\d+)/[^/]*_Section_(\d+)_metadata_file\.csv$")
+
+
+def _cosmx_metadata_members(namelist):
+    """``{section number: member path}`` for every metadata CSV in the archive."""
+    found = {}
+    for name in namelist:
+        m = COSMX_META_RE.match(name)
+        if m and int(m.group(1)) == int(m.group(2)):
+            found[int(m.group(1))] = name
+    return found
 
 
 def read_cosmx_raw(path, verbose=True):
@@ -398,27 +414,35 @@ def read_cosmx_raw(path, verbose=True):
     # ── physical coordinates from the flat files ──
     coords = {}
     with zipfile.ZipFile(flat_zip) as zf:
+        members = _cosmx_metadata_members(zf.namelist())
+        # A section whose coordinates cannot be read is not a degraded build, it
+        # is a different experiment: the section count sets the hold-out pattern
+        # (``held_out: "alternate"``), and because ``n_sections`` is taken from
+        # the data nothing downstream can notice that half the block went
+        # missing. So this fails here rather than warning and carrying on.
+        absent = [s for s in COSMX_SECTIONS if s not in members]
+        if absent:
+            raise ValueError(
+                f"{flat_zip.name} has no metadata CSV for section(s) {absent}.\n"
+                f"  expected sections: {list(COSMX_SECTIONS)}\n"
+                f"  found in archive : {sorted(members)}\n"
+                f"  Building without them would silently produce a "
+                f"{len(members)}-section volume, which changes the hold-out "
+                f"split and is not the protocol this dataset is registered for. "
+                f"Re-download cosmx_flat_files.zip (Zenodo 15240431).")
         for sec in COSMX_SECTIONS:
-            run = COSMX_SECTION_RUN[sec]
-            member = (f"cosmx_flat_files/Section_{sec:02d}/"
-                      f"{run}_Section_{sec:02d}_metadata_file.csv")
-            try:
-                with zf.open(member) as f:
-                    df = pd.read_csv(f, usecols=["fov", "cell_ID",
-                                                 "CenterX_global_px",
-                                                 "CenterY_global_px"])
-            except KeyError:
-                if verbose:
-                    print(f"  WARNING: {member} not in {flat_zip.name}; "
-                          f"section {sec} will have no coordinates")
-                continue
+            with zf.open(members[sec]) as f:
+                df = pd.read_csv(f, usecols=["fov", "cell_ID",
+                                             "CenterX_global_px",
+                                             "CenterY_global_px"])
             for fov, cid, cx, cy in zip(df["fov"].astype(int),
                                         df["cell_ID"].astype(int),
                                         df["CenterX_global_px"],
                                         df["CenterY_global_px"]):
                 coords[(sec, fov, cid)] = (cx, cy)
     if verbose:
-        print(f"  {len(coords)} flat-file coordinates")
+        print(f"  {len(coords)} flat-file coordinates from "
+              f"{len(COSMX_SECTIONS)} sections")
 
     key_re = re.compile(r"section_(\d+)_fov_(\d+)_ID_(\d+)")
     sec_to_z = {sec: float(i) * COSMX_SECTION_SPACING_UM
