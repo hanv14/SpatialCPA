@@ -44,7 +44,7 @@ import scipy.sparse as sp
 from .config import DATASET_PATH, RANDOM_SEED, SUMMARY_DIR, resolve_dataset_arg
 from .design import build_designs
 from .evaluate_paper import evaluate_paper
-from .run_benchmark import build_input
+from .run_benchmark import build_input, dataset_meta
 
 # Reuse the exact writer every real method wrapper uses, so the self-test
 # exercises the real prediction contract rather than a lookalike.
@@ -144,10 +144,15 @@ def main():
 
     args.dataset = str(resolve_dataset_arg(args.dataset))
     cfg = build_designs(args.dataset, design=args.design)[0]
-    print(f"design={args.design} holdout={cfg['holdout_id']} "
+    # The input cache is keyed by dataset name; without passing it, every dataset
+    # would self-test against whatever is cached under the STARmap default — a
+    # different gene panel and a different set of cells.
+    ds_name, registration = dataset_meta(args.dataset)
+    print(f"dataset={ds_name} design={args.design} holdout={cfg['holdout_id']} "
           f"held out={cfg['holdout_sections']}")
 
-    info = build_input(cfg, dataset_path=args.dataset, verbose=True)
+    info = build_input(cfg, dataset_path=args.dataset, registration=registration,
+                       dataset_name=ds_name, verbose=True)
     targets = [(s, float(z)) for s, z in info["targets"]]
     full = ad.read_h5ad(args.dataset)
     train = ad.read_h5ad(info["input_path"])

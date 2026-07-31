@@ -26,9 +26,11 @@ and log-scale predictions are directly comparable. (Rank-normalization is
 imported from v2's evaluator so v3 and v2 use bit-identical definitions.)
 
 Only the binned-field and localization metrics need the prediction and the GT to
-share a coordinate frame; those use v2's orientation-robust
-``align_prediction_to_gt``. Alignment is an evaluation-side operation — it reads
-the GT and feeds nothing back to the method — so it is not leakage.
+share a coordinate frame; those use :func:`bench3.align.align_by_expression`,
+which picks the pose by marker-field agreement and never mirrors the tissue (see
+``align.py`` for why occupancy-based pose selection fails on symmetric tissue).
+Alignment is an evaluation-side operation — it reads the GT and feeds nothing
+back to the method — so it is not leakage.
 """
 
 from __future__ import annotations
@@ -44,7 +46,8 @@ from scipy.spatial import cKDTree
 from scipy.spatial.distance import cdist
 from scipy.stats import pearsonr, spearmanr
 
-from ._v2bridge import align_prediction_to_gt, load_ground_truth, load_prediction
+from ._v2bridge import load_ground_truth, load_prediction
+from .align import align_by_expression, binned_gene_field, scoring_columns
 from .config import (
     DEPTH_BINS, EMBED_NEIGHBORS, FIELD_GRID, LAYER_DEEP, LAYER_SUPERFICIAL,
     MARKER_GENES, RANDOM_SEED, SPATIAL_K,
@@ -284,18 +287,10 @@ def depth_profile(xy, values, axis_u, edges):
     return out
 
 
-def _binned_gene_field(xy, values, xe, ye, grid):
-    xb = np.clip(np.digitize(xy[:, 0], xe) - 1, 0, grid - 1)
-    yb = np.clip(np.digitize(xy[:, 1], ye) - 1, 0, grid - 1)
-    flat = yb * grid + xb
-    sums = np.zeros(grid * grid)
-    cnts = np.zeros(grid * grid)
-    np.add.at(sums, flat, values)
-    np.add.at(cnts, flat, 1.0)
-    occ = cnts > 0
-    means = np.zeros(grid * grid)
-    means[occ] = sums[occ] / cnts[occ]
-    return means, occ
+# The binning lives in ``align`` because the aligner scores poses with it; the
+# metric below has to use the *same* binning or the score that selected the pose
+# would not be the score being reported.
+_binned_gene_field = binned_gene_field
 
 
 def marker_metrics(pred_xy_aligned, pred_R, gt_xy, gt_R, gene_names,
@@ -497,6 +492,16 @@ def expression_similarity(pred_L, gt_L):
 # --------------------------------------------------------------------------- #
 # Driver                                                                       #
 # --------------------------------------------------------------------------- #
+# Per-section bookkeeping that must not become a ``paper_*`` metric: cell counts
+# (already reported), and the alignment record (partly non-numeric, and an angle
+# is not something you average — see below).
+NOT_POOLED = frozenset({
+    "n_gt_cells", "n_pred_cells",
+    "align_rotation_deg", "align_scale", "align_score", "align_runner_up",
+    "align_coverage", "align_method", "align_basis",
+})
+
+
 def evaluate_paper(prediction_path, h5ad_path, output_path=None,
                    markers=None, k=SPATIAL_K, grid=FIELD_GRID,
                    depth_bins=DEPTH_BINS, seed=RANDOM_SEED, use_umap=True,
@@ -564,9 +569,12 @@ def evaluate_paper(prediction_path, h5ad_path, output_path=None,
 
         gt_xy = gt_spatial[gm, :2]
         pred_xy = np.column_stack([pred["x"][pm], pred["y"][pm]])
-        pred_xy_al = align_prediction_to_gt(pred_xy, gt_xy, with_scale=True)
+        cols, basis = scoring_columns(gene_names, markers, gt_xy, gR, spatial_k=k)
+        pred_xy_al, ainfo = align_by_expression(
+            pred_xy, pR[:, cols], gt_xy, gR[:, cols], grid=grid, seed=seed)
 
-        m = {}
+        m = dict(ainfo)
+        m["align_basis"] = basis
         m.update(spatial_autocorrelation_metrics(pred_xy, pR, gt_xy, gR, k=k))
         m.update(embedding_continuity(pR, gR, seed=seed, use_umap=use_umap))
         m.update(marker_metrics(pred_xy_al, pR, gt_xy, gR, gene_names,
@@ -592,12 +600,20 @@ def evaluate_paper(prediction_path, h5ad_path, output_path=None,
 
     w = np.asarray(weights, dtype=float)
     keys = sorted({key for _, v in usable for key in v
-                   if key not in ("n_gt_cells", "n_pred_cells")})
+                   if key not in NOT_POOLED})
     for key in keys:
         vals = np.array([v.get(key, np.nan) for _, v in usable], dtype=float)
         ok = ~np.isnan(vals)
         metrics[f"paper_{key}"] = (float(np.average(vals[ok], weights=w[ok]))
                                    if ok.any() else None)
+
+    # The alignment record stays per-section — a mean of angles is meaningless
+    # (350° and 10° average to 180°) — but the largest rotation applied is worth
+    # surfacing at the top level, because a big one on an already-registered
+    # dataset is the signal that a pose decision deserves a look.
+    rots = [abs(v["align_rotation_deg"]) for _, v in usable
+            if v.get("align_rotation_deg") is not None]
+    metrics["align_rotation_deg_max"] = max(rots) if rots else None
 
     metrics["per_section"] = per_section
     return _finish(metrics, output_path)

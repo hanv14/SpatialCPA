@@ -33,7 +33,8 @@ from pathlib import Path
 import numpy as np
 import scipy.sparse as sp
 
-from ._v2bridge import align_prediction_to_gt, load_ground_truth, load_prediction
+from ._v2bridge import load_ground_truth, load_prediction
+from .align import align_by_expression, scoring_columns
 from .config import (
     DATASET_NAME, EMBED_NEIGHBORS, FIGURES_DIR, MARKER_GENES, METHOD_ORDER,
     RANDOM_SEED, RESULTS_DIR, SPATIAL_K, dataset_path, resolve_dataset_arg,
@@ -107,8 +108,14 @@ def _ordered(methods):
                                           if m in METHOD_ORDER else 99, m))
 
 
-def load_section(pred_path, gt_adata, section):
-    """Return per-section aligned prediction + GT arrays on a common gene space."""
+def load_section(pred_path, gt_adata, section, markers=None, align=True):
+    """Return per-section aligned prediction + GT arrays on a common gene space.
+
+    The pose is chosen by :func:`bench3.align.align_by_expression` — the same
+    aligner ``evaluate_paper`` scores with, so a marker map in the figures shows
+    the orientation the reported ``paper_marker_field_r`` was computed at. Pass
+    ``align=False`` for a figure that never draws coordinates (the UMAP panel).
+    """
     pred = load_prediction(str(pred_path))
     gt_sections = gt_adata.obs["section"].values.astype(str)
     gm = gt_sections == section
@@ -129,11 +136,21 @@ def load_section(pred_path, gt_adata, section):
 
     gt_xy = np.asarray(gt_adata.obsm["spatial"])[gm, :2]
     pred_xy = np.column_stack([pred["x"][pm], pred["y"][pm]])
+    genes = [str(g) for g in common]
+    pR, gR = _rank_normalize(pX), _rank_normalize(gX)
+
+    info = {}
+    if align:
+        cols, _ = scoring_columns(genes, markers or dataset_markers(gt_adata),
+                                  gt_xy, gR, spatial_k=SPATIAL_K)
+        pred_xy, info = align_by_expression(pred_xy, pR[:, cols],
+                                            gt_xy, gR[:, cols], seed=RANDOM_SEED)
     return {
-        "genes": [str(g) for g in common],
-        "pred_R": _rank_normalize(pX), "gt_R": _rank_normalize(gX),
-        "pred_xy": align_prediction_to_gt(pred_xy, gt_xy, with_scale=True),
+        "genes": genes,
+        "pred_R": pR, "gt_R": gR,
+        "pred_xy": pred_xy,
         "gt_xy": gt_xy,
+        "align": info,
     }
 
 
@@ -173,7 +190,7 @@ def figure_umap(runs, gt_adata, section, out_path, seed=RANDOM_SEED):
 
     basis = "embedding"
     for ax, method in zip(axes.ravel(), methods):
-        data = load_section(runs[method], gt_adata, section)
+        data = load_section(runs[method], gt_adata, section, align=False)
         if data is None:
             ax.set_axis_off()
             ax.set_title(f"{method}\n(no cells)", color=INK_MUTED)
@@ -217,7 +234,8 @@ def figure_markers(runs, gt_adata, section, out_path, markers=None):
     plt, cmaps = _mpl()
     methods = _ordered(runs)
 
-    loaded = {m: load_section(runs[m], gt_adata, section) for m in methods}
+    loaded = {m: load_section(runs[m], gt_adata, section, markers=markers)
+              for m in methods}
     loaded = {m: d for m, d in loaded.items() if d is not None}
     if not loaded:
         return None
@@ -272,7 +290,10 @@ def figure_autocorrelation(runs, gt_adata, section, out_path, k=SPATIAL_K):
                              figsize=(2.6 * len(methods), 5.6), squeeze=False)
 
     for c, method in enumerate(methods):
-        d = load_section(runs[method], gt_adata, section)
+        # Moran's I and Geary's C are computed on each slice's own kNN graph, so
+        # they are invariant to the pose: no alignment needed (nor done by
+        # ``evaluate_paper`` for these two).
+        d = load_section(runs[method], gt_adata, section, align=False)
         for r, (stat, fn, lo, hi) in enumerate((
                 ("Moran's I", _morans_i, -0.1, 1.0),
                 ("Geary's C", gearys_c, 0.0, 1.6))):

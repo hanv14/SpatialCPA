@@ -95,6 +95,43 @@ the two benchmarks cannot silently drift apart.
 truth cell-by-cell. Generation synthesizes cells; it does not place them on GT
 cells, so a manufactured correspondence measures alignment noise, not fidelity.
 
+### Choosing the pose (alignment-dependent metrics only)
+
+Two metrics compare *positions* — `paper_marker_field_r` and
+`paper_celltype_localization` — so the prediction has to be rotated into the
+ground truth's frame first. Everything else (both autocorrelation families, the
+embedding mixing, the distributional metrics, `paper_marker_depth_r` up to the
+laminar axis) is computed within each slice and is pose-invariant.
+
+`src/bench3/align.py` picks that pose, on two rules:
+
+* **Expression breaks the symmetry that geometry cannot.** Candidate rotations
+  are scored by agreement between the *binned marker fields*, not by how many
+  cells overlap. On tissue with a symmetric outline — a bilaterally symmetric
+  coronal section, say — identity and 180° cover the ground truth equally well,
+  so an occupancy score cannot separate them and the pose falls to noise; a flip
+  inverts the marker gradient, so field agreement scores it about −1 and rejects
+  it. When a dataset's marker panel resolves empty the aligner falls back to the
+  genes with the highest ground-truth Moran's I.
+* **Reflections are not candidates.** Physical tissue has fixed handedness, so a
+  mirrored pose is wrong by construction however well it fits. Only proper
+  rotations (det = +1) are searched.
+
+Ties resolve toward the smallest rotation, so an already-registered dataset keeps
+the identity pose. The chosen rotation, scale, score and runner-up score are
+written into each section's entry in `metrics.json` (`align_rotation_deg`,
+`align_score`, `align_runner_up`, …), with the largest rotation applied surfaced
+at the top level as `align_rotation_deg_max` — a marginal decision is visible
+rather than silent. The figures use the same aligner, so a marker map is drawn at
+the orientation its reported `paper_marker_field_r` was computed at.
+
+Measured on synthetic sections whose correct pose is known: on symmetric geometry
+the occupancy aligner picked a wrong pose in 3 of 12 runs (`field_r` ≈ −0.94
+where the correct pose gives +0.94); the expression-scored one, 0 of 12. Scored
+end to end through `evaluate_paper` on a prediction delivered in an arbitrary
+frame, `paper_marker_field_r` holds at ≈ 0.89 for rotations of 0°, 40° and 150°,
+against 0.44–0.48 before.
+
 ---
 
 ## Leakage policy
@@ -118,7 +155,8 @@ matters more here, not less, because three sections are missing at once:
 The evaluation side *is* allowed to read the ground truth — that is what
 evaluation means. The prediction→GT rigid alignment used by the binned-field and
 localization metrics is an evaluation-side operation that feeds nothing back to
-the method.
+the method. How that pose is chosen is described under
+[Choosing the pose](#choosing-the-pose-alignment-dependent-metrics-only).
 
 The `train_registered.h5ad` is built **once per holdout and reused by every
 method**, so the comparison is apples-to-apples by construction.
@@ -170,6 +208,13 @@ on the real split (16 527 training cells from sections 1/3/5/7, 12 451 held out)
 the shared-input cache, the prediction-format writer (the wrappers' own
 `_v2_io.write_prediction_h5`), the merged three-evaluator path, aggregation,
 ranking and all four figures.
+
+The pose selector has its own fixtures — two synthetic datasets in v3 format, one
+with a symmetric outline and one asymmetric — which the self-test passes on both,
+with the `oracle` probe holding the identity pose exactly (`align_rotation_deg` =
+0 on every section) and `paper_marker_field_r` at +1.000. See
+[Choosing the pose](#choosing-the-pose-alignment-dependent-metrics-only) for the
+old-vs-new numbers.
 
 **Not verified here:** the seven method wrappers, which need `bench_spatialcpa`,
 `bench_spatialz`, `bench_feast` and `bench_isost`. They are v2's wrappers,

@@ -678,3 +678,12 @@ SPATIAL_K = 10          # kNN degree for Moran's I / Geary's C spatial weights
 FIELD_GRID = 20         # bins per axis for binned spatial fields
 DEPTH_BINS = 20         # bins along the cortical laminar axis
 EMBED_NEIGHBORS = 15    # kNN degree for the UMAP/PCA mixing score
+
+# ── Pose selection for the alignment-dependent metrics (align.py) ─────────────
+# Candidate rotations tried when bringing a prediction into the GT frame. Poses
+# are scored by marker-field agreement rather than by cell overlap, because a
+# symmetric outline covers itself equally well under a flip; reflections are not
+# candidates at all, since physical tissue cannot be mirrored.
+ALIGN_ANGLES = 24        # candidate rotations, evenly spaced over 360 degrees
+ALIGN_ICP_ITERS = 12     # refinement iterations per candidate (0 disables)
+ALIGN_MAX_POINTS = 3000  # cells subsampled per side for the pose search
