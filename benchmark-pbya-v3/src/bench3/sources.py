@@ -30,6 +30,72 @@ EXSEQ_COORD_COLS = ("x_um", "y_um", "z_um")
 IMC_Z_STEP_UM = 10.0        # fallback when the filename does not name the step
 
 
+# Coordinate columns as the various raw distributions spell them. Matched
+# case-insensitively, in order, so the plainest name wins when a file has more
+# than one candidate.
+COORD_ALIASES = {
+    "x": ("x", "x_um", "x_micron", "x_microns", "x_position", "x_centroid",
+          "center_x", "centroid_x", "global_x", "spatial_x", "col", "column"),
+    "y": ("y", "y_um", "y_micron", "y_microns", "y_position", "y_centroid",
+          "center_y", "centroid_y", "global_y", "spatial_y", "row"),
+    "z": ("z", "z_um", "z_micron", "z_microns", "z_position", "z_centroid",
+          "center_z", "centroid_z", "global_z", "spatial_z", "slice", "plane",
+          "section", "z_slice", "zslice"),
+}
+
+
+def pick_coord_column(df, axis, where):
+    """The column of ``df`` holding ``axis``, whatever the file happens to call it.
+
+    Raw distributions are not consistent about coordinate column names, and the
+    failure mode of assuming one is a bare ``KeyError: 'x'`` that says nothing
+    about what the file *does* carry. This resolves the usual spellings and,
+    failing that, reports the real header so the fix is a one-line alias.
+    """
+    lower = {}
+    for c in df.columns:                 # first spelling wins on a case collision
+        lower.setdefault(str(c).strip().lower(), c)
+    for cand in COORD_ALIASES[axis]:
+        if cand in lower:
+            return lower[cand]
+    raise ValueError(
+        f"{where}: no {axis} coordinate column. Tried {list(COORD_ALIASES[axis])};\n"
+        f"  the file carries {list(df.columns)[:12]}"
+        f"{' ...' if len(df.columns) > 12 else ''}\n"
+        f"  Add the right spelling to COORD_ALIASES[{axis!r}] in src/bench3/sources.py."
+    )
+
+
+def read_csv_auto_index(path, **kwargs):
+    """``read_csv`` that only consumes a first column when it really is an index.
+
+    The Deep-STARmap CSVs carry no index: ``x`` is the spatial file's first data
+    column and a gene is the expression file's. Reading them with ``index_col=0``
+    silently eats both — the spatial file then fails with ``KeyError: 'x'``, and
+    the expression file would have quietly lost its first gene. pandas names a
+    genuinely unnamed first column ``Unnamed: 0``, which is the only case where
+    consuming it is right.
+    """
+    import pandas as pd
+
+    df = pd.read_csv(path, **kwargs)
+    first = str(df.columns[0])
+    if first.startswith("Unnamed:") or first == "":
+        df = df.set_index(df.columns[0])
+        df.index.name = None
+    return df
+
+
+def coord_is_um(column_name):
+    """Whether a resolved coordinate column is already in micrometres.
+
+    Names such as ``x_um`` state their unit; multiplying those by a voxel
+    calibration would scale the volume a second time.
+    """
+    n = str(column_name).strip().lower()
+    return n.endswith(("_um", "_micron", "_microns")) or "micron" in n
+
+
 def read_exseq_csv(path, verbose=True):
     """Read the raw ExSeq visual-cortex distribution (spacejam2) as AnnData.
 
@@ -192,10 +258,12 @@ DEEP_STARMAP_VOXEL_Z_UM = 0.70
 def read_deep_starmap_csv(path, verbose=True):
     """Read the raw Deep-STARmap distribution (Sui et al. 2025) as AnnData.
 
-    Expression and spatial CSVs, positionally aligned. Voxel indices become
-    micrometres with the paper's calibration (0.32 x 0.32 x 0.70 um), cell types
-    come from the spatial file's FUSEmap annotation, and the z value doubles as
-    the section label — exactly what v1's processor does.
+    Expression and spatial CSVs, positionally aligned and carrying **no index
+    column** — the spatial file's first column is ``x`` and the expression file's
+    is a gene. Voxel indices become micrometres with the paper's calibration
+    (0.32 x 0.32 x 0.70 um), cell types come from the spatial file's FUSEmap
+    annotation, and the z value doubles as the section label — exactly what v1's
+    processor does.
     """
     import anndata as ad
     import pandas as pd
@@ -210,17 +278,41 @@ def read_deep_starmap_csv(path, verbose=True):
 
     if verbose:
         print(f"  reading {expr_path.name} + {spatial_path.name} ...")
-    expr = pd.read_csv(expr_path, index_col=0)
-    spatial = pd.read_csv(spatial_path, index_col=0)
+    expr = read_csv_auto_index(expr_path)
+    spatial = read_csv_auto_index(spatial_path)
+
+    # Only numeric columns are genes. Nothing in the published distribution is
+    # non-numeric here, but a re-export carrying a cell-id column would otherwise
+    # be cast to float and crash — or worse, be counted as a gene.
+    non_numeric = [c for c in expr.columns
+                   if not pd.api.types.is_numeric_dtype(expr[c])]
+    if non_numeric:
+        if verbose:
+            print(f"  dropping {len(non_numeric)} non-numeric expression "
+                  f"column(s): {non_numeric[:5]}")
+        expr = expr.drop(columns=non_numeric)
+
     if len(expr) != len(spatial):
         raise ValueError(
             f"Deep-STARmap files disagree on cell count: expression {len(expr)} "
             f"vs spatial {len(spatial)} (they are positionally aligned)")
 
+    xc, yc, zc = (pick_coord_column(spatial, a, spatial_path.name)
+                  for a in ("x", "y", "z"))
+    # Voxel indices unless the column names say micrometres — scaling an
+    # already-calibrated coordinate would shrink the volume by 3x in z.
+    sx, sy, sz = ((1.0, 1.0, 1.0) if all(map(coord_is_um, (xc, yc, zc)))
+                  else (DEEP_STARMAP_VOXEL_XY_UM, DEEP_STARMAP_VOXEL_XY_UM,
+                        DEEP_STARMAP_VOXEL_Z_UM))
+    if verbose:
+        print(f"  coordinates from columns ({xc}, {yc}, {zc}), "
+              + ("already in um" if sx == 1.0 else
+                 f"voxels x ({sx}, {sy}, {sz}) um"))
+
     coords = np.column_stack([
-        spatial["x"].values.astype(np.float64) * DEEP_STARMAP_VOXEL_XY_UM,
-        spatial["y"].values.astype(np.float64) * DEEP_STARMAP_VOXEL_XY_UM,
-        spatial["z"].values.astype(np.float64) * DEEP_STARMAP_VOXEL_Z_UM,
+        spatial[xc].values.astype(np.float64) * sx,
+        spatial[yc].values.astype(np.float64) * sy,
+        spatial[zc].values.astype(np.float64) * sz,
     ])
     ct_col = next((c for c in ("FUSEmap_sub_level", "Harmony_labels",
                                "FUSEmap_main_level", "cell_type")
@@ -233,7 +325,7 @@ def read_deep_starmap_csv(path, verbose=True):
 
     adata = ad.AnnData(
         X=sp.csr_matrix(expr.values.astype(np.float32)),
-        obs=pd.DataFrame({"section": spatial["z"].values.astype(str),
+        obs=pd.DataFrame({"section": spatial[zc].values.astype(str),
                           "cell_type": cell_types},
                          index=[f"cell_{i}" for i in range(len(expr))]),
         var=pd.DataFrame(index=pd.Index(expr.columns, name=None)))
