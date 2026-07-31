@@ -280,7 +280,8 @@ python -m src.bench3.run_all --design loo --skip-existing
 # 5. results
 python -m src.bench3.aggregate_results
 python -m src.bench3.rank_methods --include-gen
-python -m src.bench3.plot_paper_figures
+python -m src.bench3.plot_paper_figures     # per dataset
+python -m src.bench3.plot_cross_dataset     # every method x every dataset
 ```
 
 Re-evaluate without re-running the methods (prediction and evaluation are
@@ -328,6 +329,9 @@ src/bench3/
   aggregate_results.py   all_metrics / per_section_metrics / summary_by_method CSVs
   rank_methods.py        rank by criterion + composite
   plot_paper_figures.py  UMAP, marker maps, Moran/Geary scatter, summary heatmap
+                         — one dataset at a time
+  plot_cross_dataset.py  every method x every dataset: bars, heatmap, rank profile
+  nature_theme.py        the Nature/Springer figure theme the above draws in
   selftest.py            validate the harness with known-quality reconstructions
   survey_datasets.py     screen benchmark-pbya's datasets for protocol fitness
 
@@ -584,6 +588,73 @@ composites are mouse cortex, and a non-cortex dataset needs its own chosen befor
 `paper_marker_*` means anything. The `markers` column reports how much of the
 current panel a candidate carries; `prepare_dataset` records the intersection and
 warns when it is empty.
+
+## Cross-dataset figures
+
+`plot_paper_figures` draws inside one volume — a UMAP, a marker map and an
+autocorrelation scatter only mean anything against that volume's own ground
+truth. `plot_cross_dataset` draws the other view, **every method across every
+dataset**, which is the figure a paper reports:
+
+```bash
+python -m src.bench3.plot_cross_dataset
+```
+
+| figure | what it shows |
+|---|---|
+| `fig_cross_dataset_bars` | one panel per metric; datasets along x, a bar per method, each held-out section overlaid as a dot |
+| `fig_cross_dataset_heatmap` | one panel per metric, methods × datasets, annotated — the compact overview |
+| `fig_cross_dataset_ranks` | each method's composite rank *within* each dataset, side by side, with no average across them |
+
+Each run also writes `cross_dataset_values.csv` — exactly the numbers drawn.
+
+### Choosing and labelling what goes on the axes
+
+Directory names make poor axis labels, so selection and labelling are the same
+flag. **The keys of whichever flag you pass select and order that axis:**
+
+```bash
+python -m src.bench3.plot_cross_dataset \
+  --method-order spatialz feast isost spatialcpav15_gen \
+  --method-names spatialz=SpatialZ feast=FEAST isost=isoST \
+                 'spatialcpav15_gen=SpatialCPA v15' \
+  --dataset-names starmap_visual_cortex='STARmap V1' \
+                  exseq_visual_cortex='ExSeq V1' \
+                  cosmx_nsclc_3d='CosMx NSCLC' \
+  --width 120
+```
+
+* `--method-order` / `--dataset-order` — membership and order.
+* `--method-names` / `--dataset-names` — labels; and when the matching `*-order`
+  flag is absent, these select and order too, so one flag does both jobs.
+* Either form takes `NAME` or `NAME=Label`; an inline label on the order flag
+  wins. A name with no results fails with the list of names that do have some.
+* `--metrics` / `--metric-names` do the same for the metric panels.
+
+Ranks are recomputed among exactly the methods plotted — a rank is a position in
+a field, so narrowing the field changes it.
+
+### The theme
+
+`nature_theme.py` holds the Nature-family constraints in one place: the fixed
+column widths (89 / 120 / 183 mm, `--width`, never above the 247 mm page), 5–7 pt
+sans at final size, 0.5 pt hairlines, outward ticks, and PDF output with embedded
+editable type. **The saved PDF is exactly the width asked for** — no tight
+bounding box, because recropping to the ink would change the width and
+production would then rescale the type. A 600 dpi PNG is written alongside for
+viewing.
+
+Colours are Okabe-Ito (the Color Universal Design set) minus black, with the pale
+yellow swapped for a dark gold that survives print. The slot ordering is not a
+preference: all 5040 orderings were scored against a white surface and this one
+clears every gate on the adjacent pairlist — worst adjacent colourblind ΔE 15.8
+against a target of 8. Two consequences are handled rather than ignored: past
+four slots the palette no longer separates *every* pair, so the rank figure adds
+a distinct marker per method and labels each line at its end; and two hues sit
+below 3:1 on white, which is why every figure writes its CSV.
+
+Seven methods is the palette's depth. An eighth raises an error rather than
+cycling a hue, because two methods sharing a colour would still render.
 
 ## Reading the results next to v2
 
