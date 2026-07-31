@@ -260,6 +260,57 @@ def partition_sections(labels_by_z, n_sections, trim="center"):
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
+def sanitize_frame(df, what, verbose=True):
+    """Make ``obs``/``var`` writable to h5ad, in place.
+
+    Readers that concatenate one file per section with ``join='outer'`` inherit
+    every per-file annotation column, and a gene (or cell) missing from the file
+    a column came from gets ``NaN``. The column then has object dtype holding a
+    mix of real values and ``NaN``, and h5py's variable-length string writer
+    rejects it outright:
+
+        TypeError: Can't implicitly convert non-string objects to strings
+        Error raised while writing key 'mt' of ... to /var
+
+    Open-ST is the case that hit this — scanpy's boolean ``var['mt']`` QC flag,
+    NaN for every gene outside the first section's panel. None of these columns
+    is used by the benchmark (only ``var_names`` is), so the goal is simply to
+    write something faithful rather than to fail the build: an all-empty column
+    is dropped, a bool/NaN column becomes bool, a numeric one stays numeric, and
+    anything else becomes a string with missing values as ``''``.
+    """
+    import pandas as pd
+
+    dropped, coerced = [], []
+    for col in list(df.columns):
+        s = df[col]
+        if s.isna().all():                        # nothing to preserve
+            df.drop(columns=[col], inplace=True)
+            dropped.append(str(col))
+            continue
+        if s.dtype != object:                     # numeric, bool, categorical: fine
+            continue
+        vals = s.dropna()
+        if len(vals) == len(s) and vals.map(lambda v: isinstance(v, str)).all():
+            continue                              # plain strings: already writable
+        if vals.map(lambda v: isinstance(v, (bool, np.bool_))).all():
+            df[col] = np.array([bool(v) if pd.notna(v) else False for v in s],
+                               dtype=bool)
+        elif vals.map(lambda v: isinstance(v, (int, float, np.number))).all():
+            df[col] = pd.to_numeric(s, errors="coerce")
+        else:
+            df[col] = s.fillna("").astype(str)
+        coerced.append(str(col))
+
+    if verbose and (dropped or coerced):
+        bits = []
+        if coerced:
+            bits.append(f"coerced {coerced} (mixed types are not h5ad-writable)")
+        if dropped:
+            bits.append(f"dropped all-empty {dropped}")
+        print(f"  {what}: " + "; ".join(bits))
+
+
 def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
           n_sections=None, verbose=True, trim=True, z_trim_quantile=None,
           section_trim=None, min_cells=MIN_CELLS_PER_SECTION,
@@ -467,6 +518,9 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
         "layer_superficial": resolve_markers(s["layer_superficial"], panel),
         "layer_deep": resolve_markers(s["layer_deep"], panel),
     }
+
+    sanitize_frame(out.var, "var", verbose=verbose)
+    sanitize_frame(out.obs, "obs", verbose=verbose)
 
     hint = ""
     if s["partition"] == "z_width":
