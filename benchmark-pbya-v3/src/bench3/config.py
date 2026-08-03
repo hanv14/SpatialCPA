@@ -982,6 +982,19 @@ def _v2_wrapper(name):
     return V2_ROOT / "src" / "benchmark" / "methods" / name
 
 
+def _v3_wrapper(name):
+    """A wrapper that lives in v3 because v2 does not have the method.
+
+    Every wrapper v2 already has is invoked from v2 (see the README): sharing
+    them is what guarantees v3 and v2 exercise the same synthesis code. A method
+    v2 has never run has nothing to share, and adding it to v2 would mean editing
+    a frozen benchmark, so its wrapper lives here. It speaks the identical
+    ``_v2_io`` contract — same CLI, same prediction format, same leakage guard —
+    so ``run_benchmark`` cannot tell the difference.
+    """
+    return PROJECT_ROOT / "src" / "bench3" / "methods" / name
+
+
 METHODS = {
     "spatialcpav8_gen": {
         "wrapper": _v2_wrapper("run_spatialcpav8.py"),
@@ -1032,6 +1045,20 @@ METHODS = {
         "available": True,
         "family": "spatialcpa",
         "notes": "structure-field diffusion + NB expression VAE + marked point process",
+    },
+    "spatialcpav16_gen": {
+        "wrapper": _v3_wrapper("run_spatialcpav16.py"),
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "spectral tissue flow — flow matching over graph harmonics, "
+                 "with the per-gene autocorrelation profile enforced",
+        # v16 degrades to the depth-interpolated spectrum when torch is missing
+        # or the flow fails to train. That is a sensible library fallback and an
+        # invalid benchmark row: it is not the method under test, so v3 fails
+        # the run rather than scoring it.
+        "invalid_log_markers": ("spectral flow trained: False",
+                                "torch UNAVAILABLE"),
     },
     "spatialz": {
         "wrapper": _v2_wrapper("run_spatialz.py"),
