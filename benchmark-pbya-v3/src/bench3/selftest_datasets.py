@@ -172,12 +172,12 @@ def check_one(name, case, tmp, verbose=True):
         fails.append(f"{name}: n_sections={pp['n_sections']} want {want_n}")
     if got_id != want_id:
         fails.append(f"{name}: holdout_id={got_id!r} want {want_id!r}")
-    if pp["resolution"] != spec(name).get("resolution", "single_cell"):
-        fails.append(f"{name}: resolution={pp['resolution']!r}")
+    if pp.get("resolution") != spec(name).get("resolution", "single_cell"):
+        fails.append(f"{name}: resolution={pp.get('resolution')!r}")
     if not pp["marker_genes"]:
         fails.append(f"{name}: no marker genes resolved from the panel")
     # A gene cap must never remove a marker or layer gene.
-    if pp["gene_selection"]:
+    if pp.get("gene_selection"):
         panel = {str(v).lower() for v in built.var_names}
         lost = [g for g in (list(pp["marker_genes"]) + list(pp["layer_superficial"])
                             + list(pp["layer_deep"])) if str(g).lower() not in panel]

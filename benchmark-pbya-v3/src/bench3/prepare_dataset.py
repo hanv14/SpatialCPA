@@ -498,6 +498,19 @@ def sanitize_frame(df, what, verbose=True):
         print(f"  {what}: " + "; ".join(bits))
 
 
+def drop_nulls(obj):
+    """Recursively remove None values so the result is h5ad-writable everywhere.
+
+    Only the *absence* of a key carries meaning here, never a null: every reader
+    of ``paper_protocol`` uses ``.get()`` with a default.
+    """
+    if isinstance(obj, dict):
+        return {k: drop_nulls(v) for k, v in obj.items() if v is not None}
+    if isinstance(obj, (list, tuple)):
+        return [drop_nulls(v) for v in obj if v is not None]
+    return obj
+
+
 def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
           n_sections=None, verbose=True, trim=True, z_trim_quantile=None,
           section_trim=None, min_cells=MIN_CELLS_PER_SECTION,
@@ -758,6 +771,15 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
         "gene_selection": hvg_note,
         "cell_subsample": subsample_note,
     }
+    # A None in uns is written as h5ad ``encoding_type='null'``, which older
+    # anndata cannot read back — and the method conda envs pin older anndata than
+    # the build environment. An uncapped dataset therefore produced a
+    # train_registered.h5ad that every wrapper crashed on:
+    #     IORegistryError: No read method registered for IOSpec(encoding_type='null')
+    #     Error raised while reading key 'cell_subsample' of /uns/paper_protocol
+    # Absence already means "no cap applied", so the keys are simply dropped
+    # rather than written as null.
+    out.uns["paper_protocol"] = drop_nulls(out.uns["paper_protocol"])
 
     sanitize_frame(out.var, "var", verbose=verbose)
     sanitize_frame(out.obs, "obs", verbose=verbose)
