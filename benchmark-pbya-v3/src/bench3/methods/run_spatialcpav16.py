@@ -120,6 +120,10 @@ def run_method(adata, targets, gene_names, args):
     cfg.expression.residual_by_type = not args.residual_pooled
     cfg.types.composition_match = not args.no_composition_match
     cfg.runtime.device = args.device
+    cfg.runtime.cuda_index = args.cuda_index
+    cfg.runtime.memory_fraction = args.gpu_memory_fraction
+    cfg.runtime.expandable_segments = not args.no_expandable_segments
+    cfg.runtime.release_cache = not args.no_gpu_cache_release
 
     gen = SpatialCPAv16(stack, gene_names=gene_names,
                         cell_type_names=cell_type_names, cfg=cfg)
@@ -149,6 +153,10 @@ def run_method(adata, targets, gene_names, args):
         results[sec] = {"X": sp.csr_matrix(vs.expression.astype(np.float32)),
                         "coords": vs.coords.astype(np.float64),
                         "cell_type": names}
+    # Surfaced into method_params so a result records the device it ran on and
+    # what it actually held, not just what was asked for.
+    run_method.device = gen.diagnostics.get("device", "cpu")
+    run_method.peak_gpu_gib = gen.diagnostics.get("peak_gpu_gib")
     return results
 
 
@@ -164,7 +172,21 @@ def main():
     p.add_argument("--ode-steps", type=int, default=16)
     p.add_argument("--ensemble", type=int, default=8)
     p.add_argument("--residual-scale", type=float, default=1.0)
-    p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
+    p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"],
+                   help="default 'auto': use a GPU whenever one is visible")
+    p.add_argument("--cuda-index", type=int, default=0,
+                   help="which GPU on a multi-GPU host")
+    p.add_argument("--gpu-memory-fraction", type=float, default=None,
+                   help="hard ceiling on this process's share of the card "
+                        "(e.g. 0.4). Off by default: a cap set too tight turns "
+                        "a slow run into a crashed one")
+    p.add_argument("--no-expandable-segments", action="store_true",
+                   help="stop asking the CUDA allocator for growable segments "
+                        "(not recommended on a shared card — pools then reserve "
+                        "fixed blocks they never return)")
+    p.add_argument("--no-gpu-cache-release", action="store_true",
+                   help="keep cached GPU blocks between stages instead of "
+                        "returning them to the driver")
     # Ablations
     p.add_argument("--no-calibration", action="store_true",
                    help="ablate the spectral calibration stage")
@@ -187,6 +209,8 @@ def main():
     t0 = time.time()
     results = run_method(adata, targets, list(adata.var_names), args)
     wall = time.time() - t0
+    gen_device = getattr(run_method, "device", "cpu")
+    gen_peak = getattr(run_method, "peak_gpu_gib", None)
     if not results:
         print("No sections synthesized.")
         return 1
@@ -198,6 +222,8 @@ def main():
          "ode_steps": args.ode_steps, "ensemble": args.ensemble,
          "residual_scale": args.residual_scale,
          "calibration": not args.no_calibration,
+         "device": gen_device, "peak_gpu_gib": gen_peak,
+         "gpu_memory_fraction": args.gpu_memory_fraction,
          "seed": args.seed},
         wall, args.output, "spatialcpav16_gen")
     return 0

@@ -79,10 +79,19 @@ class TypeConfig:
 
 @dataclass
 class RuntimeConfig:
+    """Where the flow trains, and how co-operatively it holds the card.
+
+    See ``runtime.py``. The defaults are the sharing-friendly ones: use a GPU if
+    one is visible, let the allocator's pools grow and shrink with demand rather
+    than reserve fixed blocks, and hand cached memory back between stages. The
+    hard cap is off by default because a cap set too tight turns a slow run into
+    a crashed one.
+    """
     device: str = "auto"               # auto | cpu | cuda
     cuda_index: int = 0
-    memory_fraction: float | None = None
-    release_cache: bool = True
+    expandable_segments: bool = True   # pools grow/shrink instead of reserving
+    memory_fraction: float | None = None   # optional hard ceiling, e.g. 0.4
+    release_cache: bool = True         # empty_cache between stages
 
 
 @dataclass

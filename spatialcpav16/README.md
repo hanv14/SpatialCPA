@@ -171,6 +171,61 @@ supposed to move has not demonstrated its mechanism.
 
 ---
 
+## GPU, and sharing the card
+
+v16 uses a GPU **automatically whenever one is visible** — `RuntimeConfig.device`
+defaults to `auto`. Only the spectral velocity field trains on it; the harmonics,
+the calibration, the residual draw and the typing are numpy/scipy, so the card is
+genuinely idle for a large part of the run. That is what makes the sharing policy
+worth setting rather than incidental.
+
+**The defaults are already the sharing-friendly ones:**
+
+| default | what it does |
+|---|---|
+| `expandable_segments = True` | asks the CUDA allocator to back its pools with expandable virtual-memory segments, so they **grow and shrink with demand** instead of reserving fixed blocks that are never given back |
+| `release_cache = True` | returns cached blocks to the driver after the flow finishes training and again after each section's ODE integration, so the memory is free for everything that does not need it |
+| `memory_fraction = None` | optional **hard cap** on this process's share of the card; off by default, because a cap set too tight turns a slow run into a crashed one |
+
+```bash
+cd benchmark-pbya-v3
+
+# default: GPU if present, pools grow and shrink, cache released between stages
+python -m src.bench3.run_all --methods spatialcpav16_gen --dataset starmap_visual_cortex
+
+# shared card: additionally cap this process at 40 % of the GPU
+python -m src.bench3.run_all --methods spatialcpav16_gen \
+  --dataset starmap_visual_cortex -- --gpu-memory-fraction 0.4
+
+# pick a GPU on a multi-GPU host
+python -m src.bench3.run_all --methods spatialcpav16_gen \
+  --dataset starmap_visual_cortex -- --cuda-index 1
+
+# force CPU
+python -m src.bench3.run_all --methods spatialcpav16_gen \
+  --dataset starmap_visual_cortex -- --device cpu
+```
+
+`--no-expandable-segments` and `--no-gpu-cache-release` turn the policy off; not
+recommended on a shared card.
+
+The chosen device and the peak reserved memory are printed (`[v16] device: …`,
+`flow trained; peak GPU N.NN GiB`) and stored in `diagnostics` and in the
+prediction's `method_params`, so a result records what it actually held rather
+than what was asked for.
+
+**Expandable segments must be in place before the CUDA allocator initializes**,
+which is why the policy is applied once at the start of the fit, before any
+tensor is created. If CUDA was already initialized by the caller, the private
+runtime setter is used instead and a failure there is non-fatal — it costs
+sharing friendliness, not correctness.
+
+**Honest status:** the CUDA path has **not been executed** — the machine this was
+developed and benchmarked on has no CUDA device, so every number in
+`validation/VALIDATION.md` is from CPU. Device selection, the CPU branch and the
+end-to-end run were exercised; the CUDA-only branch (allocator settings, the hard
+cap, peak reporting) is guarded but unexercised.
+
 ## Status
 
 See `validation/VALIDATION.md` for measured numbers, what was run, and what was

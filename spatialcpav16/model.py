@@ -221,7 +221,12 @@ class SpatialCPAv16:
         self.c_sd = Cx.std(axis=(0, 1), keepdims=True) + 1e-6
         self.z_mu, self.z_sd = float(Z.mean()), float(Z.std() + 1e-6)
 
-        dev = _device(cfg)
+        # The sharing policy is applied here, before any tensor exists — the
+        # allocator's expandable-segment setting only takes effect if it is in
+        # place before the CUDA caching allocator initializes.
+        from . import runtime
+        dev = runtime.configure(cfg.runtime)
+        self._log(f"device: {runtime.describe()}")
         Yt = torch.tensor((Y - self.y_mu) / self.y_sd, dtype=torch.float32, device=dev)
         Lt = torch.tensor(L, dtype=torch.float32, device=dev)
         Zt = torch.tensor((Z - self.z_mu) / self.z_sd, dtype=torch.float32, device=dev)
@@ -264,6 +269,16 @@ class SpatialCPAv16:
         self.M_train = M
         self.diagnostics["flow_final_loss"] = float(loss.item())
         self.diagnostics["flow_examples"] = int(n)
+        self.diagnostics["device"] = runtime.describe()
+        peak = runtime.peak_memory_gib(dev)
+        if peak is not None:
+            self.diagnostics["peak_gpu_gib"] = peak
+            self._log(f"flow trained; peak GPU {peak:.2f} GiB")
+        # Training is over and everything downstream — harmonics, calibration,
+        # the point process — is numpy. Give the card back now rather than at
+        # process exit.
+        if cfg.runtime.release_cache:
+            runtime.release(dev)
 
     # ── generation ───────────────────────────────────────────────────────────
     def generate_virtual_slice(self, z, seed=None):
@@ -365,6 +380,12 @@ class SpatialCPAv16:
             y = integrate(self.model, lam_t, z_t, ctx_t,
                           n_steps=self.cfg.flow.ode_steps, generator=gen)
             draws.append(y.cpu().numpy()[0])
+        if self.cfg.runtime.release_cache:
+            # The ODE integration is the only GPU work per section; release
+            # straight after it so the card is free for the calibration, the
+            # residual draw and the typing, which are all numpy.
+            from . import runtime
+            runtime.release(self.device)
         # The ensemble mean is the conditional expectation of the spectrum. A
         # single draw carries the full conditional variance, and averaging draws
         # is *not* over-smoothing here: the calibration stage sets the energy
@@ -464,10 +485,3 @@ class _SubSlice:
         self.section_id = ""
 
 
-def _device(cfg):
-    import torch
-    if cfg.runtime.device == "cpu" or not torch.cuda.is_available():
-        return torch.device("cpu")
-    if cfg.runtime.device in ("auto", "cuda"):
-        return torch.device(f"cuda:{cfg.runtime.cuda_index}")
-    return torch.device("cpu")
