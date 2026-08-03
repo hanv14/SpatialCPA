@@ -133,7 +133,7 @@ def blend_profiles(prof_lo, prof_hi, w):
     return out
 
 
-def apply_calibration(X_smooth, Phi, lam, target, floor=1e-9):
+def apply_calibration(X_smooth, Phi, lam, target, floor=1e-9, protect_low_bins=1):
     """Rescale a generated section so its spectral profile matches ``target``.
 
     Operates per (frequency bin, gene): within a bin the *shape* the generator
@@ -161,6 +161,28 @@ def apply_calibration(X_smooth, Phi, lam, target, floor=1e-9):
     # zero rather than injecting arbitrary structure, and let the reported
     # realized profile show the shortfall.
     gain = np.nan_to_num(gain, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # Anchor the gains on the lowest frequency band.
+    #
+    # Calibration sets each band's energy and ``scale_to_variance`` then restores
+    # the gene's total, so only the *ratios* between bands survive — and that is
+    # what silently cost the laminar gradient. Measured on STARmap the raw gains
+    # amplify the lowest band by 1.30x but the mid bands by up to 1.62x, so after
+    # the rescale the low band has *lost* relative weight, which is precisely the
+    # structure ``paper_marker_depth_r`` integrates. Ablating calibration
+    # outright showed the size of it: depth 0.675 -> 0.734, at a cost of Moran
+    # 0.917 -> 0.863.
+    #
+    # Dividing through by the protected bands' own gain keeps the anatomy fixed
+    # and lets the rest move relative to it. The autocorrelation target is still
+    # met — Moran's I depends on the energy *distribution*, which is unchanged by
+    # a common factor — while the low-frequency content the depth profile reads
+    # is no longer collateral.
+    if protect_low_bins > 0:
+        p = int(min(protect_low_bins, gain.shape[0]))
+        anchor = gain[:p].mean(axis=0, keepdims=True)
+        gain = np.divide(gain, anchor, out=np.zeros_like(gain),
+                         where=anchor > floor)
 
     Xhat_cal = Xhat * gain[bins, :]
     X_cal = igft(Phi, Xhat_cal, mu)

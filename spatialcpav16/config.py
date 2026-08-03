@@ -63,6 +63,13 @@ class ExpressionConfig:
     # dispersion.
     residual_by_type: bool = True
     calibrate: bool = True             # the spectral calibration stage
+    # Frequency bands the calibration anchors on rather than rescales.
+    # OFF by default because it was tested and did not work: the theory was that
+    # calibration costs depth by amplifying mid bands (1.62x) more than the
+    # lowest (1.30x), so that after scale_to_variance the anatomy loses relative
+    # weight. Anchoring on the low band moved paper_marker_depth_r 0.675 -> 0.677
+    # and cost Moran 0.917 -> 0.912 — a wash. Kept as a knob, not a default.
+    protect_low_bins: int = 0
     readout: str = "auto"              # auto | counts | continuous
 
 

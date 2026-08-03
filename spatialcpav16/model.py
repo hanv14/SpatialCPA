@@ -314,7 +314,8 @@ class SpatialCPAv16:
         target = blend_profiles(lo["profile"], hi["profile"], w)
         pred_moran_before = self._predict_morans(X_smooth, Phi, lam)
         if cfg.expression.calibrate:
-            X_cal, _ = apply_calibration(X_smooth, Phi, lam, target)
+            X_cal, _ = apply_calibration(X_smooth, Phi, lam, target,
+                                         protect_low_bins=cfg.expression.protect_low_bins)
             total_var_target = self._target_total_variance(lo, hi, w, len(xy))
             X_cal = scale_to_variance(X_cal, total_var_target * target["kept"])
         else:

@@ -69,24 +69,48 @@ on four of five.
 
 ### What the ablations establish
 
-**The spectral calibration works, and its cost is now measured.** Turning it off
-drops Moran 0.917 -> 0.863 and Geary 0.918 -> 0.865, and raises depth 0.675 ->
-0.734. It does exactly what it was built to do — set per-gene spatial
-autocorrelation — and it does so partly by suppressing the lowest frequency band,
-which is where the laminar gradient `paper_marker_depth_r` measures lives. That
-is a genuine mechanism with a genuine trade-off, not a wash.
+Four hypotheses for the depth deficit have been tested. **Three are dead.**
 
-**The residual is not what breaks depth.** Halving it left depth flat (0.675 ->
-0.680) and cost embedding mixing heavily (0.815 -> 0.687). The hypothesis that
-unstructured residual variance was blurring the marker field is wrong, and the
-depth deficit has to be explained by the smooth field or the pose it is scored
-in, not by the noise added on top.
+| change | Moran | Geary | UMAP mix | depth | localization |
+|---|---|---|---|---|---|
+| type-posterior fix (current default) | **0.917** | **0.918** | 0.815 | 0.675 | 0.577 |
+| residual x0.5 | 0.908 | 0.909 | 0.687 | 0.680 | 0.581 |
+| calibration off entirely | 0.863 | 0.865 | 0.828 | **0.734** | 0.578 |
+| calibration anchored on the low band | 0.912 | 0.913 | 0.807 | 0.677 | **0.586** |
 
-**Best achievable today is still not enough.** Taking the best cell of each
-column across all configurations gives 0.917 / 0.918 / 0.828 / 0.734 / 0.581
-against SpatialZ's 0.929 / 0.931 / 0.793 / 0.920 / 0.817 — a win on embedding
-mixing, near-parity on the two autocorrelation metrics, and a wide loss on depth
-and localization.
+* **The residual does not cause it.** Halving it left depth flat (0.675 -> 0.680)
+  and cost embedding mixing heavily (0.815 -> 0.687).
+* **The low-frequency ratio does not cause it.** Calibration amplifies the mid
+  bands (1.62x) more than the lowest (1.30x), so after ``scale_to_variance`` the
+  anatomy loses relative weight — a clean theory that predicts the right sign.
+  Anchoring the gains on the low band moved depth 0.675 -> 0.677. A wash. The
+  knob (``protect_low_bins``) is kept and defaults off.
+* **Calibration as a whole does cause it**, and the mechanism is now the only one
+  left standing: gains are computed **per gene**, so each gene gets its own
+  spatial reweighting. That is exactly what ``paper_morans_pearson`` rewards —
+  per-gene spectral energy is what it measures — and it breaks the *cross-gene*
+  spatial coherence that ``paper_marker_depth_r`` and
+  ``paper_celltype_localization`` depend on. Off: depth +0.06, Moran -0.05.
+
+**This is a design tension, not a tuning problem.** The calibration stage is the
+method's headline contribution and it optimizes one metric family at the direct
+expense of another. No setting found so far gets both.
+
+### The structural problem
+
+v14 scores depth 0.819 and localization 0.785 on STARmap; v16 scores 0.690 and
+0.576. The difference is not subtle and it is not spectral. **v14 grounds each
+generated cell in a real local training profile; v16 synthesizes expression and
+deliberately does not.** Every method that scores well on these two metrics —
+SpatialZ 0.920/0.817, v8 0.894/0.698, v15 0.914/0.759, v14 0.819/0.785 — carries
+real profiles into the virtual slice in some form. v16 is the only one that does
+not, and it is last on both.
+
+The metrics reward grounding. That is worth stating plainly before more effort
+goes into the generative side: on this benchmark, synthesizing expression from a
+latent is a handicap on three of the five headline numbers, and the one metric
+v16 wins (``paper_umap_mixing``, where it beats SpatialZ 0.817 vs 0.793) is the
+one that rewards *not* copying.
 
 ## 3. What *is* established
 
