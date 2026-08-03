@@ -184,6 +184,47 @@ expression residual from the donor distribution its generated profile actually
 supports. Nothing in the current design allows that — one label does both jobs —
 and that, not the spectral basis, is the next thing to change.
 
+### Decoupling placement from expression — built, measured, reverted
+
+The fix the diagnosis implied: give a cell two labels from one posterior. Take
+the **mode under a composition constraint, rarest type first**, for placement, so
+rare types land on the cells that most look like them; **sample** the posterior
+for the residual donor, so a cell that is 60 % endothelial in the model's belief
+draws an endothelial residual 60 % of the time and its expression stays
+consistent with what the generated field supports.
+
+| config | Moran | Geary | UMAP mix | depth | Flt1 | localization |
+|---|---|---|---|---|---|---|
+| **confidence-first, hard-label residual (default)** | **0.917** | **0.918** | **0.815** | 0.675 | 0.348 | **0.577** |
+| rarest-first, hard-label residual | 0.843 | 0.848 | 0.614 | 0.727 | 0.493 | 0.530 |
+| **rarest-first, posterior-sampled residual** | 0.841 | 0.845 | 0.607 | **0.750** | **0.544** | 0.531 |
+
+It did what it was built to do on its own target — Flt1 0.348 -> 0.544 and depth
+0.675 -> 0.750, the best depth any v16 configuration has reached — and it did not
+recover Moran or embedding mixing. **Reverted**, and two things are now understood
+that were not before:
+
+* **Posterior sampling is itself a cost.** Drawing the donor type stochastically
+  means neighbouring cells with similar posteriors get residuals from different
+  types, which blurs type-specific expression structure. The deterministic
+  hard-label draw was *better* for Moran and embedding mixing precisely because it
+  was consistent. The hypothesis that hard-label following was what wrecked those
+  metrics is wrong.
+* **Rarest-first placement hurts `paper_celltype_localization`** (0.577 -> 0.531),
+  which is the opposite of what it was meant to do, and the reason is in the
+  metric: localization is averaged **weighted by ground-truth type frequency**, so
+  common types dominate it. Giving rare types first pick of the best cells
+  necessarily degrades common-type placement, and the weighting means that loss
+  outweighs the rare-type gain.
+
+That last point is the important one and it generalizes: **`paper_marker_depth_r`
+and `paper_celltype_localization` are not the same objective after all.** Depth
+averages three markers unweighted, so a rare-type marker like Flt1 carries a third
+of it; localization weights by frequency, so rare types barely register. The
+earlier conclusion that they were "one cause with two symptoms" was half right —
+one *cause* (rare-type placement), but pulling on it moves the two metrics in
+opposite directions.
+
 ### The structural problem
 
 v14 scores depth 0.819 and localization 0.785 on STARmap; v16 scores 0.690 and
