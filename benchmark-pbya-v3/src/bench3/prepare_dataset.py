@@ -532,16 +532,31 @@ def merge_colocated_sections(secs_all, by_z, z_um_all, tol):
     return np.array([remap[s] for s in secs_all]), new_order, n_merged
 
 
-def drop_nulls(obj):
-    """Recursively remove None values so the result is h5ad-writable everywhere.
+def h5ad_safe(obj):
+    """Make a nested structure writable by every anndata version we target.
 
-    Only the *absence* of a key carries meaning here, never a null: every reader
-    of ``paper_protocol`` uses ``.get()`` with a default.
+    Two rules, both learned from builds that died at write time after all the
+    work was done:
+
+    * **No None.** anndata writes it as ``encoding_type='null'``, which the older
+      anndata pinned in the method conda envs cannot read back. Absence already
+      means "not applicable" — every reader of ``paper_protocol`` uses ``.get()``
+      with a default — so null keys are dropped rather than written.
+    * **String keys only.** A dict keyed by ints (section index -> cell count)
+      writes as an HDF5 group whose member names anndata then tries to
+      ``rsplit``, giving ``AttributeError: 'int' object has no attribute
+      'rsplit'`` from deep inside the writer, naming a key rather than the
+      dataset that produced it.
+
+    Applied to the whole ``paper_protocol`` dict, so neither can recur through a
+    note added later.
     """
     if isinstance(obj, dict):
-        return {k: drop_nulls(v) for k, v in obj.items() if v is not None}
+        return {str(k): h5ad_safe(v) for k, v in obj.items() if v is not None}
     if isinstance(obj, (list, tuple)):
-        return [drop_nulls(v) for v in obj if v is not None]
+        return [h5ad_safe(v) for v in obj if v is not None]
+    if isinstance(obj, np.generic):
+        return obj.item()
     return obj
 
 
@@ -848,15 +863,9 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
         "cell_subsample": subsample_note,
         "zero_count_cells_dropped": zero_note,
     }
-    # A None in uns is written as h5ad ``encoding_type='null'``, which older
-    # anndata cannot read back — and the method conda envs pin older anndata than
-    # the build environment. An uncapped dataset therefore produced a
-    # train_registered.h5ad that every wrapper crashed on:
-    #     IORegistryError: No read method registered for IOSpec(encoding_type='null')
-    #     Error raised while reading key 'cell_subsample' of /uns/paper_protocol
-    # Absence already means "no cap applied", so the keys are simply dropped
-    # rather than written as null.
-    out.uns["paper_protocol"] = drop_nulls(out.uns["paper_protocol"])
+    # See ``h5ad_safe``: no None (older anndata cannot read the null encoding)
+    # and no non-string mapping keys (the writer assumes names are strings).
+    out.uns["paper_protocol"] = h5ad_safe(out.uns["paper_protocol"])
 
     sanitize_frame(out.var, "var", verbose=verbose)
     sanitize_frame(out.obs, "obs", verbose=verbose)

@@ -138,9 +138,18 @@ LAYER_DEEP = ("Pcp4", "Ctgf", "Sema3e")
 # at whole-brain scale is grey vs. white matter: Slc17a7 marks excitatory
 # neurons (grey), Mbp/Plp1 the myelinated tracts. So paper_marker_depth_r reads
 # as "profile across the grey-white axis".
-BRAIN_MARKER_GENES = ("Slc17a7", "Gad1", "Mbp")
-BRAIN_LAYER_SUPERFICIAL = ("Slc17a7", "Gad1")     # neuronal / grey matter pole
-BRAIN_LAYER_DEEP = ("Mbp", "Plp1", "Sox10")       # myelin / white matter pole
+# Chosen against the *panels*, not from a textbook. The Zhuang ABCA panel carries
+# Gad2 but not Gad1, and no Mbp at all, so the original pick (Slc17a7/Gad1/Mbp)
+# resolved to a single marker there and the metric group was measuring one gene:
+#     WARNING: no channel matched 'Gad1' — closest panel names: Gja1, Gad2, ...
+#     WARNING: no channel matched 'Mbp'  — closest panel names: Pmfbp1, Mybpc1
+# These three are present in the ABCA panel and in the whole-transcriptome
+# datasets, so every brain dataset resolves the same three and their rows stay
+# comparable. Extra fallbacks follow the primary in each layer list;
+# ``resolve_markers`` keeps whichever the panel actually has.
+BRAIN_MARKER_GENES = ("Slc17a7", "Gad2", "Sox10")
+BRAIN_LAYER_SUPERFICIAL = ("Slc17a7", "Gad2", "Gad1")   # neuronal / grey pole
+BRAIN_LAYER_DEEP = ("Sox10", "Plp1", "Mbp", "Mog")      # myelin / white pole
 
 # Mouse hypothalamus (3-D MERFISH thick tissue, EASI-FISH LHA). Neuropeptidergic
 # nuclei are the spatial structure here; the axis contrasts the two best-separated

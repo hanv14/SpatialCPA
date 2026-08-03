@@ -42,7 +42,9 @@ from .prepare_dataset import build
 # find. Real panels are larger; these are the genes the specs actually name.
 PANELS = {
     "cortex": ("Flt1", "Pcp4", "Cux2", "Rasgrf2", "Nov", "Ctgf", "Sema3e"),
-    "brain": ("Slc17a7", "Gad1", "Mbp", "Plp1", "Sox10", "Gad2"),
+    # Zhuang-shaped: Gad2 and Sox10 present, Gad1 and Mbp absent — the
+    # panel that exposed the original marker pick as unresolvable.
+    "brain": ("Slc17a7", "Gad2", "Sox10", "Plp1", "Gja1"),
     "hypothalamus": ("Gad1", "Slc17a6", "Nts", "Gad2", "Slc32a1"),
     "tumour": ("EPCAM", "PTPRC", "COL1A1", "KRT8", "KRT18"),
     "imc": ("panCK", "CD3", "CD31"),
