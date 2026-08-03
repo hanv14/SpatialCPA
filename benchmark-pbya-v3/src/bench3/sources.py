@@ -686,6 +686,48 @@ ALLEN_CELLTYPE_COLUMNS = ("subclass", "class", "supertype", "cluster_alias",
                           "cell_type", "celltype", "cluster")
 
 
+def read_h5ad_checked(path):
+    """``read_h5ad`` with a readable message when the file is incomplete.
+
+    The Allen expression matrices are multi-gigabyte (C57BL6J-638850-raw.h5ad is
+    7.6 GB), so an interrupted download is a normal thing to hit. h5py reports it
+    as raw superblock arithmetic —
+
+        OSError: Unable to synchronously open file (truncated file:
+        eof = 1475346432, sblock->base_addr = 0, stored_eof = 7627589574)
+
+    — which is precise and says nothing about what to do. Those two numbers are
+    the bytes present and the bytes the header says should be, so the diagnosis
+    is available; it just needs stating.
+    """
+    import anndata as ad
+
+    try:
+        return ad.read_h5ad(str(path))
+    except OSError as exc:
+        if "truncated file" not in str(exc):
+            raise
+        have = Path(path).stat().st_size
+        want = None
+        for token in str(exc).replace(")", " ").split():
+            if token.isdigit() and int(token) > have:
+                want = int(token)
+        def _sz(n):
+            return f"{n / 1e9:.2f} GB" if n >= 1e9 else f"{n / 1e6:.1f} MB"
+
+        pct = f" ({have / want:.0%} of it)" if want else ""
+        raise OSError(
+            f"{Path(path).name} is incomplete — an interrupted download, not a "
+            f"format problem.\n"
+            f"  on disk: {_sz(have)}{pct}\n"
+            + (f"  the file's own header says it should be {_sz(want)}\n"
+               if want else "")
+            + f"  Re-download it, then rebuild:\n"
+              f"    python benchmark-pbya/src/data/download/download_allen_merfish_brain.py\n"
+              f"  (that script verifies size and MD5, so a second truncation "
+              f"will be caught at download time rather than here.)") from exc
+
+
 def read_allen_ccf(path, verbose=True, region=None):
     """Read an Allen Brain Cell atlas MERFISH volume from its raw distribution.
 
@@ -731,7 +773,7 @@ def read_allen_ccf(path, verbose=True, region=None):
 
     if verbose:
         print(f"  reading {h5ad.name} + {meta_csv.name}")
-    adata = ad.read_h5ad(str(h5ad))
+    adata = read_h5ad_checked(h5ad)
     meta = pd.read_csv(meta_csv, index_col=0, low_memory=False)
 
     common = adata.obs.index.intersection(meta.index)
