@@ -10,10 +10,9 @@ SpatialCPA variants are measured against them on identical footing.
 Methods benchmarked: **spatialcpav8_gen, spatialcpav11_gen, spatialcpav14_gen,
 spatialcpav15_gen, SpatialZ, FEAST, isoST**.
 
-Datasets: **STARmap visual cortex** (the paper's, `kind=paper`), plus **ExSeq
-visual cortex**, **3-D IMC breast cancer**, **CosMx NSCLC**, **Deep-STARmap**,
-**MERFISH hypothalamus** and **Open-ST lymph node** (the same protocol on other
-volumes, `kind=analogue` — see [Datasets](#datasets)).
+Datasets: **STARmap visual cortex** (the paper's, `kind=paper`) plus **17
+analogues** — every volume in `benchmark-pbya` that can be cut into sections at
+all (`kind=analogue` — see [Datasets](#datasets)).
 
 v3 does not modify v1 or v2; all three coexist.
 
@@ -216,9 +215,22 @@ with the `oracle` probe holding the identity pose exactly (`align_rotation_deg` 
 [Choosing the pose](#choosing-the-pose-alignment-dependent-metrics-only) for the
 old-vs-new numbers.
 
+**Also verified here:** every one of the eighteen registered datasets builds.
+`python -m src.bench3.selftest_datasets` synthesizes a source shaped like each
+dataset's real one and runs the real `prepare_dataset`, asserting the section
+count, the hold-out id, that every held-out section is bracketed, that the marker
+panel resolves, and that a gene cap never drops a marker or layer gene. All 18
+pass. It also runs the coordinate-guard negative control described under [The
+coordinate trap](#the-coordinate-trap-these-datasets-introduced). A dataset
+registered without a case there fails the run, so a spec cannot be added and left
+unexercised.
+
 **Not verified here:** the seven method wrappers, which need `bench_spatialcpa`,
 `bench_spatialz`, `bench_feast` and `bench_isost`. They are v2's wrappers,
-invoked unchanged.
+invoked unchanged. And, for the eleven datasets added after the original seven,
+the *readers against their real files* — `selftest_datasets` proves the specs and
+the partitioning, not that a column is spelled the way a distribution spells it.
+Build each one once and read the printed section table before trusting a row.
 
 ---
 
@@ -269,7 +281,8 @@ python -m src.bench3.prepare_starmap
 python -m src.bench3.design
 
 # 3. validate the harness without any conda env
-python -m src.bench3.selftest
+python -m src.bench3.selftest            # the evaluator, on known-quality probes
+python -m src.bench3.selftest_datasets   # every registered dataset's build
 
 # 4. run the campaign (all 7 methods, shared input)
 python -m src.bench3.run_all
@@ -316,7 +329,9 @@ Path overrides: `BENCH_V3_RAW_STARMAP`, `BENCH_V3_DATA`, `BENCH_V3_RESULTS`.
 src/bench3/
   config.py              protocol constants, method registry, metric names
   prepare_dataset.py     any registered volume -> its 7-section dataset
-  sources.py             readers for source volumes (h5ad; ExSeq's raw CSV)
+  sources.py             readers for source volumes (h5ad; ExSeq/Deep-STARmap
+                         CSVs; IMC/Open-ST per-section h5ads; CosMx zips;
+                         Allen ABC h5ad + CCF metadata CSV)
   prepare_starmap.py     the STARmap entry point (thin wrapper, unchanged CLI)
   design.py              the paper holdout (2/4/6) and the LOO robustness check
   _v2bridge.py           imports v2's leakage guard / evaluators / resource monitor
@@ -333,6 +348,8 @@ src/bench3/
   plot_cross_dataset.py  every method x every dataset: bars, heatmap, rank profile
   nature_theme.py        the Nature/Springer figure theme the above draws in
   selftest.py            validate the harness with known-quality reconstructions
+  selftest_datasets.py   validate every DATASET_SPECS entry builds, on synthetic
+                         sources — plus the coordinate-guard negative control
   survey_datasets.py     screen benchmark-pbya's datasets for protocol fitness
 
 data/processed/<dataset>/data.h5ad              built by prepare_dataset (gitignored)
@@ -414,20 +431,62 @@ Nothing here modifies the checkpoint you supplied.
 
 ## Datasets
 
+Eighteen volumes. The first seven build from `data/raw/`; the rest are read from
+`benchmark-pbya`'s **processed** `data.h5ad` (see [Where each source comes
+from](#where-each-source-comes-from)).
+
 | dataset | `kind` | partition | source | status |
 |---|---|---|---|---|
 | `starmap_visual_cortex` | `paper` | `planes` — trim z 6–13 / 91–94, split 77 planes into 7 × 11 | the paper's own volume | the reproduction |
 | `exseq_visual_cortex` | `analogue` | `z_width` — cut the z range into 7 equal-width slabs (0.2 % outlier clip, not a noise trim) | `benchmark-pbya/data/raw/exseq_visual_cortex` (or v1's processed h5ad) | the same protocol, a second volume |
 | `imc_breast_cancer` | `analogue` | `sections` — all 15 real serial sections at 10 µm, used as-is | `benchmark-pbya/data/raw/imc_breast_cancer` (15 h5ads, or v1's processed) | protein panel, human tumour |
-| `cosmx_nsclc_3d` | `analogue` | `sections` — all 6 real cryosections, **30 µm** apart | `benchmark-pbya/data/raw/cosmx_nsclc_3d` (2 zips, or v1's processed) | widest gaps in the benchmark |
+| `cosmx_nsclc_3d` | `analogue` | `sections` — all 6 real cryosections, **30 µm** apart | `benchmark-pbya/data/raw/cosmx_nsclc_3d` (2 zips, or v1's processed) | widest *uniform* gaps |
 | `deep_starmap` | `analogue` | `planes` — 0.70 µm optical planes grouped into 7 slabs, no trim | `benchmark-pbya/data/raw/deep_starmap` (3 CSVs, or v1's processed) | dense volume, mouse brain |
 | `merfish_hypothalamus` | `analogue` | `sections` — 12 coronal sections, **50 µm** apart (animal 1) | `benchmark-pbya/data/raw/merfish_hypothalamus` (one CSV, all animals) | new tissue, wide gaps |
-| `openst_lymph_node` | `analogue` | `sections` — 19 cryosections, 10 µm apart | `benchmark-pbya/data/raw/openst_lymph_node` (19 h5ad.gz) | human lymphoid tissue |
+| `openst_lymph_node` | `analogue` | `sections` — 19 cryosections | `benchmark-pbya/data/raw/openst_lymph_node` (19 h5ad.gz) | human lymphoid tissue |
+| `allen_merfish_brain` | `analogue` | `sections` — 59 sections, centred window | Allen ABC `MERFISH-C57BL6J-638850` | whole mouse brain, most sections |
+| `allen_zhuang_abca1` | `analogue` | `sections` — centred window of 15 | Allen ABC `Zhuang-ABCA-1` | whole mouse brain |
+| `allen_zhuang_abca2` | `analogue` | `sections` — centred window of 15 | Allen ABC `Zhuang-ABCA-2` | whole mouse brain, 2nd parcellation |
+| `merfish_thick_cortex` | `analogue` | `z_width` — 100 µm block into 7 slabs (~14 µm) | Fang et al. 2023, Dryad | thick-tissue volume |
+| `merfish_thick_hypothalamus` | `analogue` | `z_width` — 200 µm block into 7 slabs (~29 µm) | Fang et al. 2023, Dryad | thickest slabs in the benchmark |
+| `easi_fish_lha1/2/3` | `analogue` | `z_width` — each sample into 7 slabs | Figshare 13749154 | three independent volumes, **tiny panel** |
+| `exseq_breast_cancer` | `analogue` | `z_width` — **5** sections (the volume is small) | Alon et al. 2021, Zenodo | human tumour, ~3 100 cells |
+| `st_mouse_brain_ortiz` | `analogue`, **spot** | `sections` — centred window of 15 of 75 | GEO GSE147747 | spot array, whole transcriptome |
+| `visium_mouse_brain_c2l` | `analogue`, **spot** | `sections` — all 3 (mouse 1) | E-MTAB-11114 | spot array, thinnest experiment |
 
 ```bash
 python -m src.bench3.prepare_dataset --dataset exseq_visual_cortex
 python -m src.bench3.run_all --dataset exseq_visual_cortex
 ```
+
+### Two flags that are not decoration
+
+**`resolution: "spot"`** — `st_mouse_brain_ortiz` and `visium_mouse_brain_c2l`
+are spot arrays, not single cells. Everything mechanical works, but a spot pools
+tens of cells, so `paper_celltype_localization` scores *deconvolved composition*
+rather than cells and the binned marker field is already binned by the array
+geometry before v3 bins it. `rank_methods` prints the flag and says so. Read the
+two spot rows against each other, never against a single-cell row — the same
+discipline `kind` imposes between the paper dataset and the analogues.
+
+**Size caps.** Three datasets arrive at a scale the earlier seven never reached,
+so their specs carry caps that are applied **when the dataset is built** — so the
+ground truth and every method's input hold the same cells and the same genes:
+
+* `n_hvg` (ST, Visium: 3 000) — whole-transcriptome sources arrive at 20–35 k
+  genes against the 28–1 000 of the targeted panels. Uncapped, the per-gene
+  Moran's/Geary's families average over tens of thousands of near-empty genes,
+  and any method that materializes a dense cell-by-gene matrix cannot load the
+  input at all. The dataset's own marker and layer genes are force-included, so
+  the selection can never silence `paper_marker_*`.
+* `max_cells_per_section` (the three Allen atlases: 20 000) — those volumes run
+  to millions of cells. The subsample is spatially stratified, so it keeps the
+  tissue outline and the density gradient the field metrics read.
+
+Both are recorded in `uns['paper_protocol']['gene_selection']` /
+`['cell_subsample']` and overridable per run with `--n-hvg` /
+`--max-cells-per-section`. `openst_lymph_node` is whole-transcriptome too and is
+**not** capped here — see [Known gap](#known-gap-openst-is-still-uncapped).
 
 Both write to `benchmark-pbya-v3/data/processed/<dataset>/data.h5ad` (override with
 `$BENCH_V3_DATA`; the build prints the destination). ExSeq needs no arguments: it
@@ -454,13 +513,67 @@ stage that has it. Ranks are **within** a dataset: a composite is a position amo
 that volume, so averaging STARmap's and ExSeq's composites would compare places in
 two different races. Restrict any stage to one dataset with `--dataset-name`.
 
-**Every dataset builds from `data/raw/`.** v1's processed files are accepted as an
-alternative, but none is required: `sources.py` reads each raw distribution in its
-own form — ExSeq's cell-by-gene CSV, IMC's per-section h5ads, Deep-STARmap's
-expression/spatial CSVs, and CosMx's two zips (the shipped h5ad carries STIM
-coordinates in arbitrary units, so it is joined to the per-section flat files for
-physical micrometres). Those readers mirror v1's processors rather than calling
-them, so v3 stays self-contained.
+### Where each source comes from
+
+**The original seven build from `data/raw/`.** v1's processed files are accepted
+as an alternative, but none is required: `sources.py` reads each raw distribution
+in its own form — ExSeq's cell-by-gene CSV, IMC's per-section h5ads,
+Deep-STARmap's expression/spatial CSVs, and CosMx's two zips (the shipped h5ad
+carries STIM coordinates in arbitrary units, so it is joined to the per-section
+flat files for physical micrometres). Those readers mirror v1's processors rather
+than calling them, so v3 stays self-contained.
+
+**The Allen atlases build from either.** `sources.read_allen_ccf` reads the raw
+distribution directly — an expression `.h5ad` beside the cell-metadata CSV that
+carries the reconstructed CCF position and the cluster annotation — including the
+mm → µm conversion, which is the step that is silently wrong if skipped, since
+every other v3 dataset is micrometres. `reader_region` selects which Zhuang
+parcellation.
+
+**The remaining six read v1's *processed* `data.h5ad`.** `merfish_thick_*`,
+`easi_fish_lha*`, `exseq_breast_cancer`, `st_mouse_brain_ortiz` and
+`visium_mouse_brain_c2l` have no raw reader in v3, because their raw forms are a
+Dryad archive with an R/Seurat fallback path, a MATLAB `.mat` of transcript
+positions, and a per-slide Visium ZIP respectively — re-implementing those
+faithfully is a much larger job than the CSV and h5ad readers above, and getting
+one subtly wrong is the failure mode this benchmark is least able to detect. So
+they require v1's processing pipeline to have been run, and the build says so if
+the file is missing. Adding a raw reader later changes nothing else: it is one
+entry in `sources.READERS` plus a `reader` key.
+
+### The coordinate trap these datasets introduced
+
+The Allen atlases copy their whole metadata CSV into `obs`, which puts
+*section-local* `x`/`y`/`z` right next to the reconstructed volume position in
+`obsm['spatial']`. `extract_xyz` prefers `obs['x','y','z']` — correct for
+STARmap, catastrophic here: the build would assemble the stack out of unrelated
+per-section frames and produce a dataset with the right section count, the right
+cell counts, monotone section centres, and geometry that is noise.
+
+Two things stop it. Those specs set `"coords": "obsm"`, which says which array to
+believe rather than relying on a priority order. And `prepare_dataset` now checks
+the property that actually distinguishes the two for any `partition="sections"`
+dataset: in real serial sections every cell in a section shares that section's z,
+so the spread *within* a section must be small against the gap *between*
+sections. Comparable values mean z is a per-cell quantity and the build stops.
+
+That second check matters because the existing z-monotonicity assertion in
+`verify` cannot catch this — for `sections` the section index is *assigned* by
+sorting on the section centres, so "centres increase with index" is true by
+construction. Verified both ways: with `coords: "obsm"` the eight new datasets
+build correctly, and flipping `allen_zhuang_abca1` back to `auto` on the same
+source is refused by the new check rather than silently succeeding, which is what
+it did before.
+
+### Known gap: Open-ST is still uncapped
+
+`openst_lymph_node` is whole-transcriptome like the two spot datasets, and it is
+**not** given an `n_hvg` cap here. A `spatialcpav14_gen` run on it was killed by
+the OOM killer: the wrapper densifies the training matrix, which at ~10⁶ cells ×
+~2×10⁴ genes is order 80 GB. Capping it is the same one-line spec change the ST
+and Visium entries already carry, but it changes the panel a *previously reported*
+dataset was measured on, so it is left as a deliberate decision rather than folded
+into this change. Until then, expect that run to fail.
 
 **Why ExSeq.** Same tissue as STARmap — mouse visual cortex — so the marker genes
 and the laminar-axis composite carry over unchanged, and it is the only candidate
@@ -605,6 +718,10 @@ python -m src.bench3.plot_cross_dataset
 | `fig_cross_dataset_bars` | one panel per metric; datasets along x, a bar per method, each held-out section overlaid as a dot |
 | `fig_cross_dataset_heatmap` | one panel per metric, methods × datasets, annotated — the compact overview |
 | `fig_cross_dataset_ranks` | each method's composite rank *within* each dataset, side by side, with no average across them |
+
+With all eighteen datasets built these get wide. There is no cap — the tick
+layout adapts — but a figure for publication generally wants a chosen subset:
+use `--dataset-order` to pick and order it (see below).
 
 Each run also writes `cross_dataset_values.csv` — exactly the numbers drawn.
 

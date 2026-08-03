@@ -217,8 +217,12 @@ def main():
     # different races.
     if "dataset" in ranked.columns:
         for ds, sub in ranked.groupby("dataset"):
-            kind = DATASET_SPECS.get(ds, {}).get("kind")
-            tag = f"  [{kind}]" if kind else ""
+            info = DATASET_SPECS.get(ds, {})
+            bits = [b for b in (info.get("kind"),
+                                info.get("resolution", "single_cell")
+                                if info.get("resolution") == "spot" else None)
+                    if b]
+            tag = f"  [{', '.join(bits)}]" if bits else ""
             print(f"\n{'=' * 72}\n  dataset: {ds}{tag}\n{'=' * 72}")
             print_tables(sub)
     else:
@@ -231,6 +235,14 @@ def main():
         print("Note: ranks are within a dataset. The STARmap row is the paper "
               "reproduction; other datasets are protocol analogues (config."
               "DATASET_SPECS['kind']). Do not average their composites.")
+        spot = sorted(ds for ds in ranked["dataset"].unique()
+                      if DATASET_SPECS.get(ds, {}).get("resolution") == "spot")
+        if spot:
+            print(f"Note: {', '.join(spot)} are spot arrays, not single cells "
+                  f"(DATASET_SPECS['resolution']). A spot pools tens of cells, so "
+                  f"paper_celltype_localization scores composition rather than "
+                  f"cells and the marker field is pre-binned by the array. Read "
+                  f"them against each other, not against the single-cell rows.")
 
 
 if __name__ == "__main__":

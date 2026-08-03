@@ -677,7 +677,123 @@ def read_openst_lymph_node(path, verbose=True):
     return adata
 
 
+ALLEN_CCF_COLUMNS = (("x_ccf", "y_ccf", "z_ccf"),
+                     ("x_reconstructed", "y_reconstructed", "z_reconstructed"))
+ALLEN_CCF_MM_TO_UM = 1000.0
+ALLEN_SECTION_COLUMNS = ("brain_section_label", "section", "section_id",
+                         "slice", "slice_id")
+ALLEN_CELLTYPE_COLUMNS = ("subclass", "class", "supertype", "cluster_alias",
+                          "cell_type", "celltype", "cluster")
+
+
+def read_allen_ccf(path, verbose=True, region=None):
+    """Read an Allen Brain Cell atlas MERFISH volume from its raw distribution.
+
+    The distribution is an expression ``.h5ad`` beside a cell-metadata CSV; the
+    CSV, not the h5ad, carries the reconstructed CCF position and the cell-type
+    labels. Two shapes are handled:
+
+    * ``MERFISH-C57BL6J-638850`` — one ``C57BL6J-638850-raw.h5ad`` plus
+      ``cell_metadata_with_cluster_annotation.csv``.
+    * ``Zhuang-ABCA-N``          — ``<region>-log2.h5ad`` plus
+      ``<region>-cell_metadata.csv``; ``region`` selects which.
+
+    Mirrors ``benchmark-pbya/src/data/process/process_allen_*.py`` rather than
+    calling it, so v3 stays self-contained — including the mm -> um conversion,
+    which is the one step that is silently wrong if skipped (CCF coordinates are
+    millimetres and every other v3 dataset is micrometres).
+
+    The CCF position goes to ``obsm['spatial']`` and the CSV's own ``x``/``y``
+    are *not* copied into ``obs``: those are section-local, and a build that
+    picked them up would assemble a stack of unrelated frames. See
+    ``prepare_dataset.extract_xyz``'s ``prefer`` argument.
+    """
+    import anndata as ad
+    import pandas as pd
+
+    path = Path(path)
+    raw_dir = path if path.is_dir() else path.parent
+
+    if region:
+        h5ad = next(iter(sorted(raw_dir.glob(f"{region}*.h5ad"))), None)
+        meta_csv = next(iter(sorted(raw_dir.glob(f"{region}*cell_metadata*.csv"))), None)
+    else:
+        h5ad = next(iter(sorted(raw_dir.glob("*-raw.h5ad"))
+                         or sorted(raw_dir.glob("*.h5ad"))), None)
+        meta_csv = next(iter(sorted(raw_dir.glob("*cell_metadata*.csv"))), None)
+    if h5ad is None or meta_csv is None:
+        raise FileNotFoundError(
+            f"Allen atlas source incomplete under {raw_dir}\n"
+            f"  expression h5ad: {h5ad}\n"
+            f"  cell metadata csv: {meta_csv}\n"
+            f"  expected an expression .h5ad beside a *cell_metadata*.csv"
+            + (f" for region {region!r}" if region else ""))
+
+    if verbose:
+        print(f"  reading {h5ad.name} + {meta_csv.name}")
+    adata = ad.read_h5ad(str(h5ad))
+    meta = pd.read_csv(meta_csv, index_col=0, low_memory=False)
+
+    common = adata.obs.index.intersection(meta.index)
+    if len(common) < adata.n_obs * 0.5:
+        meta.index = meta.index.astype(str)
+        adata.obs.index = adata.obs.index.astype(str)
+        common = adata.obs.index.intersection(meta.index)
+    if len(common) == 0:
+        raise ValueError(
+            f"no cells shared between {h5ad.name} and {meta_csv.name} — the "
+            f"metadata does not describe this expression matrix")
+    adata = adata[common].copy()
+    meta = meta.loc[common]
+
+    cols = next((c for c in ALLEN_CCF_COLUMNS
+                 if all(x in meta.columns for x in c)), None)
+    if cols is None:
+        raise ValueError(
+            f"{meta_csv.name}: no CCF coordinate columns; looked for "
+            f"{ALLEN_CCF_COLUMNS}, found {sorted(meta.columns)[:20]}")
+    adata.obsm["spatial"] = np.column_stack(
+        [meta[c].values.astype(np.float64) * ALLEN_CCF_MM_TO_UM for c in cols])
+
+    sec = next((c for c in ALLEN_SECTION_COLUMNS if c in meta.columns), None)
+    if sec is not None:
+        adata.obs["section"] = meta[sec].astype(str).values
+    else:
+        # No section column: the reconstructed z *is* the section position, so
+        # the distinct values are the sections.
+        adata.obs["section"] = np.round(
+            adata.obsm["spatial"][:, 2], 1).astype(str)
+
+    ct = next((c for c in ALLEN_CELLTYPE_COLUMNS if c in meta.columns), None)
+    adata.obs["cell_type"] = (meta[ct].astype(str).values if ct
+                              else "unannotated")
+    # Deliberately narrow: keeping the rest of the CSV would reintroduce the
+    # section-local x/y this reader exists to avoid.
+    adata.obs = adata.obs[["section", "cell_type"]]
+
+    if "gene_symbol" in adata.var.columns:
+        adata.var["ensembl_id"] = adata.var.index.values
+        adata.var.index = adata.var["gene_symbol"].fillna(
+            adata.var["ensembl_id"]).values
+    adata.var_names_make_unique()
+    adata.X = adata.X.tocsr() if sp.issparse(adata.X) else sp.csr_matrix(adata.X)
+    adata.uns["expression_type"] = (
+        "log2_normalized" if "log2" in h5ad.name else "raw_counts")
+    adata.uns["spatial_metadata"] = {
+        "technology": "MERFISH", "species": "mouse", "tissue": "whole brain",
+        "coordinate_units": "micrometers",
+        "expression_type": adata.uns["expression_type"],
+        "source": f"Allen Brain Cell Atlas ({region or h5ad.stem}), read by bench3.sources",
+    }
+    if verbose:
+        print(f"  {adata.n_obs} cells x {adata.n_vars} genes, "
+              f"{adata.obs['section'].nunique()} sections "
+              f"(CCF {cols[0]}/{cols[1]}/{cols[2]}, mm -> um)")
+    return adata
+
+
 READERS = {"exseq_csv": read_exseq_csv, "imc_zstack": read_imc_zstack,
+           "allen_ccf": read_allen_ccf,
            "deep_starmap_csv": read_deep_starmap_csv,
            "cosmx_raw": read_cosmx_raw,
            "merfish_hypothalamus_csv": read_merfish_hypothalamus_csv,
@@ -700,7 +816,11 @@ def load_source(path, spec, verbose=True):
 
     reader = spec.get("reader", "auto")
     if reader in READERS:
-        return READERS[reader](path, verbose=verbose)
+        # A reader that serves several volumes out of one raw directory (the
+        # Allen parcellations) needs to be told which; nothing else passes it.
+        extra = ({"region": spec["reader_region"]}
+                 if spec.get("reader_region") and reader == "allen_ccf" else {})
+        return READERS[reader](path, verbose=verbose, **extra)
 
     raise ValueError(
         f"don't know how to read {path} for this dataset "

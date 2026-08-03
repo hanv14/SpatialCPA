@@ -58,15 +58,15 @@ import numpy as np
 import scipy.sparse as sp
 
 from .config import (
-    DATASET_NAME, dataset_path, held_out_indices, resolve_raw, section_label,
-    spec,
+    DATASET_NAME, RANDOM_SEED, dataset_path, held_out_indices, resolve_raw,
+    section_label, spec,
 )
 from .sources import load_source
 
 
 # ── Raw-volume readers ────────────────────────────────────────────────────────
 
-def extract_xyz(adata):
+def extract_xyz(adata, prefer="auto"):
     """Return ``(coords (n, 3), units, source)`` — units is 'voxels' or 'um'.
 
     Accepts a raw volume or a v1-*processed* file. Getting the units wrong is a
@@ -78,14 +78,26 @@ def extract_xyz(adata):
     distribution carries the z-planes there even when ``obsm['spatial']`` is only
     2-D, and v1 leaves those columns as original voxel indices), then a 3-D obsm,
     then 2-D obsm + an obs z column.
+
+    ``prefer="obsm"`` skips the obs branch entirely. That is not a tidiness knob:
+    the Allen atlases copy their whole metadata CSV into ``obs``, which carries
+    *section-local* ``x``/``y`` next to the reconstructed CCF position in
+    ``obsm['spatial']``. Taking the obs columns there would silently rebuild the
+    volume out of unrelated per-section frames — a stack that looks healthy and
+    is geometric nonsense — so those specs say which array to believe rather than
+    relying on a priority order that happens to be right for STARmap.
     """
-    for xc, yc, zc in (("x", "y", "z"), ("X", "Y", "Z")):
-        if all(c in adata.obs.columns for c in (xc, yc, zc)):
-            return np.column_stack([
-                adata.obs[xc].values.astype(np.float64),
-                adata.obs[yc].values.astype(np.float64),
-                adata.obs[zc].values.astype(np.float64),
-            ]), "voxels", f"obs['{xc}','{yc}','{zc}']"
+    if prefer not in ("auto", "obsm"):
+        raise ValueError(f"unknown coords preference {prefer!r}; use 'auto' or 'obsm'")
+
+    if prefer == "auto":
+        for xc, yc, zc in (("x", "y", "z"), ("X", "Y", "Z")):
+            if all(c in adata.obs.columns for c in (xc, yc, zc)):
+                return np.column_stack([
+                    adata.obs[xc].values.astype(np.float64),
+                    adata.obs[yc].values.astype(np.float64),
+                    adata.obs[zc].values.astype(np.float64),
+                ]), "voxels", f"obs['{xc}','{yc}','{zc}']"
 
     declared = str((adata.uns.get("spatial_metadata") or {})
                    .get("coordinate_units", "")).lower()
@@ -102,9 +114,184 @@ def extract_xyz(adata):
                             [coords, adata.obs[zc].values.astype(np.float64)]),
                             units, f"obsm['{key}'] + obs['{zc}']")
     raise ValueError(
-        "Could not find 3-D coordinates: expected obs['x','y','z'] or a 3-D "
-        "obsm['spatial']/'spatial3d'."
+        "Could not find 3-D coordinates: expected a 3-D obsm['spatial']/'spatial3d'"
+        + ("" if prefer == "obsm" else ", or obs['x','y','z']")
+        + f" (coords preference {prefer!r})."
     )
+
+
+def check_sections_separate_in_z(z_um, sec_idx, dataset, coord_source):
+    """For a serial-section dataset, assert z actually separates the sections.
+
+    ``verify`` checks that section centres increase with section index — but for
+    ``partition="sections"`` the index is *assigned* by sorting on those centres,
+    so that check is satisfied by construction and cannot fail. It would pass on
+    coordinates that have nothing to do with the stack.
+
+    That is not hypothetical. A source whose ``obs`` carries section-*local*
+    coordinates next to the reconstructed volume position (the Allen atlases) will
+    build a perfectly healthy-looking stack out of the wrong array: right number
+    of sections, right cell counts, monotone centres, and geometry that is noise.
+
+    The property that distinguishes them is physical. In real serial sections
+    every cell in a section shares that section's z, so the spread *within* a
+    section is far smaller than the gap *between* consecutive sections. If the two
+    are comparable, z is a per-cell quantity rather than a section coordinate, and
+    the stack is not what it claims to be.
+    """
+    centres, spreads = [], []
+    for i in np.unique(sec_idx):
+        if i == 0:
+            continue
+        zi = z_um[sec_idx == i]
+        centres.append(float(np.median(zi)))
+        spreads.append(float(np.std(zi)))
+    if len(centres) < 2:
+        return
+    centres = np.sort(np.asarray(centres))
+    gaps = np.diff(centres)
+    median_gap = float(np.median(gaps))
+    median_spread = float(np.median(spreads))
+    if median_gap > 0 and median_spread < 0.5 * median_gap:
+        return
+    raise ValueError(
+        f"{dataset}: z does not separate the sections — median within-section "
+        f"spread {median_spread:.3g} um vs median between-section gap "
+        f"{median_gap:.3g} um.\n"
+        f"  Coordinates were read from {coord_source}.\n"
+        f"  For real serial sections every cell in a section shares that "
+        f"section's z, so the spread must be small against the gap. Comparable "
+        f"values mean these are per-cell coordinates inside each section, not a "
+        f"stack coordinate — a common shape when a source carries section-local "
+        f"x/y/z alongside a reconstructed volume position.\n"
+        f"  Fix by pointing the dataset at the volume coordinates: set "
+        f"\"coords\": \"obsm\" in config.DATASET_SPECS[{dataset!r}] if the "
+        f"reconstructed position lives in obsm['spatial'].")
+
+
+# ── Size caps ─────────────────────────────────────────────────────────────────
+# Both are applied to the *built dataset*, so the ground truth and every method's
+# input carry the same cells and the same genes. Capping only the method input
+# would leave the evaluator scoring against a panel the method never saw.
+
+def select_genes(adata, n_hvg, keep, verbose=True):
+    """Reduce to ``n_hvg`` highly variable genes, force-keeping ``keep``.
+
+    Whole-transcriptome datasets (Open-ST, ST, Visium) arrive with 20-35k genes
+    against the 28-1000 of the targeted panels. That breaks the benchmark twice
+    over: the per-gene autocorrelation families average over tens of thousands of
+    near-empty genes, so the number that comes out is dominated by genes carrying
+    no spatial signal at all; and any method that materializes a dense cell-by-gene
+    matrix cannot load the input.
+
+    ``keep`` — the dataset's own marker and layer genes — is force-included, so
+    the ``paper_marker_*`` group can never be silenced by the selection.
+    """
+    if not n_hvg or adata.n_vars <= int(n_hvg):
+        return adata, None
+
+    import scanpy as sc
+
+    n_hvg = int(n_hvg)
+    keep_idx = {i for i, v in enumerate(adata.var_names)
+                if _canon(v) in {_canon(k) for k in keep}}
+
+    work = adata.copy()
+    work.X = work.X.tocsr() if sp.issparse(work.X) else sp.csr_matrix(work.X)
+    # HVG selection wants log-scale input; the built file keeps its own values.
+    counts_like = bool(np.all(np.asarray(
+        (work.X[:min(work.n_obs, 2000)]).todense()) % 1 == 0))
+    if counts_like:
+        sc.pp.normalize_total(work, target_sum=1e4)
+        sc.pp.log1p(work)
+    try:
+        sc.pp.highly_variable_genes(work, n_top_genes=n_hvg, flavor="seurat")
+        chosen = set(np.where(work.var["highly_variable"].values)[0].tolist())
+    except Exception:
+        # Fall back to plain variance ranking — a dispersion fit can fail on a
+        # panel with too few genes or degenerate means, and losing the cap is a
+        # worse outcome than losing the flavour.
+        X = work.X
+        mean = np.asarray(X.mean(axis=0)).ravel()
+        sq = np.asarray(X.multiply(X).mean(axis=0)).ravel() if sp.issparse(X) \
+            else np.asarray((X ** 2).mean(axis=0)).ravel()
+        var = np.maximum(sq - mean ** 2, 0.0)
+        chosen = set(np.argsort(-var)[:n_hvg].tolist())
+
+    chosen |= keep_idx
+    order = np.sort(np.fromiter(chosen, dtype=int))
+    out = adata[:, order].copy()
+    note = {"n_hvg": n_hvg, "genes_before": int(adata.n_vars),
+            "genes_after": int(out.n_vars),
+            "markers_forced": sorted(str(adata.var_names[i]) for i in keep_idx)}
+    if verbose:
+        print(f"  genes: {adata.n_vars} -> {out.n_vars} "
+              f"(top {n_hvg} highly variable"
+              + (f" + {len(keep_idx)} marker/layer forced" if keep_idx else "")
+              + ")")
+    return out, note
+
+
+def subsample_sections(adata, sec_idx, max_cells, seed, verbose=True):
+    """Cap each section's cell count, sampling uniformly *in space*.
+
+    A plain random draw thins dense regions and sparse ones by the same factor,
+    which is what we want — but drawn independently per cell it also leaves the
+    per-section spatial support ragged at the low-density edges. Sampling within
+    a coarse spatial grid instead keeps the tissue outline and the density
+    gradient, which the field and localization metrics both read.
+
+    Returns ``(keep_mask, note)``.
+    """
+    keep = np.ones(adata.n_obs, dtype=bool)
+    if not max_cells:
+        return keep, None
+    max_cells = int(max_cells)
+    coords = np.asarray(adata.obsm["spatial"], dtype=np.float64)
+    rng = np.random.default_rng(seed)
+
+    before = {}
+    for i in np.unique(sec_idx):
+        rows = np.where(sec_idx == i)[0]
+        before[int(i)] = int(len(rows))
+        if len(rows) <= max_cells:
+            continue
+        xy = coords[rows][:, :2]
+        # ~sqrt(max_cells) bins per axis puts a handful of cells in each, so the
+        # draw is spread over the section rather than over the cell list.
+        nb = max(1, int(np.sqrt(max_cells) / 2))
+        gx = np.clip(((xy[:, 0] - xy[:, 0].min()) /
+                      max(np.ptp(xy[:, 0]), 1e-9) * nb).astype(int), 0, nb - 1)
+        gy = np.clip(((xy[:, 1] - xy[:, 1].min()) /
+                      max(np.ptp(xy[:, 1]), 1e-9) * nb).astype(int), 0, nb - 1)
+        cell = gx * nb + gy
+        # Proportional allocation with the remainder given to the fullest bins,
+        # so the sample keeps the density field rather than flattening it.
+        order = rng.permutation(len(rows))
+        ranks = np.empty(len(rows), dtype=int)
+        for c in np.unique(cell):
+            m = np.where(cell[order] == c)[0]
+            ranks[order[m]] = np.arange(len(m))
+        quota = np.ceil(np.bincount(cell, minlength=nb * nb) *
+                        (max_cells / len(rows))).astype(int)
+        take = ranks < quota[cell]
+        chosen = np.where(take)[0]
+        if len(chosen) > max_cells:            # ceil() overshoots; trim at random
+            chosen = rng.choice(chosen, size=max_cells, replace=False)
+        drop = np.setdiff1d(np.arange(len(rows)), chosen, assume_unique=False)
+        keep[rows[drop]] = False
+
+    after = {int(i): int(keep[sec_idx == i].sum()) for i in np.unique(sec_idx)}
+    if not (~keep).any():
+        return keep, None
+    note = {"max_cells_per_section": max_cells, "seed": int(seed),
+            "cells_before": before, "cells_after": after}
+    if verbose:
+        print(f"  cells: capped at {max_cells}/section — "
+              f"{int((~keep).sum())} of {adata.n_obs} dropped "
+              f"(per section {min(before.values())}-{max(before.values())} -> "
+              f"{min(after.values())}-{max(after.values())})")
+    return keep, note
 
 
 def cell_type_series(adata):
@@ -314,7 +501,7 @@ def sanitize_frame(df, what, verbose=True):
 def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
           n_sections=None, verbose=True, trim=True, z_trim_quantile=None,
           section_trim=None, min_cells=MIN_CELLS_PER_SECTION,
-          allow_small=False):
+          allow_small=False, n_hvg=None, max_cells_per_section=None):
     """Build and write a dataset's paper-protocol view. Returns the AnnData.
 
     ``trim=False`` disables the dataset's trim where one is optional. STARmap's
@@ -362,7 +549,7 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
         print(f"  input: {adata.n_obs} cells x {adata.n_vars} genes "
               f"[{dataset}, partition={s['partition']}]")
 
-    coords, units, source = extract_xyz(adata)
+    coords, units, source = extract_xyz(adata, prefer=s.get("coords", "auto"))
     # A spec may state the source units outright. v1's ExSeq processor writes
     # micrometres into obsm['spatial'] but records no ``coordinate_units``, so
     # detection alone would call it voxels; that happens to be harmless only
@@ -374,8 +561,8 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
                   f"dataset spec")
         units = declared
     if units == "voxels":
-        coords_um = np.column_stack([coords[:, :2] * s["voxel_xy_um"],
-                                     coords[:, 2] * s["voxel_z_um"]])
+        coords_um = np.column_stack([coords[:, :2] * s.get("voxel_xy_um", 1.0),
+                                     coords[:, 2] * s.get("voxel_z_um", 1.0)])
     else:
         coords_um = coords
     if verbose:
@@ -452,14 +639,43 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
         print(f"  trimmed {trim_desc}: dropped {n_drop} cells "
               f"({n_drop / adata.n_obs:.1%}){extra}")
 
+    if s["partition"] == "sections":
+        check_sections_separate_in_z(
+            z_um_all[keep_mask], sec_idx_all[keep_mask], dataset, source)
+
     out = adata[keep_mask].copy()
     coords_um = coords_um[keep_mask]
     planes = planes_all[keep_mask]
     sec_idx = sec_idx_all[keep_mask]
-    z_um = coords_um[:, 2]
 
     out.X = out.X.tocsr() if sp.issparse(out.X) else sp.csr_matrix(out.X)
     out.var_names_make_unique()
+
+    # Size caps, applied once the sections are known so the cell cap can be
+    # per-section. Both are recorded in uns['paper_protocol'] below — a result
+    # measured on a capped panel has to say so.
+    cap_cells = (s.get("max_cells_per_section")
+                 if max_cells_per_section is None else max_cells_per_section)
+    if cap_cells:
+        out.obsm["spatial"] = np.column_stack([coords_um[:, :2], coords_um[:, 2]])
+        sub_keep, subsample_note = subsample_sections(
+            out, sec_idx, cap_cells, seed=RANDOM_SEED, verbose=verbose)
+        if not sub_keep.all():
+            out = out[sub_keep].copy()
+            coords_um = coords_um[sub_keep]
+            planes = planes[sub_keep]
+            sec_idx = sec_idx[sub_keep]
+    else:
+        subsample_note = None
+
+    cap_genes = s.get("n_hvg") if n_hvg is None else n_hvg
+    out, hvg_note = select_genes(
+        out, cap_genes,
+        keep=tuple(s["marker_genes"]) + tuple(s["layer_superficial"])
+             + tuple(s["layer_deep"]),
+        verbose=verbose)
+
+    z_um = coords_um[:, 2]
 
     sections = np.array([section_label(i) for i in sec_idx])
 
@@ -535,6 +751,12 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
         "marker_genes_requested": [str(g) for g in s["marker_genes"]],
         "layer_superficial": resolve_markers(s["layer_superficial"], panel),
         "layer_deep": resolve_markers(s["layer_deep"], panel),
+        # A spot array is not the resolution this protocol was designed on, and a
+        # capped panel is not the panel the assay produced. Both travel with the
+        # data so a row can never be read as something it is not.
+        "resolution": s.get("resolution", "single_cell"),
+        "gene_selection": hvg_note,
+        "cell_subsample": subsample_note,
     }
 
     sanitize_frame(out.var, "var", verbose=verbose)
@@ -655,6 +877,15 @@ def main():
                          "protocol (it will break methods and make metrics noise)")
     ap.add_argument("--min-cells-per-section", type=int,
                     default=MIN_CELLS_PER_SECTION)
+    ap.add_argument("--n-hvg", type=int, default=None,
+                    help="cap the panel at this many highly variable genes "
+                         "(the dataset's marker/layer genes are always kept). "
+                         "Default: the dataset's own; needed for the "
+                         "whole-transcriptome datasets")
+    ap.add_argument("--max-cells-per-section", type=int, default=None,
+                    help="cap each section by spatially stratified subsample "
+                         "(default: the dataset's own). Applied to the built "
+                         "dataset, so ground truth and method input match")
     ap.add_argument("--print-protocol", action="store_true",
                     help="print the resolved protocol as JSON and exit")
     args = ap.parse_args()
@@ -664,7 +895,9 @@ def main():
                   trim=not args.no_trim, z_trim_quantile=args.z_trim_quantile,
                   section_trim=args.section_trim,
                   min_cells=args.min_cells_per_section,
-                  allow_small=args.allow_small_sections)
+                  allow_small=args.allow_small_sections,
+                  n_hvg=args.n_hvg,
+                  max_cells_per_section=args.max_cells_per_section)
     if args.print_protocol:
         print(json.dumps(adata.uns["paper_protocol"], indent=2, default=str))
     return 0
