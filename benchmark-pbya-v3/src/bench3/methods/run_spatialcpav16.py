@@ -11,6 +11,7 @@ method receives one scalar target z per section. Nothing else.
 """
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -29,21 +30,58 @@ import _v2_io                      # noqa: E402
 import leakage_guard               # noqa: E402
 
 
+ROOT_ENV = "SPATIALCPAV16_ROOT"
+
+
+def _candidate_roots():
+    """Directories that might *contain* the ``spatialcpav16`` package.
+
+    ``$SPATIALCPAV16_ROOT`` wins, matching the convention v14's wrapper uses. It
+    names the directory the package sits **in**, not the package itself — but
+    pointing it straight at ``.../spatialcpav16`` is the obvious mistake, so that
+    spelling is accepted too rather than failing with the package one level away.
+    """
+    env = os.environ.get(ROOT_ENV)
+    if env:
+        p = Path(env).expanduser()
+        yield p
+        # ``$SPATIALCPAV16_ROOT=/path/to/spatialcpav16`` -> try its parent.
+        if p.name == "spatialcpav16":
+            yield p.parent
+    yield from Path(__file__).resolve().parents
+
+
 def _add_root():
-    for cand in Path(__file__).resolve().parents:
+    tried = []
+    for cand in _candidate_roots():
+        tried.append(str(cand))
         if (cand / "spatialcpav16" / "__init__.py").exists():
             if str(cand) not in sys.path:
                 sys.path.insert(0, str(cand))
-            return str(cand)
-    return None
+            return str(cand), tried
+    return None, tried
 
 
-_ROOT = _add_root()
+_ROOT, _TRIED = _add_root()
 
 
 def check_environment():
     if _ROOT is None:
+        env = os.environ.get(ROOT_ENV)
         print("ERROR: could not locate the `spatialcpav16` package.", file=sys.stderr)
+        print(f"  Looked for a directory containing spatialcpav16/__init__.py in:",
+              file=sys.stderr)
+        for t in _TRIED:
+            print(f"    {t}", file=sys.stderr)
+        if env:
+            print(f"  ${ROOT_ENV} is set to {env!r}; it must name the directory "
+                  f"the package sits IN, so {Path(env) / 'spatialcpav16' / '__init__.py'} "
+                  f"has to exist.", file=sys.stderr)
+        else:
+            print(f"  ${ROOT_ENV} is not set. Either set it to the directory "
+                  f"holding spatialcpav16/, or keep the package at the repository "
+                  f"root beside benchmark-pbya-v3/ where the parent walk finds it.",
+                  file=sys.stderr)
         return False
     try:
         import spatialcpav16
