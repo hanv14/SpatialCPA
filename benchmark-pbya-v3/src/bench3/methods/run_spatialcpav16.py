@@ -149,6 +149,9 @@ def run_method(adata, targets, gene_names, args):
     cfg.flow.ode_steps = args.ode_steps
     cfg.flow.n_ensemble = args.ensemble
     cfg.expression.residual_scale = args.residual_scale
+    cfg.expression.ground = not args.no_ground
+    cfg.expression.ground_edit_weight = args.edit_weight
+    cfg.expression.ground_space_weight = args.ground_space_weight
     cfg.expression.calibrate = not args.no_calibration
     cfg.expression.residual_by_type = not args.residual_pooled
     cfg.types.composition_match = not args.no_composition_match
@@ -205,6 +208,14 @@ def main():
     p.add_argument("--ode-steps", type=int, default=16)
     p.add_argument("--ensemble", type=int, default=8)
     p.add_argument("--residual-scale", type=float, default=1.0)
+    p.add_argument("--no-ground", action="store_true",
+                   help="ablate grounding: emit the synthesized field plus the "
+                        "modelled residual instead of real profiles")
+    p.add_argument("--edit-weight", type=float, default=0.25,
+                   help="how much of the generated field is blended into the "
+                        "grounded profile")
+    p.add_argument("--ground-space-weight", type=float, default=0.5,
+                   help="locality vs molecular agreement when selecting a donor")
     p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"],
                    help="default 'auto': use a GPU whenever one is visible")
     p.add_argument("--cuda-index", type=int, default=0,

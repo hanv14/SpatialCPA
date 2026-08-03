@@ -96,6 +96,46 @@ Four hypotheses for the depth deficit have been tested. **Three are dead.**
 method's headline contribution and it optimizes one metric family at the direct
 expense of another. No setting found so far gets both.
 
+### Grounding was tried, and it failed
+
+The ranking evidence pointed hard at grounding — every method above v16 on depth
+and localization carries real profiles into the virtual slice — so v16 grew a
+grounding stage: each virtual cell is given a real training cell's profile,
+selected in a joint space of position and generated expression, restricted to
+donors of its own assigned type, then blended with the generated field. Position,
+cell type and the expression target all still come from the generative side.
+
+It made things worse, twice.
+
+| config | Moran | Geary | UMAP mix | depth | localization |
+|---|---|---|---|---|---|
+| **ungrounded (the default)** | **0.917** | **0.918** | **0.815** | **0.675** | 0.577 |
+| grounded, first implementation | 0.760 | 0.766 | 0.536 | 0.667 | 0.579 |
+| grounded, dimension-corrected | 0.810 | 0.814 | 0.617 | 0.661 | 0.575 |
+
+The first version had a real bug: the 27-dimensional expression block outweighed
+the 2-dimensional position block about 13:1 whatever the weight was set to, so
+the match degenerated into "find the training cell most like this smoothed
+profile", which selects near-population-mean cells everywhere. Scaling each block
+by the square root of its dimensionality recovered 0.08 of embedding mixing and
+changed nothing else.
+
+What remains is not a bug. Nearest-neighbour donor selection draws the same cells
+repeatedly, and blending a real profile with a smoothed one shrinks the variance
+of both. The result is a duplicated, variance-compressed sample of the real
+expression distribution — which is exactly what ``paper_umap_mixing`` is built to
+detect, and it detects it. **Grounding does not transfer to v16 as a bolt-on**,
+and it notably did not move depth (0.675 -> 0.661) either, which was the reason
+for trying it.
+
+The stage is kept behind ``ExpressionConfig.ground`` (default off) and
+``--no-ground``/`--edit-weight`/`--ground-space-weight`, because the reasoning
+that motivated it still stands even though this implementation does not. v14
+grounds successfully, so the difference is in *how* — v14 grounds a per-cell
+latent it generated jointly with position, v16 grounds a section-level spectral
+field. Making it work here would mean generating a per-cell latent to match
+against, which is a redesign, not a parameter.
+
 ### The structural problem
 
 v14 scores depth 0.819 and localization 0.785 on STARmap; v16 scores 0.690 and

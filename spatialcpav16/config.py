@@ -70,6 +70,29 @@ class ExpressionConfig:
     # weight. Anchoring on the low band moved paper_marker_depth_r 0.675 -> 0.677
     # and cost Moran 0.917 -> 0.912 — a wash. Kept as a knob, not a default.
     protect_low_bins: int = 0
+    # Grounding: give each virtual cell a real training cell's profile, selected
+    # by the generated field rather than copied from a neighbour slice.
+    #
+    # On this benchmark, synthesizing expression from a latent is a handicap.
+    # Every method scoring well on paper_marker_depth_r and
+    # paper_celltype_localization — SpatialZ, v8, v14, v15 — carries real
+    # profiles into the virtual slice, and ungrounded v16 was last on both.
+    # Position, cell type and the expression *target* all still come from the
+    # generative side; grounding only answers which real profile realizes it.
+    #
+    # OFF by default: IT WAS TRIED AND IT DID NOT WORK. Two implementations were
+    # measured (see validation/VALIDATION.md) and both were worse than the
+    # ungrounded pipeline on four of five metrics, embedding mixing worst of all
+    # (0.62 against 0.82). Selecting donors by nearest-neighbour draws the same
+    # cells repeatedly and blending a real profile with a smoothed one shrinks
+    # the cloud, so the result is a duplicated, variance-compressed sample of the
+    # real distribution rather than a faithful one. Kept behind the flag because
+    # the reasoning that motivated it still stands; the implementation does not.
+    ground: bool = False
+    ground_edit_weight: float = 0.25   # blend of the generated field back in
+    ground_space_weight: float = 0.5   # locality vs molecular agreement in the match
+    ground_candidates: int = 8         # sample among the k nearest, not the argmin
+    ground_min_donors: int = 10        # below this a type falls back tissue-wide
     readout: str = "auto"              # auto | counts | continuous
 
 
