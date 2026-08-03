@@ -34,23 +34,16 @@ ROOT_ENV = "SPATIALCPAV16_ROOT"
 
 
 def _candidate_roots():
-    """Directories that might *contain* the ``spatialcpav16`` package.
+    """Directories that might contain the ``spatialcpav16`` package.
 
-    ``$SPATIALCPAV16_ROOT`` wins, matching the convention v14's wrapper uses. It
-    names the directory the package sits **in**, not the package itself — but
-    pointing it straight at ``.../spatialcpav16`` is the obvious mistake, so that
-    spelling is accepted too rather than failing with the package one level away.
+    Same rule as v14's wrapper: ``$SPATIALCPAV16_ROOT`` first, then the wrapper's
+    own parent directories. The variable names the directory the package sits
+    **in**, not the package itself.
     """
     env = os.environ.get(ROOT_ENV)
     if env:
-        p = Path(env).expanduser()
-        yield p
-        # ``$SPATIALCPAV16_ROOT=/path/to/spatialcpav16`` -> try its parent.
-        if p.name == "spatialcpav16":
-            yield p.parent
-    for p in Path(__file__).resolve().parents:
-        yield p
-        yield p / "src"          # the package lives in <repo>/src/
+        yield Path(env).expanduser()
+    yield from Path(__file__).resolve().parents
 
 
 def _add_root():
