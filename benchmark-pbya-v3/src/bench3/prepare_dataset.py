@@ -498,6 +498,40 @@ def sanitize_frame(df, what, verbose=True):
         print(f"  {what}: " + "; ".join(bits))
 
 
+def merge_colocated_sections(secs_all, by_z, z_um_all, tol):
+    """Merge source sections whose depths coincide into one section each.
+
+    Some sources label sections by something other than depth. Ortiz names two
+    replicate sections at one anterior-posterior coordinate ``23A`` and ``23B``,
+    and after registration into the Allen frame both sit at the same z — so the
+    "stack" contains pairs of sections at identical depth, which is not a stack
+    and which no interpolation method can be asked to order.
+
+    Physically they *are* one plane sampled twice, so they are merged into one
+    section rather than dropped: nothing is lost and the depth axis becomes
+    strictly increasing, which is what the protocol requires.
+    """
+    z_of = {lab: float(np.median(z_um_all[secs_all == lab])) for lab in by_z}
+    groups, current = [], [by_z[0]]
+    for prev, lab in zip(by_z, by_z[1:]):
+        if abs(z_of[lab] - z_of[prev]) <= tol:
+            current.append(lab)
+        else:
+            groups.append(current)
+            current = [lab]
+    groups.append(current)
+
+    remap, new_order = {}, []
+    n_merged = 0
+    for g in groups:
+        name = g[0] if len(g) == 1 else "+".join(g)
+        new_order.append(name)
+        n_merged += len(g) - 1
+        for lab in g:
+            remap[lab] = name
+    return np.array([remap[s] for s in secs_all]), new_order, n_merged
+
+
 def drop_nulls(obj):
     """Recursively remove None values so the result is h5ad-writable everywhere.
 
@@ -632,6 +666,15 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
         secs_all = adata.obs["section"].values.astype(str)
         by_z = sorted(np.unique(secs_all),
                       key=lambda lab: float(np.median(z_um_all[secs_all == lab])))
+        tol = float(s.get("section_z_tolerance", 0.0))
+        if tol > 0:
+            secs_all, by_z, n_merged = merge_colocated_sections(
+                secs_all, by_z, z_um_all, tol)
+            if verbose and n_merged:
+                print(f"  merged {n_merged} co-located source sections "
+                      f"(within {tol:g} um) -> {len(by_z)} distinct depths")
+            if n_sections is None:
+                n_sections = len(by_z)
         keep_labels, assignment = partition_sections(by_z, n_sections, window)
         window_note = "" if len(keep_labels) == len(by_z) else f" ({window} window)"
         keep_mask = np.isin(secs_all, keep_labels)
@@ -820,7 +863,20 @@ def verify(adata, n_sections, held_out, verbose=True,
 
     z = adata.obsm["spatial"][:, 2]
     zs = [float(np.median(z[labels == s])) for s in uniq]
-    assert all(a < b for a, b in zip(zs, zs[1:])), "section z must increase with index"
+    ties = [(a, b, za) for a, b, za, zb in zip(uniq, uniq[1:], zs, zs[1:]) if za >= zb]
+    if ties:
+        raise ValueError(
+            "section z must increase with index, but these consecutive sections "
+            "do not:\n"
+            + "\n".join(f"    {a} and {b} both at z = {za:.4g} um"
+                         for a, b, za in ties)
+            + "\n  Two sections at the same z are not a stack. The usual cause is a "
+              "source whose section labels distinguish something other than depth — "
+              "replicate sections at one anatomical coordinate (Ortiz names them "
+              "'23A'/'23B'), or several animals registered into a shared frame.\n"
+              "  Fix by setting \"section_z_tolerance\" in "
+              "config.DATASET_SPECS[<dataset>] so labels within that many um of each "
+              "other are merged into one section, which is what they physically are.")
 
     missing = [s for s in held_out if s not in uniq]
     assert not missing, f"held-out sections absent from the build: {missing}"

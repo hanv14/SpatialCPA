@@ -813,10 +813,18 @@ DATASET_SPECS = {
         "source_units": "um",
         "coords": "obsm",
         "partition": "sections",
-        # 75 sections from 3 animals interleaved into one anterior-posterior
-        # atlas, all registered to the Allen atlas by the authors. A centred
+        # The labels are '01A'/'01B' ... '40A'/'40B': A and B are replicate
+        # sections at ONE anterior-posterior coordinate, so after registration
+        # into the Allen frame each pair sits at the same z. Two sections at the
+        # same depth are not a stack, and the build stops on it. They are
+        # physically one plane sampled twice, so they are merged rather than
+        # dropped — nothing is lost and the depth axis becomes strictly
+        # increasing, which the protocol requires.
+        "section_z_tolerance": 1.0,        # um
+        # 75 source sections from 3 animals interleaved into one
+        # anterior-posterior atlas, ~38 distinct depths after merging. A centred
         # window of 15 keeps the design comparable with the Allen entries instead
-        # of producing a 37-way hold-out nothing else can be read against.
+        # of producing a hold-out nothing else can be read against.
         "n_sections": 15,
         "section_trim": "center",
         "held_out": "alternate",
