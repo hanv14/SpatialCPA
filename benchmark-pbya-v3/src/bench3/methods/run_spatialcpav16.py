@@ -48,7 +48,9 @@ def _candidate_roots():
         # ``$SPATIALCPAV16_ROOT=/path/to/spatialcpav16`` -> try its parent.
         if p.name == "spatialcpav16":
             yield p.parent
-    yield from Path(__file__).resolve().parents
+    for p in Path(__file__).resolve().parents:
+        yield p
+        yield p / "src"          # the package lives in <repo>/src/
 
 
 def _add_root():
