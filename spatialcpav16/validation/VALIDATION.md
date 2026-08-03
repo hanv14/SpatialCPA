@@ -24,22 +24,69 @@ ceiling).
 
 ## 2. The five target metrics
 
-| metric | **v16** (M=64) | v16 (M=384) | `flanking_copy` | `oracle` |
-|---|---|---|---|---|
-| `paper_morans_pearson` | +0.897 | +0.876 | **+0.975** | +1.000 |
-| `paper_gearys_pearson` | +0.896 | +0.879 | **+0.976** | +1.000 |
-| `paper_umap_mixing` | +0.827 | +0.772 | **+0.963** | +1.000 |
-| `paper_marker_depth_r` | +0.754 | +0.692 | **+0.944** | +1.000 |
-| `paper_celltype_localization` | +0.459 | +0.511 | **+0.754** | +0.982 |
+**Full leaderboard, run by the repo owner** on `starmap_visual_cortex`,
+`paper_2_4_6`, mean over holdouts — the comparison this package could not make
+itself, since SpatialZ needs `bench_spatialz` and the Zenodo distribution:
 
-**v16 loses to a flanking copy on all five.** It therefore cannot be claimed to
-beat SpatialZ, and no such claim is made anywhere in this package.
+| method | UMAP mix | Moran | Geary | depth | localization |
+|---|---|---|---|---|---|
+| **spatialz** | 0.793 | **0.929** | **0.931** | **0.920** | **0.817** |
+| feast | 0.770 | 0.774 | 0.775 | 0.769 | 0.000 |
+| isost | **0.990** | 0.788 | 0.798 | 0.698 | 0.000 |
+| spatialcpav8_gen | 0.863 | 0.912 | 0.914 | 0.894 | 0.698 |
+| spatialcpav11_gen | 0.591 | 0.828 | 0.830 | 0.822 | 0.466 |
+| spatialcpav14_gen | 0.788 | 0.924 | 0.927 | 0.819 | 0.785 |
+| spatialcpav15_gen | 0.828 | 0.903 | 0.903 | 0.914 | 0.759 |
+| **spatialcpav16_gen** | 0.817 | 0.893 | 0.893 | 0.703 | 0.437 |
 
-**SpatialZ was not run.** It needs the `bench_spatialz` conda environment and the
-SpatialZ distribution from Zenodo, neither of which exists in the environment
-this was developed in. `flanking_copy` is a *proxy* — a strong one, and the
-right one for a first look, but it is not SpatialZ and no number here says
-anything directly about SpatialZ's performance.
+**v16 beats SpatialZ on one of the five** (`paper_umap_mixing`, 0.817 vs 0.793)
+and loses the other four. It is also **worse than v14 — the version it is meant
+to enhance — on four of five**. The design goal is not met.
+
+The one metric it wins is the one its mechanism targets most directly: whole-cell
+residual draws restore single-cell dispersion *and* gene-gene covariance, which
+is what embedding mixing reads. The two it loses badly are spatial placement.
+
+### After the type-posterior fix
+
+Cell type was originally carried through the same harmonic basis as expression.
+That is the wrong basis for it: at 64 modes over ~4 000 cells a mode spans ~60
+cells, coarser than most cell types' spatial domain, so the blurred argmax
+collapses to the commonest types and the composition constraint then forces
+correct *counts* onto arbitrary cells. Estimating the type posterior at cell
+resolution instead (`model._type_posterior`):
+
+| config | Moran | Geary | UMAP mix | depth | localization |
+|---|---|---|---|---|---|
+| v16 as benchmarked above | 0.893 | 0.893 | 0.817 | 0.703 | 0.437 |
+| **+ type-posterior fix** | **0.917** | **0.918** | 0.815 | 0.675 | **0.577** |
+| + fix, calibration off | 0.863 | 0.865 | 0.828 | **0.734** | 0.578 |
+| + fix, residual x0.5 | 0.908 | 0.909 | 0.687 | 0.680 | 0.581 |
+| *SpatialZ* | *0.929* | *0.931* | *0.793* | *0.920* | *0.817* |
+
+Localization +0.14 and Moran/Geary +0.024, depth −0.028. Still short of SpatialZ
+on four of five.
+
+### What the ablations establish
+
+**The spectral calibration works, and its cost is now measured.** Turning it off
+drops Moran 0.917 -> 0.863 and Geary 0.918 -> 0.865, and raises depth 0.675 ->
+0.734. It does exactly what it was built to do — set per-gene spatial
+autocorrelation — and it does so partly by suppressing the lowest frequency band,
+which is where the laminar gradient `paper_marker_depth_r` measures lives. That
+is a genuine mechanism with a genuine trade-off, not a wash.
+
+**The residual is not what breaks depth.** Halving it left depth flat (0.675 ->
+0.680) and cost embedding mixing heavily (0.815 -> 0.687). The hypothesis that
+unstructured residual variance was blurring the marker field is wrong, and the
+depth deficit has to be explained by the smooth field or the pose it is scored
+in, not by the noise added on top.
+
+**Best achievable today is still not enough.** Taking the best cell of each
+column across all configurations gives 0.917 / 0.918 / 0.828 / 0.734 / 0.581
+against SpatialZ's 0.929 / 0.931 / 0.793 / 0.920 / 0.817 — a win on embedding
+mixing, near-parity on the two autocorrelation metrics, and a wide loss on depth
+and localization.
 
 ## 3. What *is* established
 
@@ -103,19 +150,28 @@ the design decision the method turns on.
 
 ## 5. What would have to happen next
 
-In rough order of expected value:
+`paper_marker_depth_r` (0.73 best, SpatialZ 0.92) and
+`paper_celltype_localization` (0.58 best, SpatialZ 0.82) are the whole gap. In
+rough order of expected value:
 
-1. **Separate the type model from the expression model.** Types need a different
-   basis resolution than expression; sharing one is currently costing both.
-2. **Condition the residual draw on local context, not just cell type.** A
-   type-conditional i.i.d. draw restores marginals and covariance but no local
-   structure, which is the most likely cause of the embedding-mixing gap.
-3. **Run against SpatialZ.** Everything above is inference from a proxy baseline.
-   The comparison the request actually asks for has not been made.
-4. **Check whether the goal is reachable on STARmap at all.** With `flank_r` at
-   0.98, a dataset with wider section spacing (the v3 README recommends exactly
-   this) may be where a generative method can show an advantage that STARmap
-   cannot resolve.
+1. **Find out why depth is low, since the residual has been ruled out.** Two
+   candidates remain and they are distinguishable: the *pose*, which
+   `align_by_expression` selects by binned marker-field agreement and which a
+   weak marker field would get wrong (check `align_rotation_deg` and
+   `align_runner_up` in `metrics.json` — a marginal decision is recorded there);
+   or the smooth field genuinely not carrying the laminar gradient, which the
+   per-marker `marker_<gene>_field_r` breakdown would show directly.
+2. **Make the calibration frequency-selective.** It currently costs 0.06 of depth
+   to buy 0.05 of Moran because it rescales the lowest band along with the rest.
+   Exempting the lowest bin — where the anatomy lives — should keep most of the
+   autocorrelation gain without the depth cost.
+3. **Condition residual draws on position, not only type.** Halving the residual
+   showed how much embedding mixing depends on it (0.815 -> 0.687), so it cannot
+   simply be reduced; it has to become locally appropriate instead of smaller.
+4. **Reconsider whether the spectral basis should carry expression at all.** The
+   type channels had to leave it to work. The same argument — that the basis
+   resolves ~60 cells and the signal turns over faster — may apply to the marker
+   genes that `depth_r` scores.
 
 ## 6. Reproduce
 

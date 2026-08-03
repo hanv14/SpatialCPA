@@ -72,7 +72,12 @@ class TypeConfig:
     # field per type, spectrally — then sampled with a composition constraint.
     # Type fields are low-frequency by nature, which is why this basis suits
     # them and why paper_celltype_localization is the metric it targets.
-    n_modes: int = 32
+    # Cell type does NOT go through the expression harmonics — see
+    # ``model._type_posterior``. It is a categorical label whose neighbourhood
+    # composition turns over within a few cell diameters, which is finer than the
+    # harmonic basis resolves, so it is estimated at cell resolution instead.
+    neighbors: int = 12                # cells per bracket in the local estimate
+    field_prior_weight: float = 0.15   # weight on the harmonic type channels
     composition_match: bool = True
     temperature: float = 1.0
 

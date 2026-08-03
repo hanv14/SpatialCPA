@@ -321,7 +321,8 @@ class SpatialCPAv16:
             X_cal = X_smooth
 
         # 7 — typing (before the residual, which is drawn per type)
-        types = self._sample_types(T_field, lo, hi, w, rng)
+        types = self._sample_types(self._type_posterior(xy, lo, hi, w, T_field),
+                                   lo, hi, w, rng)
 
         # 6 — residual
         res = np.zeros_like(X_cal)
@@ -426,6 +427,51 @@ class SpatialCPAv16:
         v_hi = hi["X"].var(axis=0)
         return ((1.0 - w) * v_lo + w * v_hi) * max(n_out - 1, 1)
 
+    def _type_posterior(self, xy, lo, hi, w, T_field):
+        """Local type composition at each virtual position, at cell resolution.
+
+        Cell type was originally carried as extra channels through the same
+        harmonic basis as expression, and that is the wrong basis for it. With 64
+        modes over ~4 000 cells a mode spans ~60 cells, which is coarser than the
+        spatial domain of most cell types. Projecting 19 one-hot indicators onto
+        that basis blurs them until the argmax is the commonest type nearly
+        everywhere; the composition constraint then forces the *counts* to be
+        right while assigning them to essentially arbitrary cells. Measured, that
+        is ``paper_celltype_localization`` 0.44 against v14's 0.79 — the counts
+        correct, the placement destroyed.
+
+        Type is not smooth in the way a gene's expression field is. It is a
+        categorical label whose neighbourhood composition changes over a few cell
+        diameters, so it needs a resolution the harmonic basis deliberately
+        discards. Here the posterior is the kernel-weighted composition of the
+        nearest *real* cells in each bracketing section, evaluated at the virtual
+        positions and blended by depth — the same ``evaluate_field`` idea the
+        method already uses, at the resolution this signal actually needs.
+
+        The harmonic type channels are kept as a weak prior rather than dropped,
+        so the flow still contributes; they simply stop being the whole story.
+        """
+        from .nets import evaluate_field
+
+        post = np.zeros((len(xy), self.C), dtype=np.float64)
+        zs = [lo, hi]
+        wts = [1.0 - w, w]
+        for e, wt in zip(zs, wts):
+            if wt <= 0:
+                continue
+            T = np.zeros((e["n"], self.C))
+            T[np.arange(e["n"]), np.clip(e["types"], 0, self.C - 1)] = 1.0
+            post += wt * evaluate_field(e["xy"], T, xy,
+                                        k=self.cfg.types.neighbors)
+        post = np.maximum(post, 0.0)
+        post /= np.maximum(post.sum(axis=1, keepdims=True), 1e-12)
+
+        prior = np.asarray(T_field, dtype=np.float64)
+        prior = prior - prior.min(axis=1, keepdims=True)
+        prior /= np.maximum(prior.sum(axis=1, keepdims=True), 1e-12)
+        a = float(np.clip(self.cfg.types.field_prior_weight, 0.0, 1.0))
+        return (1.0 - a) * post + a * prior
+
     def _sample_types(self, T_field, lo, hi, w, rng):
         """Assign types from the generated indicator fields.
 
@@ -438,9 +484,12 @@ class SpatialCPAv16:
         impossible.
         """
         cfg = self.cfg
+        # ``T_field`` arrives from ``_type_posterior`` already normalized, so it
+        # is sharpened by temperature rather than passed through a softmax — a
+        # softmax over probabilities would flatten them toward uniform, which is
+        # the opposite of what a temperature is for.
         P = np.asarray(T_field, dtype=np.float64)
-        P = P - P.max(axis=1, keepdims=True)
-        P = np.exp(P / max(cfg.types.temperature, 1e-6))
+        P = np.maximum(P, 0.0) ** (1.0 / max(cfg.types.temperature, 1e-6))
         P = P / np.maximum(P.sum(axis=1, keepdims=True), 1e-12)
 
         n = P.shape[0]
