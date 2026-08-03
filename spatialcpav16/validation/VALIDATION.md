@@ -136,6 +136,54 @@ latent it generated jointly with position, v16 grounds a section-level spectral
 field. Making it work here would mean generating a per-cell latent to match
 against, which is a redesign, not a parameter.
 
+### The depth deficit, finally diagnosed
+
+The per-marker breakdown in `metrics.json` — which should have been the *first*
+thing read, not the last — settles it. On STARmap, ungrounded v16:
+
+| marker | v16 | flanking_copy | what it marks |
+|---|---|---|---|
+| Cux2 | **0.933** | 0.980 | upper cortical layers — abundant, laminar |
+| Pcp4 | 0.702 | 0.976 | deep layers — abundant, laminar |
+| **Flt1** | **0.348** | 0.875 | endothelium — **rare, sparse, not laminar** |
+
+**v16 reproduces the laminar gradient nearly perfectly.** The mean `depth_r` of
+0.66 is dragged down almost entirely by Flt1, a marker of a rare cell type whose
+spatial pattern is a sparse vascular network rather than a layered gradient.
+
+And the pose is not the problem: rotations applied are at most 6.9 deg, and Cux2
+scores 0.93 *through the same pose*. Three rounds were spent asking whether
+alignment was the culprit; the data was already on disk and says no.
+
+So `paper_marker_depth_r` and `paper_celltype_localization` are **one cause with
+two symptoms**: rare cell types are placed badly. That is a much more specific
+target than "the spectral basis is wrong".
+
+### The rare-type fix, and why it is not free
+
+Assignment was global-greedy by confidence, which systematically sacrifices rare
+types: abundant types fill their quota first because they own the most confident
+cells, and a rare type is assigned from the leftovers. Reversing it — rarest
+quota first, each rare type taking the cells that most look like it:
+
+| config | Moran | Geary | UMAP mix | depth | Flt1 | localization |
+|---|---|---|---|---|---|---|
+| confidence-first (default) | **0.917** | **0.918** | **0.815** | 0.675 | 0.348 | **0.577** |
+| rarest-first | 0.843 | 0.848 | 0.614 | **0.727** | **0.493** | 0.530 |
+
+Flt1 +0.15 and depth +0.05, at a cost of 0.20 embedding mixing, 0.07 Moran and
+0.05 localization. **Reverted** — it is a net loss — but it proves the mechanism:
+forcing rare types onto cells that only partly resemble them fixes their spatial
+pattern and corrupts those cells' expression, because the residual is then drawn
+from wrong-type donors.
+
+The real fix follows directly and has not been built: **decouple the type used
+for placement from the type used to draw expression.** A cell can be labelled
+endothelial for the localization and marker-field metrics while drawing its
+expression residual from the donor distribution its generated profile actually
+supports. Nothing in the current design allows that — one label does both jobs —
+and that, not the spectral basis, is the next thing to change.
+
 ### The structural problem
 
 v14 scores depth 0.819 and localization 0.785 on STARmap; v16 scores 0.690 and
