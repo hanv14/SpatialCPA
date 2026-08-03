@@ -548,7 +548,8 @@ def drop_nulls(obj):
 def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
           n_sections=None, verbose=True, trim=True, z_trim_quantile=None,
           section_trim=None, min_cells=MIN_CELLS_PER_SECTION,
-          allow_small=False, n_hvg=None, max_cells_per_section=None):
+          allow_small=False, n_hvg=None, max_cells_per_section=None,
+          drop_zero_cells=True):
     """Build and write a dataset's paper-protocol view. Returns the AnnData.
 
     ``trim=False`` disables the dataset's trim where one is optional. STARmap's
@@ -731,6 +732,38 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
              + tuple(s["layer_deep"]),
         verbose=verbose)
 
+    # Cells with no counts left. They must go *after* the gene cap, because the
+    # cap is what creates most of them: a spot whose expression sat entirely in
+    # genes the HVG selection dropped is now an all-zero row. An all-zero row is
+    # not a cell — it has no profile, no type signal and no position information
+    # worth scoring — but it is counted by every distributional metric, drags the
+    # embedding toward a spurious origin cluster, and makes scanpy's
+    # normalize_total warn in every downstream wrapper ("Some cells have zero
+    # counts"). Dropping them is what the earlier repo-wide review flagged and is
+    # the same class of guard as the minimum-cells-per-section check below.
+    zero_note = None
+    if drop_zero_cells:
+        counts = np.asarray(out.X.sum(axis=1)).ravel()
+        alive = counts > 0
+        n_zero = int((~alive).sum())
+        if n_zero:
+            per_sec_before = {section_label(i): int((sec_idx == i).sum())
+                              for i in range(1, n_sections + 1)}
+            out = out[alive].copy()
+            coords_um = coords_um[alive]
+            planes = planes[alive]
+            sec_idx = sec_idx[alive]
+            per_sec_after = {section_label(i): int((sec_idx == i).sum())
+                             for i in range(1, n_sections + 1)}
+            zero_note = {"n_dropped": n_zero,
+                         "fraction": float(n_zero / len(alive)),
+                         "per_section_before": per_sec_before,
+                         "per_section_after": per_sec_after}
+            if verbose:
+                print(f"  zero-count cells: dropped {n_zero} of {len(alive)} "
+                      f"({n_zero / len(alive):.2%}) with no counts in the "
+                      f"retained panel")
+
     z_um = coords_um[:, 2]
 
     sections = np.array([section_label(i) for i in sec_idx])
@@ -813,6 +846,7 @@ def build(dataset=DATASET_NAME, raw_path=None, output_path=None, flatten_z=True,
         "resolution": s.get("resolution", "single_cell"),
         "gene_selection": hvg_note,
         "cell_subsample": subsample_note,
+        "zero_count_cells_dropped": zero_note,
     }
     # A None in uns is written as h5ad ``encoding_type='null'``, which older
     # anndata cannot read back — and the method conda envs pin older anndata than
@@ -964,6 +998,10 @@ def main():
                     help="cap each section by spatially stratified subsample "
                          "(default: the dataset's own). Applied to the built "
                          "dataset, so ground truth and method input match")
+    ap.add_argument("--keep-zero-count-cells", action="store_true",
+                    help="keep cells with no counts in the retained gene panel. "
+                         "They are dropped by default: an all-zero row is not a "
+                         "cell, but every distributional metric counts it")
     ap.add_argument("--print-protocol", action="store_true",
                     help="print the resolved protocol as JSON and exit")
     args = ap.parse_args()
@@ -975,7 +1013,8 @@ def main():
                   min_cells=args.min_cells_per_section,
                   allow_small=args.allow_small_sections,
                   n_hvg=args.n_hvg,
-                  max_cells_per_section=args.max_cells_per_section)
+                  max_cells_per_section=args.max_cells_per_section,
+                  drop_zero_cells=not args.keep_zero_count_cells)
     if args.print_protocol:
         print(json.dumps(adata.uns["paper_protocol"], indent=2, default=str))
     return 0
