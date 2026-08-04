@@ -122,6 +122,7 @@ def run_method(adata, targets, gene_names, args):
     cfg.generation.position_mode = args.position_mode
     cfg.generation.displacement_scale = args.displacement_scale
     cfg.generation.ground_blend_flow = args.ground_blend_flow
+    cfg.generation.ground_k = args.ground_k
     cfg.generation.edit_weight = args.edit_weight
     cfg.generation.ground_expression = not args.no_ground
     if args.context_slices is not None:
@@ -185,6 +186,9 @@ def main():
                         help="scale on the flow-decoded displacement field (morph mode)")
     parser.add_argument("--ground-blend-flow", type=float, default=0.20,
                         help="fraction of cells re-grounded to the flow-latent pick")
+    parser.add_argument("--ground-k", type=int, default=8,
+                        help="number of spatially-nearest real candidate cells the flow "
+                             "latent selects among when grounding each spot")
     parser.add_argument("--edit-weight", type=float, default=0.25,
                         help="blend toward the flow-decoded profile (0 = pure real exemplar)")
     parser.add_argument("--context-slices", type=int, default=None,
