@@ -92,7 +92,20 @@ def build_input(holdout_config, dataset_path=DATASET_PATH,
     input_path = cache_dir / "train_registered.h5ad"
     meta_path = cache_dir / "targets.json"
 
-    if input_path.exists() and meta_path.exists() and not force:
+    # A cache hit is only valid if the dataset it was cut from has not changed
+    # since. ``train_registered.h5ad`` is a *copy* — same uns, same cells minus
+    # the held-out sections — so rebuilding the dataset leaves every cached input
+    # stale, and nothing downstream can tell. That is not hypothetical: a build
+    # fix that corrected uns had to be applied twice, because the second run
+    # still read a pre-fix cache and failed identically:
+    #     IORegistryError: ... encoding_type='null' ... key 'cell_subsample'
+    # Comparing mtimes makes the cache self-invalidating, so a dataset rebuild is
+    # enough on its own.
+    stale = (input_path.exists() and Path(dataset_path).exists()
+             and input_path.stat().st_mtime < Path(dataset_path).stat().st_mtime)
+    if stale and verbose:
+        print(f"  input cache is older than {Path(dataset_path).name} — rebuilding")
+    if input_path.exists() and meta_path.exists() and not force and not stale:
         meta = json.loads(meta_path.read_text())
         return {"input_path": str(input_path), "targets": meta["targets"],
                 "registration": meta["registration"]}
