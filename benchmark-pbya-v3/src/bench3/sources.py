@@ -677,8 +677,21 @@ def read_openst_lymph_node(path, verbose=True):
     return adata
 
 
+# Every spelling v1's ``find_ccf_columns`` tries, in its order. Keeping only the
+# two explicit "_ccf"/"_reconstructed" forms — which is what this reader did
+# first — makes it fail outright on MERFISH-C57BL6J-638850, whose
+# cell_metadata_with_cluster_annotation.csv names them plainly:
+#     ValueError: no CCF coordinate columns; ... found [..., 'x', 'y', 'z']
+# The bare ``x``/``y``/``z`` triple is last on purpose: it is the most ambiguous
+# name and should only win when nothing more explicit is present. Whether the
+# columns chosen really are a stack coordinate is not taken on trust either —
+# ``prepare_dataset.check_sections_separate_in_z`` rejects the build if z fails
+# to separate the sections, which is the guard that makes a permissive list safe.
 ALLEN_CCF_COLUMNS = (("x_ccf", "y_ccf", "z_ccf"),
-                     ("x_reconstructed", "y_reconstructed", "z_reconstructed"))
+                     ("ccf_x", "ccf_y", "ccf_z"),
+                     ("x_reconstructed", "y_reconstructed", "z_reconstructed"),
+                     ("x", "y", "z"),
+                     ("X", "Y", "Z"))
 ALLEN_CCF_MM_TO_UM = 1000.0
 ALLEN_SECTION_COLUMNS = ("brain_section_label", "section", "section_id",
                          "slice", "slice_id")
