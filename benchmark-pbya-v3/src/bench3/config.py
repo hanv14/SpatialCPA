@@ -1077,6 +1077,28 @@ METHODS = {
         "invalid_log_markers": ("spectral flow trained: False",
                                 "torch UNAVAILABLE"),
     },
+    "spatialcpav17_gen": {
+        "wrapper": _v2_wrapper("run_spatialcpav17.py"),
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "fully-generative VAE with an NB decoder + latent flow matching "
+                 "— the virtual slice is decoded, not retrieved",
+        # No ``wrapper_args``: v17's default mode is the one under test (decode;
+        # ``--retrieval`` is its ablation, and a store_true flag cannot be pinned
+        # off anyway). Which mode actually ran is recorded per prediction in
+        # ``method_params['mode']``, so a result is self-describing.
+        #
+        # v17 falls back three ways — no torch, training raised, generation
+        # raised — and each one substitutes a flanking resample-and-copy for the
+        # method. That is a reasonable library default and an invalid benchmark
+        # row: the copy is close to the ``flanking_copy`` probe the self-test
+        # uses as a *baseline*, so a degraded run would not merely be wrong, it
+        # would score respectably. v3 fails the run instead.
+        "invalid_log_markers": ("model trained: False",
+                                "torch UNAVAILABLE",
+                                "[spatialcpav17] generation failed"),
+    },
     "spatialz": {
         "wrapper": _v2_wrapper("run_spatialz.py"),
         "conda_env": "bench_spatialz",
@@ -1100,10 +1122,21 @@ METHODS = {
     },
 }
 
-# Order used in tables and figures: published baselines first, then SpatialCPA.
+# Order used in tables and figures: published baselines first, then SpatialCPA,
+# oldest variant first. This list is also ``run_all``'s default campaign, so a
+# method registered above but missing here is never run unless it is named
+# explicitly — which is why v16 and v17 are both here rather than only in
+# METHODS.
+#
+# It is now longer than ``nature_theme.PALETTE`` (seven validated hues, never
+# cycled). Tables, rankings and the per-dataset figures are unaffected — they
+# order by this list but do not colour by it. ``plot_cross_dataset`` does colour
+# by it, and refuses to draw more than seven series; pass ``--method-order`` to
+# choose which appear. See the README, "Cross-dataset figures".
 METHOD_ORDER = [
     "spatialz", "feast", "isost",
-    "spatialcpav8_gen", "spatialcpav11_gen", "spatialcpav14_gen", "spatialcpav15_gen",
+    "spatialcpav8_gen", "spatialcpav11_gen", "spatialcpav14_gen",
+    "spatialcpav15_gen", "spatialcpav16_gen", "spatialcpav17_gen",
 ]
 
 

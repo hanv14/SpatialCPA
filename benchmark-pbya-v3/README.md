@@ -8,7 +8,8 @@ it — so a published method's numbers are reproducible on their own terms, and 
 SpatialCPA variants are measured against them on identical footing.
 
 Methods benchmarked: **spatialcpav8_gen, spatialcpav11_gen, spatialcpav14_gen,
-spatialcpav15_gen, SpatialZ, FEAST, isoST**.
+spatialcpav15_gen, spatialcpav16_gen, spatialcpav17_gen, SpatialZ, FEAST,
+isoST**.
 
 Datasets: **STARmap visual cortex** (the paper's, `kind=paper`) plus **17
 analogues** — every volume in `benchmark-pbya` that can be cut into sections at
@@ -225,10 +226,12 @@ coordinate trap](#the-coordinate-trap-these-datasets-introduced). A dataset
 registered without a case there fails the run, so a spec cannot be added and left
 unexercised.
 
-**Not verified here:** the seven method wrappers, which need `bench_spatialcpa`,
+**Not verified here:** the nine method wrappers, which need `bench_spatialcpa`,
 `bench_spatialz`, `bench_feast` and `bench_isost`. They are v2's wrappers,
-invoked unchanged. And, for the eleven datasets added after the original seven,
-the *readers against their real files* — `selftest_datasets` proves the specs and
+invoked unchanged — except `spatialcpav16_gen`, whose wrapper lives here (see
+[Why the method wrappers live in v2](#why-the-method-wrappers-live-in-v2)). And,
+for the eleven datasets added after the original seven, the *readers against
+their real files* — `selftest_datasets` proves the specs and
 the partitioning, not that a column is spelled the way a distribution spells it.
 Build each one once and read the printed section table before trusting a row.
 
@@ -284,7 +287,7 @@ python -m src.bench3.design
 python -m src.bench3.selftest            # the evaluator, on known-quality probes
 python -m src.bench3.selftest_datasets   # every registered dataset's build
 
-# 4. run the campaign (all 7 methods, shared input)
+# 4. run the campaign (all 9 methods, shared input)
 python -m src.bench3.run_all
 python -m src.bench3.run_all --dry-run              # print the plan first
 python -m src.bench3.run_all --methods spatialz feast
@@ -338,7 +341,7 @@ src/bench3/
   assets.py              method assets v3 prepares (torch checkpoints it can load)
   sanitize_checkpoint.py runs in the method's conda env; tensors-only rewrite
   run_benchmark.py       one method: shared input -> wrapper -> merged metrics.json
-  run_all.py             the 7-method campaign
+  run_all.py             the 9-method campaign
   evaluate_paper.py      the paper's validation strategy, as metrics
   evaluate_all.py        re-evaluate predictions without re-running methods
   aggregate_results.py   all_metrics / per_section_metrics / summary_by_method CSVs
@@ -374,6 +377,13 @@ rather than forking guarantees v3 and v2 exercise the *same* synthesis code — 
 fix or a tuning change propagates to both, and a difference between the two
 benchmarks can only come from the protocol, never from the method.
 
+The one exception is `spatialcpav16_gen`, whose wrapper is
+`src/bench3/methods/run_spatialcpav16.py`: v2 never ran v16, and adding it there
+would mean editing a frozen benchmark. It speaks the identical `_v2_io` contract
+— same CLI, same `prediction.h5`, same leakage guard — so `run_benchmark` cannot
+tell the difference. `spatialcpav17_gen` needs no such exception: v2 already
+carries `run_spatialcpav17.py`, so v3 invokes v2's copy like every other method.
+
 What is *not* shared is the wrappers' ablation flags: their defaults follow
 whichever variant v2 was last tuning, so inheriting them would let a v3 run change
 — or fail outright — because of an unrelated edit in v2. A method may therefore
@@ -397,7 +407,14 @@ correctly here never means editing v2 or a method package:
   substitutes a tensors-only copy in `results/_assets/` (same weights; `assets.py`).
 * **`invalid_log_markers`** — strings in the method log that mean the run silently
   degraded to a fallback. v3 renames the prediction to `prediction.h5.degraded`,
-  skips evaluation and fails the run.
+  skips evaluation and fails the run. Three methods carry one: `spatialcpav11_gen`
+  (OT-morph fallback when the neural fields fail to train), `spatialcpav16_gen`
+  (depth-interpolated spectrum without torch) and `spatialcpav17_gen` (flanking
+  resample-and-copy when torch is missing, or when training or generation
+  raises). Each fallback is a sensible library default and an invalid benchmark
+  row — v17's in particular is close to the `flanking_copy` probe the self-test
+  uses as a *baseline*, so a degraded run would score respectably rather than
+  visibly failing.
 
 ### Running spatialcpav11_gen with the real OmiCLIP teacher
 
@@ -773,13 +790,20 @@ below 3:1 on white, which is why every figure writes its CSV.
 Seven methods is the palette's depth. An eighth raises an error rather than
 cycling a hue, because two methods sharing a colour would still render.
 
+**The default campaign is nine methods, so `plot_cross_dataset` needs a chosen
+subset.** With results for all nine in the tree it stops with the count and the
+remedy rather than drawing; pass `--method-order` (or `--method-names`, which
+selects too) to name at most seven. Nothing else is affected: the tables, the
+rankings and `plot_paper_figures` order by `METHOD_ORDER` but do not colour by
+it, so they carry all nine.
+
 ## Reading the results next to v2
 
 v3 and v2 answer different questions and their numbers are not interchangeable:
 
 * v2 asks *"which method generalizes across 17 datasets under leave-one-out?"*
 * v3 asks *"under the published STARmap protocol, on the criteria that paper
-  validated, how do these seven methods compare?"*
+  validated, how do these nine methods compare?"*
 
 v3 is a harder holdout (three sections missing at once) on one dataset. Use v2 for
 breadth and v3 for reproducing and extending a published result. The shared

@@ -1,14 +1,14 @@
 """Run the full v3 campaign: every method through the paper design.
 
-By default this is the seven-method comparison the folder exists for —
-spatialcpav8/v11/v14/v15, SpatialZ, FEAST and isoST — each reconstructing
+By default this is the nine-method comparison the folder exists for —
+spatialcpav8/v11/v14/v15/v16/v17, SpatialZ, FEAST and isoST — each reconstructing
 sections 2, 4 and 6 of the STARmap visual cortex from sections 1, 3, 5 and 7.
 
 The training-only input is built once and shared by every method, so the
 comparison is apples-to-apples by construction.
 
 Usage:
-    python -m src.bench3.run_all                              # all 7 methods
+    python -m src.bench3.run_all                              # all 9 methods
     python -m src.bench3.run_all --methods spatialz feast     # a subset
     python -m src.bench3.run_all --dry-run                    # print the plan
     python -m src.bench3.run_all --design loo --skip-existing
