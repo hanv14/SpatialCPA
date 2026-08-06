@@ -43,6 +43,7 @@ from .config import (
     spec,
 )
 from .design import build_designs
+from .prepare_dataset import h5ad_safe
 from .evaluate_paper import evaluate_paper
 
 
@@ -130,6 +131,19 @@ def build_input(holdout_config, dataset_path=DATASET_PATH,
     if "v2_registration" in train_adata.uns:   # stringify for h5 safety
         train_adata.uns["v2_registration"] = json.loads(
             json.dumps(train_adata.uns["v2_registration"], default=str))
+
+    # Sanitize uns HERE, not only where the dataset is built.
+    #
+    # This file is what the methods actually read, and they read it under the
+    # OLDER anndata pinned in their conda envs, which cannot decode
+    # encoding_type='null' or a non-string mapping key. Fixing only
+    # prepare_dataset left a gap: a dataset built before that fix still carries
+    # the bad uns, and since the input is a straight copy the poison propagates —
+    # the mtime guard above cannot help either, because the cache is not *older*
+    # than its source, it is faithful to a bad one. Cleaning at this boundary
+    # makes the method input valid whatever the dataset happens to hold, so no
+    # dataset rebuild is required to unblock a run.
+    train_adata.uns = h5ad_safe(dict(train_adata.uns))
     train_adata.write_h5ad(str(input_path))
     meta_path.write_text(json.dumps(
         {"targets": targets, "registration": registration,
