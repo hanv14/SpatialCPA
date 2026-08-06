@@ -124,9 +124,23 @@ def run_method(adata, targets, gene_names, args):
     cfg.generation.ground_blend_flow = args.ground_blend_flow
     cfg.generation.ground_k = args.ground_k
     cfg.generation.edit_weight = args.edit_weight
+    cfg.generation.selection = args.selection
     cfg.generation.ground_expression = not args.no_ground
     if args.context_slices is not None:
         cfg.attn.context_slices_each_side = args.context_slices
+    # ── ablation / sensitivity knobs (only override when supplied; defaults unchanged) ──
+    if args.gap_dropout is not None:
+        cfg.train.gap_dropout = args.gap_dropout
+    if args.z_sigma is not None:
+        cfg.train.z_sigma = args.z_sigma
+    if args.morph_k is not None:
+        cfg.latent.morph_k = args.morph_k
+    if args.n_context is not None:
+        cfg.attn.n_context = args.n_context
+    if args.flow_hidden is not None:
+        cfg.flow.hidden = args.flow_hidden
+    if args.flow_layers is not None:
+        cfg.flow.n_layers = args.flow_layers
     if args.type_placement is not None:
         cfg.generation.type_placement = args.type_placement
     if args.no_coherent_source:
@@ -146,7 +160,9 @@ def run_method(adata, targets, gene_names, args):
           f"flow(steps={cfg.flow.n_ode_steps},ens={cfg.flow.n_ensemble}), "
           f"pos={cfg.generation.position_mode}, ctx_slices={cfg.attn.context_slices_each_side}, "
           f"coherent_src={cfg.generation.coherent_source}(f={cfg.generation.coherent_freq}), "
-          f"types={cfg.generation.type_placement}, bio={not args.no_bio}, "
+          f"types={cfg.generation.type_placement}, selection={cfg.generation.selection}, "
+          f"edit_w={cfg.generation.edit_weight}, blend={cfg.generation.ground_blend_flow}, "
+          f"k={cfg.generation.ground_k}, bio={not args.no_bio}, "
           f"ground={cfg.generation.ground_expression}")
 
     gen = SpatialCPAv14(stack, gene_names=gene_names, cell_type_names=cell_type_names, cfg=cfg)
@@ -191,6 +207,22 @@ def main():
                              "latent selects among when grounding each spot")
     parser.add_argument("--edit-weight", type=float, default=0.25,
                         help="blend toward the flow-decoded profile (0 = pure real exemplar)")
+    parser.add_argument("--selection", default="flow", choices=["flow", "nearest", "random"],
+                        help="ABLATION: how a flow-driven cell picks among its candidates — "
+                             "'flow' (nearest in the generated latent, the method), 'nearest' "
+                             "(spatially nearest, ignores the flow), 'random' (ignores the flow)")
+    parser.add_argument("--gap-dropout", type=float, default=None,
+                        help="prob. of dropping a whole context slice during training (robustness)")
+    parser.add_argument("--z-sigma", type=float, default=None,
+                        help="z-jitter used for marginalization during training (robustness)")
+    parser.add_argument("--morph-k", type=int, default=None,
+                        help="kNN for the per-cell morphology/pseudo-image features")
+    parser.add_argument("--n-context", type=int, default=None,
+                        help="local flanking cells attended per query in the 3D context")
+    parser.add_argument("--flow-hidden", type=int, default=None,
+                        help="hidden width of the flow velocity network")
+    parser.add_argument("--flow-layers", type=int, default=None,
+                        help="number of layers in the flow velocity network")
     parser.add_argument("--context-slices", type=int, default=None,
                         help="neighbouring real slices per side feeding the 3D context")
     parser.add_argument("--type-placement", default=None, choices=["exemplar", "flow_smooth"])
@@ -227,7 +259,13 @@ def main():
         "seed": args.seed, "epochs": args.epochs, "pretrain_epochs": args.pretrain_epochs,
         "latent_dim": args.latent_dim, "joint_dim": args.joint_dim,
         "ode_steps": args.ode_steps, "ensemble": args.ensemble,
-        "position_mode": args.position_mode, "flow_matching": True, "generation_only": True,
+        "position_mode": args.position_mode,
+        "edit_weight": args.edit_weight, "ground_blend_flow": args.ground_blend_flow,
+        "ground_k": args.ground_k, "selection": args.selection,
+        "gap_dropout": args.gap_dropout, "z_sigma": args.z_sigma, "morph_k": args.morph_k,
+        "n_context": args.n_context, "flow_hidden": args.flow_hidden,
+        "flow_layers": args.flow_layers, "coherent_source": not args.no_coherent_source,
+        "flow_matching": True, "generation_only": True,
     }
     _v2_io.write_prediction_h5(results, gene_names, target_sections,
                                method_params, wall_time, args.output,
