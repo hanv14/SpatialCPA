@@ -196,6 +196,12 @@ METHODS = {
         "available": True,
         "generation_native": True,
     },
+    "spatialcpav17_gen": {
+        "wrapper": "src/benchmark/methods/run_spatialcpav17.py",
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "generation_native": True,
+    },
     "spatialcpav14_gen": {
         "wrapper": "src/benchmark/methods/run_spatialcpav14.py",
         "conda_env": "bench_spatialcpa",
