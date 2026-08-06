@@ -44,8 +44,21 @@ per-cell pseudo-image channels m  ─┘                                        
 | **3.1** 3D attention context | Fourier `(x,y,z)` query cross-attends over local flanking cells + per-slice global tokens → `C(z)` | `nets.ContextAttention` |
 | **3.2** Conditional flow matching | velocity field trained with the CFM loss on the OT straight-line path | `nets.VectorField`, `trainer._phase_b` |
 | **3.3** Gap-aware + z-marginalized | whole context slices randomly dropped; z jittered during conditioning | `trainer._context`, `_phase_b` |
-| **4** Generation | coherent-patch sheet layout; flow ODE (noise-ensemble) → `h*`; **decode** `h*` to expression; library from the anchor real cell; optional cell-type composition matching | `trainer.generate_slice` |
+| **4** Generation | coherent-patch sheet layout; one flow trajectory per cell → `h*`; **decode** `h*` and draw an **NB posterior-predictive sample** `~NB(μ,θ)`; library from the anchor real cell; optional cell-type composition matching | `trainer.generate_slice` |
 | **5** Retrieval (ablation) | `--retrieval`: use `h*` as a key to pick 1-of-K spatially-nearest real cells (v14 behavior) | `trainer.generate_slice` |
+
+## Why sample instead of the NB mean
+
+The NB decoder learns the per-gene dispersion `θ`, so a real cell's count is a **draw** from
+`NB(μ, θ)`, not the mean `μ`. Emitting `μ` directly under-states per-gene variance and
+inflates gene-gene correlation (everything is driven by one low-dim latent) — the same
+low-rank-decode pathology that made v14 fall back to retrieval. v17 instead emits a
+**posterior-predictive draw** (`emit="sample"`, the default; Gamma-Poisson sampling), which
+restores realistic marginals and de-correlates genes, while the flow-conditioned mean still
+provides smooth spatial gradients. For the same reason, generation uses a **single flow
+trajectory per cell** (no ensemble averaging), so cells span the conditional distribution
+rather than collapsing to its mean. `--emit mean` recovers the old point-estimate behavior
+as an ablation.
 
 ## Likelihood selection
 
