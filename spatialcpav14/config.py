@@ -98,6 +98,11 @@ class GenerationConfig:
     ground_k: int = 8               # candidate real cells per query for latent grounding
     ground_temp: float = 0.25       # softmax temperature over latent similarity (RAG-style)
     ground_blend_flow: float = 0.20  # (anchor mode) prob. a cell is re-grounded to the flow-latent pick
+    # How a flow-driven cell chooses among its ``ground_k`` spatial candidates (ABLATION
+    # control): "flow" = nearest in the flow-generated latent (the method); "nearest" =
+    # spatially nearest candidate (ignores the flow — the retrieval baseline); "random" =
+    # uniform among candidates. Only "flow" uses the generative signal.
+    selection: str = "flow"         # "flow" | "nearest" | "random"
     edit_weight: float = 0.25       # blend toward the flow-decoded profile (0 = pure real exemplar)
     output_counts: bool = True      # emit count-like (expm1) expression for the evaluator
     composition_match: bool = True  # match cell-type composition to the interpolated flanking mix

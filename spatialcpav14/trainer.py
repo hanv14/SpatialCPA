@@ -618,6 +618,23 @@ def _ground_by_type(m, anchor, ct_idx, e_hat, pool_nxy, pool_e, pool_expr, pool_
     return expr
 
 
+def _pick_candidate(gcfg, ci, e_hat_i, pool_e, rng):
+    """Choose one real candidate (index into the pool) per the ``selection`` mode.
+
+    ABLATION control — with everything else fixed this isolates the flow's contribution:
+      * "flow"    : the candidate nearest the flow-generated latent (the method).
+      * "nearest" : the spatially-nearest candidate (candidates come distance-sorted, so
+                    index 0) — ignores the flow (retrieval / nearest-neighbour baseline).
+      * "random"  : a uniformly-random candidate — ignores the flow.
+    """
+    if gcfg.selection == "nearest":
+        return ci[0]
+    if gcfg.selection == "random":
+        return ci[int(rng.integers(len(ci)))]
+    d = np.linalg.norm(pool_e[ci] - e_hat_i, axis=1)      # "flow"
+    return ci[int(np.argmin(d))]
+
+
 def _ground(m, anchor, anchor_src, e_hat, pool_nxy, pool_e, pool_expr, pool_type, gcfg, rng):
     """Emit a real exemplar profile per generated cell.
 
@@ -641,9 +658,7 @@ def _ground(m, anchor, anchor_src, e_hat, pool_nxy, pool_e, pool_expr, pool_type
             sel = rng.choice(n, size=n_flow, replace=False)
             cand = _knn(anchor[sel], pool_nxy, K)
             for r, i in enumerate(sel):
-                ci = cand[r]
-                d = np.linalg.norm(pool_e[ci] - e_hat[i], axis=1)
-                pick[i] = ci[int(np.argmin(d))]
+                pick[i] = _pick_candidate(gcfg, cand[r], e_hat[i], pool_e, rng)
         expr[:] = pool_expr[pick]
         ct[:] = pool_type[pick]
         return expr, (ct if m.n_types >= 2 else None)
