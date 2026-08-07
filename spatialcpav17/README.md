@@ -108,6 +108,24 @@ Or on a dataset via the standalone runner (diagnostic only — writes no predict
 python src/benchmark/methods/diagnose_spatialcpav17.py --input <train_only.h5ad>
 ```
 
-If a gap is detected, a Phase-C decoder fine-tune (training the decoder on flow-produced
-latents) is the targeted fix; if not, decode-generation is already on-manifold and Phase C is
-unnecessary.
+If a gap is detected, the Phase-C decoder fine-tune is the targeted fix; if not,
+decode-generation is already on-manifold and Phase C is unnecessary.
+
+## Phase C: decoder fine-tune (optional, `--finetune-decoder`)
+
+When the diagnostic finds a manifold gap, Phase C closes it. After Phase A (VAE) and Phase B
+(flow), it fine-tunes **only the decoder** — the **encoder, attention, and flow stay frozen**,
+so the flow's target never moves. For each interior slice it runs the frozen flow at the real
+cells' own positions to get flow latents `h_flow` (fresh noise each epoch) and trains the
+decoder to reconstruct those cells' real expression from **both** `h_flow` (robustness to what
+generation actually produces) **and** the encoder latent `h_enc` (retains the clean
+reconstruction). The decoder thus learns to decode exactly the latents the flow hands it.
+
+```
+python src/benchmark/methods/run_spatialcpav17.py ... --finetune-decoder
+# confirm it closed the gap:
+python src/benchmark/methods/diagnose_spatialcpav17.py --input <train_only.h5ad> --finetune-decoder
+```
+
+Off by default (`finetune_decoder=False`): only enable it when the diagnostic says a gap
+exists. On a synthetic gap it lifted flow-decoded gene-mean fidelity `r` from ~0.04 to ~0.54.
