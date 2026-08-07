@@ -153,8 +153,9 @@ def run_method(adata, targets, gene_names, is_counts, args):
 def main():
     parser = argparse.ArgumentParser(description="SpatialCPA-v17 wrapper (benchmark-pbya-v2)")
     _v2_io.add_v2_args(parser)
-    parser.add_argument("--epochs", type=int, default=160, help="Phase B flow-matching epochs")
-    parser.add_argument("--pretrain-epochs", type=int, default=120, help="Phase A VAE epochs")
+    # Defaults mirror spatialcpav17.config TrainConfig (careful-convergence schedule) — keep in sync.
+    parser.add_argument("--epochs", type=int, default=260, help="Phase B flow-matching epochs")
+    parser.add_argument("--pretrain-epochs", type=int, default=200, help="Phase A VAE epochs")
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--latent-dim", type=int, default=32, help="VAE latent dim d")
     parser.add_argument("--hidden", type=int, default=256, help="VAE MLP width")
