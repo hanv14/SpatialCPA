@@ -110,8 +110,11 @@ def _phase_a(m, S, vae, dev):
                 mu_nb, theta, _ = vae.decode(h, s["lib"][b])
                 recon = nb_nll(s["counts"][b], mu_nb, theta, cfg.vae.eps)
             else:
-                mean, _, _ = vae.decode(h, s["lib"][b])
-                recon = F.mse_loss(mean, xin) * m.n_genes
+                mean, sigma, _ = vae.decode(h, s["lib"][b])
+                # Gaussian NLL with a learned per-gene sigma (the Gaussian analogue of NB's
+                # dispersion), so the decoder also learns the observation noise to sample from.
+                var = sigma.pow(2) + cfg.vae.eps
+                recon = (0.5 * ((xin - mean).pow(2) / var + torch.log(var))).sum(-1).mean()
             kl = 0.5 * (mu.pow(2) + logvar.exp() - logvar - 1.0).sum(-1).mean()
             loss = recon + kl_w * kl
             loss = loss + cfg.vae.w_morph * F.mse_loss(vae.decode_morph(h), mo) * m.n_morph
@@ -377,8 +380,15 @@ def generate_slice(m, z):
                 else:
                     expr = mu_np.astype(np.float32)           # NB mean = expected counts
             else:
-                mean = out.cpu().numpy() * m._xin_std + m._xin_mean
-                expr = mean.astype(np.float32)
+                mean_std = out.cpu().numpy().astype(np.float64)
+                if gcfg.emit == "sample":
+                    # Gaussian posterior-predictive draw in standardized space, then un-standardize;
+                    # restores per-gene variance the mean-decode discards (mirrors the NB path).
+                    sig = np.clip(theta.cpu().numpy().astype(np.float64), 1e-4, 1e6)[None, :]
+                    sample_std = mean_std + sig * rng.standard_normal(mean_std.shape)
+                else:
+                    sample_std = mean_std
+                expr = (sample_std * m._xin_std + m._xin_mean).astype(np.float32)
             ct_idx = (type_logits.argmax(1).cpu().numpy().astype(np.int64)
                       if type_logits is not None else None)
 

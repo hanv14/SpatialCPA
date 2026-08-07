@@ -99,7 +99,8 @@ class JointVAE(nn.Module):
         self.enc_logvar = nn.Linear(h, d)
         self.dec_body = mlp([d] + [h] * cfg.n_layers, last_act=True, dropout=cfg.dropout)
         self.dec_expr = nn.Linear(h, n_genes)            # gene logits -> softmax proportions (NB)
-        self.px_r = nn.Parameter(torch.randn(n_genes) * 0.1)   # log dispersion (gene-wise)
+        self.px_r = nn.Parameter(torch.randn(n_genes) * 0.1)   # NB log dispersion (gene-wise)
+        self.px_logsigma = nn.Parameter(torch.zeros(n_genes)) # Gaussian log std (gene-wise)
         self.dec_morph = nn.Linear(h, n_morph)
         self.type_head = nn.Linear(d, max(n_types, 1))
         self.d = d
@@ -114,7 +115,11 @@ class JointVAE(nn.Module):
         return mu + std * torch.randn_like(std)
 
     def decode(self, h, library):
-        """Return decoder outputs. NB: (mu_nb, theta, rho). Gaussian: (mean, None, None)."""
+        """Return decoder outputs. NB: (mu_nb, theta, rho). Gaussian: (mean, sigma, None).
+
+        The second slot carries the per-gene scale used for posterior-predictive sampling:
+        NB inverse-dispersion ``theta`` or Gaussian standard deviation ``sigma`` (both gene-wise).
+        """
         body = self.dec_body(h)
         if self.likelihood == "nb":
             rho = torch.softmax(self.dec_expr(body), dim=-1)   # gene proportions (sum=1)
@@ -122,7 +127,8 @@ class JointVAE(nn.Module):
             theta = torch.exp(self.px_r)
             return mu_nb, theta, rho
         mean = self.dec_expr(body)                             # Gaussian mean (standardized space)
-        return mean, None, None
+        sigma = torch.exp(self.px_logsigma)                   # Gaussian std (standardized space)
+        return mean, sigma, None
 
     def decode_morph(self, h):
         return self.dec_morph(self.dec_body(h))
