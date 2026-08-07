@@ -44,28 +44,30 @@ per-cell pseudo-image channels m  ─┘                                        
 | **3.1** 3D attention context | Fourier `(x,y,z)` query cross-attends over local flanking cells + per-slice global tokens → `C(z)` | `nets.ContextAttention` |
 | **3.2** Conditional flow matching | velocity field trained with the CFM loss on the OT straight-line path | `nets.VectorField`, `trainer._phase_b` |
 | **3.3** Gap-aware + z-marginalized | whole context slices randomly dropped; z jittered during conditioning | `trainer._context`, `_phase_b` |
-| **4** Generation | coherent-patch sheet layout; one flow trajectory per cell → `h*`; **decode** `h*` and draw an **NB posterior-predictive sample** `~NB(μ,θ)`; library from the anchor real cell; optional cell-type composition matching | `trainer.generate_slice` |
+| **4** Generation | coherent-patch sheet layout; one flow trajectory per cell → `h*`; **decode** `h*` and draw a **posterior-predictive sample** (NB `~NB(μ,θ)` for counts, Gaussian `~N(μ,σ)` for intensity); library from the anchor real cell; optional cell-type composition matching | `trainer.generate_slice` |
 | **5** Retrieval (ablation) | `--retrieval`: use `h*` as a key to pick 1-of-K spatially-nearest real cells (v14 behavior) | `trainer.generate_slice` |
 
-## Why sample instead of the NB mean
+## Why sample the decoder instead of emitting its mean
 
-The NB decoder learns the per-gene dispersion `θ`, so a real cell's count is a **draw** from
-`NB(μ, θ)`, not the mean `μ`. Emitting `μ` directly under-states per-gene variance and
-inflates gene-gene correlation (everything is driven by one low-dim latent) — the same
-low-rank-decode pathology that made v14 fall back to retrieval. v17 instead emits a
-**posterior-predictive draw** (`emit="sample"`, the default; Gamma-Poisson sampling), which
-restores realistic marginals and de-correlates genes, while the flow-conditioned mean still
-provides smooth spatial gradients. For the same reason, generation uses a **single flow
-trajectory per cell** (no ensemble averaging), so cells span the conditional distribution
-rather than collapsing to its mean. `--emit mean` recovers the old point-estimate behavior
-as an ablation.
+The decoder learns not just the mean but the **observation-noise scale** — per-gene
+dispersion `θ` (NB) or per-gene standard deviation `σ` (Gaussian). A real cell is a **draw**
+from that distribution, not its mean. Emitting the mean directly under-states per-gene
+variance and inflates gene-gene correlation (everything is driven by one low-dim latent) —
+the low-rank-decode pathology that made v14 fall back to copying real cells. v17 instead
+emits a **posterior-predictive draw** (`emit="sample"`, the default): Gamma-Poisson `~NB(μ,θ)`
+on the count path, `μ + σ·ε` on the Gaussian path. This restores realistic marginals and
+de-correlates genes, while the flow-conditioned mean still provides smooth spatial gradients —
+the realistic-variance behavior v14 gets for free from real cells, now produced generatively.
+For the same reason, generation uses a **single flow trajectory per cell** (no ensemble
+averaging), so cells span the conditional distribution rather than collapsing to its mean.
+`--emit mean` recovers the point-estimate behavior as an ablation (both likelihoods).
 
 ## Likelihood selection
 
-- **`auto`** (default): negative-binomial for raw-count inputs, Gaussian (standardized-MSE)
-  for fluorescence / already-normalized inputs. The benchmark wrapper passes **raw counts**
-  for count datasets so the NB decoder sees true counts and a real library size.
-- Force with `--likelihood {nb,gaussian}`.
+- **`auto`** (default): negative-binomial for raw-count inputs, Gaussian (learned per-gene
+  `σ`, NLL) for fluorescence / already-normalized inputs. The benchmark wrapper passes **raw
+  counts** for count datasets so the NB decoder sees true counts and a real library size.
+- Force with `--likelihood {nb,gaussian}`. Both paths sample by default (`--emit sample`).
 
 ## Usage
 
