@@ -31,6 +31,9 @@ def main():
     parser.add_argument("--latent-dim", type=int, default=32)
     parser.add_argument("--kl-weight", type=float, default=1.0e-3)
     parser.add_argument("--likelihood", default="auto", choices=["auto", "nb", "gaussian"])
+    parser.add_argument("--finetune-decoder", action="store_true",
+                        help="apply Phase-C decoder fine-tune, then diagnose (to confirm gap closure)")
+    parser.add_argument("--finetune-epochs", type=int, default=40)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -55,6 +58,8 @@ def main():
     cfg.train.epochs = args.epochs; cfg.train.pretrain_epochs = args.pretrain_epochs
     cfg.train.device = args.device
     cfg.vae.latent_dim = args.latent_dim; cfg.vae.kl_weight = args.kl_weight
+    cfg.train.finetune_decoder = args.finetune_decoder
+    cfg.train.finetune_epochs = args.finetune_epochs
     if args.likelihood != "auto":
         cfg.vae.likelihood = args.likelihood
 
