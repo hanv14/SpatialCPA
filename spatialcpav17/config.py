@@ -32,7 +32,7 @@ class VAEConfig:
     n_layers: int = 2               # hidden layers per MLP
     dropout: float = 0.05
     kl_weight: float = 1.0e-3       # weight on KL(q(h|x) || N(0,I)) (beta-VAE)
-    kl_warmup_epochs: int = 20      # linearly ramp the KL weight over this many epochs
+    kl_warmup_epochs: int = 40      # linearly ramp the KL weight over this many epochs
     likelihood: str = "auto"        # "auto" -> "nb" for counts, "gaussian" otherwise
     w_morph: float = 0.5            # auxiliary morphology-reconstruction weight
     w_type: float = 0.5             # auxiliary cell-type prediction weight
@@ -64,11 +64,13 @@ class FlowConfig:
 
 @dataclass
 class TrainConfig:
-    """Stage 6 — two-phase training strategy."""
-    pretrain_epochs: int = 120      # Phase A: VAE (longer than v14 — a real generative decoder)
-    epochs: int = 160               # Phase B: flow field + attention
+    """Stage 6 — two-phase training strategy (deep, careful-convergence schedule)."""
+    pretrain_epochs: int = 200      # Phase A: VAE (train to careful convergence)
+    epochs: int = 260               # Phase B: flow field + attention
     batch_cells: int = 256
     lr: float = 3.0e-4
+    lr_schedule: str = "cosine"     # "cosine" -> gently decay LR to a floor; "constant" otherwise
+    lr_min_ratio: float = 0.05      # cosine floor as a fraction of lr (learn finely at the end)
     weight_decay: float = 1.0e-4
     grad_clip: float = 2.0
     gap_dropout: float = 0.35

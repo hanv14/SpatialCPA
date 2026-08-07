@@ -35,6 +35,12 @@ per-cell pseudo-image channels m  ─┘                                        
 | **A** | Joint VAE: NB (or Gaussian) reconstruction + KL warmup + auxiliary morphology-reconstruction and cell-type heads. Posterior means `h=μ` are then cached as flow targets. | VAE | — |
 | **B** | Conditional flow matching in the **frozen** latent: velocity field `v_t(h_t\|t,C,z)` on the OT straight-line path, gap-aware + z-marginalized. Identical to v14. | attention + flow field | VAE |
 
+Both phases train to careful convergence: Phase A runs `pretrain_epochs=200`, Phase B
+`epochs=260`, KL is warmed up over `40` epochs, and the learning rate follows a **cosine
+decay** to a small floor (`lr_min_ratio=0.05`) so the model settles finely rather than
+oscillating at a fixed step size. The architecture is unchanged — this is a deeper training
+schedule, not a bigger model.
+
 ## Pipeline stages (one module per stage)
 
 | stage | what | module |

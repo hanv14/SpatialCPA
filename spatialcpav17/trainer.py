@@ -48,6 +48,14 @@ def _knn(query_xy, pool_xy, k):
     return idx.astype(np.int64)
 
 
+def _scheduler(cfg, opt, total_epochs):
+    """Cosine LR decay to a floor (gentle end-of-training convergence), or None for constant LR."""
+    if cfg.train.lr_schedule != "cosine":
+        return None
+    return torch.optim.lr_scheduler.CosineAnnealingLR(
+        opt, T_max=max(total_epochs, 1), eta_min=cfg.train.lr * cfg.train.lr_min_ratio)
+
+
 # --------------------------------------------------------------------------- #
 # Per-slice state                                                              #
 # --------------------------------------------------------------------------- #
@@ -94,6 +102,7 @@ def _phase_a(m, S, vae, dev):
     """Train the joint VAE (recon + KL + aux); then freeze and cache the posterior mean."""
     cfg = m.cfg
     opt = torch.optim.AdamW(vae.parameters(), lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
+    sched = _scheduler(cfg, opt, cfg.train.pretrain_epochs)
     rng = np.random.default_rng(cfg.train.seed)
     idxs = [i for i, s in enumerate(S) if s["xin"].shape[0] > 0]
     for ep in range(cfg.train.pretrain_epochs):
@@ -121,6 +130,8 @@ def _phase_a(m, S, vae, dev):
             nn.utils.clip_grad_norm_(vae.parameters(), cfg.train.grad_clip)
             opt.step()
             tot += float(loss.detach()); nb += 1
+        if sched is not None:
+            sched.step()
         if cfg.train.verbose and (ep % 30 == 0 or ep == cfg.train.pretrain_epochs - 1):
             print(f"    [v17 A] epoch {ep} vae_loss={tot / max(nb, 1):.3f} (kl_w={kl_w:.1e})")
     vae.eval()
@@ -210,6 +221,7 @@ def _phase_b(m, S, ctxmod, vfield, dev):
         plan.append(dict(i=i, src=src, pool_nxy=pool_nxy, pool_z=pool_z, pool_owner=pool_owner))
     params = list(ctxmod.parameters()) + list(vfield.parameters())
     opt = torch.optim.AdamW(params, lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
+    sched = _scheduler(cfg, opt, cfg.train.epochs)
     rng = np.random.default_rng(cfg.train.seed + 1)
     for ep in range(cfg.train.epochs):
         tot = 0.0; nb = 0
@@ -236,6 +248,8 @@ def _phase_b(m, S, ctxmod, vfield, dev):
             nn.utils.clip_grad_norm_(params, cfg.train.grad_clip)
             opt.step()
             tot += float(loss.detach()); nb += 1
+        if sched is not None:
+            sched.step()
         if cfg.train.verbose and (ep % 40 == 0 or ep == cfg.train.epochs - 1):
             print(f"    [v17 B] epoch {ep} cfm={tot / max(nb, 1):.4f}")
 
