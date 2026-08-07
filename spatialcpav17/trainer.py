@@ -48,6 +48,14 @@ def _knn(query_xy, pool_xy, k):
     return idx.astype(np.int64)
 
 
+def _scheduler(cfg, opt, total_epochs):
+    """Cosine LR decay to a floor (gentle end-of-training convergence), or None for constant LR."""
+    if cfg.train.lr_schedule != "cosine":
+        return None
+    return torch.optim.lr_scheduler.CosineAnnealingLR(
+        opt, T_max=max(total_epochs, 1), eta_min=cfg.train.lr * cfg.train.lr_min_ratio)
+
+
 # --------------------------------------------------------------------------- #
 # Per-slice state                                                              #
 # --------------------------------------------------------------------------- #
@@ -87,8 +95,6 @@ def train_model(m):
 
     _phase_a(m, S, vae, dev)
     _phase_b(m, S, ctxmod, vfield, dev)
-    if cfg.train.finetune_decoder:
-        _phase_c(m, S, vae, ctxmod, vfield, dev)
     vae.eval(); ctxmod.eval(); vfield.eval()
 
 
@@ -96,6 +102,7 @@ def _phase_a(m, S, vae, dev):
     """Train the joint VAE (recon + KL + aux); then freeze and cache the posterior mean."""
     cfg = m.cfg
     opt = torch.optim.AdamW(vae.parameters(), lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
+    sched = _scheduler(cfg, opt, cfg.train.pretrain_epochs)
     rng = np.random.default_rng(cfg.train.seed)
     idxs = [i for i, s in enumerate(S) if s["xin"].shape[0] > 0]
     for ep in range(cfg.train.pretrain_epochs):
@@ -112,11 +119,8 @@ def _phase_a(m, S, vae, dev):
                 mu_nb, theta, _ = vae.decode(h, s["lib"][b])
                 recon = nb_nll(s["counts"][b], mu_nb, theta, cfg.vae.eps)
             else:
-                mean, sigma, _ = vae.decode(h, s["lib"][b])
-                # Gaussian NLL with a learned per-gene sigma (the Gaussian analogue of NB's
-                # dispersion), so the decoder also learns the observation noise to sample from.
-                var = sigma.pow(2) + cfg.vae.eps
-                recon = (0.5 * ((xin - mean).pow(2) / var + torch.log(var))).sum(-1).mean()
+                mean, _, _ = vae.decode(h, s["lib"][b])
+                recon = F.mse_loss(mean, xin) * m.n_genes
             kl = 0.5 * (mu.pow(2) + logvar.exp() - logvar - 1.0).sum(-1).mean()
             loss = recon + kl_w * kl
             loss = loss + cfg.vae.w_morph * F.mse_loss(vae.decode_morph(h), mo) * m.n_morph
@@ -126,6 +130,8 @@ def _phase_a(m, S, vae, dev):
             nn.utils.clip_grad_norm_(vae.parameters(), cfg.train.grad_clip)
             opt.step()
             tot += float(loss.detach()); nb += 1
+        if sched is not None:
+            sched.step()
         if cfg.train.verbose and (ep % 30 == 0 or ep == cfg.train.pretrain_epochs - 1):
             print(f"    [v17 A] epoch {ep} vae_loss={tot / max(nb, 1):.3f} (kl_w={kl_w:.1e})")
     vae.eval()
@@ -215,6 +221,7 @@ def _phase_b(m, S, ctxmod, vfield, dev):
         plan.append(dict(i=i, src=src, pool_nxy=pool_nxy, pool_z=pool_z, pool_owner=pool_owner))
     params = list(ctxmod.parameters()) + list(vfield.parameters())
     opt = torch.optim.AdamW(params, lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
+    sched = _scheduler(cfg, opt, cfg.train.epochs)
     rng = np.random.default_rng(cfg.train.seed + 1)
     for ep in range(cfg.train.epochs):
         tot = 0.0; nb = 0
@@ -241,81 +248,10 @@ def _phase_b(m, S, ctxmod, vfield, dev):
             nn.utils.clip_grad_norm_(params, cfg.train.grad_clip)
             opt.step()
             tot += float(loss.detach()); nb += 1
+        if sched is not None:
+            sched.step()
         if cfg.train.verbose and (ep % 40 == 0 or ep == cfg.train.epochs - 1):
             print(f"    [v17 B] epoch {ep} cfm={tot / max(nb, 1):.4f}")
-
-
-# --------------------------------------------------------------------------- #
-# Phase C — decoder fine-tune on flow-produced latents (optional)              #
-# --------------------------------------------------------------------------- #
-def _phase_c(m, S, vae, ctxmod, vfield, dev):
-    """Fine-tune the decoder so it decodes what generation actually hands it.
-
-    Encoder, attention, and flow stay frozen (the flow's target must not move). For each
-    interior slice, run the frozen flow at the real cells' own positions to get flow latents
-    ``h_flow`` (fresh noise each epoch) and train the decoder to reconstruct those cells' real
-    expression from both ``h_flow`` (robustness to the flow's pushforward) and the encoder
-    latent ``h_enc`` (retain the clean reconstruction). This closes the manifold gap.
-    """
-    cfg = m.cfg
-    order = np.argsort(m.stack.z_centers())
-    interior = order[1:-1] if len(order) >= 3 else order[:1]
-    k_side = max(cfg.attn.context_slices_each_side, 1)
-    plan = []
-    for i in interior:
-        i = int(i); pos = int(np.where(order == i)[0][0])
-        src = _neighbor_slices(order, pos, k_side)
-        pool_nxy, pool_z, pool_owner = _build_pool(S, src)
-        plan.append(dict(i=i, src=src, pool_nxy=pool_nxy, pool_z=pool_z, pool_owner=pool_owner))
-
-    dec_params = (list(vae.dec_body.parameters()) + list(vae.dec_expr.parameters())
-                  + [vae.px_r, vae.px_logsigma] + list(vae.type_head.parameters()))
-    for p in dec_params:
-        p.requires_grad_(True)
-    opt = torch.optim.AdamW(dec_params, lr=cfg.train.finetune_lr, weight_decay=cfg.train.weight_decay)
-    rng = np.random.default_rng(cfg.train.seed + 2)
-    steps = max(cfg.flow.n_ode_steps, 1)
-
-    def _recon(hlat, s, bt):
-        if m.likelihood == "nb":
-            mu_nb, theta, _ = vae.decode(hlat, s["lib"][bt])
-            return nb_nll(s["counts"][bt], mu_nb, theta, cfg.vae.eps)
-        mean, sigma, _ = vae.decode(hlat, s["lib"][bt])
-        var = sigma.pow(2) + cfg.vae.eps
-        return (0.5 * ((s["xin"][bt] - mean).pow(2) / var + torch.log(var))).sum(-1).mean()
-
-    for ep in range(cfg.train.finetune_epochs):
-        tot = 0.0; nb = 0
-        for pl in plan:
-            i = pl["i"]; s = S[i]; n = s["h"].shape[0]
-            if n == 0:
-                continue
-            B = min(cfg.train.batch_cells, n)
-            b = rng.choice(n, B, replace=False); bt = torch.tensor(b, device=dev)
-            query_nxy = s["nxy"][b]; zq = float(s["nz"])
-            pool_h = torch.cat([S[j]["h"] for j in pl["src"]], 0)
-            with torch.no_grad():                              # flow + context frozen
-                ctx = _context(m, pool_h, pl["pool_nxy"], pl["pool_z"], pl["pool_owner"],
-                               pl["src"], S, query_nxy, zq, ctxmod, dev)
-                zt = torch.full((B,), zq, device=dev)
-                h = torch.randn((B, cfg.vae.latent_dim), device=dev)
-                for si in range(steps):
-                    h = h + (1.0 / steps) * vfield(h, torch.full((B,), si / steps, device=dev), ctx, zt)
-                h_flow = h.detach()
-            h_enc = s["h"][bt]
-            loss = _recon(h_enc, s, bt) + _recon(h_flow, s, bt)
-            if m.n_types >= 2:
-                ty = s["types"][bt]
-                loss = loss + cfg.vae.w_type * (F.cross_entropy(vae.type_head(h_enc), ty)
-                                                + F.cross_entropy(vae.type_head(h_flow), ty))
-            opt.zero_grad(); loss.backward()
-            nn.utils.clip_grad_norm_(dec_params, cfg.train.grad_clip)
-            opt.step()
-            tot += float(loss.detach()); nb += 1
-        if cfg.train.verbose and (ep % 20 == 0 or ep == cfg.train.finetune_epochs - 1):
-            print(f"    [v17 C] epoch {ep} finetune_dec={tot / max(nb, 1):.3f}")
-    for p in dec_params:
-        p.requires_grad_(False)
 
 
 # --------------------------------------------------------------------------- #
@@ -408,24 +344,15 @@ def generate_slice(m, z):
     with torch.no_grad():
         ctx = _context(m, pool_h, pool_nxy, pool_z, pool_owner, ctx_src, m._S, anchor, zn, ctxmod, dev)
         Q = anchor.shape[0]; zt = torch.full((Q,), float(zn), device=dev)
-        steps = max(cfg.flow.n_ode_steps, 1)
-
-        def _integrate(h0):
-            h = h0
+        h_acc = torch.zeros((Q, cfg.vae.latent_dim), device=dev)
+        n_ens = max(cfg.flow.n_ensemble, 1)
+        for _ in range(n_ens):
+            h = torch.randn((Q, cfg.vae.latent_dim), device=dev)
+            steps = max(cfg.flow.n_ode_steps, 1)
             for si in range(steps):
                 h = h + (1.0 / steps) * vfield(h, torch.full((Q,), si / steps, device=dev), ctx, zt)
-            return h
-
-        # "sample": a single flow trajectory per cell keeps the conditional spread (each cell is a
-        # draw from p(h | context), not its mean). "mean": average the ensemble to a point estimate.
-        if gcfg.emit == "mean" or gcfg.retrieval:
-            n_ens = max(cfg.flow.n_ensemble, 1)
-            h_acc = torch.zeros((Q, cfg.vae.latent_dim), device=dev)
-            for _ in range(n_ens):
-                h_acc += _integrate(torch.randn((Q, cfg.vae.latent_dim), device=dev))
-            h_star = h_acc / n_ens
-        else:
-            h_star = _integrate(torch.randn((Q, cfg.vae.latent_dim), device=dev))
+            h_acc += h
+        h_star = h_acc / n_ens
         type_logits = vae.type_head(h_star) if m.n_types >= 2 else None
 
         if gcfg.retrieval:                                    # ── ablation: v14-style retrieval ──
@@ -443,27 +370,12 @@ def generate_slice(m, z):
             ct_idx = pool_type[pick] if m.n_types >= 2 else None
         else:                                                 # ── decode (fully generative) ──
             lib_t = torch.tensor(lib, device=dev)
-            out, theta, _ = vae.decode(h_star, lib_t)
+            out, _, _ = vae.decode(h_star, lib_t)
             if m.likelihood == "nb":
-                mu_np = np.clip(out.cpu().numpy().astype(np.float64), 1e-8, None)
-                if gcfg.emit == "sample":
-                    # NB posterior-predictive draw (Gamma-Poisson): restores real per-gene
-                    # dispersion and breaks the mean-decode's inflated gene-gene correlation.
-                    th = np.clip(theta.cpu().numpy().astype(np.float64), 1e-4, 1e6)[None, :]
-                    lam = rng.gamma(shape=np.broadcast_to(th, mu_np.shape), scale=mu_np / th)
-                    expr = rng.poisson(lam).astype(np.float32)
-                else:
-                    expr = mu_np.astype(np.float32)           # NB mean = expected counts
+                expr = out.cpu().numpy().astype(np.float32)   # NB mean = expected counts
             else:
-                mean_std = out.cpu().numpy().astype(np.float64)
-                if gcfg.emit == "sample":
-                    # Gaussian posterior-predictive draw in standardized space, then un-standardize;
-                    # restores per-gene variance the mean-decode discards (mirrors the NB path).
-                    sig = np.clip(theta.cpu().numpy().astype(np.float64), 1e-4, 1e6)[None, :]
-                    sample_std = mean_std + sig * rng.standard_normal(mean_std.shape)
-                else:
-                    sample_std = mean_std
-                expr = (sample_std * m._xin_std + m._xin_mean).astype(np.float32)
+                mean = out.cpu().numpy() * m._xin_std + m._xin_mean
+                expr = mean.astype(np.float32)
             ct_idx = (type_logits.argmax(1).cpu().numpy().astype(np.int64)
                       if type_logits is not None else None)
 

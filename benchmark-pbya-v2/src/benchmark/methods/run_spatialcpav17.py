@@ -115,11 +115,8 @@ def run_method(adata, targets, gene_names, is_counts, args):
         cfg.vae.likelihood = args.likelihood
     cfg.flow.n_ode_steps = args.ode_steps
     cfg.flow.n_ensemble = args.ensemble
-    cfg.train.finetune_decoder = args.finetune_decoder
-    cfg.train.finetune_epochs = args.finetune_epochs
     cfg.generation.retrieval = args.retrieval
     cfg.generation.decode_only = not args.retrieval
-    cfg.generation.emit = args.emit
     cfg.generation.ground_k = args.ground_k
     cfg.generation.coherent_source = not args.no_coherent_source
     cfg.generation.coherent_freq = args.coherent_freq
@@ -128,8 +125,7 @@ def run_method(adata, targets, gene_names, is_counts, args):
     print(f"  epochs(A={cfg.train.pretrain_epochs},B={cfg.train.epochs}), "
           f"vae(d={cfg.vae.latent_dim},h={cfg.vae.hidden},kl={cfg.vae.kl_weight}), "
           f"flow(steps={cfg.flow.n_ode_steps},ens={cfg.flow.n_ensemble}), "
-          f"is_counts={is_counts}, mode={'retrieval' if args.retrieval else 'decode:' + args.emit}"
-          f"{', +finetune' if args.finetune_decoder else ''}")
+          f"is_counts={is_counts}, mode={'retrieval' if args.retrieval else 'decode'}")
 
     gen = SpatialCPAv17(stack, gene_names=gene_names, cell_type_names=cell_type_names,
                         cfg=cfg, is_counts=is_counts)
@@ -166,11 +162,6 @@ def main():
     parser.add_argument("--likelihood", default="auto", choices=["auto", "nb", "gaussian"])
     parser.add_argument("--ode-steps", type=int, default=12)
     parser.add_argument("--ensemble", type=int, default=4)
-    parser.add_argument("--finetune-decoder", action="store_true",
-                        help="Phase C: fine-tune the decoder on flow-produced latents (closes manifold gap)")
-    parser.add_argument("--finetune-epochs", type=int, default=40)
-    parser.add_argument("--emit", default="sample", choices=["sample", "mean"],
-                        help="decode output: NB posterior-predictive 'sample' (default) or NB 'mean'")
     parser.add_argument("--retrieval", action="store_true",
                         help="ABLATION: retrieve real profiles instead of decoding")
     parser.add_argument("--ground-k", type=int, default=2, help="(retrieval mode) candidates per spot")
@@ -199,8 +190,7 @@ def main():
         "seed": args.seed, "epochs": args.epochs, "pretrain_epochs": args.pretrain_epochs,
         "latent_dim": args.latent_dim, "hidden": args.hidden, "kl_weight": args.kl_weight,
         "ode_steps": args.ode_steps, "ensemble": args.ensemble,
-        "mode": "retrieval" if args.retrieval else "decode", "emit": args.emit,
-        "finetune_decoder": bool(args.finetune_decoder), "is_counts": bool(is_counts),
+        "mode": "retrieval" if args.retrieval else "decode", "is_counts": bool(is_counts),
         "vae_nb": True, "generation_only": True,
     }
     _v2_io.write_prediction_h5(results, gene_names, target_sections,
