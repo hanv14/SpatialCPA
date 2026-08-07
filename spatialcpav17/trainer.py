@@ -330,15 +330,24 @@ def generate_slice(m, z):
     with torch.no_grad():
         ctx = _context(m, pool_h, pool_nxy, pool_z, pool_owner, ctx_src, m._S, anchor, zn, ctxmod, dev)
         Q = anchor.shape[0]; zt = torch.full((Q,), float(zn), device=dev)
-        h_acc = torch.zeros((Q, cfg.vae.latent_dim), device=dev)
-        n_ens = max(cfg.flow.n_ensemble, 1)
-        for _ in range(n_ens):
-            h = torch.randn((Q, cfg.vae.latent_dim), device=dev)
-            steps = max(cfg.flow.n_ode_steps, 1)
+        steps = max(cfg.flow.n_ode_steps, 1)
+
+        def _integrate(h0):
+            h = h0
             for si in range(steps):
                 h = h + (1.0 / steps) * vfield(h, torch.full((Q,), si / steps, device=dev), ctx, zt)
-            h_acc += h
-        h_star = h_acc / n_ens
+            return h
+
+        # "sample": a single flow trajectory per cell keeps the conditional spread (each cell is a
+        # draw from p(h | context), not its mean). "mean": average the ensemble to a point estimate.
+        if gcfg.emit == "mean" or gcfg.retrieval:
+            n_ens = max(cfg.flow.n_ensemble, 1)
+            h_acc = torch.zeros((Q, cfg.vae.latent_dim), device=dev)
+            for _ in range(n_ens):
+                h_acc += _integrate(torch.randn((Q, cfg.vae.latent_dim), device=dev))
+            h_star = h_acc / n_ens
+        else:
+            h_star = _integrate(torch.randn((Q, cfg.vae.latent_dim), device=dev))
         type_logits = vae.type_head(h_star) if m.n_types >= 2 else None
 
         if gcfg.retrieval:                                    # ── ablation: v14-style retrieval ──
@@ -356,9 +365,17 @@ def generate_slice(m, z):
             ct_idx = pool_type[pick] if m.n_types >= 2 else None
         else:                                                 # ── decode (fully generative) ──
             lib_t = torch.tensor(lib, device=dev)
-            out, _, _ = vae.decode(h_star, lib_t)
+            out, theta, _ = vae.decode(h_star, lib_t)
             if m.likelihood == "nb":
-                expr = out.cpu().numpy().astype(np.float32)   # NB mean = expected counts
+                mu_np = np.clip(out.cpu().numpy().astype(np.float64), 1e-8, None)
+                if gcfg.emit == "sample":
+                    # NB posterior-predictive draw (Gamma-Poisson): restores real per-gene
+                    # dispersion and breaks the mean-decode's inflated gene-gene correlation.
+                    th = np.clip(theta.cpu().numpy().astype(np.float64), 1e-4, 1e6)[None, :]
+                    lam = rng.gamma(shape=np.broadcast_to(th, mu_np.shape), scale=mu_np / th)
+                    expr = rng.poisson(lam).astype(np.float32)
+                else:
+                    expr = mu_np.astype(np.float32)           # NB mean = expected counts
             else:
                 mean = out.cpu().numpy() * m._xin_std + m._xin_mean
                 expr = mean.astype(np.float32)

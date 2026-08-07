@@ -83,6 +83,7 @@ class TrainConfig:
 class GenerationConfig:
     """Stage 5 — inference: decode the flow-generated latent into expression."""
     decode_only: bool = True        # emit decoder(h*) expression (fully generative)
+    emit: str = "sample"            # "sample" -> NB posterior-predictive draw; "mean" -> NB mean
     retrieval: bool = False         # ABLATION: switch to v14-style real-profile retrieval
     ground_k: int = 2               # (retrieval mode) candidate real cells per spot
     output_counts: bool = True      # emit count-like expression for the evaluator
