@@ -21,11 +21,12 @@ from .config import (
 from .data import Slice, SliceStack
 from .latents import morphology_features
 from .model import SpatialCPAv17, VirtualSlice
+from .diagnostics import reconstruction_gap
 
 __version__ = "17.0.0"
 
 __all__ = [
     "SpatialCPAv17", "VirtualSlice", "SpatialCPAv17Config", "LatentConfig",
     "VAEConfig", "AttnConfig", "FlowConfig", "TrainConfig", "GenerationConfig",
-    "Slice", "SliceStack", "morphology_features",
+    "Slice", "SliceStack", "morphology_features", "reconstruction_gap",
 ]
