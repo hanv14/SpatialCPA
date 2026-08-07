@@ -86,3 +86,28 @@ python src/benchmark/methods/run_spatialcpav17.py \
 
 Retrieval ablation: add `--retrieval`. All defaults in `config.py` are the intended
 production settings; v14 is left completely untouched.
+
+## Diagnostic: is there a manifold gap?
+
+Decode-generation only works if the flow's generated latents `h*` land where the decoder was
+trained (the encoder's aggregate posterior). `reconstruction_gap(model)` measures this on the
+interior training slices, comparing **encode→decode** (`decode(encode(x))`) against
+**flow→decode** at the same positions, in latent space (a kNN off-manifold ratio) and in
+expression space (how well each reproduces real per-gene mean/variance). The verdict is driven
+by the **fidelity drop** recon→gen — not the raw ratio, which is `>1` partly by construction —
+so a robust decoder that absorbs the flow's spread reads as *no gap*.
+
+```python
+from spatialcpav17 import reconstruction_gap
+reconstruction_gap(gen)          # prints per-slice + aggregate metrics and a verdict
+```
+
+Or on a dataset via the standalone runner (diagnostic only — writes no predictions):
+
+```
+python src/benchmark/methods/diagnose_spatialcpav17.py --input <train_only.h5ad>
+```
+
+If a gap is detected, a Phase-C decoder fine-tune (training the decoder on flow-produced
+latents) is the targeted fix; if not, decode-generation is already on-manifold and Phase C is
+unnecessary.
