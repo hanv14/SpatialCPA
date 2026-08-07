@@ -110,8 +110,12 @@ def describe(dataset, path=None, flank_r=False):
         return None
 
     s = spec(dataset) if dataset in DATASET_SPECS else {}
-    backed = not flank_r          # flank_r needs X; everything else does not
-    adata = ad.read_h5ad(str(path), backed="r" if backed else None)
+    # Always backed. The flank probe reads X, but it subsamples to
+    # ``survey_datasets.PROBE_CELLS`` per section and pulls only those rows into
+    # memory (``_flank_morans_r`` handles a backed object explicitly), so reading
+    # the whole matrix would cost gigabytes to use a few thousand rows — openst is
+    # 1.5e6 x 3002.
+    adata = ad.read_h5ad(str(path), backed="r")
     try:
         pp = _protocol(adata)
         sections = adata.obs["section"].values.astype(str)
