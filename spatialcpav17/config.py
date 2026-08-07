@@ -73,9 +73,6 @@ class TrainConfig:
     grad_clip: float = 2.0
     gap_dropout: float = 0.35
     z_sigma: float = 0.15
-    finetune_decoder: bool = False  # Phase C: fine-tune the decoder on flow-produced latents
-    finetune_epochs: int = 40       # (Phase C) epochs, if enabled
-    finetune_lr: float = 1.0e-4     # (Phase C) gentle LR to adapt the decoder without drifting
     device: str = "auto"
     seed: int = 42
     verbose: bool = True
@@ -86,7 +83,6 @@ class TrainConfig:
 class GenerationConfig:
     """Stage 5 — inference: decode the flow-generated latent into expression."""
     decode_only: bool = True        # emit decoder(h*) expression (fully generative)
-    emit: str = "sample"            # "sample" -> posterior-predictive draw (NB or Gaussian); "mean" -> decoder mean
     retrieval: bool = False         # ABLATION: switch to v14-style real-profile retrieval
     ground_k: int = 2               # (retrieval mode) candidate real cells per spot
     output_counts: bool = True      # emit count-like expression for the evaluator
