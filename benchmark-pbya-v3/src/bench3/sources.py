@@ -28,6 +28,24 @@ EXSEQ_EDV = "results_adata.h5ad"
 EXSEQ_EDV_COLUMN = "edv_predictions_|_merged_cluster_smFISH"
 EXSEQ_COORD_COLS = ("x_um", "y_um", "z_um")
 
+# Second annotation source, for distributions that ship the SpaceTx tables but
+# not ``results_adata.h5ad``. The SpaceTx pipeline is an *independent
+# segmentation* of the same volume — 1271 cells against spacejam2's 1154 in the
+# published release — so it is neither row- nor id-aligned and has to be matched
+# geometrically. It also carries no z, which is why it can annotate the
+# spacejam2 cells but can never replace them.
+EXSEQ_SPACETX_CELLS = "spacetx_mapped_cell_table.csv"
+EXSEQ_SPACETX_LABEL = "cluster"
+# Prefer the adjusted centres when present; they are the same quantity, refined.
+EXSEQ_SPACETX_XY = (("xc_adjusted", "yc_adjusted"), ("xc", "yc"), ("x", "y"))
+# A match must be much closer than the typical spacing between cells, as a
+# fraction of the median nearest-neighbour distance within the target cloud.
+EXSEQ_MATCH_TOL = 0.5
+# Below this matched fraction the geometry disagrees and the labels are dropped.
+EXSEQ_MATCH_MIN = 0.5
+# Trimmed-ICP refinement steps for the frame fit (translation + isotropic scale).
+EXSEQ_MATCH_ITERS = 12
+
 IMC_Z_STEP_UM = 10.0        # fallback when the filename does not name the step
 
 
@@ -97,10 +115,150 @@ def coord_is_um(column_name):
     return n.endswith(("_um", "_micron", "_microns")) or "micron" in n
 
 
+def _match_clouds(target_xy, source_xy, tol=EXSEQ_MATCH_TOL, iters=EXSEQ_MATCH_ITERS):
+    """Mutual-nearest-neighbour match between two segmentations of one image.
+
+    Returns ``(index_into_source, matched_mask, info)``. ``index_into_source`` is
+    -1 where unmatched.
+
+    Both clouds are centred and scaled to unit mean radius first, so the match
+    survives the two pipelines expressing coordinates in different units or
+    origins — spacejam2 is micrometres, the SpaceTx tables look like pixels.
+    Rotation is *not* fitted: these are two segmentations of the same image, so a
+    relative rotation would mean the files do not describe the same volume, and
+    silently rotating one to fit the other would manufacture agreement.
+
+    The acceptance radius is ``tol`` x the median nearest-neighbour spacing
+    *within* the target cloud, so "same cell" means much closer than neighbouring
+    cells rather than an absolute distance that would depend on the units. The
+    match is required to be mutual, so two target cells cannot claim one source
+    cell and inherit the same label by accident.
+    """
+    from scipy.spatial import cKDTree
+
+    t = np.asarray(target_xy, dtype=np.float64)
+    s = np.asarray(source_xy, dtype=np.float64)
+    info = {"n_target": len(t), "n_source": len(s)}
+    if len(t) < 3 or len(s) < 3:
+        return np.full(len(t), -1), np.zeros(len(t), bool), info
+
+    # Length scale: typical spacing between target cells, in the target's own
+    # units. "Same cell" has to mean much closer than neighbouring cells, and
+    # expressing that relative to the spacing keeps it unit-free.
+    d_self, _ = cKDTree(t).query(t, k=2)
+    spacing = float(np.median(d_self[:, 1]))
+    radius = tol * spacing
+
+    # Initial guess: centroid and mean radius. That is only approximate — the two
+    # segmentations do not contain the same cells, so both statistics are pulled
+    # by whichever cells are unique to one of them.
+    # Medians, not means: a handful of stray cells in one segmentation — debris,
+    # a mis-mapped field of view — moves a mean centroid and a mean radius enough
+    # to push the whole cloud outside the acceptance radius, and the ICP below
+    # cannot recover from a bad enough start.
+    def stats(a):
+        c = np.median(a, axis=0)
+        r = float(np.median(np.sqrt(((a - c) ** 2).sum(axis=1))))
+        return c, (r if r > 0 else 1.0)
+
+    tc, tr = stats(t)
+    sc, sr = stats(s)
+    scale = tr / sr
+    moved = (s - sc) * scale + tc
+
+    # Refine by trimmed ICP over translation and isotropic scale only. Trimming to
+    # the closest 80% of correspondences is what makes it robust to the cells that
+    # exist in one segmentation and not the other — untrimmed, those drag the fit.
+    tree_t = cKDTree(t)
+    for _ in range(int(iters)):
+        d, j = tree_t.query(moved)
+        keep = d <= np.quantile(d, 0.8)
+        if keep.sum() < 3:
+            break
+        a, b = moved[keep], t[j[keep]]
+        am, bm = a.mean(axis=0), b.mean(axis=0)
+        denom = float(((a - am) ** 2).sum())
+        if denom <= 0:
+            break
+        step = float(((a - am) * (b - bm)).sum() / denom)
+        moved = (moved - am) * step + bm
+
+    d_ts, i_ts = cKDTree(moved).query(t)        # target -> nearest source
+    _, i_st = tree_t.query(moved)               # source -> nearest target
+    mutual = i_st[i_ts] == np.arange(len(t))
+    matched = mutual & (d_ts <= radius)
+
+    idx = np.where(matched, i_ts, -1)
+    info.update({
+        "matched": int(matched.sum()),
+        "fraction": float(matched.mean()),
+        "median_distance": float(np.median(d_ts[matched])) if matched.any() else float("nan"),
+        "spacing": spacing,
+        "radius": radius,
+    })
+    return idx, matched, info
+
+
+def _exseq_spacetx_labels(csv_dir, coords_um, n_cells, verbose=True):
+    """Cell labels for the spacejam2 cells, from the SpaceTx mapped cell table.
+
+    Returns an array of labels (``"unknown"`` where unmatched), or None when the
+    table is absent or the geometry does not agree well enough to trust.
+    """
+    import pandas as pd
+
+    table = Path(csv_dir) / EXSEQ_SPACETX_CELLS
+    if not table.exists():
+        return None
+
+    df = pd.read_csv(table, index_col=0, low_memory=False)
+    if EXSEQ_SPACETX_LABEL not in df.columns:
+        if verbose:
+            print(f"  note: {EXSEQ_SPACETX_CELLS} has no {EXSEQ_SPACETX_LABEL!r} "
+                  f"column; cell types left unknown")
+        return None
+    xy_cols = next((c for c in EXSEQ_SPACETX_XY
+                    if all(x in df.columns for x in c)), None)
+    if xy_cols is None:
+        if verbose:
+            print(f"  note: {EXSEQ_SPACETX_CELLS} has no usable coordinate pair "
+                  f"(looked for {EXSEQ_SPACETX_XY}); cell types left unknown")
+        return None
+
+    source_xy = np.column_stack([df[c].values.astype(np.float64) for c in xy_cols])
+    idx, matched, info = _match_clouds(coords_um[:, :2], source_xy)
+
+    if verbose:
+        print(f"  matching {EXSEQ_SPACETX_CELLS} ({info['n_source']} cells) onto "
+              f"the {info['n_target']} spacejam2 cells: {info['matched']} matched "
+              f"({info['fraction']:.1%})")
+    if info["fraction"] < EXSEQ_MATCH_MIN:
+        if verbose:
+            print(f"  WARNING: only {info['fraction']:.1%} matched (need "
+                  f"{EXSEQ_MATCH_MIN:.0%}) — the two segmentations do not appear "
+                  f"to describe the same frame; cell types left unknown")
+        return None
+
+    labels = df[EXSEQ_SPACETX_LABEL].astype(str).values
+    out = np.array(["unknown"] * n_cells, dtype=object)
+    out[matched] = labels[idx[matched]]
+    if verbose:
+        n_types = len(set(out[matched].tolist()))
+        print(f"  cell types from {EXSEQ_SPACETX_CELLS}: {int(matched.sum())}/"
+              f"{n_cells} cells, {n_types} labels (SpaceTx clusters)")
+    return out
+
+
 def read_exseq_csv(path, verbose=True):
     """Read the raw ExSeq visual-cortex distribution (spacejam2) as AnnData.
 
     ``path`` may be the raw directory or the CSV itself.
+
+    Cell types come from ``results_adata.h5ad`` when it is present and
+    row-aligned. Some copies of the distribution ship the SpaceTx tables instead;
+    those carry a ``cluster`` label but no z, and they are an independent
+    segmentation, so they are matched onto the spacejam2 cells geometrically and
+    used only when that match is convincing (see :func:`_match_clouds`).
     """
     import anndata as ad
     import pandas as pd
@@ -153,8 +311,20 @@ def read_exseq_csv(path, verbose=True):
                 print(f"  WARNING: could not read {EXSEQ_EDV} ({e}); "
                       f"cell types left unknown")
     elif verbose:
-        print(f"  note: no {EXSEQ_EDV} beside the CSV — cell types will be "
-              f"'unknown', so paper_celltype_* will be unavailable")
+        print(f"  note: no {EXSEQ_EDV} beside the CSV — looking for "
+              f"{EXSEQ_SPACETX_CELLS} instead")
+
+    # Fallback: the SpaceTx mapped cell table, matched by geometry. Only used
+    # when the EDV path left everything unknown, so a distribution that ships
+    # both keeps the row-aligned labels it was verified against.
+    if not (cell_types != "unknown").any():
+        spacetx = _exseq_spacetx_labels(csv_path.parent, coords, len(df),
+                                        verbose=verbose)
+        if spacetx is not None:
+            cell_types = spacetx
+        elif verbose:
+            print(f"  cell types unavailable — paper_celltype_* will be reported "
+                  f"as missing for this dataset")
 
     adata = ad.AnnData(
         X=X,
