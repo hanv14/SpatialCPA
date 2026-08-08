@@ -101,7 +101,7 @@ def _stats(values, prefix, ndigits=1):
             f"{prefix}_max": round(float(a.max()), ndigits)}
 
 
-def describe(dataset, path=None, flank_r=False):
+def describe(dataset, path=None, flank_r=False, n_examples=5):
     """Summary row for one built dataset. Returns a dict, or None if not built."""
     import anndata as ad
 
@@ -137,10 +137,16 @@ def describe(dataset, path=None, flank_r=False):
         if ct is not None:
             lowered = np.char.lower(ct.astype(str))
             unann = np.isin(lowered, UNANNOTATED)
-            n_types = int(len({c for c, u in zip(ct, unann) if not u}))
+            real = pd.Series(ct[~unann])
+            n_types = int(real.nunique())
             pct_unann = round(100.0 * float(unann.mean()), 1)
+            # Most frequent first, and the placeholder labels excluded, so the
+            # column always shows what the annotation actually *says*. Reading the
+            # labels is how a wrong one is caught: cluster ids where subclass names
+            # were intended look nothing alike, and no count column shows that.
+            examples = list(real.value_counts().index[:int(n_examples)])
         else:
-            n_types, pct_unann = 0, 100.0
+            n_types, pct_unann, examples = 0, 100.0, []
 
         hvg = dict(pp.get("gene_selection") or {})
         sub = dict(pp.get("cell_subsample") or {})
@@ -173,6 +179,7 @@ def describe(dataset, path=None, flank_r=False):
             "cell_type_source": pp.get("cell_type_source"),
             "n_cell_types": n_types,
             "pct_unannotated": pct_unann,
+            "cell_type_examples": _join(examples),
             "marker_genes": _join(markers),
             "n_markers_resolved": len(markers),
             "n_markers_requested": len(requested),
@@ -211,7 +218,7 @@ COLUMNS = [
     "section_z_extent_um_max",
     "gap_um_min", "gap_um_median", "gap_um_max",
     "registration", "flattened_z",
-    "cell_type_source", "n_cell_types", "pct_unannotated",
+    "cell_type_source", "n_cell_types", "pct_unannotated", "cell_type_examples",
     "marker_genes", "n_markers_resolved", "n_markers_requested",
     "layer_superficial", "layer_deep",
     "trim", "expression_type", "n_hvg", "genes_before_hvg",
@@ -226,6 +233,9 @@ def main():
                     help="dataset names (default: every registered one that is built)")
     ap.add_argument("--out", default=None,
                     help="CSV path (default: results/summary/datasets.csv)")
+    ap.add_argument("--n-examples", type=int, default=5,
+                    help="how many of the most frequent cell-type labels to show "
+                         "in cell_type_examples (default 5)")
     ap.add_argument("--flank-r", action="store_true",
                     help="also compute the flanking-slice Moran's correlation — the "
                          "score a method gets by copying a neighbour, i.e. how much "
@@ -239,7 +249,7 @@ def main():
     rows, missing = [], []
     for name in names:
         try:
-            row = describe(name, flank_r=args.flank_r)
+            row = describe(name, flank_r=args.flank_r, n_examples=args.n_examples)
         except Exception as e:                       # one bad file must not hide the rest
             print(f"  {name}: FAILED — {type(e).__name__}: {e}")
             continue
@@ -270,6 +280,12 @@ def main():
         compact.append("flank_r")
     print()
     print(df[[c for c in compact if c in df.columns]].to_string(index=False))
+
+    # Kept out of the table above, which is already wide: printed as its own
+    # block so the labels stay readable at full length.
+    print("\ncell-type labels (most frequent first)")
+    for _, r in df.iterrows():
+        print(f"  {r['dataset']:28s} {r['cell_type_examples'] or '(none — unannotated)'}")
 
 
 if __name__ == "__main__":
