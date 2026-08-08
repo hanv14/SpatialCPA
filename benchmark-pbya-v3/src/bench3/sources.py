@@ -47,6 +47,13 @@ EXSEQ_MATCH_MIN = 0.5
 EXSEQ_MATCH_ITERS = 12
 
 IMC_Z_STEP_UM = 10.0        # fallback when the filename does not name the step
+# Kuett et al. ship one h5ad per section, each carrying its *own* leiden run
+# (its own neighbors/pca in uns). The cluster integers are therefore per-section
+# names for per-section clusterings: "3" in one section and "3" in the next are
+# not the same population. Harmonizing them onto a common vocabulary by marker
+# profile is what makes a cross-section label mean anything. A cluster whose best
+# profile correlation falls below this is left unmatched rather than guessed.
+IMC_HARMONIZE_MIN_R = 0.6
 
 
 # Coordinate columns as the various raw distributions spell them. Matched
@@ -343,6 +350,91 @@ def read_exseq_csv(path, verbose=True):
     return adata
 
 
+def harmonize_section_clusters(adata, section_key="section", label_key="cell_type",
+                               min_r=IMC_HARMONIZE_MIN_R, verbose=True):
+    """Put per-section cluster labels onto one vocabulary, matched by profile.
+
+    A dataset delivered as one file per section may carry a clustering run
+    *independently per section* — the 3-D IMC volume does. The integers are then
+    per-section names, and concatenating them produces a label column where the
+    same string means different things in different sections. Nothing downstream
+    can detect that: the vocabulary looks shared, the metric runs, and
+    ``paper_celltype_localization`` compares a prediction's labels against ground
+    truth labels that were never the same labels.
+
+    Each cluster is summarized by its mean channel profile, z-scored *within* its
+    own section first so that per-acquisition intensity drift does not masquerade
+    as a difference in cell type. The section with the most clusters is the
+    reference vocabulary; every other section's clusters are matched to it by
+    Hungarian assignment on ``1 - correlation``, and a pair whose correlation is
+    below ``min_r`` is rejected — those cells become ``"unknown"`` rather than
+    carrying a label that was guessed.
+
+    This is an evaluation-side renaming, not new biology: it changes what the
+    labels are *called*, never which cells are grouped together.
+
+    Returns ``(labels, info)``.
+    """
+    from scipy.optimize import linear_sum_assignment
+
+    sections = np.asarray(adata.obs[section_key]).astype(str)
+    labels = np.asarray(adata.obs[label_key]).astype(str)
+    order = sorted(set(sections.tolist()))
+    info = {"sections": len(order), "matched": 0, "unmatched": 0}
+    if len(order) < 2:
+        return labels, info
+
+    X = adata.X
+    X = np.asarray(X.todense() if sp.issparse(X) else X, dtype=np.float64)
+
+    # Per-section, per-cluster mean profile on within-section z-scored channels.
+    profiles, keys = {}, {}
+    for sec in order:
+        m = sections == sec
+        Xs = X[m]
+        mu, sd = Xs.mean(axis=0), Xs.std(axis=0)
+        Z = (Xs - mu) / np.where(sd > 0, sd, 1.0)
+        ls = labels[m]
+        uniq = sorted(set(ls.tolist()))
+        profiles[sec] = np.vstack([Z[ls == c].mean(axis=0) for c in uniq])
+        keys[sec] = uniq
+
+    ref = max(order, key=lambda s: len(keys[s]))
+    ref_profiles, ref_keys = profiles[ref], keys[ref]
+    vocab = {(ref, c): f"c{j}" for j, c in enumerate(ref_keys)}
+
+    for sec in order:
+        if sec == ref:
+            continue
+        P = profiles[sec]
+        # correlation between every (section cluster, reference cluster) pair
+        A = P - P.mean(axis=1, keepdims=True)
+        B = ref_profiles - ref_profiles.mean(axis=1, keepdims=True)
+        na = np.linalg.norm(A, axis=1, keepdims=True)
+        nb = np.linalg.norm(B, axis=1, keepdims=True)
+        C = (A / np.where(na > 0, na, 1.0)) @ (B / np.where(nb > 0, nb, 1.0)).T
+        rows, cols = linear_sum_assignment(-C)
+        for i, j in zip(rows, cols):
+            if C[i, j] >= min_r:
+                vocab[(sec, keys[sec][i])] = f"c{j}"
+                info["matched"] += 1
+            else:
+                info["unmatched"] += 1
+        # clusters with no assignment at all (more clusters than the reference has)
+        info["unmatched"] += len(keys[sec]) - len(rows)
+
+    out = np.array([vocab.get((s, c), "unknown") for s, c in zip(sections, labels)],
+                   dtype=object)
+    info["vocabulary"] = len(set(v for v in vocab.values()))
+    info["pct_unknown"] = round(100.0 * float((out == "unknown").mean()), 1)
+    if verbose:
+        print(f"  harmonizing per-section clusters onto {ref}'s vocabulary "
+              f"({info['vocabulary']} labels): {info['matched']} matched, "
+              f"{info['unmatched']} left unmatched, "
+              f"{info['pct_unknown']}% of cells unknown")
+    return out, info
+
+
 def read_imc_zstack(path, verbose=True):
     """Read the 3-D IMC breast-cancer raw distribution: one h5ad per z-section.
 
@@ -393,7 +485,12 @@ def read_imc_zstack(path, verbose=True):
 
         a.obsm["spatial"] = np.column_stack([xy, np.full(len(xy), i * step)])
         a.obs["section"] = f"z{i}"
-        if "cell_type" not in a.obs.columns:
+        # Each file carries its own leiden run, so these labels are per-section
+        # names until ``harmonize_section_clusters`` puts them on one vocabulary
+        # after the concat. A real ``cell_type`` column, if the distribution ever
+        # gains one, is already cross-section and is taken as-is.
+        per_section_clusters = "cell_type" not in a.obs.columns
+        if per_section_clusters:
             a.obs["cell_type"] = (a.obs["leiden"].astype(str)
                                   if "leiden" in a.obs.columns else "unannotated")
         a.X = a.X.tocsr() if sp.issparse(a.X) else sp.csr_matrix(a.X)
@@ -406,6 +503,9 @@ def read_imc_zstack(path, verbose=True):
     adata.X = adata.X.tocsr() if sp.issparse(adata.X) else sp.csr_matrix(adata.X)
     adata.obs["section"] = adata.obs["section"].astype(str)
     adata.obs["cell_type"] = adata.obs["cell_type"].astype(str)
+    if per_section_clusters and adata.obs["cell_type"].nunique() > 1:
+        harmonized, _ = harmonize_section_clusters(adata, verbose=verbose)
+        adata.obs["cell_type"] = harmonized.astype(str)
     adata.uns["expression_type"] = "fluorescence_intensity"
     adata.uns["dataset_name"] = "imc_breast_cancer"
     adata.uns["spatial_metadata"] = {
