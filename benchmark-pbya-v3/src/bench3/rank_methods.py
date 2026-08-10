@@ -14,9 +14,13 @@ happens to contribute more individual numbers.
                    paper_gearys_mae             ↓       (catches over-smoothing)
     markers        paper_marker_depth_r         ↑   laminar profile of Flt1/Pcp4/Cux2
                    paper_marker_field_r         ↑   2-D pattern of the same markers
+                   paper_marker_field_ssim      ↑   ... incl. contrast/level (SSIM)
                    paper_marker_morans_mae      ↓
     localization   paper_celltype_localization  ↑   cell types in the right place
-                   paper_gene_mean_spearman     ↑   expression similarity
+                   paper_rare_celltype_localization ↑  rare types in the right place
+    expression     paper_gene_mean_spearman     ↑   per-gene mean agreement
+                   paper_gene_var_spearman      ↑   per-gene variance agreement
+                   paper_gene_detection_spearman ↑  detection frequency (sparsity)
 
 ``--include-gen`` adds v2's correspondence-free generation metrics as a fifth
 group, which is useful for checking that the v3 ranking and the v2 sweep tell the
@@ -53,11 +57,21 @@ GROUPS = {
     "markers": [
         ("paper_marker_depth_r", +1),
         ("paper_marker_field_r", +1),
+        ("paper_marker_field_ssim", +1),
         ("paper_marker_morans_mae", -1),
     ],
     "localization": [
         ("paper_celltype_localization", +1),
+        ("paper_rare_celltype_localization", +1),
+    ],
+    # Gene-expression similarity is its own criterion (the fifth family the paper
+    # validates), so it gets its own group rather than riding inside localization —
+    # that also means gene VARIANCE and detection frequency actually count toward
+    # the composite instead of being computed and ignored.
+    "expression": [
         ("paper_gene_mean_spearman", +1),
+        ("paper_gene_var_spearman", +1),
+        ("paper_gene_detection_spearman", +1),
     ],
 }
 
@@ -75,10 +89,12 @@ HEADLINE = [
     "paper_celltype_localization", "paper_cell_count_ratio",
 ]
 
-# Reported alongside the scored metrics but deliberately NOT ranked: the number
-# of synthesized cells is emergent in generation-only mode, so it is a diagnostic
-# ("did the method produce a plausible amount of tissue?"), not a quality score.
-DIAGNOSTICS = ["paper_cell_count_ratio"]
+# Reported alongside the scored metrics but deliberately NOT ranked. The number
+# of synthesized cells is emergent in generation-only mode ("did the method
+# produce a plausible amount of tissue?"); rare-cell-type recall is a
+# presence/abundance count (the pose-independent half of rare-type preservation —
+# its ranked, localization half lives in the `localization` group).
+DIAGNOSTICS = ["paper_cell_count_ratio", "paper_rare_celltype_recall"]
 
 
 def rank(df, include_gen=False):

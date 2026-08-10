@@ -124,10 +124,18 @@ CHECKS = [
     ("paper_morans_pearson", +1, True),
     ("paper_gearys_pearson", +1, True),
     ("paper_marker_field_r", +1, True),
+    ("paper_marker_field_ssim", +1, True),
     ("paper_marker_depth_r", +1, True),
     ("paper_gene_mean_spearman", +1, False),
+    ("paper_gene_detection_spearman", +1, False),
     ("paper_celltype_localization", +1, True),
+    ("paper_rare_celltype_localization", +1, True),
 ]
+# NB: composition-only metrics (paper_rare_celltype_recall, gen_celltype_composition)
+# are NOT ordering-checked here — the probes preserve the cell-type MULTISET (random
+# permutes labels, scramble keeps them), so recall is ~1 for every probe by design.
+# Recall discriminates a real method that DROPS a rare type; the probes don't drop
+# any. Its oracle ceiling is checked below instead.
 
 
 def main():
@@ -219,6 +227,16 @@ def main():
     if ratio is not None:
         print(f"  {'PASS' if abs(ratio - 1) < 1e-6 else 'FAIL'} "
               f"paper_cell_count_ratio  oracle={ratio:.4f} (expect 1.0)")
+
+    # The oracle reproduces every cell type at its true abundance, so rare-type
+    # recall must be at its ceiling. (It is a presence/abundance diagnostic, not an
+    # ordering-checked score — see the note on CHECKS.)
+    rare_recall = val("oracle", "paper_rare_celltype_recall")
+    if rare_recall is not None:
+        print(f"  {'PASS' if rare_recall > 0.99 else 'FAIL'} "
+              f"paper_rare_celltype_recall  oracle={rare_recall:.4f} (expect 1.0)")
+        if rare_recall <= 0.99:
+            failures.append("paper_rare_celltype_recall")
 
     summary_path = Path(SUMMARY_DIR) / "selftest_metrics.json"
     summary_path.parent.mkdir(parents=True, exist_ok=True)

@@ -50,7 +50,7 @@ from ._v2bridge import load_ground_truth, load_prediction
 from .align import align_by_expression, binned_gene_field, scoring_columns
 from .config import (
     DEPTH_BINS, EMBED_NEIGHBORS, FIELD_GRID, LAYER_DEEP, LAYER_SUPERFICIAL,
-    MARKER_GENES, RANDOM_SEED, SPATIAL_K,
+    MARKER_GENES, RANDOM_SEED, RARE_CELLTYPE_FRAC, SPATIAL_K,
 )
 
 # Same definitions v2's generation evaluator uses — imported rather than
@@ -293,6 +293,35 @@ def depth_profile(xy, values, axis_u, edges):
 _binned_gene_field = binned_gene_field
 
 
+def _global_ssim(a, b):
+    """Single-window SSIM between two vectors of bin values.
+
+        SSIM = (2 muA muB + C1)(2 cov + C2) / ((muA^2 + muB^2 + C1)(varA + varB + C2))
+
+    with C1 = (0.01 L)^2, C2 = (0.03 L)^2 and L the data range.  This is the
+    global (single-window) form, evaluated over the bins occupied in BOTH fields —
+    the SAME bins ``marker_<g>_field_r`` uses — so the SSIM and the Pearson r
+    describe one picture, not two.  Unlike a windowed image SSIM it needs no
+    skimage and no dense raster, and it adds the contrast/luminance sensitivity
+    Pearson r lacks: r is invariant to an affine rescaling of the field, SSIM is
+    not, so a prediction with the right *shape* but the wrong *level* of a marker
+    is caught here where r misses it.  (The SpatialZ audit reports SSIM for exactly
+    this reason.)
+    """
+    a = np.asarray(a, dtype=np.float64)
+    b = np.asarray(b, dtype=np.float64)
+    if a.size < 2:
+        return np.nan
+    L = max(a.max() - a.min(), b.max() - b.min(), 1e-9)
+    C1 = (0.01 * L) ** 2
+    C2 = (0.03 * L) ** 2
+    mu_a, mu_b = a.mean(), b.mean()
+    va, vb = a.var(), b.var()
+    cov = float(((a - mu_a) * (b - mu_b)).mean())
+    return float(((2 * mu_a * mu_b + C1) * (2 * cov + C2))
+                 / ((mu_a ** 2 + mu_b ** 2 + C1) * (va + vb + C2)))
+
+
 def marker_metrics(pred_xy_aligned, pred_R, gt_xy, gt_R, gene_names,
                    markers=MARKER_GENES, grid=FIELD_GRID, depth_bins=DEPTH_BINS,
                    k=SPATIAL_K, layers=None):
@@ -302,6 +331,10 @@ def marker_metrics(pred_xy_aligned, pred_R, gt_xy, gt_R, gene_names,
 
     ``<gene>_field_r``
         Pearson r between the binned 2-D expression fields (needs alignment).
+    ``<gene>_field_ssim``
+        SSIM between the same binned fields — adds the contrast/level sensitivity
+        that Pearson r is blind to (r is invariant to an affine rescale of the
+        field). This is the SpatialZ audit's spatial-pattern SSIM, per marker.
     ``<gene>_depth_r``
         Pearson r between the profiles along the cortical laminar axis. This is
         the laminar-organization test and is far more robust than the 2-D field
@@ -313,7 +346,7 @@ def marker_metrics(pred_xy_aligned, pred_R, gt_xy, gt_R, gene_names,
         wrong amount of spatial structure.
 
     Also returns the unweighted means over markers as ``marker_field_r``,
-    ``marker_depth_r`` and ``marker_morans_mae``.
+    ``marker_field_ssim``, ``marker_depth_r`` and ``marker_morans_mae``.
     """
     names = list(gene_names)
     present = [g for g in markers if g in names]
@@ -335,16 +368,20 @@ def marker_metrics(pred_xy_aligned, pred_R, gt_xy, gt_R, gene_names,
         d_gt = gt_xy @ axis_u
         edges = np.linspace(d_gt.min(), d_gt.max(), depth_bins + 1)
 
-    field_rs, depth_rs, morans_deltas = [], [], []
+    field_rs, field_ssims, depth_rs, morans_deltas = [], [], [], []
     for j, (g, col) in enumerate(zip(present, cols)):
         pm, po = _binned_gene_field(pred_xy_aligned, pred_R[:, col], xe, ye, grid)
         gm, go = _binned_gene_field(gt_xy, gt_R[:, col], xe, ye, grid)
         both = po & go
         fr = np.nan
+        ss = np.nan
         if both.sum() >= 4 and pm[both].std() > 0 and gm[both].std() > 0:
             fr = float(pearsonr(pm[both], gm[both])[0])
+            ss = _global_ssim(pm[both], gm[both])
         out[f"marker_{g}_field_r"] = fr
+        out[f"marker_{g}_field_ssim"] = ss
         field_rs.append(fr)
+        field_ssims.append(ss)
 
         dr = np.nan
         if axis_u is not None:
@@ -362,6 +399,8 @@ def marker_metrics(pred_xy_aligned, pred_R, gt_xy, gt_R, gene_names,
         morans_deltas.append(delta)
 
     out["marker_field_r"] = float(np.nanmean(field_rs)) if np.any(~np.isnan(field_rs)) else np.nan
+    out["marker_field_ssim"] = (float(np.nanmean(field_ssims))
+                                if np.any(~np.isnan(field_ssims)) else np.nan)
     out["marker_depth_r"] = float(np.nanmean(depth_rs)) if np.any(~np.isnan(depth_rs)) else np.nan
     out["marker_morans_mae"] = (float(np.nanmean(morans_deltas))
                                 if np.any(~np.isnan(morans_deltas)) else np.nan)
@@ -394,7 +433,7 @@ def _sinkhorn_divergence(A, B, scale, eps=0.05):
 
 def celltype_localization(pred_xy_aligned, pred_types, gt_xy, gt_types,
                           seed=RANDOM_SEED, min_gt_cells=20, min_pred_cells=5,
-                          max_n=250):
+                          max_n=250, rare_frac=RARE_CELLTYPE_FRAC):
     """Is each cell type in the *right part of the tissue*?
 
     For every ground-truth cell type, the spatial distribution of that type's
@@ -415,6 +454,23 @@ def celltype_localization(pred_xy_aligned, pred_types, gt_xy, gt_types,
 
     Also returns ``celltype_ot`` — the raw weighted divergence over types present
     in both, in units of the tissue radius squared (lower is better).
+
+    **Rare-cell-type preservation.** The localization score above is averaged
+    *weighted by GT frequency*, so a method that drops every rare niche can still
+    score well — yet reproducing rare types and their spatial niches is one of the
+    things the SpatialZ audit specifically checks.  So this function also returns,
+    over the RARE types (GT frequency ``< rare_frac`` among the types large enough
+    to score, default 5%):
+
+      * ``rare_celltype_localization`` — the *unweighted* mean localization of the
+        rare types (0 for a rare type the method failed to produce), i.e. "are the
+        rare types that exist in the right place", giving every rare type equal say
+        instead of drowning them under the abundant ones. This is the ranked score.
+      * ``rare_celltype_recall`` — the fraction of rare types the method produced at
+        all (``>= min_pred_cells`` predicted cells). A presence/abundance diagnostic
+        (it does not depend on the pose), reported but not ranked.
+
+    Both are ``nan`` when the section has no rare types in the scorable band.
     """
     rng = np.random.default_rng(seed)
     pred_types = np.asarray(pred_types).astype(str)
@@ -438,11 +494,13 @@ def celltype_localization(pred_xy_aligned, pred_types, gt_xy, gt_types,
         return M[rng.choice(len(M), max_n, replace=False)] if len(M) > max_n else M
 
     scores, ots, weights = [], [], []
+    rare_scores, rare_present = [], []    # rare-type preservation (unweighted)
     for t in np.unique(gt_types):
         g_mask = gt_types == t
         if g_mask.sum() < min_gt_cells:
             continue
         w = float(g_mask.mean())
+        is_rare = w < rare_frac
         Gc = sub(G_all[g_mask])
 
         null_draw = sub(G_all[rng.choice(len(G_all), int(g_mask.sum()), replace=False)])
@@ -454,19 +512,31 @@ def celltype_localization(pred_xy_aligned, pred_types, gt_xy, gt_types,
         if p_mask.sum() < min_pred_cells:
             scores.append(0.0)     # never produced -> no localization preserved
             weights.append(w)
+            if is_rare:
+                rare_scores.append(0.0)
+                rare_present.append(0.0)
             continue
 
         d_obs = _sinkhorn_divergence(sub(P_all[p_mask]), Gc, scale)
-        scores.append(float(np.clip(1.0 - d_obs / d_null, 0.0, 1.0)))
+        sc = float(np.clip(1.0 - d_obs / d_null, 0.0, 1.0))
+        scores.append(sc)
         ots.append(d_obs)
         weights.append(w)
+        if is_rare:
+            rare_scores.append(sc)
+            rare_present.append(1.0)
 
     if not scores:
-        return {"celltype_localization": np.nan, "celltype_ot": np.nan}
+        return {"celltype_localization": np.nan, "celltype_ot": np.nan,
+                "rare_celltype_localization": np.nan, "rare_celltype_recall": np.nan}
     w = np.asarray(weights)
     return {
         "celltype_localization": float(np.average(scores, weights=w)),
         "celltype_ot": float(np.mean(ots)) if ots else np.nan,
+        "rare_celltype_localization": (float(np.mean(rare_scores))
+                                       if rare_scores else np.nan),
+        "rare_celltype_recall": (float(np.mean(rare_present))
+                                 if rare_present else np.nan),
     }
 
 
@@ -486,6 +556,39 @@ def expression_similarity(pred_L, gt_L):
         g = fn(gt_L, axis=0)
         out[f"gene_{stat}_spearman"] = (
             float(spearmanr(p, g)[0]) if p.std() > 0 and g.std() > 0 else np.nan)
+    return out
+
+
+def gene_detection_metrics(pred_X, gt_X, eps=0.0):
+    """Per-gene detection-frequency agreement (fraction of cells expressing a gene).
+
+    Detection frequency is the fraction of cells with nonzero expression of each
+    gene — the panel's *sparsity structure*.  It is deliberately computed on the
+    RAW emitted expression (not the rank-normalized matrix the spatial metrics
+    use): rank-normalization maps every gene's zeros to the same low rank, so it
+    erases exactly this quantity, which is why none of the other paper metrics can
+    see it and why the SpatialZ audit reports it separately.
+
+    A value ``> eps`` counts as detected, so the metric is invariant to any
+    zero-preserving monotone transform (log1p, library-size normalization) — two
+    methods differing only in output scale score identically — while a method that
+    emits a DENSE field (no zeros, e.g. a raw latent decode) is correctly penalised
+    because its detection frequency is ~1 for every gene and no longer tracks the
+    ground truth.
+
+    Returns the cross-gene Spearman agreement plus the pred/GT median detection
+    rate (diagnostics, so an over- or under-sparse prediction is visible even when
+    the ranking still correlates).
+    """
+    p = (np.asarray(pred_X) > eps).mean(axis=0)
+    g = (np.asarray(gt_X) > eps).mean(axis=0)
+    out = {
+        "gene_detection_median_pred": float(np.median(p)),
+        "gene_detection_median_gt": float(np.median(g)),
+        "gene_detection_spearman": np.nan,
+    }
+    if p.std() > 0 and g.std() > 0:
+        out["gene_detection_spearman"] = float(spearmanr(p, g)[0])
     return out
 
 
@@ -581,6 +684,9 @@ def evaluate_paper(prediction_path, h5ad_path, output_path=None,
                                 markers=markers, grid=grid,
                                 depth_bins=depth_bins, k=k, layers=layers))
         m.update(expression_similarity(pL, gL))
+        # Detection frequency runs on the RAW (pre-rank) expression on purpose —
+        # rank-normalization erases the sparsity structure this metric measures.
+        m.update(gene_detection_metrics(pred_X, gt_X))
         if gt_has_types:
             m.update(celltype_localization(
                 pred_xy_al, pred["cell_type"][pm],

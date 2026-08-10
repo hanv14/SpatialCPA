@@ -1160,14 +1160,22 @@ PAPER_METRIC_NAMES = [
     "paper_gearys_median_gt",
     # marker-gene spatial patterns (Flt1 / Pcp4 / Cux2)
     "paper_marker_field_r",
+    "paper_marker_field_ssim",
     "paper_marker_depth_r",
     "paper_marker_morans_mae",
     # gene expression similarity
     "paper_gene_mean_spearman",
     "paper_gene_var_spearman",
-    # preservation of cell spatial localization
+    # gene detection frequency (sparsity structure; the rank-invariant metrics
+    # cannot see this, so it is reported on its own)
+    "paper_gene_detection_spearman",
+    "paper_gene_detection_median_pred",
+    "paper_gene_detection_median_gt",
+    # preservation of cell spatial localization (+ rare-cell-type preservation)
     "paper_celltype_localization",
     "paper_celltype_ot",
+    "paper_rare_celltype_localization",
+    "paper_rare_celltype_recall",
     # bookkeeping
     "paper_cell_count_ratio",
 ]
@@ -1176,7 +1184,7 @@ PAPER_METRIC_NAMES = [
 PAPER_MARKER_METRIC_NAMES = [
     f"paper_marker_{g}_{suffix}"
     for g in MARKER_GENES
-    for suffix in ("field_r", "depth_r", "morans_delta")
+    for suffix in ("field_r", "field_ssim", "depth_r", "morans_delta")
 ]
 
 # Tier B — v2's correspondence-free generation metrics, computed identically so
@@ -1212,6 +1220,8 @@ SPATIAL_K = 10          # kNN degree for Moran's I / Geary's C spatial weights
 FIELD_GRID = 20         # bins per axis for binned spatial fields
 DEPTH_BINS = 20         # bins along the cortical laminar axis
 EMBED_NEIGHBORS = 15    # kNN degree for the UMAP/PCA mixing score
+RARE_CELLTYPE_FRAC = 0.05   # a GT type below this frequency is "rare" for the
+                            # rare-cell-type preservation metric (evaluate_paper)
 
 # ── Pose selection for the alignment-dependent metrics (align.py) ─────────────
 # Candidate rotations tried when bringing a prediction into the GT frame. Poses
