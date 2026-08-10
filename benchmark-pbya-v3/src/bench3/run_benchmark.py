@@ -336,7 +336,11 @@ def main():
     ap = argparse.ArgumentParser(
         description="Run one v3 method against the STARmap paper design")
     ap.add_argument("--method", required=True, choices=sorted(METHODS))
-    ap.add_argument("--design", default="paper", choices=["paper", "loo"])
+    ap.add_argument("--design", default="paper", choices=["paper", "loo", "wide"])
+    ap.add_argument("--holdout-block", type=int, default=None,
+                    help="consecutive sections held out per run for --design wide "
+                         "(default 3; clamped to n-2, keeping the first and last "
+                         "sections as input). Ignored by other designs.")
     ap.add_argument("--holdout-id", default=None,
                     help="run only this holdout (relevant for --design loo)")
     ap.add_argument("--dataset", default=None,
@@ -358,7 +362,8 @@ def main():
     if not resolved.exists():
         raise SystemExit(dataset_not_found_message(args.dataset, resolved))
     args.dataset = str(resolved)
-    configs = build_designs(args.dataset, design=args.design)
+    configs = build_designs(args.dataset, design=args.design,
+                            holdout_block=args.holdout_block)
     if args.holdout_id:
         configs = [c for c in configs if c["holdout_id"] == args.holdout_id]
         if not configs:

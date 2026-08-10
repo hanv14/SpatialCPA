@@ -43,7 +43,11 @@ def main():
     ap = argparse.ArgumentParser(description="Run the full benchmark-pbya-v3 campaign")
     ap.add_argument("--methods", nargs="+", default=None,
                     help="methods to run (default: all available, in METHOD_ORDER)")
-    ap.add_argument("--design", default="paper", choices=["paper", "loo"])
+    ap.add_argument("--design", default="paper", choices=["paper", "loo", "wide"])
+    ap.add_argument("--holdout-block", type=int, default=None,
+                    help="consecutive sections held out per run for --design wide "
+                         "(default 3; clamped to n-2, keeping the first and last "
+                         "sections as input). Ignored by other designs.")
     ap.add_argument("--dataset", default=None,
                     help="dataset NAME (e.g. exseq_visual_cortex) or a path to a "
                          "built data.h5ad (default: the STARmap paper dataset)")
@@ -69,7 +73,8 @@ def main():
     args.dataset = str(resolved)
 
     methods = resolve_methods(args.methods)
-    configs = build_designs(args.dataset, design=args.design)
+    configs = build_designs(args.dataset, design=args.design,
+                            holdout_block=args.holdout_block)
     dataset_name, dataset_registration = dataset_meta(args.dataset)
     registration = args.registration or dataset_registration
 
