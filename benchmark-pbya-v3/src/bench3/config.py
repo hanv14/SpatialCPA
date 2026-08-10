@@ -1155,6 +1155,35 @@ METHODS = {
                                 "[v14] training failed",
                                 "[v14] generation failed"),
     },
+    "spatialcpav20_gen": {
+        # v20 is the single-file ``learn_spatialcpav20.py`` at the repository
+        # root (v18 + Bernoulli cross-mix, repairing v19's wide-gap collapse),
+        # not a package v2 ever ran, so its wrapper lives here (like v16/v18/v19)
+        # and loads that file directly. It speaks the identical _v2_io contract.
+        "wrapper": _v3_wrapper("run_spatialcpav20.py"),
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "H3D-FLA (v18) + Bernoulli cross-mix — per-gene real-value "
+                 "selection between exemplar and cross-flank partner, keeping "
+                 "sparsity/count-ness intact at wide gaps (fixes v19)",
+        # No ``wrapper_args``: the wrapper's argparse defaults already mirror
+        # V14Config's production defaults, so a bare invocation runs v20 as
+        # intended; which knobs actually ran is recorded per prediction in
+        # ``method_params``, so a result is self-describing.
+        #
+        # v20 degrades to the numpy latent-grounded fallback when torch is
+        # missing or the flow fails to train/generate — the same fallback prints
+        # as v18/v19 (the shared v14 core). The fallback is not the method under
+        # test, so v3 fails the run rather than scoring it. The first two markers
+        # are the wrapper's own; the last three are printed by
+        # learn_spatialcpav20.py itself when it drops to the fallback.
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v14] torch unavailable",
+                                "[v14] training failed",
+                                "[v14] generation failed"),
+    },
     "spatialz": {
         "wrapper": _v2_wrapper("run_spatialz.py"),
         "conda_env": "bench_spatialz",
@@ -1193,7 +1222,7 @@ METHOD_ORDER = [
     "spatialz", "feast", "isost",
     "spatialcpav8_gen", "spatialcpav11_gen", "spatialcpav14_gen",
     "spatialcpav15_gen", "spatialcpav16_gen", "spatialcpav17_gen",
-    "spatialcpav18_gen", "spatialcpav19_gen",
+    "spatialcpav18_gen", "spatialcpav19_gen", "spatialcpav20_gen",
 ]
 
 
