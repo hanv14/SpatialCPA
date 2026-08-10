@@ -17,6 +17,16 @@ consecutive centres, cells per section, cell-type counts) are computed here.
     python -m src.bench3.describe_datasets --out datasets.csv
     python -m src.bench3.describe_datasets --datasets starmap_visual_cortex imc_breast_cancer
     python -m src.bench3.describe_datasets --flank-r      # adds the discrimination probe
+    python -m src.bench3.describe_datasets --designs wide --holdout-block 5
+    python -m src.bench3.describe_datasets --designs      # main table only, no scenarios
+
+The per-dataset row reports the *built* (paper) split. In addition, the design
+scenarios block expands every holdout design ``run_all``/``run_benchmark`` accepts
+— ``paper``, ``loo`` and ``wide`` — so the same datasets can be read under each
+``--design``: which sections each holds out, how many runs it is, and
+``max_holdout_gap_um``, the hardest held-out -> nearest-input gap (one spacing for
+``paper``/``loo``, several for ``wide``). Detailed per-run rows are written to
+``dataset_designs.csv``; a compact per-(dataset, design) summary is printed.
 
 A note on two columns that are easy to misread:
 
@@ -41,7 +51,15 @@ import numpy as np
 import pandas as pd
 
 from .config import DATASET_SPECS, RANDOM_SEED, dataset_path, spec
-from .design import holdout_id_for
+from .design import (
+    consecutive_design, holdout_id_for, loo_design, paper_design, sorted_sections,
+)
+
+# Holdout designs described per dataset by ``--designs`` (see design.py). The
+# main per-dataset row reports the built (paper) split; this is the same set of
+# designs run_all / run_benchmark accept, so the table shows what each `--design`
+# would actually hold out on every dataset — not just the paper one.
+DESIGN_NAMES = ("paper", "loo", "wide")
 
 # Labels the pipeline uses for "no annotation"; both count as unannotated.
 UNANNOTATED = ("unknown", "unannotated", "nan", "")
@@ -207,6 +225,115 @@ def describe(dataset, path=None, flank_r=False, n_examples=5):
             adata.file.close()
 
 
+def describe_designs(dataset, path=None, designs=DESIGN_NAMES, wide_block=None):
+    """Per-design holdout plan for one built dataset: one row per (design, run).
+
+    Complements ``describe``: where that row reports the *built* (paper) split,
+    this expands every design ``run_all``/``run_benchmark`` accepts, so the same
+    dataset can be read under each ``--design``. ``loo`` yields one run per
+    interior section; ``paper`` and ``wide`` yield a single multi-section run.
+
+    ``max_holdout_gap_um`` is the difficulty summary that actually separates the
+    designs: for each run, the largest distance from a held-out section centre to
+    the nearest *input* section centre — how far the method must reach. It is one
+    spacing for ``paper``/``loo`` and several for ``wide``. Returns a list of row
+    dicts (a per-design ``error`` row if a design does not apply, e.g. ``wide`` on
+    a volume with fewer than three sections), or None if the dataset is not built.
+    """
+    import anndata as ad
+
+    path = Path(path or dataset_path(dataset))
+    if not path.exists():
+        return None
+
+    adata = ad.read_h5ad(str(path), backed="r")
+    try:
+        _labels, z_by = sorted_sections(adata)
+        n_sec = len(_labels)
+
+        def _max_gap(held, keep):
+            if not held or not keep:
+                return np.nan
+            kv = np.array([z_by[k] for k in keep if k in z_by], dtype=np.float64)
+            hv = [z_by[h] for h in held if h in z_by]
+            if kv.size == 0 or not hv:
+                return np.nan
+            return round(float(max(np.min(np.abs(kv - h)) for h in hv)), 1)
+
+        rows = []
+        for d in designs:
+            try:
+                if d == "paper":
+                    configs = paper_design(adata)
+                elif d == "loo":
+                    configs = loo_design(adata)
+                elif d == "wide":
+                    configs = consecutive_design(adata, block=wide_block)
+                else:
+                    rows.append({"dataset": dataset, "design": d,
+                                 "error": "unknown design"})
+                    continue
+            except Exception as e:                    # design inapplicable here
+                rows.append({"dataset": dataset, "design": d,
+                             "error": f"{type(e).__name__}: {e}"})
+                continue
+            if not configs:                           # e.g. loo with no interior
+                rows.append({"dataset": dataset, "design": d,
+                             "error": f"no runs (n_sections={n_sec})"})
+                continue
+            for cfg in configs:
+                held = list(cfg["holdout_sections"])
+                keep = list(cfg["remaining_sections"])
+                rows.append({
+                    "dataset": dataset,
+                    "design": d,
+                    "holdout_id": cfg["holdout_id"],
+                    "n_held_out": len(held),
+                    "held_out_sections": _join(held),
+                    "n_input": len(keep),
+                    "max_holdout_gap_um": _max_gap(held, keep),
+                })
+        return rows
+    finally:
+        if adata.isbacked:
+            adata.file.close()
+
+
+DESIGN_COLUMNS = [
+    "dataset", "design", "holdout_id", "n_held_out", "held_out_sections",
+    "n_input", "max_holdout_gap_um", "error",
+]
+
+# Print order for the design-scenario summary.
+_DESIGN_ORDER = {"paper": 0, "loo": 1, "wide": 2}
+
+
+def _print_design_summary(ddf):
+    """Compact one-line-per-(dataset, design) view of the holdout scenarios."""
+    has_err = "error" in ddf.columns
+    print("\ndesign scenarios (holdout per design; "
+          "max_gap = hardest held-out -> nearest-input gap)")
+    print(f"  {'dataset':28s} {'design':6s} {'runs':>4s} {'held/run':>8s} "
+          f"{'input':>6s} {'max_gap_um':>10s}  holdout_id(s)")
+    for dataset, g in ddf.groupby("dataset", sort=False):
+        for design, gg in sorted(g.groupby("design"),
+                                 key=lambda kv: _DESIGN_ORDER.get(kv[0], 9)):
+            real = gg[gg["error"].isna()] if has_err else gg
+            if real.empty:
+                err = gg["error"].dropna().iloc[0] if has_err else "n/a"
+                print(f"  {dataset:28s} {design:6s}   n/a  ({err})")
+                continue
+            runs = len(real)
+            held = int(real["n_held_out"].iloc[0])
+            n_in = int(real["n_input"].iloc[0])
+            mg = real["max_holdout_gap_um"].astype(float).max()
+            mgs = "nan" if not np.isfinite(mg) else f"{mg:.1f}"
+            ids = list(real["holdout_id"])
+            id_str = ids[0] if runs == 1 else f"{ids[0]} … {ids[-1]} ({runs} runs)"
+            print(f"  {dataset:28s} {design:6s} {runs:>4d} {held:>8d} {n_in:>6d} "
+                  f"{mgs:>10s}  {id_str}")
+
+
 # Column order for the CSV: identity, size, geometry, annotation, processing.
 COLUMNS = [
     "dataset", "kind", "resolution", "technology", "species", "tissue",
@@ -241,6 +368,17 @@ def main():
                          "score a method gets by copying a neighbour, i.e. how much "
                          "room the dataset leaves for a method to win. Reads X, so "
                          "it is much slower on the large volumes.")
+    ap.add_argument("--designs", nargs="*", choices=list(DESIGN_NAMES),
+                    default=list(DESIGN_NAMES),
+                    help="also describe the holdout under each of these designs "
+                         "(default: all). Pass with no names to skip the design "
+                         "scenarios entirely.")
+    ap.add_argument("--holdout-block", type=int, default=None,
+                    help="consecutive block width for the 'wide' design scenario "
+                         "(default 3; clamped to n-2 per dataset)")
+    ap.add_argument("--designs-out", default=None,
+                    help="CSV path for the per-(design, run) rows "
+                         "(default: results/summary/dataset_designs.csv)")
     args = ap.parse_args()
 
     from .config import SUMMARY_DIR
@@ -286,6 +424,34 @@ def main():
     print("\ncell-type labels (most frequent first)")
     for _, r in df.iterrows():
         print(f"  {r['dataset']:28s} {r['cell_type_examples'] or '(none — unannotated)'}")
+
+    # ── design scenarios ──────────────────────────────────────────────────────
+    # The per-dataset table above reports the built (paper) split; this expands
+    # every design run_all/run_benchmark accepts, so the same datasets can be read
+    # under paper, loo and wide. Skipped when --designs is given with no names.
+    if args.designs:
+        design_rows = []
+        for name in names:
+            if not dataset_path(name).exists():
+                continue
+            try:
+                dr = describe_designs(name, designs=args.designs,
+                                      wide_block=args.holdout_block)
+            except Exception as e:
+                print(f"  {name}: design scenarios FAILED — {type(e).__name__}: {e}")
+                continue
+            if dr:
+                design_rows.extend(dr)
+        if design_rows:
+            ddf = pd.DataFrame(design_rows)
+            if "error" not in ddf.columns:
+                ddf["error"] = np.nan
+            ddf = ddf[[c for c in DESIGN_COLUMNS if c in ddf.columns]]
+            dout = Path(args.designs_out or (Path(SUMMARY_DIR) / "dataset_designs.csv"))
+            dout.parent.mkdir(parents=True, exist_ok=True)
+            ddf.to_csv(dout, index=False)
+            print(f"\nWrote {len(ddf)} design-scenario rows to {dout}")
+            _print_design_summary(ddf)
 
 
 if __name__ == "__main__":
