@@ -1126,6 +1126,35 @@ METHODS = {
                                 "[v14] training failed",
                                 "[v14] generation failed"),
     },
+    "spatialcpav19_gen": {
+        # v19 is the single-file ``learn_spatialcpav19.py`` at the repository
+        # root (v18 + gap-adaptive generation), not a package v2 ever ran, so its
+        # wrapper lives here (like v16's and v18's) and loads that file directly.
+        # It speaks the identical _v2_io contract.
+        "wrapper": _v3_wrapper("run_spatialcpav19.py"),
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "H3D-FLA (v18) + gap-adaptive generation — gap-scaled generative "
+                 "weight, cross-flank paired interpolation, gap-triggered flow "
+                 "blend, and a wide-gap training curriculum",
+        # No ``wrapper_args``: the wrapper's argparse defaults already mirror
+        # V14Config's production defaults, so a bare invocation runs v19 as
+        # intended; which knobs actually ran is recorded per prediction in
+        # ``method_params``, so a result is self-describing.
+        #
+        # v19 degrades to the numpy latent-grounded fallback when torch is
+        # missing or the flow fails to train/generate — the same fallback prints
+        # as v18 (the shared v14 core). The fallback is not the method under
+        # test, so v3 fails the run rather than scoring it. The first two markers
+        # are the wrapper's own; the last three are printed by
+        # learn_spatialcpav19.py itself when it drops to the fallback.
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v14] torch unavailable",
+                                "[v14] training failed",
+                                "[v14] generation failed"),
+    },
     "spatialz": {
         "wrapper": _v2_wrapper("run_spatialz.py"),
         "conda_env": "bench_spatialz",
@@ -1164,7 +1193,7 @@ METHOD_ORDER = [
     "spatialz", "feast", "isost",
     "spatialcpav8_gen", "spatialcpav11_gen", "spatialcpav14_gen",
     "spatialcpav15_gen", "spatialcpav16_gen", "spatialcpav17_gen",
-    "spatialcpav18_gen",
+    "spatialcpav18_gen", "spatialcpav19_gen",
 ]
 
 
