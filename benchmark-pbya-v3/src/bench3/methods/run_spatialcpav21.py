@@ -232,7 +232,15 @@ def _build_config(args):
     cfg.layout_freq_narrow = args.layout_freq_narrow
     cfg.field_align = not args.no_field_align
     cfg.field_align_gap_only = not args.no_field_align_gap_only
+    cfg.field_align_k = args.field_align_k
+    cfg.field_align_cand_k = args.field_align_cand_k
+    cfg.field_align_frac = args.field_align_frac
+    cfg.field_align_margin = args.field_align_margin
+    cfg.field_align_noise_mult = args.field_align_noise_mult
     cfg.field_repair = not args.no_field_repair
+    cfg.repair_q = args.repair_q
+    cfg.repair_noise_mult = args.repair_noise_mult
+    cfg.repair_frac = args.repair_frac
     cfg.repair_tail_scale = args.repair_tail_scale
     return cfg
 
@@ -414,8 +422,28 @@ def main():
                         "local mean field)")
     p.add_argument("--no-field-align-gap-only", action="store_true",
                    help="run field-align at all gap widths, not only wide gaps")
+    p.add_argument("--field-align-k", type=int, default=12,
+                   help="in-plane kNN per flank for the field-align local field target")
+    p.add_argument("--field-align-cand-k", type=int, default=10,
+                   help="candidate exemplars per cell for field-align")
+    p.add_argument("--field-align-frac", type=float, default=0.35,
+                   help="max fraction of cells re-grounded by the field-align pass")
+    p.add_argument("--field-align-margin", type=float, default=0.10,
+                   help="relative field-deviation improvement a field-align swap "
+                        "must beat before it is taken")
+    p.add_argument("--field-align-noise-mult", type=float, default=1.25,
+                   help="field-align noise floor: only cells whose field mismatch "
+                        "exceeds mult x the real pool's own median field deviation "
+                        "are eligible (avoids over-smoothing past the ground truth)")
     p.add_argument("--no-field-repair", action="store_true",
                    help="ablate the per-gene tail-rate-matched field repair")
+    p.add_argument("--repair-q", type=float, default=0.90,
+                   help="pool-residual quantile defining the per-gene real noise floor")
+    p.add_argument("--repair-noise-mult", type=float, default=1.25,
+                   help="an entry is a repair candidate only if its residual exceeds "
+                        "mult x the per-gene noise floor")
+    p.add_argument("--repair-frac", type=float, default=0.10,
+                   help="max fraction of (cell, gene) entries repaired per section")
     p.add_argument("--repair-tail-scale", type=float, default=0.30,
                    help="allowance multiplier on the real tail rate at alpha=1 "
                         "(1.0 = exact matching / never over-smooth; <1 repairs into "
@@ -482,7 +510,15 @@ def main():
         "layout_freq_narrow": args.layout_freq_narrow,
         "field_align": not args.no_field_align,
         "field_align_gap_only": not args.no_field_align_gap_only,
+        "field_align_k": args.field_align_k,
+        "field_align_cand_k": args.field_align_cand_k,
+        "field_align_frac": args.field_align_frac,
+        "field_align_margin": args.field_align_margin,
+        "field_align_noise_mult": args.field_align_noise_mult,
         "field_repair": not args.no_field_repair,
+        "repair_q": args.repair_q,
+        "repair_noise_mult": args.repair_noise_mult,
+        "repair_frac": args.repair_frac,
         "repair_tail_scale": args.repair_tail_scale,
         "flow_matching": True, "generation_only": True,
     }
