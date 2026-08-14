@@ -1272,6 +1272,33 @@ METHODS = {
                                 "[v14] training failed",
                                 "[v14] generation failed"),
     },
+    "spatialcpav24_gen": {
+        # v24 is the single-file ``learn_spatialcpav24.py`` at the repository root,
+        # implementing the ``v23_design.md`` CTF-Flow design. Its wrapper lives here
+        # (like v16/v18-v23) and loads that file directly; identical _v2_io contract.
+        "wrapper": _v3_wrapper("run_spatialcpav24.py"),
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "CTF-Flow — continuous transcriptomic field (v23_design.md). "
+                 "Neural tier (triplane/flow/ZINB/MedCPT/metric-aware LOSO) is a "
+                 "scaffold; runs are quarantined until it is implemented and trains.",
+        # QUARANTINE BY DESIGN. CTF-Flow's neural tier is a guarded scaffold in
+        # learn_spatialcpav24.py (needs GPU/torch/MedCPT/data), so SpatialCPAv24
+        # reports trained=False and generates with the numpy field tier — a strict
+        # v20 superset, but NOT the CTF-Flow the design claims wins for. Scoring the
+        # numpy core under this method name would misrepresent it, so these markers
+        # fail the run rather than scoring it. Implementing _train_neural /
+        # _generate_neural (and removing the scaffold guard) is what makes v24
+        # produce scored results. The wrapper prints the first marker; the file
+        # prints the rest when it takes the numpy/scaffold path.
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v24] torch unavailable",
+                                "[v24] neural training failed",
+                                "[v24] neural generation failed",
+                                "neural CTF-Flow tier is a scaffold"),
+    },
     "spatialz": {
         "wrapper": _v2_wrapper("run_spatialz.py"),
         "conda_env": "bench_spatialz",
@@ -1312,6 +1339,7 @@ METHOD_ORDER = [
     "spatialcpav15_gen", "spatialcpav16_gen", "spatialcpav17_gen",
     "spatialcpav18_gen", "spatialcpav19_gen", "spatialcpav20_gen",
     "spatialcpav21_gen", "spatialcpav22_gen", "spatialcpav23_gen",
+    "spatialcpav24_gen",
 ]
 
 
