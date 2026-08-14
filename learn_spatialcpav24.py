@@ -202,6 +202,12 @@ class CTFFlowConfig:
     lr: float = 3e-4
     n_ode_steps: int = 24             # Heun in the design; Euler here
     gap_dropout: float = 0.35
+    lambda_rec: float = 1.0           # weight on the ZINB reconstruction NLL. The
+                                      # ZINB NLL can dwarf the flow-matching loss
+                                      # (drowning out the velocity field); lower
+                                      # this, and/or rely on the two-phase schedule
+                                      # (pretrain_epochs), to give the flow a fair
+                                      # gradient share.
     lambda_autocorr: float = 1.0      # metric-aware LOSO losses (design 4)
     lambda_profile: float = 1.0
     lambda_distribution: float = 1.0
@@ -1086,8 +1092,15 @@ class SpatialCPAv24:
             if m.sum() >= 12:
                 graphs[si] = torch.tensor(_knn_idx(tr["xy"][m], 10), device=self.dev)
 
-        for ep in range(cfg.epochs):
-            self.gene.gamma = min(1.0, ep / max(cfg.epochs * 0.5, 1))   # anneal text residual
+        # Two-phase schedule (design build order / the v14 recipe): PHASE A trains
+        # the field + gene embeddings + encoder + ZINB decoder on reconstruction
+        # only, so the decoder is settled before PHASE B adds the flow-matching
+        # loss. Without this the huge early ZINB NLL swamps the CFM term and the
+        # velocity field never trains (the flat cfm=~1.0 symptom).
+        total_ep = cfg.pretrain_epochs + cfg.epochs
+        for ep in range(total_ep):
+            phase_b = ep >= cfg.pretrain_epochs
+            self.gene.gamma = min(1.0, ep / max(total_ep * 0.5, 1))     # anneal text residual
             # whole-section dropout (gap-aware curriculum, design 3.1/3.2)
             keep_sec = [si for si in range(n_sec)
                         if np.random.rand() > cfg.gap_dropout] or list(range(n_sec))
@@ -1109,17 +1122,21 @@ class SpatialCPAv24:
 
             # straight-line CFM (iid N(0,I) prior at train; correlated prior only
             # changes the cross-cell structure at inference, not the marginal v)
-            t = torch.rand(h1.shape[0], device=self.dev)
-            h0 = torch.randn_like(h1)
-            ht = (1 - t)[:, None] * h0 + t[:, None] * h1
-            v_pred = self.vfield(ht, t, cond)
-            L_cfm = ((v_pred - (h1 - h0)) ** 2).mean()
+            # flow-matching term only in PHASE B (the decoder is settled by then)
+            if phase_b:
+                t = torch.rand(h1.shape[0], device=self.dev)
+                h0 = torch.randn_like(h1)
+                ht = (1 - t)[:, None] * h0 + t[:, None] * h1
+                v_pred = self.vfield(ht, t, cond)
+                L_cfm = ((v_pred - (h1 - h0)) ** 2).mean()
+            else:
+                L_cfm = torch.zeros((), device=self.dev)
 
             s_i = F.softplus(self.size(h1)).squeeze(-1) + 1e-3
             mu, th, pi = self.dec(h1, E, s_i)
             L_zinb = zinb_nll(yraw[:, gidx], mu, th, pi)
 
-            L = L_cfm + L_zinb + cfg.lambda_reg * self.field.tv_z()
+            L = L_cfm + cfg.lambda_rec * L_zinb + cfg.lambda_reg * self.field.tv_z()
             # metric-aware autocorr (design 4): match soft Moran's of the decoded
             # reconstruction to the real cells, on a fixed section kNN graph.
             if cfg.lambda_autocorr > 0:
@@ -1142,9 +1159,10 @@ class SpatialCPAv24:
             opt.zero_grad(); L.backward()
             torch.nn.utils.clip_grad_norm_(params, 2.0)
             opt.step()
-            if cfg.verbose and ep % max(cfg.epochs // 8, 1) == 0:
-                print(f"[v24][train] ep {ep}: L={L.item():.3f} "
-                      f"(cfm={L_cfm.item():.3f} zinb={L_zinb.item():.3f})")
+            if cfg.verbose and ep % max(total_ep // 10, 1) == 0:
+                print(f"[v24][train] ep {ep} ({'B' if phase_b else 'A'}): "
+                      f"L={L.item():.3f} (cfm={L_cfm.item():.3f} "
+                      f"zinb={L_zinb.item():.3f})")
 
         # cache training latents for retrieval at inference
         with torch.no_grad():
