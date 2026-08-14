@@ -16,10 +16,10 @@ install:
 	$(PY) -m pip install -e ".[dev]"
 
 test:
-	$(PY) -m pytest tests/ -m "not slow"
+	$(PY) -m pytest tests/ -m "not slow" || [ $$? -eq 5 ]
 
 test-all:
-	$(PY) -m pytest tests/
+	$(PY) -m pytest tests/ || [ $$? -eq 5 ]
 
 lint:
 	$(PY) -m ruff check $(PKG) tests scripts
