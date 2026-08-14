@@ -11,17 +11,18 @@ otherwise), **INFO** (recorded, no action).
 
 ## A. Contradictions between task files — resolve before the affected task
 
-### A1. `Volume` vs `TrainingVolume` / `HeldOutSections` — **OPEN**
+### A1. `Volume` vs `TrainingVolume` / `HeldOutSections` — **RESOLVED in T01**
 T01 specifies `split_holdout(vol, mode, fold) -> tuple[Volume, list[Section]]` and
 `loso_folds(vol) -> Iterator[tuple[Volume, Section]]`. T08 and T09 require the training portion to
 be a distinct type `TrainingVolume`, the holdout to be `HeldOutSections`, and passing the wrong one
 to be a **`TypeError`** (`test_metric_aware_rejects_heldout`). A `typing.NewType` gives a mypy error,
 not a runtime `TypeError`.
 
-*Proposal:* make them real classes in `data/schema.py` — `TrainingVolume(Volume)` and
-`HeldOutSections` (a container, deliberately *not* a `Volume`) — have `split_holdout` return
-`tuple[TrainingVolume, HeldOutSections]` from the start, and have the loss/calibration entrypoints
-runtime-check the type. Costs nothing in T01 and makes T08/T09's guarantee real.
+*Resolution (T01):* done as proposed. `data/schema.py` defines `TrainingVolume(Volume)` and
+`HeldOutSections` (a `Sequence[Section]`, deliberately *not* a `Volume` and carrying no
+`median_spacing`); `split_holdout` returns `tuple[TrainingVolume, HeldOutSections]` and `loso_folds`
+raises `TypeError` for anything else. T08/T09 should runtime-check the same way at their
+entrypoints.
 
 ### A2. Per-gene-module length-scale calibration is not implementable as written — **OPEN**
 T09 §2 calibrates `ell` "per gene-module (Leiden clusters of gene embedding space, ~10 modules)".
@@ -59,7 +60,7 @@ results, which came from bench3.
 `test_metrics_match_reference_after_fixes`, and keep T10's bug note as a caveat about v20's
 *internal* scoring (which is what its own tuning was driven by) rather than about the benchmark.
 
-### A4. `Config` is missing fields that later tasks depend on — **PROPOSED**
+### A4. `Config` is missing fields that later tasks depend on — **RESOLVED in T01**
 Convention 1 forbids constants outside `Config`, but the task files write several inline. Not in the
 T01 field list and needed: `field_dim` (`d_f`, used everywhere from T04 on), `ctx_dim` (`d_ctx`,
 retrieval output), retrieval attention head count, `expr_pca_dim` (neighbour tokens, Sinkhorn basis),
@@ -70,14 +71,19 @@ retrieval output), retrieval attention head count, `expr_pca_dim` (neighbour tok
 `n_uncertainty_samples` (T09's M=8), `sefl_min_stratum_cells` (T07's 20), `holdout_consecutive_k`
 (T01 calls it "configurable" but gives no field), `bisection_max_iter` / `bisection_grid_size` (T09).
 
-I will add these in T01 with the spec's values as defaults and document each. Flagging because it
-makes T01's `Config` noticeably larger than the block printed in the spec.
+*Resolution (T01):* all added and documented; `Config` is 94 fields rather than the ~60 printed in
+the spec. Four have no value fixed anywhere in `specs/` and are marked *provisional* in their
+docstrings, to be set by the task that first uses them: `field_dim=128`, `retrieval_ctx_dim=64`,
+`retrieval_n_heads=4`, `expr_pca_dim=32` (the last taken from GATE 2's "top-32 expression PCs").
+`holdout_consecutive_k` is read by `split_holdout` through a new `cfg` keyword, since the signature
+in the spec has nowhere else to get the run length from.
 
-### A5. `Config.validate()` cannot check the example it is given — **PROPOSED**
+### A5. `Config.validate()` cannot check the example it is given — **RESOLVED in T01**
 T01 asks `validate()` to raise on "`fourier_bands_z > 4` with fewer than 8 training sections", but
-`Config` is standalone and has no volume. *Proposal:* `validate()` for self-consistency (set
-membership, positivity, mutually exclusive gates) plus `validate_against_volume(vol)` for the
-data-dependent checks, called by `load_volume`.
+`Config` is standalone and has no volume. *Resolution (T01):* `Config.validate()` covers set
+membership, positivity, fractions and cross-field relations; the data-dependent checks live in
+`data/schema.py::validate_config_against_volume(cfg, vol)` (a function rather than a method, so
+`config.py` need not import the schema), called by `load_volume`.
 
 ### A6. Nothing specifies building the v20 cross-mix — **OPEN**
 `expr_mode ∈ {zinb-flow, cross-mix, auto-blend}` is a `Config` gate (T01), the no-regression
@@ -133,7 +139,8 @@ generated layout is strictly more regular than the tissue it is imitating, which
 `test_pcf_matches_real` (max |Δg(r)| < 0.15 from `r0` up).
 *Proposal:* set `r0` to the 1st percentile (or the observed minimum) and let the fitted `gamma`/`R`
 carry the soft repulsion; keep the 5th percentile as a `Config`-selectable alternative and record
-which was used.
+which was used. (T01 added `Config.repulsion_r0_percentile`, default 1.0, so T05 only has to read
+it.)
 
 ### B7. The layout sampler is a conditional Strauss, not a Strauss process (T05) — **PROPOSED**
 Step 1 draws `N ~ Poisson(N_expected)` and step 3 thins; conditioning on `N` and then thinning is
@@ -153,8 +160,9 @@ docstring.
 
 ### B9. G1.4's throughput target needs chunking to be possible at all — **PROPOSED**
 10⁶ points at M = 4096 is a 16 GB float32 feature matrix if materialised. *Proposal:* chunked
-evaluation (fixed chunk size in `Config`), and if 5 s on this CPU proves out of reach after
-chunking, report the measured number rather than quietly loosening the gate.
+evaluation (fixed chunk size in `Config`; T01 added `Config.grf_chunk_points`, default 65536), and
+if 5 s on this CPU proves out of reach after chunking, report the measured number rather than
+quietly loosening the gate.
 
 ---
 
@@ -178,15 +186,20 @@ MC estimate. State the choice in the docstring and note it in the paper's method
 The spec says "mean-pool the last hidden state", then says MedCPT-Query-Encoder is trained with CLS
 pooling and to use whichever the checkpoint specifies. *Proposal:* use the CLS/first-token
 representation (what the MedCPT query encoder is trained for), make it a `Config` field with
-mean-pooling as the alternative, and write the justification in a comment as the spec asks.
+mean-pooling as the alternative, and write the justification in a comment as the spec asks. (T01
+added `Config.text_pooling`, default `"cls"`.)
 
-### C4. The fixture's ground-truth field has nowhere to live (T01) — **PROPOSED**
-The spec suggests `vol.uns["gt_field"]`, but the `Volume` dataclass has no `uns`. *Proposal:* return
-`(volume, gt_field)` as a tuple; keep `Volume` free of an untyped dict.
+### C4. The fixture's ground-truth field has nowhere to live (T01) — **RESOLVED in T01**
+The spec suggests `vol.uns["gt_field"]`, but the `Volume` dataclass has no `uns`. *Resolution (T01):* `make_synthetic_volume` returns
+`(Volume, GroundTruthField)`; `Volume` has no `uns`. `GroundTruthField` exposes `latent(xyz)`,
+`type_logits`, `expression_mu(latent, xyz, cell_type)` and `sample_counts`, so T03's G1.3 can
+substitute its own noise for the latent and push it through the same generative map.
 
-### C5. `Volume`'s derived fields need `field(init=False)` (T01) — **PROPOSED**
+### C5. `Volume`'s derived fields need `field(init=False)` (T01) — **RESOLVED in T01**
 `median_spacing`, `median_nn_dist`, `bbox` are listed as ordinary fields but described as computed in
-`__post_init__`. They will be `field(init=False)` so they cannot be passed in and go stale.
+`__post_init__`. *Resolution (T01):* they are `field(init=False)`, computed in `__post_init__`, so
+they cannot be passed in and go stale; removing sections means constructing a new `Volume`, which is
+what makes `split_holdout`'s recomputation of `median_spacing` automatic.
 
 ### C6. Which tests are `slow`? — **PROPOSED**
 `test_distillation_reduces_error` (200 steps), `test_cfm_recovers_gaussian` (2000),
@@ -212,6 +225,22 @@ with thin wrappers plus a test asserting agreement to 1e-6 on shared inputs.
 (T09) do the same job with different signatures. *Proposal:* the method delegates to the function.
 
 ---
+
+### C10. T08's principal tissue axis has nowhere to live — **OPEN** (raised in T01)
+T08 §2 says the principal tissue axis is computed once per dataset and "stored on the `Volume`", but
+T01's `Volume` has no such field, and computing it requires a `TrainingVolume` (computing it on the
+full volume would consult held-out sections). T01 did **not** add the field speculatively.
+*Proposal:* T08 adds `principal_axis` to `TrainingVolume` as a cached property computed from its own
+sections, so it is leakage-free by construction and cannot drift per epoch; alternatively an
+explicit `set_principal_axis` on `TrainingVolume` called once by the trainer. Decide at T08.
+
+### C11. `split_holdout` and endpoint sections — **PROPOSED** (raised in T01)
+The spec's alternating regime says "hold out every other section (fold selects the parity)" with a
+"flanking gap ≈ 1× `median_spacing` on each side". Those are inconsistent for the first and last
+section, which have no flanking pair. T01 holds out only *interior* sections in both regimes, so
+every held-out section is an interpolation target. This changes the fold counts slightly (9 sections
+give 3 and 4 held-out sections at parities 0 and 1, and 5 consecutive-3 folds); T10's regime
+bookkeeping should read them from `split_holdout` rather than assuming.
 
 ## D. In the design docs but missing from `specs/11_COVERAGE_MATRIX.md`
 

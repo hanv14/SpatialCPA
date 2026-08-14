@@ -121,6 +121,8 @@ ignore = [
   "D203",    # incompatible with D211
   "D213",    # incompatible with D212
   "ANN401",  # allow Any where a library forces it
+  "ANN101",  # annotating `self` is not a thing anyone does (deprecated upstream)
+  "ANN102",  # ditto `cls`
   "E731",
   "N803",    # (N, G)-style maths names: X, W, A are the paper's names
   "N806",
