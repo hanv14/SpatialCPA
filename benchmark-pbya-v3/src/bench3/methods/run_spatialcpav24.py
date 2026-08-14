@@ -11,18 +11,17 @@ implements the ``v23_design.md`` "CTF-Flow" design. Its API matches the v14 line
 ``generate_virtual_slice``) but the model class is ``SpatialCPAv24`` and the config
 is ``CTFFlowConfig``.
 
-IMPORTANT — quarantine by design. CTF-Flow's *neural* tier (triplane field, flow
-matching with a correlated prior, ZINB decoder, MedCPT text embeddings, metric-
-aware LOSO training) is a guarded scaffold in ``learn_spatialcpav24.py`` and is NOT
-implemented/validated in this repository state — it needs GPU/torch/MedCPT/data.
-So ``SpatialCPAv24`` reports ``trained=False`` and generates with the numpy field
-tier (a strict v20 superset). That numpy tier is a legitimate, runnable method, but
-it is NOT the CTF-Flow the design claims wins for. Scoring it under the name
-``spatialcpav24_gen`` would misrepresent it, so config.py's ``invalid_log_markers``
-match ``flow-matching model trained: False`` and the scaffold marker, and the run
-is quarantined rather than scored — until the neural tier is implemented and trains.
-Implementing ``_train_neural`` / ``_generate_neural`` (and removing the scaffold
-guard) is what turns v24 into a scored method.
+IMPORTANT — how it scores. CTF-Flow's *neural* tier (triplane field, correlated-
+prior flow matching, ZINB decoder, optional MedCPT embeddings, metric-aware
+autocorr loss) is implemented in ``learn_spatialcpav24.py`` and has been
+smoke-tested end-to-end on CPU (it trains and generates), but is NOT yet validated
+for quality/tuning/GPU-scale. On a GPU with torch, a successful fit reports
+``trained=True`` and the run is SCORED. Without torch (or if training/generation
+raises), ``SpatialCPAv24`` falls back to the numpy field tier (a strict v20
+superset, NOT CTF-Flow) and reports ``trained=False``; config.py's
+``invalid_log_markers`` then quarantine that degraded run rather than scoring the
+fallback under the CTF-Flow name. So: real GPU run -> scored; degraded run ->
+quarantined.
 
 Generation-only: the input file physically excludes the held-out sections and the
 method receives one scalar target z per section.

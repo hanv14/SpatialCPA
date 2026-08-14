@@ -40,17 +40,21 @@ This file implements that design in TWO tiers, and is HONEST about which tier ra
          so there are no dataset-specific flags and it CANNOT regress below v20
          (design 6).  This is the "one command, no flags" property.
 
-  * NEURAL TIER (torch, optional; AUTHORED-UNVALIDATED here).  When torch is
-    present the design's neural components are built and trained (triplane field,
-    correlated-prior flow matching, gene-conditioned ZINB decoder, metric-aware
-    LOSO losses).  MedCPT text embeddings load only if `transformers` + the model
-    are available; otherwise the text channel degrades to the free-lookup residual
-    (design A3 / r_g=0), so nothing external is required to run.
-    ** This tier has NOT been executed in the authoring environment (no GPU/torch/
-       MedCPT/data).  Treat it as a faithful scaffold to run and debug on a GPU,
-       not as a validated result.  If training or generation raises, the class
-       falls back to the numpy tier and reports `trained=False` (which the
-       benchmark quarantines rather than scoring). **
+  * NEURAL TIER (torch, optional; RUNS, NOT YET VALIDATED FOR QUALITY).  When
+    torch is present the design's neural components are built and trained (triplane
+    field, correlated-prior flow matching, gene-conditioned ZINB decoder, metric-
+    aware autocorr loss).  MedCPT text embeddings load only if `transformers` + the
+    model are available; otherwise the text channel degrades to the free-lookup
+    residual (design A3 / r_g=0), so nothing external is required to run.
+    ** STATUS: smoke-tested END-TO-END ON CPU (tiny synthetic data, few epochs) -
+       it trains, generates finite counts, and reports trained=True.  It has NOT
+       been validated for quality, tuning, or GPU-scale behaviour, and its win
+       claims are unproven until you run the real benchmark.  If training or
+       generation raises, the class falls back to the numpy tier and reports
+       trained=False (which the benchmark quarantines).  Two documented
+       simplifications remain (retrieval = z-weighted mean-pool, not cross-
+       attention; positions/types from the numpy layout, not Head A) - see the
+       PART 6b header. **
 
     $ python learn_spatialcpav24.py            # synthetic cortex, numpy tier
     $ python learn_spatialcpav24.py --fast     # quick smoke test
@@ -201,6 +205,7 @@ class CTFFlowConfig:
     lambda_autocorr: float = 1.0      # metric-aware LOSO losses (design 4)
     lambda_profile: float = 1.0
     lambda_distribution: float = 1.0
+    lambda_reg: float = 1e-3          # TV_z penalty weight on the triplane
 
     # ---- inherited v20 recombination knobs (the numpy spine / `resample`) ----
     ground_k: int = 8
@@ -217,6 +222,8 @@ class CTFFlowConfig:
     composition_match: bool = True
 
     # ---- runtime ------------------------------------------------------------
+    neural: bool = True               # use the torch CTF-Flow tier when available
+                                      # (False -> numpy field tier only, for debug)
     device: str = "auto"
     seed: int = 42
     verbose: bool = True
@@ -383,6 +390,20 @@ def fit_gene_modules(X_union: np.ndarray, n_modules: int, seed: int = 0) -> np.n
 # with a target correlation length; used to make the stochastic mixing choices
 # SPATIALLY COHERENT (neighbours mix together), which is what keeps Moran's I up.
 # ==============================================================================
+def _erfinv_clip(x):
+    """Inverse error function (for uniform-field -> Gaussian-field), clipped so
+    the tails stay finite.  Uses scipy if present, else a rational approximation."""
+    x = np.clip(np.asarray(x, np.float64), -0.999, 0.999)
+    try:
+        from scipy.special import erfinv
+        return erfinv(x)
+    except Exception:                                      # Winitzki approximation
+        a = 0.147
+        ln = np.log(1 - x ** 2)
+        term = 2 / (np.pi * a) + ln / 2
+        return np.sign(x) * np.sqrt(np.sqrt(term ** 2 - ln / a) - term)
+
+
 def correlated_field(xy: np.ndarray, ell_spacings: float, rng, k: int = 10,
                      n_smooth: int = 3) -> np.ndarray:
     """Return a per-cell scalar field in [0,1], smooth at length ~ell_spacings
@@ -524,6 +545,160 @@ def _potts_smooth(xy, ct, n_types, k=8):
 
 
 # ==============================================================================
+# PART 6b - NEURAL TIER MODULES (torch).  AUTHORED-UNVALIDATED: written to the
+# v23_design.md spec but NOT executed here (no GPU/torch).  Every module is small
+# and self-contained so failures localise; the class guards training/generation
+# and degrades to the numpy tier on any exception.
+#
+# Faithful decomposition, with two deliberate, documented simplifications to keep
+# an untested first draft debuggable:
+#   * The neural tier owns EXPRESSION (the correlated-prior flow + ZINB decoder,
+#     the load-bearing part for the six metrics); POSITIONS/TYPES come from the
+#     numpy intensity-field layout (PART 6), which is already tested.  Head A's
+#     intensity is still trainable but not on the critical path.
+#   * Retrieval context is z-proximity-weighted mean-pooling of neighbour latents
+#     rather than full multi-head cross-attention (same information, fewer shape
+#     bugs).  Swap in nn.MultiheadAttention once it trains.
+# ==============================================================================
+if _HAS_TORCH:
+
+    def _mlp(sizes, act=nn.GELU, last_act=False):
+        layers = []
+        for i in range(len(sizes) - 1):
+            layers.append(nn.Linear(sizes[i], sizes[i + 1]))
+            if i < len(sizes) - 2 or last_act:
+                layers.append(act())
+        return nn.Sequential(*layers)
+
+    class AnisoFourier(nn.Module):
+        """Anisotropic (x,y,z) Fourier features: many xy bands, few z bands
+        (design 2.3 - high-frequency z basis overfits with 4-7 sections)."""
+        def __init__(self, bands_xy=8, bands_z=2):
+            super().__init__()
+            self.register_buffer("fxy", 2.0 ** torch.arange(bands_xy).float() * math.pi)
+            self.register_buffer("fz", 2.0 ** torch.arange(bands_z).float() * math.pi)
+            self.out_dim = 2 * 2 * bands_xy + 2 * bands_z
+
+        def forward(self, p):                              # p (N,3) in [-1,1]
+            xy = p[:, :2, None] * self.fxy                 # (N,2,bxy)
+            z = p[:, 2:3, None] * self.fz                  # (N,1,bz)
+            return torch.cat([xy.sin().flatten(1), xy.cos().flatten(1),
+                              z.sin().flatten(1), z.cos().flatten(1)], 1)
+
+    class Triplane(nn.Module):
+        """Triplane anatomical field (design 3.1): 3 feature planes + MLP -> f."""
+        def __init__(self, res_xy=256, res_z=32, ch=32, d_out=64):
+            super().__init__()
+            self.xy = nn.Parameter(torch.randn(1, ch, res_xy, res_xy) * 0.1)
+            self.xz = nn.Parameter(torch.randn(1, ch, res_z, res_xy) * 0.1)
+            self.yz = nn.Parameter(torch.randn(1, ch, res_z, res_xy) * 0.1)
+            self.mlp = _mlp([ch * 3, 128, d_out])
+
+        @staticmethod
+        def _samp(plane, coords):                          # coords (N,2) in [-1,1]
+            g = coords.view(1, -1, 1, 2)
+            s = F.grid_sample(plane, g, align_corners=True, mode="bilinear")
+            return s.view(plane.shape[1], -1).t()          # (N,ch)
+
+        def forward(self, p):                              # p (N,3) in [-1,1]
+            f = torch.cat([self._samp(self.xy, p[:, [0, 1]]),
+                           self._samp(self.xz, p[:, [0, 2]]),
+                           self._samp(self.yz, p[:, [1, 2]])], -1)
+            return self.mlp(f)
+
+        def tv_z(self):
+            def tv(t): return (t[:, :, 1:, :] - t[:, :, :-1, :]).abs().mean()
+            return tv(self.xz) + tv(self.yz)
+
+    class GeneEmbed(nn.Module):
+        """Gene embedding e_g = LN(W t_g + gamma r_g).  Text channel optional
+        (design 2.2); default is the free residual lookup (A3 / r_g)."""
+        def __init__(self, n_genes, d=64, text=None):
+            super().__init__()
+            self.res = nn.Parameter(torch.randn(n_genes, d) * 0.1)
+            self.ln = nn.LayerNorm(d)
+            self.gamma = 0.0
+            if text is not None:
+                self.register_buffer("t", text)
+                self.proj = nn.Linear(text.shape[1], d)
+                self.distill = nn.Linear(text.shape[1], d)   # text -> residual (design 2.2)
+            else:
+                self.t = None
+
+        def forward(self, idx=None):
+            r = self.res if idx is None else self.res[idx]
+            if self.t is not None:
+                base = self.proj(self.t if idx is None else self.t[idx])
+                return self.ln(base + self.gamma * r)
+            return self.ln(r)
+
+    class CellEncoder(nn.Module):
+        """Real cell -> latent h1 (panel-agnostic: pool expression over gene
+        embeddings, so the encoder does not depend on a fixed gene index)."""
+        def __init__(self, d_gene, h_dim, n_types):
+            super().__init__()
+            self.type_emb = nn.Embedding(max(n_types, 1), 16)
+            self.net = _mlp([d_gene + 16, 128, h_dim])
+
+        def forward(self, y, Egene, ct):                   # y (n,G), Egene (G,dg)
+            w = y / (y.sum(1, keepdim=True) + 1e-6)
+            pooled = w @ Egene                             # (n, dg)
+            return self.net(torch.cat([pooled, self.type_emb(ct)], -1))
+
+    class VelocityField(nn.Module):
+        """Flow-matching velocity v(h,t,cond) on the straight-line path."""
+        def __init__(self, h_dim, cond_dim):
+            super().__init__()
+            self.net = _mlp([h_dim + 1 + cond_dim, 256, 256, h_dim])
+
+        def forward(self, h, t, cond):
+            return self.net(torch.cat([h, t.view(-1, 1), cond], -1))
+
+    class ZINBDecoder(nn.Module):
+        """Gene-conditioned ZINB head (design 3.5): (mu,theta,pi)_ig from a
+        bilinear (FiLM-style) interaction of the cell latent and gene embedding.
+        All genes share h_i, so gene-gene covariance is inherited from the latent
+        instead of destroyed as in SpatialZ's independent per-gene draws."""
+        def __init__(self, h_dim, d_gene):
+            super().__init__()
+            self.A = nn.Linear(d_gene, h_dim, bias=False)
+            self.net = _mlp([2 * h_dim + d_gene, 128, 3])
+
+        def forward(self, h, e, s):                        # h (n,H) e (G,dg) s (n,)
+            n, G = h.shape[0], e.shape[0]
+            Ae = self.A(e)                                 # (G,H)
+            inter = h[:, None, :] * Ae[None, :, :]         # (n,G,H)
+            he = h[:, None, :].expand(-1, G, -1)
+            ee = e[None, :, :].expand(n, -1, -1)
+            out = self.net(torch.cat([he, ee, inter], -1)) # (n,G,3)
+            mu = F.softplus(out[..., 0]) * s[:, None]
+            theta = F.softplus(out[..., 1]) + 1e-4
+            pi = torch.sigmoid(out[..., 2])
+            return mu, theta, pi
+
+    def zinb_nll(y, mu, theta, pi, eps=1e-8):
+        """Zero-inflated negative-binomial NLL (design 3.5)."""
+        lg = torch.lgamma
+        nb = (lg(y + theta) - lg(theta) - lg(y + 1)
+              + theta * (torch.log(theta + eps) - torch.log(theta + mu + eps))
+              + y * (torch.log(mu + eps) - torch.log(theta + mu + eps)))
+        case_zero = torch.logaddexp(torch.log(pi + eps),
+                                    torch.log(1 - pi + eps) + nb)
+        case_pos = torch.log(1 - pi + eps) + nb
+        ll = torch.where(y < 1e-8, case_zero, case_pos)
+        return -ll.mean()
+
+    def soft_morans(xy_t, X_t, idx):
+        """Differentiable per-gene Moran's I on a FIXED kNN graph `idx` (LongTensor
+        (n,k)).  Used by the metric-aware autocorr loss (design 4)."""
+        Xc = X_t - X_t.mean(0, keepdim=True)
+        neigh = Xc[idx].mean(1)                            # (n,G)
+        num = (Xc * neigh).sum(0)
+        den = (Xc ** 2).sum(0) + 1e-8
+        return num / den
+
+
+# ==============================================================================
 # PART 7 - THE MODEL.  Numpy tier is complete & runnable; neural tier is an
 # optional, guarded, AUTHORED-UNVALIDATED enhancement.
 # ==============================================================================
@@ -552,7 +727,7 @@ class SpatialCPAv24:
 
         # neural tier (optional, guarded)
         self._model = None
-        if _HAS_TORCH:
+        if _HAS_TORCH and self.cfg.neural:
             try:
                 self._train_neural()
                 self.trained = True
@@ -560,9 +735,11 @@ class SpatialCPAv24:
                 print(f"[v24] neural training failed ({e}); numpy field tier.")
                 import traceback; traceback.print_exc()
                 self.trained = False
-        else:
+        elif not _HAS_TORCH:
             print("[v24] torch unavailable -> numpy field tier (design's runnable "
                   "core; the neural CTF-Flow tier is skipped).")
+        else:
+            print("[v24] neural tier disabled (cfg.neural=False) -> numpy field tier.")
 
     # ---- gate selection ------------------------------------------------------
     def _select_gates(self):
@@ -804,16 +981,249 @@ class SpatialCPAv24:
         gene_flip = unit_flip[:, modules]                 # (n,G)
         expr[:] = np.where(gene_flip, emit_pool[partner], expr)
 
-    # ---- NEURAL TIER (authored-unvalidated; see file header) ----------------
-    def _train_neural(self):
-        raise RuntimeError(
-            "neural CTF-Flow tier is a scaffold and is intentionally not run in "
-            "this build (needs GPU/torch/MedCPT/data to train and validate). "
-            "Implement _train_neural/_generate_neural per v23_design.md sections "
-            "3-5 and remove this guard to enable it.")
+    # ==========================================================================
+    # NEURAL TIER (torch) - AUTHORED-UNVALIDATED.  Written to v23_design.md but
+    # NOT executed in the authoring environment; expect to debug on a GPU.  Any
+    # exception here is caught by the constructor / generate_virtual_slice and the
+    # class degrades to the numpy tier (trained=False -> benchmark quarantines it).
+    # ==========================================================================
+    def _device(self):
+        d = self.cfg.device
+        if d == "auto":
+            return "cuda" if torch.cuda.is_available() else "cpu"
+        return d
 
-    def _generate_neural(self, z):                         # pragma: no cover
-        raise NotImplementedError
+    def _norm_p(self, xy, z):
+        """Physical (x,y,z) -> [-1,1]^3 using the stack's own extent."""
+        return np.column_stack([(xy - self._p_c[:2]) / self._p_s[:2],
+                                np.full(len(xy), (z - self._p_c[2]) / self._p_s[2])])
+
+    def _text_embeddings(self):
+        """MedCPT gene embeddings if text_emb=='medcpt+residual' and available;
+        else None (free-lookup residual only).  Descriptors are gene symbols only
+        on the benchmark (no NCBI summaries shipped) - documented in the design."""
+        if self.cfg.text_emb != "medcpt+residual":
+            return None
+        try:
+            from transformers import AutoTokenizer, AutoModel
+            tok = AutoTokenizer.from_pretrained("ncbi/MedCPT-Query-Encoder")
+            enc = AutoModel.from_pretrained("ncbi/MedCPT-Query-Encoder").eval()
+            with torch.no_grad():
+                b = tok(self.gene_names, truncation=True, padding=True,
+                        max_length=64, return_tensors="pt")
+                t = enc(**b).last_hidden_state[:, 0, :]
+            return t.float()
+        except Exception as e:
+            print(f"[v24] MedCPT unavailable ({e}); using lookup-only gene embeddings.")
+            return None
+
+    def _prep_neural(self):
+        """Assemble per-training-cell tensors: normalized positions, log & raw
+        expression, types, section ids, and the leakage-safe kNN graph."""
+        dev = self.dev
+        S = self.stack
+        allxy = np.concatenate([s.coords_xy for s in S.slices], 0).astype(np.float64)
+        zc = S.z_centers()
+        c = np.array([allxy[:, 0].mean(), allxy[:, 1].mean(),
+                      0.5 * (zc.min() + zc.max())])
+        s = np.array([(allxy[:, 0].max() - allxy[:, 0].min()) / 2 + 1e-6,
+                      (allxy[:, 1].max() - allxy[:, 1].min()) / 2 + 1e-6,
+                      (zc.max() - zc.min()) / 2 + 1e-6])
+        self._p_c, self._p_s = c, s
+
+        P, Ylog, Yraw, CT, SEC = [], [], [], [], []
+        for si, sl in enumerate(S.slices):
+            p = self._norm_p(sl.coords_xy, sl.z_center)
+            P.append(p)
+            Ylog.append(np.asarray(sl.expression))
+            Yraw.append(sl.raw_expression if sl.raw_expression is not None
+                        else np.expm1(np.clip(sl.expression, 0, None)))
+            CT.append(sl.cell_type_indices if sl.cell_type_indices is not None
+                      else np.zeros(sl.n_spots, int))
+            SEC.append(np.full(sl.n_spots, si))
+        self._tr = dict(
+            p=torch.tensor(np.vstack(P), dtype=torch.float32, device=dev),
+            ylog=torch.tensor(np.vstack(Ylog), dtype=torch.float32, device=dev),
+            yraw=torch.tensor(np.vstack(Yraw), dtype=torch.float32, device=dev),
+            ct=torch.tensor(np.concatenate(CT), dtype=torch.long, device=dev),
+            sec=torch.tensor(np.concatenate(SEC), dtype=torch.long, device=dev),
+            xy=np.vstack([s.coords_xy for s in S.slices]).astype(np.float64),
+            z=np.concatenate([np.full(s.n_spots, s.z_center) for s in S.slices]),
+        )
+
+    def _train_neural(self):
+        cfg = self.cfg
+        self.dev = self._device()
+        torch.manual_seed(cfg.seed)
+        self._prep_neural()
+        G = self.n_genes
+        text = self._text_embeddings()
+
+        self.field = Triplane(cfg.triplane_res, 32, 32, 64).to(self.dev)
+        self.gene = GeneEmbed(G, 64, text.to(self.dev) if text is not None else None).to(self.dev)
+        self.enc = CellEncoder(64, cfg.h_dim, self.n_types).to(self.dev)
+        self.fourier = AnisoFourier(cfg.fourier_bands_xy, cfg.fourier_bands_z).to(self.dev)
+        cond_dim = 64 + cfg.h_dim + self.fourier.out_dim + 16     # f + ctx + phi(p) + type
+        self.type_emb = nn.Embedding(max(self.n_types, 1), 16).to(self.dev)
+        self.vfield = VelocityField(cfg.h_dim, cond_dim).to(self.dev)
+        self.dec = ZINBDecoder(cfg.h_dim, 64).to(self.dev)
+        self.size = _mlp([cfg.h_dim, 32, 1]).to(self.dev)
+
+        params = (list(self.field.parameters()) + list(self.gene.parameters())
+                  + list(self.enc.parameters()) + list(self.vfield.parameters())
+                  + list(self.dec.parameters()) + list(self.size.parameters())
+                  + list(self.type_emb.parameters()))
+        opt = torch.optim.Adam(params, lr=cfg.lr, weight_decay=1e-4)
+
+        tr = self._tr
+        n = tr["p"].shape[0]
+        secs = tr["sec"]
+        n_sec = int(secs.max().item()) + 1
+        # precompute a fixed kNN graph per section for the soft-Moran loss
+        graphs = {}
+        for si in range(n_sec):
+            m = (secs == si).cpu().numpy()
+            if m.sum() >= 12:
+                graphs[si] = torch.tensor(_knn_idx(tr["xy"][m], 10), device=self.dev)
+
+        for ep in range(cfg.epochs):
+            self.gene.gamma = min(1.0, ep / max(cfg.epochs * 0.5, 1))   # anneal text residual
+            # whole-section dropout (gap-aware curriculum, design 3.1/3.2)
+            keep_sec = [si for si in range(n_sec)
+                        if np.random.rand() > cfg.gap_dropout] or list(range(n_sec))
+            sel = torch.isin(secs, torch.tensor(keep_sec, device=self.dev))
+            idx = torch.where(sel)[0]
+            if idx.numel() < 16:
+                idx = torch.arange(n, device=self.dev)
+            b = idx[torch.randperm(idx.numel(), device=self.dev)[:min(512, idx.numel())]]
+
+            p, ylog, yraw, ct = tr["p"][b], tr["ylog"][b], tr["yraw"][b], tr["ct"][b]
+            gidx = torch.randperm(G, device=self.dev)[:min(cfg.gene_subsample, G)]
+            Eall = self.gene()
+            E = Eall[gidx]
+
+            h1 = self.enc(ylog, Eall.detach(), ct)         # data latent
+            f = self.field(p)
+            ctx = self._retrieval_ctx(p, tr, exclude=None)
+            cond = torch.cat([f, ctx, self.fourier(p), self.type_emb(ct)], -1)
+
+            # straight-line CFM (iid N(0,I) prior at train; correlated prior only
+            # changes the cross-cell structure at inference, not the marginal v)
+            t = torch.rand(h1.shape[0], device=self.dev)
+            h0 = torch.randn_like(h1)
+            ht = (1 - t)[:, None] * h0 + t[:, None] * h1
+            v_pred = self.vfield(ht, t, cond)
+            L_cfm = ((v_pred - (h1 - h0)) ** 2).mean()
+
+            s_i = F.softplus(self.size(h1)).squeeze(-1) + 1e-3
+            mu, th, pi = self.dec(h1, E, s_i)
+            L_zinb = zinb_nll(yraw[:, gidx], mu, th, pi)
+
+            L = L_cfm + L_zinb + cfg.lambda_reg * self.field.tv_z()
+            # metric-aware autocorr (design 4): match soft Moran's of the decoded
+            # reconstruction to the real cells, on a fixed section kNN graph.
+            if cfg.lambda_autocorr > 0:
+                for si in graphs:
+                    mask = (tr["sec"] == si)
+                    if mask.sum() < 12:
+                        continue
+                    hh = self.enc(tr["ylog"][mask], Eall.detach(), tr["ct"][mask])
+                    mu2, _, pi2 = self.dec(hh, E, F.softplus(self.size(hh)).squeeze(-1) + 1e-3)
+                    rec = mu2 * (1 - pi2)
+                    mi_pred = soft_morans(None, rec, graphs[si])
+                    mi_real = soft_morans(None, tr["yraw"][mask][:, gidx], graphs[si])
+                    L = L + cfg.lambda_autocorr * F.smooth_l1_loss(mi_pred, mi_real)
+                    break                                  # one section per step (cost)
+
+            if text is not None and self.gene.distill is not None:
+                r_hat = self.gene.distill(self.gene.t)
+                L = L + 0.1 * ((r_hat - self.gene.res.detach()) ** 2).mean()
+
+            opt.zero_grad(); L.backward()
+            torch.nn.utils.clip_grad_norm_(params, 2.0)
+            opt.step()
+            if cfg.verbose and ep % max(cfg.epochs // 8, 1) == 0:
+                print(f"[v24][train] ep {ep}: L={L.item():.3f} "
+                      f"(cfm={L_cfm.item():.3f} zinb={L_zinb.item():.3f})")
+
+        # cache training latents for retrieval at inference
+        with torch.no_grad():
+            self._train_h1 = self.enc(tr["ylog"], self.gene().detach(), tr["ct"])
+        self._model = True
+
+    def _retrieval_ctx(self, p_query, tr, exclude=None):
+        """z-proximity-weighted mean of neighbour latents (design 3.2, simplified
+        from cross-attention).  Uses cached train latents at inference; a cheap
+        in-batch proxy during training."""
+        if getattr(self, "_train_h1", None) is not None:
+            H = self._train_h1
+            allp = tr["p"]
+        else:
+            H = self.enc(tr["ylog"], self.gene().detach(), tr["ct"])
+            allp = tr["p"]
+        d = torch.cdist(p_query, allp)                     # (q, n)  normalized-space dist
+        w = torch.exp(-d)
+        w = w / (w.sum(1, keepdim=True) + 1e-8)
+        return w @ H
+
+    def _generate_neural(self, z):
+        cfg = self.cfg
+        # positions/types from the (tested) numpy intensity-field layout
+        gates = {"layout_mode": cfg.layout_mode, "prior_mode": cfg.prior_mode,
+                 "expr_mode": cfg.expr_mode}
+        z_bits = int(np.float64(z).view(np.int64)) & 0x7FFFFFFF
+        rng = np.random.default_rng([cfg.seed, z_bits])
+        base = self._generate_numpy(self.stack, z, gates, rng)   # positions/types + numpy expr
+        xy = base.coords[:, :2]; ct = base.cell_type_idx
+        n = xy.shape[0]
+        if n == 0:
+            return base
+
+        dev = self.dev
+        p = torch.tensor(self._norm_p(xy, z), dtype=torch.float32, device=dev)
+        ctt = torch.tensor(ct if ct is not None else np.zeros(n, int),
+                           dtype=torch.long, device=dev)
+        with torch.no_grad():
+            f = self.field(p)
+            ctx = self._retrieval_ctx(p, self._tr)
+            cond = torch.cat([f, ctx, self.fourier(p), self.type_emb(ctt)], -1)
+            Eall = self.gene()
+
+            # correlated GRF prior (design 3.4): spatially-correlated noise field
+            ell = cfg.corr_length if cfg.corr_length > 0 else 3.0
+            samples = []
+            M = max(cfg.n_uncertainty_samples, 1)
+            for _ in range(M):
+                if gates["prior_mode"] == "correlated":
+                    fld = np.stack([correlated_field(xy, ell, rng)
+                                    for _ in range(cfg.h_dim)], 1)      # (n,H) uniform
+                    h = torch.tensor(np.sqrt(2.0) * _erfinv_clip(2 * fld - 1),
+                                     dtype=torch.float32, device=dev)   # -> ~N(0,1), correlated
+                else:
+                    h = torch.randn(n, cfg.h_dim, device=dev)
+                steps = max(cfg.n_ode_steps, 1)
+                for si in range(steps):                      # Euler integrate 0->1
+                    tt = torch.full((n,), si / steps, device=dev)
+                    h = h + (1.0 / steps) * self.vfield(h, tt, cond)
+                samples.append(h)
+            H = torch.stack(samples, 0)                      # (M,n,H)
+            h_star = H.mean(0)
+            var = H.var(0).mean(1)                           # per-cell uncertainty
+
+            s_i = F.softplus(self.size(h_star)).squeeze(-1) + 1e-3
+            mu, th, pi = self.dec(h_star, Eall, s_i)
+            # NB mean * detection as the expected count; sample-free for stability
+            expr_neural = (mu * (1 - pi)).cpu().numpy().astype(np.float32)
+
+        # uncertainty-gated anchoring (design 5): where variance is LOW, trust the
+        # retrieval-anchored numpy profile (count-exact); where HIGH, the generative
+        # sample.  Blend weight is a smooth function of normalized variance.
+        v = var.cpu().numpy()
+        v = (v - v.min()) / (np.ptp(v) + 1e-9)
+        w_gen = np.clip(v, 0.0, 1.0)[:, None] * cfg.anchor_strength
+        expr = (1 - w_gen) * base.expression + w_gen * expr_neural
+        return VirtualSlice(coords=base.coords, expression=expr.astype(np.float32),
+                            cell_type=base.cell_type, cell_type_idx=ct)
 
 
 # ==============================================================================

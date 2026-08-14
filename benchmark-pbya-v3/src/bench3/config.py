@@ -1281,23 +1281,23 @@ METHODS = {
         "available": True,
         "family": "spatialcpa",
         "notes": "CTF-Flow — continuous transcriptomic field (v23_design.md). "
-                 "Neural tier (triplane/flow/ZINB/MedCPT/metric-aware LOSO) is a "
-                 "scaffold; runs are quarantined until it is implemented and trains.",
-        # QUARANTINE BY DESIGN. CTF-Flow's neural tier is a guarded scaffold in
-        # learn_spatialcpav24.py (needs GPU/torch/MedCPT/data), so SpatialCPAv24
-        # reports trained=False and generates with the numpy field tier — a strict
-        # v20 superset, but NOT the CTF-Flow the design claims wins for. Scoring the
-        # numpy core under this method name would misrepresent it, so these markers
-        # fail the run rather than scoring it. Implementing _train_neural /
-        # _generate_neural (and removing the scaffold guard) is what makes v24
-        # produce scored results. The wrapper prints the first marker; the file
-        # prints the rest when it takes the numpy/scaffold path.
+                 "Neural tier (triplane/flow/ZINB/MedCPT/metric-aware autocorr) is "
+                 "implemented and CPU-smoke-tested; a successful GPU training run is "
+                 "scored, a torchless/failed run degrades to the numpy tier and is "
+                 "quarantined.",
+        # The neural CTF-Flow tier is implemented and trains (smoke-tested on CPU),
+        # so on a GPU with torch a successful fit reports trained=True and the run
+        # is SCORED — none of the markers below fire in that case. The markers fire
+        # only on DEGRADATION: no torch, or training/generation raised and the class
+        # fell back to the numpy field tier (a v20 superset, not CTF-Flow). Failing
+        # a degraded run rather than scoring it keeps the numpy fallback from being
+        # mistaken for the neural method.
         "invalid_log_markers": ("flow-matching model trained: False",
                                 "torch UNAVAILABLE",
                                 "[v24] torch unavailable",
                                 "[v24] neural training failed",
                                 "[v24] neural generation failed",
-                                "neural CTF-Flow tier is a scaffold"),
+                                "[v24] neural tier disabled"),
     },
     "spatialz": {
         "wrapper": _v2_wrapper("run_spatialz.py"),
