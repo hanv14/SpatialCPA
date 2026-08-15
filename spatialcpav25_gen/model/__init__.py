@@ -5,9 +5,21 @@ from spatialcpav25_gen.model.embeddings import (
     TextGroundedEmbedding,
     text_embedding_diagnostics,
 )
+from spatialcpav25_gen.model.noise import (
+    GaussianRandomField,
+    LengthscaleFit,
+    fit_lengthscale_from_sections,
+    matern_correlation,
+    scaled_distance,
+)
 
 __all__ = [
     "EntityEmbeddings",
+    "GaussianRandomField",
+    "LengthscaleFit",
     "TextGroundedEmbedding",
+    "fit_lengthscale_from_sections",
+    "matern_correlation",
+    "scaled_distance",
     "text_embedding_diagnostics",
 ]

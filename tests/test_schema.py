@@ -229,9 +229,9 @@ def test_synthetic_has_structure(volume, cfg):
     assert n_gradient >= MIN_Z_GRADIENT_GENES, f"{n_gradient} genes with |corr(mean, z)| > 0.5"
 
     purity, sigma = _type_purity_sigma(middle, idx, len(volume.celltype_names))
-    assert sigma >= MIN_PURITY_SIGMA, (
-        f"type purity {purity:.3f} is only {sigma:.1f} sigma above chance"
-    )
+    assert (
+        sigma >= MIN_PURITY_SIGMA
+    ), f"type purity {purity:.3f} is only {sigma:.1f} sigma above chance"
 
 
 def _type_purity_sigma(section: Section, idx: np.ndarray, n_types: int) -> tuple[float, float]:

@@ -215,9 +215,68 @@ class Config:
     latent_dim: int = 64
     """d_h: width of the per-cell latent, i.e. the number of GRF channels."""
 
-    grf_chunk_points: int = 65536
+    grf_chunk_points: int = 1024
     """Query points per chunk when evaluating the field. Materialising the full (N, M)
-    feature matrix at N = 1e6, M = 4096 would need 16 GB (SPEC_QUESTIONS B9)."""
+    feature matrix at N = 1e6, M = 4096 would need 16 GB (SPEC_QUESTIONS B9), but the
+    binding constraint is cache, not memory: the ``(chunk, M)`` block of cosines is
+    written, read, and read again, so a chunk that does not fit in cache makes the query
+    memory-bound and about three times slower. 1024 x n_rff floats is 16 MB at the default
+    M = 4096; raise it only together with a measurement."""
+
+    variogram_n_pcs: int = 50
+    """Expression PCs the empirical semivariogram is computed on when fitting ``ell``
+    (T03). Distinct from ``expr_pca_dim`` (32), which is a model input width; this is a
+    statistic's resolution and the spec fixes it at 50."""
+
+    variogram_n_bins: int = 20
+    """Distance bins in the in-plane semivariogram."""
+
+    variogram_max_lag_frac: float = 0.25
+    """Largest lag entering the in-plane variogram fit, as a fraction of the shorter
+    in-plane extent. Standard variogram practice: beyond a quarter to a half of the
+    domain, the estimator is dominated by a handful of long pairs and by whatever
+    large-scale trend the tissue has, which biases the fitted length-scale upwards."""
+
+    variogram_max_cells_per_section: int = 800
+    """Cells subsampled per section before forming all pairs. The pair count is quadratic,
+    and 800 cells already give ~320k pairs per section."""
+
+    variogram_min_pairs_per_bin: int = 32
+    """Bins holding fewer pairs than this are dropped as too noisy to fit against."""
+
+    variogram_n_ell_grid: int = 48
+    """Log-spaced candidate length-scales scanned by the variogram fit. The two linear
+    parameters (nugget, sill) are solved in closed form at each candidate, so this is the
+    whole optimiser: no starting point, no local minima."""
+
+    variogram_ell_min_factor: float = 0.5
+    """Lower end of the length-scale search, as a multiple of the median nearest-neighbour
+    distance (in-plane) or the median section spacing (along z). Below it the data cannot
+    resolve the correlation length at all."""
+
+    variogram_ell_max_factor: float = 2.0
+    """Upper end of the length-scale search, as a multiple of the largest lag used."""
+
+    variogram_z_grid_size: int = 8
+    """Side of the coarse in-plane grid whose per-cell means carry the between-section
+    comparison. Cells in different sections have no correspondence, so ``ell_z`` is fitted
+    on grid-cell means rather than on cells."""
+
+    variogram_z_min_cells_per_cell: int = 5
+    """Grid cells with fewer cells than this are excluded from the along-z variogram."""
+
+    variogram_min_saturation: float = 0.75
+    """Fraction of the fitted sill the empirical variogram must reach at its largest lag
+    for the fitted length-scale to be an interpolation rather than an extrapolation. Below
+    it the fit warns: a stack of nine 50 um sections spans 400 um, which is not enough to
+    watch a 200 um correlation decay away along z, and the fitted ``ell_z`` will read
+    high."""
+
+    variogram_min_structured_frac: float = 0.05
+    """Smallest fitted sill (as a share of total PC variance) that counts as spatial
+    structure. Below it, fitting a correlation length is fitting noise, and
+    ``fit_lengthscale_from_sections`` raises rather than returning an artefact of the
+    search grid (Convention 6)."""
 
     # ----------------------------------------------------------------------------------
     # anatomical field (T04)
@@ -571,6 +630,16 @@ class Config:
             "ell_z": self.ell_z,
             "latent_dim": self.latent_dim,
             "grf_chunk_points": self.grf_chunk_points,
+            "variogram_n_pcs": self.variogram_n_pcs,
+            "variogram_n_bins": self.variogram_n_bins,
+            "variogram_max_cells_per_section": self.variogram_max_cells_per_section,
+            "variogram_min_pairs_per_bin": self.variogram_min_pairs_per_bin,
+            "variogram_n_ell_grid": self.variogram_n_ell_grid,
+            "variogram_ell_min_factor": self.variogram_ell_min_factor,
+            "variogram_ell_max_factor": self.variogram_ell_max_factor,
+            "variogram_z_grid_size": self.variogram_z_grid_size,
+            "variogram_z_min_cells_per_cell": self.variogram_z_min_cells_per_cell,
+            "variogram_min_structured_frac": self.variogram_min_structured_frac,
             "triplane_res_xy": self.triplane_res_xy,
             "triplane_res_z": self.triplane_res_z,
             "triplane_channels": self.triplane_channels,
@@ -640,10 +709,16 @@ class Config:
             "residual_gate_warmup_frac": self.residual_gate_warmup_frac,
             "section_dropout_p": self.section_dropout_p,
             "sefl_warmup_frac": self.sefl_warmup_frac,
+            "variogram_min_structured_frac": self.variogram_min_structured_frac,
+            "variogram_min_saturation": self.variogram_min_saturation,
         }
         for name, value in unit_interval.items():
             if not 0.0 <= value <= 1.0:
                 raise ConfigError(f"Config.{name}={value!r} must lie in [0, 1]")
+        if not 0.0 < self.variogram_max_lag_frac <= 1.0:
+            raise ConfigError(
+                f"Config.variogram_max_lag_frac={self.variogram_max_lag_frac!r} must lie in (0, 1]"
+            )
         if not 0.0 < self.ema_decay < 1.0:
             raise ConfigError(f"Config.ema_decay={self.ema_decay!r} must lie in (0, 1)")
         if not 0.0 < self.repulsion_r0_percentile < 100.0:
@@ -677,6 +752,16 @@ class Config:
             raise ConfigError(
                 "Config.min_sections_per_volume must be >= 3: a volume with fewer sections "
                 "supports neither leave-one-section-out nor a flanking pair"
+            )
+        if self.latent_dim > self.n_rff:
+            raise ConfigError(
+                f"Config.latent_dim={self.latent_dim} exceeds Config.n_rff={self.n_rff}; the "
+                "noise field's amplitude columns could not be made independent"
+            )
+        if self.variogram_n_bins < 3:
+            raise ConfigError(
+                f"Config.variogram_n_bins={self.variogram_n_bins} must be >= 3: a nugget, a "
+                "sill and a length-scale cannot be fitted to fewer points"
             )
         if self.retrieval_ctx_dim % self.retrieval_n_heads != 0:
             raise ConfigError(

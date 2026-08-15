@@ -35,8 +35,13 @@ channels that module reads from, which is not a property the decoder is constrai
 criterion is defined on), and report per-module Moran's I agreement as a **diagnostic**. If
 per-module control turns out to be needed, the cheap version is to partition the `d_h` latent
 channels into groups with their own `ell` and add a loss tying gene modules to channel groups —
-that is a design change and should be decided explicitly, not improvised at T09. To keep the door
-open, I will give `GaussianRandomField` an optional per-channel-group `ell` in T03.
+that is a design change and should be decided explicitly, not improvised at T09.
+
+*Status after T03:* the per-channel-group `ell` was **not** added. The spec's interface takes one
+`ell`, nothing in `specs/` consumes a grouped one, and speculative API is what CLAUDE.md tells us not
+to write. The door stays open at no cost: `with_lengthscale` rebuilds a rescaled field from the same
+draws without redrawing, so a per-group field is a channel-wise concatenation of those. Still OPEN as
+a T09 design decision.
 
 ### A3. T10's metric provenance is wrong — **OPEN**
 T10 says "port the six target metrics from `reference/learn_spatialcpav20.py`, fixing two bugs".
@@ -93,29 +98,58 @@ specifies implementing it, and the coverage matrix mentions it only as reference
 *Proposal:* implement it in T06 alongside the decoder (it shares the count-preserving path), ~40
 lines, ported from v20 with its behaviour pinned by a test.
 
+### A7. GATE 1's G1.3c is false on the fixture as literally specified — **OPEN (blocks T04)**
+Raised by T03. `I_gen` is **not** monotone as `ell` sweeps 0.25×–4×: median Moran's I of the
+generated section rises to a peak near 1.6× the fitted `ell` and then falls (0.271, 0.390, 0.418,
+0.413, 0.348). G1.3d fails with it, at 37 % against a 25 % tolerance.
+
+The prior is not the problem — Moran's I of the *field itself* is monotone in `ell` over the same
+sweep (0.487 → 0.990). The observable is: Moran's I of expression is structured variance over total
+variance, and a stationary unit-variance field seen through a finite window loses within-window
+variance once `ell` approaches the window size (within-section sd 0.98 → 0.65 across the sweep on the
+fixture's 1000 µm section). At a 3000 µm field of view the effect nearly vanishes. Numbers, plots and
+the two diagnostics are in `reports/gate1.md`.
+
+*Proposal:* keep the criterion, and fix what it was protecting. T09 §2 bisects `ell_xy` against a
+target Moran's I; that is well-posed only on the increasing branch. T09 should (a) cap the bracket at
+a fraction of the in-plane extent — ~0.2× is where the maximum sat here — (b) detect the maximum and
+(c) report "target unreachable" instead of walking into a bound, which is exactly what would have
+happened on this fixture, where median `I_real` (0.472) exceeds the achievable maximum (0.445).
+G1.3c then gets re-run over the range calibration actually operates in, and the restriction gets
+written into the spec. Widening the fixture would also make the criterion pass, but that changes the
+measurement and is a human's call, not a fix to apply quietly. **T04 does not start until this is
+decided.**
+
 ---
 
 ## B. Acceptance tests that will fail for reasons unrelated to the model
 
-### B1. Bitwise equality across two plane pathways (G1.2, and `test_noise_identical_along_intersection` in T07) — **PROPOSED**
+### B1. Bitwise equality across two plane pathways (G1.2, and `test_noise_identical_along_intersection` in T07) — **RESOLVED in T03**
 `torch.equal` on the GRF sampled through plane 1's and plane 2's coordinate constructions only holds
 if both produce **bit-identical** `xyz`. `origin + u*e1 + v*e2` with different orthonormal bases
 rounds differently in float32, so this can fail while the field is perfectly correct — exactly the
 misdiagnosis the spec warns about elsewhere.
-*Proposal:* route every plane→points construction through one canonical function, assert bitwise
-equality of the *field* given identical `xyz` (this is the real property: purity), and assert
-`allclose(atol=1e-6)` between the two plane constructions. Both assertions in the test, documented.
+*Resolution (T03):* done as proposed, and the worry turned out not to bite. `tests/fixtures/planes.py`
+holds one canonical `(u, v) → (x, y, z)` map (T07 supersedes it with `infer/planes.py`); the two
+float64 reconstructions agree to **2.8e-14 µm**, which rounds to **identical float32 coordinates**,
+so the field values are **bit-identical** and the spec's requirement is met outright. G1.2 asserts
+all three: the float64 gap, zero differing float32 coordinates, and `torch.equal` on the field.
+Purity is asserted separately. One measured caveat, in the module docstring: a **one-row** query is
+dispatched by torch to a matrix-vector kernel and matches the same point inside a batch to ~2e-6
+rather than exactly; every batch size from 2 up, and every chunk size, is bit-identical.
 
-### B2. G1.1's monotone-in-M requirement is stochastic — **PROPOSED**
+### B2. G1.1's monotone-in-M requirement is stochastic — **RESOLVED in T03**
 "Error decreases monotonically as M goes 1024 → 2048 → 4096" is a single-draw statement about a
 random estimator. *Proposal:* average the covariance MAE over ≥ 5 seeds per M and assert the trend
 on the means (plus `err(4096) < err(1024)` outright).
 
-### B3. `test_grf_channels_independent` tolerance is at the noise floor — **PROPOSED**
+### B3. `test_grf_channels_independent` tolerance is at the noise floor — **RESOLVED in T03**
 Finite-M cross-channel correlation is O(1/√M) ≈ 0.016 at M = 4096, before point-sampling noise; the
-spec's threshold is 0.02. *Proposal:* orthogonalise the `A` columns at construction (a QR on
-`(M, d_h)`, which also stabilises the marginal-variance renormalisation the spec asks for) and keep
-the 0.02 threshold; if that is unwanted, relax to 0.03.
+spec's threshold is 0.02. *Resolution (T03):* done as proposed. The columns are orthogonalised by a sign-canonicalised QR and
+scaled to `‖A_c‖ = √M`, which makes the space-averaged cross-channel covariance and the marginal
+variance **exact** rather than approximate; the 0.02 threshold stands and measures 0.0028 empirically
+(and < 1e-9 algebraically). `E[A_c A_cᵀ] = I` is unchanged, so the covariance function is not
+affected — G1.1 confirms.
 
 ### B4. `test_relative_position_only` (T04) is false for the full model — **PROPOSED**
 "Translating the whole volume by a constant leaves outputs unchanged" cannot hold end-to-end: the
@@ -150,19 +184,23 @@ The `20*N`-proposals escape hatch then silently breaks `test_expected_count_matc
 the count-from-intensity claim work), make the proposal cap a `Config` field, and raise rather than
 warn under test.
 
-### B8. The Matérn RFF parametrisation will not match `scipy`'s `Matern(length_scale=ell)` — **PROPOSED**
+### B8. The Matérn RFF parametrisation will not match `scipy`'s `Matern(length_scale=ell)` — **RESOLVED in T03: the worry was unfounded**
 `omega = (z/√g)/ell` with `g ~ Gamma(ν, 1/ν)` yields a Matérn *shape* but with an effective
 length-scale off by a √(2ν)-type constant relative to `scipy`'s parametrisation, so G1.1's
 MAE < 0.03 could fail purely on convention. The spec anticipates this ("verify this empirically
-rather than trusting the derivation"). *Proposal:* fix the constant numerically at construction,
-unit-test the realised covariance against `scipy` at several `ν`, and write the convention in the
-docstring.
+rather than trusting the derivation"). *Resolution (T03):* no constant is needed. The Matérn spectral density in R³ *is* a multivariate
+Student-t with 2ν degrees of freedom, and `z/√g` with `g ~ Gamma(ν, 1/ν)` is exactly that, so
+`omega = (z/√g)/ell` realises `k(r) = 2^(1−ν)/Γ(ν) (√(2ν) r)^ν K_ν(√(2ν) r)` — the same
+parametrisation `sklearn.gaussian_process.kernels.Matern(length_scale=ell, nu=nu)` uses. Verified
+rather than trusted: `matern_correlation` agrees with `sklearn` to < 1e-10 at ν = 0.5/1.5/2.5/4.0,
+and the realised field covariance sits 0.0121 from the analytic anisotropic kernel at M = 4096. The
+derivation is in the `model/noise.py` docstring.
 
-### B9. G1.4's throughput target needs chunking to be possible at all — **PROPOSED**
-10⁶ points at M = 4096 is a 16 GB float32 feature matrix if materialised. *Proposal:* chunked
-evaluation (fixed chunk size in `Config`; T01 added `Config.grf_chunk_points`, default 65536), and
-if 5 s on this CPU proves out of reach after chunking, report the measured number rather than
-quietly loosening the gate.
+### B9. G1.4's throughput target needs chunking to be possible at all — **RESOLVED in T03**
+10⁶ points at M = 4096 is a 16 GB float32 feature matrix if materialised. *Resolution (T03):* chunked, and nothing had to be loosened — **3.4 s for 10⁶ points** at M = 4096,
+d_h = 64 on a 4-core Xeon @ 2.10 GHz. The binding constraint turned out to be **cache**, not memory:
+the default chunk was lowered 65536 → **1024** so the `(chunk, M)` block of cosines is 16 MB rather
+than 1 GB, which is a 3× speed-up on its own.
 
 ---
 
@@ -304,4 +342,7 @@ found:
   numbers beats recency. Revisit only if a task needs a newer API.
 - **E4.** GATE 1 in T03 requires all four criteria (G1.1–G1.4) to pass but the stop instruction
   names only G1.3. Treating G1.3 as the stop-the-project criterion and G1.1/G1.2/G1.4 as
-  fix-the-bug criteria, since the latter three are implementation-correctness checks.
+  fix-the-bug criteria, since the latter three are implementation-correctness checks. *After T03:*
+  G1.1, G1.2 and G1.4 pass; G1.3 splits — the two criteria that test the mechanism pass by a wide
+  margin, the two that test the shape of the `ell` response fail (see A7). The stop instruction
+  applies.
