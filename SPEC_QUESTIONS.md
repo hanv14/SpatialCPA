@@ -24,7 +24,7 @@ not a runtime `TypeError`.
 raises `TypeError` for anything else. T08/T09 should runtime-check the same way at their
 entrypoints.
 
-### A2. Per-gene-module length-scale calibration is not implementable as written — **OPEN**
+### A2. Per-gene-module length-scale calibration is not implementable as written — **RESOLVED (decided 2026-08-15)**
 T09 §2 calibrates `ell` "per gene-module (Leiden clusters of gene embedding space, ~10 modules)".
 But `ell` parameterises the **latent** GRF (`d_h = 64` channels queried at cell positions), and gene
 modules only exist downstream of the decoder. One `ell` per gene module cannot be expressed against
@@ -37,13 +37,18 @@ per-module control turns out to be needed, the cheap version is to partition the
 channels into groups with their own `ell` and add a loss tying gene modules to channel groups —
 that is a design change and should be decided explicitly, not improvised at T09.
 
-*Status after T03:* the per-channel-group `ell` was **not** added. The spec's interface takes one
-`ell`, nothing in `specs/` consumes a grouped one, and speculative API is what CLAUDE.md tells us not
-to write. The door stays open at no cost: `with_lengthscale` rebuilds a rescaled field from the same
-draws without redrawing, so a per-group field is a channel-wise concatenation of those. Still OPEN as
-a T09 design decision.
+*Decision:* **one global `ell`**; per-module Moran's I agreement is reported as a **diagnostic only**,
+never as a target. If the diagnostic is poor at T09, the escalation is per-channel-group `ell` — and
+it is to be **decided explicitly**, with the diagnostic table as evidence, not improvised inside the
+calibration loop. Written into `specs/09` §2.
 
-### A3. T10's metric provenance is wrong — **OPEN**
+*Status after T03:* the per-channel-group `ell` was **not** added to `GaussianRandomField`. The
+spec's interface takes one `ell`, nothing in `specs/` consumes a grouped one, and speculative API is
+what CLAUDE.md tells us not to write. The escalation stays cheap: `with_lengthscale` rebuilds a
+rescaled field from the same draws without redrawing, so a per-group field is a channel-wise
+concatenation of those, and only the loss tying modules to channel groups is new work.
+
+### A3. T10's metric provenance is wrong — **RESOLVED (decided 2026-08-15, strengthened)**
 T10 says "port the six target metrics from `reference/learn_spatialcpav20.py`, fixing two bugs".
 Checked:
 
@@ -61,9 +66,16 @@ So porting from v20 would (a) be missing two metrics, (b) re-fix bugs that the p
 does not have, and (c) risk producing numbers that are **not comparable** to the existing v20/v22
 results, which came from bench3.
 
-*Proposal:* port the six from `bench3/evaluate_paper.py`, assert equivalence against it in
-`test_metrics_match_reference_after_fixes`, and keep T10's bug note as a caveat about v20's
-*internal* scoring (which is what its own tuning was driven by) rather than about the benchmark.
+*Decision — stronger than the proposal: do not port at all.* **Vendor or import
+`bench3/evaluate_paper.py` verbatim**, pin it with a content hash
+(`7362669200bbd2be905adf1715c4c6d44842ef1652edb2f4aba697c039538992`, 764 lines, checked at import),
+and assert **bit-identical** output on fixed inputs (`test_metrics_match_bench3_bitwise`, `==` not
+`allclose`). The existing v20/v22 numbers came out of bench3, and a reimplementation that merely
+agrees closely is **not comparable** — the paper's claim is a difference between methods measured on
+one instrument. `eval/metrics.py` becomes a thin adapter that owns no metric arithmetic. T10's bug
+note survives as a **footnote about v20's internal tuning signal**, not as a fix applied to the
+benchmark (bench3 already uses `spearmanr` and `rankdata(method="average")`). Written into
+`specs/10` §1.
 
 ### A4. `Config` is missing fields that later tasks depend on — **RESOLVED in T01**
 Convention 1 forbids constants outside `Config`, but the task files write several inline. Not in the
@@ -90,13 +102,16 @@ membership, positivity, fractions and cross-field relations; the data-dependent 
 `data/schema.py::validate_config_against_volume(cfg, vol)` (a function rather than a method, so
 `config.py` need not import the schema), called by `load_volume`.
 
-### A6. Nothing specifies building the v20 cross-mix — **OPEN**
+### A6. Nothing specifies building the v20 cross-mix — **RESOLVED (decided 2026-08-15)**
 `expr_mode ∈ {zinb-flow, cross-mix, auto-blend}` is a `Config` gate (T01), the no-regression
 guarantee depends on `cross-mix` (T09 §3, `test_selector_can_recover_v20_config`), and T09's
 uncertainty-gated anchoring blends "via the v20 Bernoulli cross-mix" (design §5). No task file
 specifies implementing it, and the coverage matrix mentions it only as reference material.
-*Proposal:* implement it in T06 alongside the decoder (it shares the count-preserving path), ~40
-lines, ported from v20 with its behaviour pinned by a test.
+*Decision:* as proposed — **implement it in T06** alongside the decoder (it shares the
+count-preserving output path), ~40 lines ported from v20, with its behaviour **pinned by a test**
+(`test_cross_mix_matches_v20`: bitwise on fixed inputs and a fixed seed, or the donor-frequency
+distribution if v20's RNG consumption order cannot be reproduced under Convention 3 — stated in the
+test's docstring either way). Written into `specs/06` §4b and the coverage matrix.
 
 ### A7. GATE 1's G1.3c was false as literally specified — **RESOLVED (spec amended, gate re-run)**
 Raised by T03: `I_gen` is not monotone as `ell` sweeps 0.25×–4×. It rises to a maximum and falls.
@@ -175,15 +190,15 @@ are consistent only under a precise statement of which frame each quantity lives
 data-frame encoding carried through `RotationContext`, write it in the module docstring, and make
 the two tests assert the two halves of it.
 
-### B6. Hard-core radius fights the pair-correlation test (T05) — **OPEN**
+### B6. Hard-core radius fights the pair-correlation test (T05) — **RESOLVED (decided 2026-08-15)**
 `r0` = 5th percentile of real nearest-neighbour distances, and `test_hardcore_respected` forbids any
 generated pair closer than `r0`. By construction 5% of *real* pairs are closer than `r0`, so the
 generated layout is strictly more regular than the tissue it is imitating, which pushes against
 `test_pcf_matches_real` (max |Δg(r)| < 0.15 from `r0` up).
-*Proposal:* set `r0` to the 1st percentile (or the observed minimum) and let the fitted `gamma`/`R`
-carry the soft repulsion; keep the 5th percentile as a `Config`-selectable alternative and record
-which was used. (T01 added `Config.repulsion_r0_percentile`, default 1.0, so T05 only has to read
-it.)
+*Decision:* as proposed — `r0` at the **1st percentile**, the fitted `gamma`/`R` carrying the soft
+repulsion, the **5th percentile kept as a `Config`-selectable alternative**, and **which one was used
+recorded** in `reports/benchmark.md` and `PROGRESS.md` (it changes a published point-process number).
+`Config.repulsion_r0_percentile` already defaults to 1.0 from T01; written into `specs/05`.
 
 ### B7. The layout sampler is a conditional Strauss, not a Strauss process (T05) — **PROPOSED**
 Step 1 draws `N ~ Poisson(N_expected)` and step 3 thins; conditioning on `N` and then thinning is
@@ -221,19 +236,36 @@ must cost < 12× the time.
 
 ## C. Under-specified — I will pick the stated option unless told otherwise
 
-### C1. GATE 2's evaluation set is undefined — **OPEN**
+### C1. GATE 2's evaluation set is undefined — **RESOLVED (decided 2026-08-15, with two additions)**
 "Reconstruct held-in cells from planes at 0°…90°" — but real cells only exist on the sectioning
 planes, so an oblique plane passes through very few of them, and R² at 90° would be computed on a
 different (and much smaller) cell set than at 0°. That makes the ratio `R²(θ)/R²(0°)` partly an
-artefact of sample size. *Proposal:* evaluation set = cells within `thickness/2` of the query plane,
-pooled across all training sections, with `n` reported per angle and a minimum-`n` guard; if `n` at
-large angles is too small on the fixture, thicken the fixture's slabs rather than changing the gate.
+artefact of sample size. *Decision:* the pooled `thickness/2` set as proposed, **plus two additions that the proposal missed**:
 
-### C2. `KL(ZINB₁ ‖ ZINB₂)` has no closed form (T07) — **PROPOSED**
-Neither NB–NB nor ZINB–ZINB KL is closed-form (both need an infinite sum over counts). *Proposal:*
-closed-form Bernoulli KL on `π`, plus an analytic surrogate on the NB component (KL between the
-Gaussian approximations in `(log μ, log θ)`), documented as a surrogate; alternatively a fixed-sample
-MC estimate. State the choice in the docstring and note it in the paper's methods.
+(a) **Leave-own-section-out retrieval.** For every evaluated cell, its own source section is excluded
+from the retrieval candidate pool **at every angle**. Without it, a cell in the 90° strip retrieves
+in-plane neighbours a few micrometres away inside its own section, the oblique plane becomes trivially
+easy, and GATE 2 passes while hiding exactly the equivariance failure it exists to detect. Needs a
+`Config` flag (`retrieval_exclude_source_section`, default `True`, added by T04), and two tests — one
+that no returned neighbour shares the query cell's `section_id`, and one that turning the exclusion
+*off* measurably raises R²(90°), so the exclusion cannot be quietly dropped later.
+
+(b) **Equal `n` across angles**, by seeded subsampling to the smallest angle's count — reporting `n`
+is not enough. R² is a variance-explained ratio; both its sampling error and the mix of tissue it
+covers move with `n`, so an unsubsampled comparison partly measures sample size. Report the common
+`n`, the pre-subsample `n` per angle, and the seed. Below a floor
+(`gate2_min_cells_per_angle`), thicken the fixture's slabs — do not lower the floor, do not drop an
+angle.
+
+`reports/gate2.md` must state the whole contract. Written into `specs/04`.
+
+### C2. `KL(ZINB₁ ‖ ZINB₂)` has no closed form (T07) — **RESOLVED (decided 2026-08-15)**
+Neither NB–NB nor ZINB–ZINB KL is closed-form (both need an infinite sum over counts). *Decision: skip the surrogate entirely.* Match the decoder parameters directly —
+`L2` on `log μ`, `log θ` and the `π` logit, with branch 2 detached. A Gaussian approximation in
+`(log μ, log θ)` is a different divergence wearing a KL's name, and a fixed-sample MC estimate adds
+variance to the most delicate loss in the system. Two branches that agree on every decoder parameter
+agree on the distribution, which is what `L_cross` is actually asserting, and an L2 is scale-stable,
+differentiable everywhere and honest in the methods section. Written into `specs/07` §2.
 
 ### C3. MedCPT pooling instruction contradicts itself (T02) — **PROPOSED**
 The spec says "mean-pool the last hidden state", then says MedCPT-Query-Encoder is trained with CLS
@@ -279,13 +311,13 @@ with thin wrappers plus a test asserting agreement to 1e-6 on shared inputs.
 
 ---
 
-### C10. T08's principal tissue axis has nowhere to live — **OPEN** (raised in T01)
+### C10. T08's principal tissue axis has nowhere to live — **RESOLVED (decided 2026-08-15; due at T08)**
 T08 §2 says the principal tissue axis is computed once per dataset and "stored on the `Volume`", but
 T01's `Volume` has no such field, and computing it requires a `TrainingVolume` (computing it on the
 full volume would consult held-out sections). T01 did **not** add the field speculatively.
-*Proposal:* T08 adds `principal_axis` to `TrainingVolume` as a cached property computed from its own
-sections, so it is leakage-free by construction and cannot drift per epoch; alternatively an
-explicit `set_principal_axis` on `TrainingVolume` called once by the trainer. Decide at T08.
+*Decision:* as proposed — **`TrainingVolume`, not `Volume`**, as a cached property computed from its
+own sections, so it is leakage-free by construction and cannot drift per epoch. **T08 adds the
+field**, plus a test that a plain `Volume` does not have it. Written into `specs/08` §2.
 
 ### C11. `split_holdout` and endpoint sections — **PROPOSED** (raised in T01)
 The spec's alternating regime says "hold out every other section (fold selects the parity)" with a
@@ -328,18 +360,19 @@ would mean something different for a 200-gene and a 20 000-gene panel. *Proposal
 **mean** over entities and components, so the weight transfers across panels. Revisit at T06 if the
 term turns out to be too weak at `w_distill=0.1`.
 
-## D. In the design docs but missing from `specs/11_COVERAGE_MATRIX.md`
+## D. In the design docs but missing from `specs/11_COVERAGE_MATRIX.md` — **all five settled 2026-08-15**
 
-The matrix says an unmapped design component is an omission to be flagged. These are the ones I
-found:
+The matrix says an unmapped design component is an omission to be flagged. These were the ones I
+found; each is now written into the task file named in the last column and into the coverage matrix,
+and each is **due at that task**, not before.
 
-| Design location | Component | Where it should land |
-|---|---|---|
-| `v23_design.md` §7 Baselines | **v14 and v18** are listed as baselines; T10 wires only `run_v20` | T10 — or drop them explicitly and say why |
-| `v23_design.md` §7 Datasets | "≥ 1 non-brain (embryo/tumour) and ≥ 1 non-transcriptomic panel (EASI-FISH)" — a stated reviewer defence against brain-only overfitting | T10 (nothing in `specs/` names any dataset requirement) |
-| `v23_design.md` §3.5 | "Calibrate `π` **and the mean–variance relation** per gene against the flanking sections" — T09 calibrates `π` only | T09 §2 |
-| `v23_design.md` §2.2 / §7 E1 | Zero-shot table must report **both** `r_g = 0` (pure text) and `r_g = ψ(t_g)` (distilled); T06/T10 require only one arm | T10 E1 |
-| `v23_design.md` §5, §6 | The v20 **Bernoulli cross-mix** itself (see A6) | T06 |
+| Design location | Component | Decision | Landed in |
+|---|---|---|---|
+| `v23_design.md` §7 Baselines | **v14 and v18** are listed as baselines; T10 wires only `run_v20` | **Dropped explicitly**, with the one-line reason in the methods: both are superseded by v20 on every metric of the existing bench3 campaign, and v20 is the version the no-regression guarantee is stated against | `specs/10` §2 |
+| `v23_design.md` §7 Datasets | "≥ 1 non-brain (embryo/tumour) and ≥ 1 non-transcriptomic panel (EASI-FISH)" — a reviewer defence against brain-only overfitting | **Required.** `run_benchmark` refuses to produce a headline table without both and names what is missing; a campaign run without them is a development run and says so on the report's first line | `specs/10` §3 |
+| `v23_design.md` §3.5 | "Calibrate `π` **and the mean–variance relation** per gene against the flanking sections" — T09 calibrates `π` only | **Both.** A per-gene correction on `log θ` fitted the same way as the `π` one; they are not substitutes (`π` moves the zeros, `θ` the spread of the non-zeros), and T06's `test_mean_variance_relation` is what it protects at inference | `specs/09` §2 |
+| `v23_design.md` §2.2 / §7 E1 | Zero-shot table must report **both** `r_g = 0` (pure text) and `r_g = ψ(t_g)` (distilled) | **Both arms.** One arm cannot separate "the text channel carries the gene" from "the distillation head guessed a residual", which is the open-vocabulary claim | `specs/10` §5 (E1) |
+| `v23_design.md` §5, §6 | The v20 **Bernoulli cross-mix** itself (see A6) | **Implement in T06**, behaviour pinned by a test | `specs/06` §4b |
 
 ---
 

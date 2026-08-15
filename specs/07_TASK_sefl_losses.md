@@ -66,9 +66,26 @@ def loss_cross(model, model_ema, bbox, cfg, gen) -> Tensor
 3. Sample n_L = 256 points along seg
 4. Branch 1: condition through p1's pathway (student, gradients on)
    Branch 2: condition through p2's pathway (EMA TEACHER, stop-gradient)
-5. Loss = KL( ZINB_1 || ZINB_2 ) + ||h_1 - h_2||^2
+5. Loss = L2 on the decoder parameters (see below) + ||h_1 - h_2||^2
         + CE(type_logits_1, softmax(type_logits_2)) + ||lambda_1 - lambda_2||^2
 ```
+
+**Match decoder parameters directly — there is no KL term** (settled, SPEC_QUESTIONS C2). Neither
+NB–NB nor ZINB–ZINB KL has a closed form (both need an infinite sum over counts), and the surrogates
+are worse than what they replace: a Gaussian approximation in `(log mu, log theta)` is a different
+divergence wearing a KL's name, and a fixed-sample Monte-Carlo estimate adds variance to a
+consistency loss that is already the delicate one. Use
+
+```
+L_params = || log mu_1 - log mu_2 ||^2 + || log theta_1 - log theta_2 ||^2
+         + || pi_logit_1 - pi_logit_2 ||^2
+```
+
+on the shared genes at the shared points, with branch 2 detached. Two branches that agree on every
+decoder parameter agree on the distribution — which is the property `L_cross` is actually asserting —
+and this is scale-stable, differentiable everywhere, and reads the same way in the paper's methods.
+Weight the three terms equally unless a measurement says otherwise, and log them separately so a
+collapse in one is visible.
 
 **Anti-collapse — mandatory.** Branch 2 must be the EMA teacher with `detach()`. A symmetric
 consistency loss has the trivial minimiser "constant field" and will find it. Add a runtime alarm:

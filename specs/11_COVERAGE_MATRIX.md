@@ -17,6 +17,7 @@ is an omission — flag it rather than skipping it.**
 | **z-proximity term in retrieval** (the competing method's omission) | T04 | `retrieval_w_z`, ablation A5 |
 | Gap-aware section dropout curriculum | T04 | `section_dropout_p` |
 | Layout: per-type intensity field, Poisson NLL | T05 | |
+| Hard-core radius `r0` at the **1st** percentile (5th selectable, recorded) | T05 | B6; `Config.repulsion_r0_percentile` |
 | Strauss/hard-core repulsion fitted to `g(r)` | T05 | ablation A4 |
 | Potts mark smoothing, `beta` fitted not set | T05 | |
 | `layout_mode` gate (field/hybrid/resample) | T05, T01 | `resample` = previous version |
@@ -25,16 +26,19 @@ is an omission — flag it rather than skipping it.**
 | Shared latent → gene–gene covariance preserved | T06 | tested vs. independent-donor baseline |
 | Sample counts, never emit `mu` | T06 | assertion in generation path |
 | Gene subsampling `genes_per_step` | T06 | what makes panel width irrelevant |
-| Metric-aware LOSO losses (Moran, Geary, profiles, Sinkhorn) | T08 | leakage enforced by type |
+| Metric-aware LOSO losses (Moran, Geary, profiles, Sinkhorn) | T08 | leakage enforced by type; **principal axis on `TrainingVolume`**, not `Volume` (C10) |
 | Uncertainty-gated anchoring (replaces alpha/gap flags) | T09 | isotonic `w(v)` |
-| Leakage-free length-scale + detection calibration | T09 | flanking sections only; **unimodal objective** — bracket capped, maximum located, `target_unreachable` status (T03/GATE 1) |
+| Leakage-free length-scale + detection calibration | T09 | flanking sections only; **unimodal objective** — bracket capped, maximum located, `target_unreachable` status (T03/GATE 1); one **global** `ell`, per-module agreement a diagnostic only (A2) |
+| **Mean–variance calibration** (`log theta` per gene, beside `pi`) | T09 §2 | design §3.5; `DetectionCalibration` carries both (D-table) |
+| **v20 Bernoulli cross-mix** (`expr_mode="cross-mix"`) | T06 §4b | design §5/§6; behaviour pinned by `test_cross_mix_matches_v20` (A6) |
 | Automatic per-dataset config selection | T09 | coordinate descent, ~10 fits |
 | No-regression guarantee | T09, T01 | `test_selector_can_recover_v20_config` |
-| Six target metrics + two v20 metric bug fixes | T10 | Pearson-as-Spearman; `argsort` ties |
+| Six target metrics, **vendored verbatim from `bench3/evaluate_paper.py`** | T10 | content hash pinned, bitwise agreement asserted; v20's two bugs are a footnote about v20's own tuning signal, not a fix to the benchmark (A3) |
 | Unoptimised control metrics | T10 | paper-integrity requirement |
-| Baselines incl. SpatialZ at published defaults | T10 | deep-copy guard |
+| Baselines incl. SpatialZ at published defaults | T10 | deep-copy guard; **v14/v18 dropped explicitly** with the reason in the methods (D-table) |
+| **Dataset requirement**: >= 1 non-brain, >= 1 non-transcriptomic panel | T10 §3 | design §7; the harness refuses a headline table without both (D-table) |
 | Ablations A1–A6 | T10 | gates in `Config` |
-| Capability experiments E1–E4 | T10 | zero-shot, cross-panel, oblique, throughput |
+| Capability experiments E1–E4 | T10 | zero-shot, cross-panel, oblique, throughput; **E1 reports both arms** (`r_g = 0` and `r_g = psi(t_g)`) (D-table) |
 
 ## From `v23_sectioning_equivariance.md` (SEFL)
 
@@ -47,11 +51,11 @@ is an omission — flag it rather than skipping it.**
 | **Unimodal `I_gen(ell)`; calibration bracket + maximum detection** | T03 (G1.3g), T09 §2 | measured in `reports/gate1.md`; `calibration_ell_max_extent_frac`, `calibration_ell_max_fitted_multiple` |
 | Rotation augmentation over the whole volume | T04 | `RotationContext` |
 | Multi-orientation triplane ensemble | T04 | `n_plane_orientations=4` |
-| **Oblique parity ≥ 0.90 × axis-aligned** | T04 | GATE 2 |
+| **Oblique parity ≥ 0.90 × axis-aligned** | T04 | GATE 2; evaluation set = pooled cells within `thickness/2`, **equal `n` across angles** and **own source section excluded from retrieval** (C1) |
 | Fourier low-frequency axis follows the data frame | T04 | the silent-bug test |
 | Plane geometry, `intersect`, `random_plane_pair` | T07 | hand-computed test cases |
 | Curved / anatomy-following surfaces | T07, T09 | `generate_curved` |
-| `L_cross` intersection consistency | T07 | |
+| `L_cross` intersection consistency | T07 | decoder parameters matched directly (L2 on `log mu`, `log theta`, `pi` logit) — **no KL surrogate** (C2) |
 | **EMA teacher + stop-gradient (anti-collapse)** | T07 | disabled-teacher test must fail |
 | Collapse alarm on per-gene variance | T07 | |
 | `L_thick` coarse-graining; counts add, no per-cell matching | T07 | |
@@ -75,7 +79,7 @@ is an omission — flag it rather than skipping it.**
 | Gate | Spec | Criterion | If it fails |
 |---|---|---|---|
 | GATE 1 | T03 | GRF prior halves Moran's I error vs. i.i.d.; `I_gen` monotone in `ell` **over the calibration bracket** and unimodal with its maximiser at or above the fitted `ell` (G1.3g); measured on the 3000 µm gate fixture | **Stop.** The method's core mechanism does not work; report before building anything else. |
-| GATE 2 | T04 | oblique R² ≥ 0.90 × axis-aligned | Raise orientations to 8, verify augmentation covers everything, then **stop** — a steerable backbone is a design change. |
+| GATE 2 | T04 | oblique R² ≥ 0.90 × axis-aligned, on an equal-`n` evaluation set with own-section retrieval excluded | Raise orientations to 8, verify augmentation covers everything, then **stop** — a steerable backbone is a design change. |
 
 ## Deliberate negative controls
 

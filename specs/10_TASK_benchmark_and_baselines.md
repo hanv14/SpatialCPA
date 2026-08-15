@@ -13,22 +13,38 @@ statistics.
 
 ## 1. Metrics — `spatialcpav25_gen/eval/metrics.py`
 
-Port the six target metrics from `reference/learn_spatialcpav20.py`, **fixing two bugs found in that
-implementation**:
+**Do not port, and do not reimplement.** The scoreboard is
+`benchmark-pbya-v3/src/bench3/evaluate_paper.py`, and every published v20/v22 number came out of it.
+A reimplementation that "agrees closely" is not comparable: the paper's claim is a *difference*
+between methods measured on one instrument, and two instruments that agree to 1e-3 turn a 0.01 median
+gap into an argument. So (settled, SPEC_QUESTIONS A3):
 
-1. **`gene_mean_spearman` / `gene_var_spearman` are computed with Pearson correlation
-   (`np.corrcoef`), not Spearman.** Either compute a real Spearman via `scipy.stats.spearmanr`, or
-   rename to `_pearson`. Do not silently keep the mismatch — any published number under that name
-   would be wrong.
-2. **`rank_normalize` uses `argsort`, which assigns distinct ranks to tied values.** With sparse
-   count data the mass of zeros gets an arbitrary rank spread, differently in prediction vs. truth.
-   Use `scipy.stats.rankdata(method="average")`. This directly affects the mixing and autocorrelation
-   comparisons on sparse data.
+1. **Vendor or import it verbatim.** Either import `bench3.evaluate_paper` directly, or vendor the
+   file into `spatialcpav25_gen/eval/_bench3_evaluate_paper.py` **byte for byte**, with a header
+   comment saying where it came from and that it must not be edited. Fixing anything in it is a
+   change to the scoreboard and needs its own decision, not a drive-by edit.
+2. **Pin it with a content hash.** `eval/metrics.py` records
+   `BENCH3_EVALUATE_PAPER_SHA256 = "7362669200bbd2be905adf1715c4c6d44842ef1652edb2f4aba697c039538992"`
+   (`benchmark-pbya-v3/src/bench3/evaluate_paper.py` as of 2026-08-15, 764 lines) and checks it at
+   import. A changed hash raises and names the file — silently scoring against a different instrument
+   is exactly the failure this pin exists to prevent (Convention 6).
+3. **Assert bit-identical output on fixed inputs.** `test_metrics_match_bench3_bitwise` runs both the
+   wrapper and `evaluate_paper` on a small fixed synthetic pair and asserts every metric is `==`, not
+   `allclose`. Any difference at all means the wrapper is doing something of its own.
 
-Both fixes must be applied to **all methods equally**, including the baselines, and noted in
-`PROGRESS.md` and the paper's methods.
+`eval/metrics.py` is therefore a thin adapter: it maps our `AnnData` pairs onto `evaluate_paper`'s
+call signature, unpacks its result dict into `METRIC_REGISTRY`, and adds the control metrics below.
+It owns no metric arithmetic.
 
-The six target metrics:
+*Footnote on v20's two bugs.* `reference/learn_spatialcpav20.py` computes `gene_mean_spearman` /
+`gene_var_spearman` with `np.corrcoef` (Pearson under a Spearman name, `:1876`) and rank-normalises
+with `argsort`, which gives tied zeros distinct ranks (`:1810`). Both are real, and both matter for
+reading v20's *internal* tuning signal — that is what its own development was steered by. Neither is
+present in `bench3/evaluate_paper.py`, which already uses `scipy.stats.spearmanr` and
+`rankdata(method="average")`, so there is nothing to fix on the scoreboard and no "bug fix" to apply
+to the baselines. Say this in the paper's methods rather than claiming to have fixed the benchmark.
+
+The six target metrics, as named by the scoreboard:
 
 ```python
 def morans_pearson(gen, real) -> float        # r between per-gene Moran's I vectors
@@ -38,6 +54,11 @@ def marker_field_r(gen, real) -> float        # 2-D binned marker field agreemen
 def marker_depth_r(gen, real) -> float        # depth-profile agreement
 def celltype_localization(gen, real) -> float # per-type spatial distribution agreement
 ```
+
+⚠️ `marker_field_r` and `celltype_localization` do **not** exist in v20 under those names; they come
+from `evaluate_paper`'s `marker_metrics` and `celltype_localization`. Map the names in the adapter
+and record the mapping in the report, so a reader can trace a paper number back to the function that
+produced it.
 
 **Unoptimised control metrics** — required for paper integrity, since six of the metrics are trained
 against (T08). Report at least five:
@@ -65,6 +86,12 @@ def run_independent_donor(vol, target_z, cfg) -> AnnData   # from T06; isolates 
 def run_v20(vol, target_z, cfg) -> AnnData           # previous version
 ```
 
+**v14 and v18 are dropped as baselines** (settled; they are listed in `design/v23_design.md` §7).
+Reason: both are superseded by v20 on every metric of the existing bench3 campaign, so they add two
+more columns without adding a comparison anyone would read — v20 is the version the no-regression
+guarantee is stated against, and it is the one that has to be beaten. Say so in one line in the
+paper's methods rather than leaving their absence unexplained.
+
 For the competing method, use its published defaults (`syn_mode='default'`, `k_sam=3`,
 `k_neighbors=1`, `nb_iter_max=3000`, `num_projections=80`) and its own MENDER-based niche pipeline.
 Do not tune it; do not cripple it. Record the exact settings in the report — reviewers check this.
@@ -80,6 +107,15 @@ occupy, so the comparison is like-for-like.
 ```python
 def run_benchmark(datasets, methods, regimes, folds, out_dir) -> pd.DataFrame
 ```
+
+**Dataset requirement (settled; from `design/v23_design.md` §7, previously unstated in `specs/`).**
+The campaign must include **at least one non-brain dataset** (embryo or tumour) and **at least one
+non-transcriptomic panel** (e.g. EASI-FISH). This is a reviewer defence, not a nicety: every version
+of this project so far has been tuned on brain sections with a transcriptomic panel, and a method
+whose oblique-sectioning claim rests on laminar structure would look excellent on brain and fail
+silently elsewhere. `run_benchmark` refuses to produce a headline table unless both are present, and
+names what is missing (Convention 6). A campaign run without them is a development run, and the
+report says so on its first line.
 
 - Regimes: `alternating`, `consecutive-3`, `consecutive-5`. Report **separately** — the expected
   story is "ties or wins at narrow gaps, wins decisively at wide gaps", and averaging destroys it.
@@ -115,12 +151,19 @@ Wire as config overrides so each is a one-line entry:
 ## 5. Capability experiments
 
 ```python
-def exp_zero_shot_genes(...)      # E1: hold out 20% of genes entirely
+def exp_zero_shot_genes(...)      # E1: hold out 20% of genes entirely (both arms, see below)
 def exp_cross_panel(...)          # E2: train on A, generate B's panel
 def exp_oblique_validation(...)   # E3: vs. orthogonally-sectioned specimen
 def exp_throughput(...)           # E4: 10x z-density, recover fine 3D structure
 def exp_intersection_agreement(...)# E5: mutual coherence vs. the competing method
 ```
+
+**E1 reports both arms** (settled; `design/v23_design.md` §2.2 / §7, previously unstated here). A
+held-out gene has no learned residual `r_g`, so the zero-shot table must show *both*
+`forward_zero_shot(use_distill=False)` — the pure-text arm, `r_g = 0` — and `use_distill=True`, the
+distilled `r_g = psi(t_g)`. Both exist and are shape-tested in T02. One arm alone cannot separate
+"the text channel carries the gene" from "the distillation head guessed a residual", which is the
+whole claim of open-vocabulary generation.
 
 **E5 is the cheapest and most decisive.** Generate two intersecting oblique sections with each
 method and measure agreement along the intersection line as a function of dihedral angle. The
@@ -179,7 +222,11 @@ the paper; make sure it is literally true of the CLI.
 
 ## Acceptance tests
 
-- `test_metrics_match_reference_after_fixes` — each metric reproduces the v20 implementation on
+- `test_metrics_match_bench3_bitwise` — the adapter and `bench3.evaluate_paper` return `==` values,
+  not `allclose`, on a fixed synthetic pair; and the pinned SHA-256 of `evaluate_paper.py` matches.
+- `test_metrics_match_reference_after_fixes` — *superseded by the above* (SPEC_QUESTIONS A3): the
+  reference is bench3, not v20, and agreement with it is asserted bitwise. Kept named here only so a
+  reader of the original spec can find where it went. Each metric reproduces the v20 implementation on
   fixed inputs *except* the two documented bug fixes, which are asserted to differ in the expected
   direction.
 - `test_rankdata_ties` — a vector with 60% zeros gets identical average ranks for all zeros.

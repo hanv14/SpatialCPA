@@ -64,7 +64,11 @@ Hard binning is non-differentiable; use Gaussian kernel weights
 
 `axis`: the section's principal tissue axis. Compute it **once per dataset** from the training
 sections (first PC of cell coordinates, or a user-supplied anatomical axis) and store it on the
-`Volume`. Do not recompute per generated section — a drifting axis makes the loss non-stationary
+`TrainingVolume` — **not** on `Volume` (settled, SPEC_QUESTIONS C10; T01 deliberately did not add the
+field speculatively). Computing it on a full `Volume` would consult held-out sections, which is
+leakage; a cached property on `TrainingVolume`, computed from its own sections, is leakage-free by
+construction and cannot drift per epoch. **T08 adds the field** and a test that a `Volume` does not
+have it. Do not recompute per generated section — a drifting axis makes the loss non-stationary
 and the metric incomparable across epochs.
 
 ```python

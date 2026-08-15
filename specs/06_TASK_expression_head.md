@@ -81,6 +81,31 @@ Draw `NB(mu, theta)` then zero out with probability `pi`. **Never return `mu`.**
 the generation path that the emitted matrix has a detection rate within a plausible band of the
 training sections' — a silent switch to means would show up here.
 
+## 4b. The v20 Bernoulli cross-mix — `expr_mode="cross-mix"` (settled, SPEC_QUESTIONS A6)
+
+```python
+def cross_mix_counts(donor_counts, weights, gen) -> Tensor
+```
+
+Nothing in `specs/` specified building this, and three things depend on it: `Config.expr_mode`
+already gates it (T01), T09's no-regression guarantee needs it
+(`test_selector_can_recover_v20_config` must be able to select `layout_mode="resample"` +
+`expr_mode="cross-mix"` and land on v20's behaviour), and T09's uncertainty-gated anchoring blends
+through it (`design/v23_design.md` §5). It belongs here because it shares the count-preserving
+output path with the sampler above.
+
+Port it from `reference/learn_spatialcpav20.py` — per gene and per cell, choose one donor by a
+Bernoulli/multinomial draw on the donor weights and take that donor's count, so the emitted matrix is
+made of real counts and never a blend of two (a blend is neither an integer nor a draw from anything).
+~40 lines.
+
+**Pin the behaviour with a test, not with a reading of the code**: `test_cross_mix_matches_v20`
+reproduces v20's output bit-for-bit on fixed inputs and a fixed seed. It is a *baseline* — its job is
+to be the thing the new path is compared against, so it has to be the old thing exactly. If v20's RNG
+consumption order cannot be reproduced under Convention 3's explicit generators, say so in the test's
+docstring and assert the distribution instead (same per-gene donor frequencies to within Monte-Carlo
+error over 10⁴ draws), rather than quietly accepting a different sampler.
+
 ## 5. Top-level module — `spatialcpav25_gen/model/spatialcpav25_gen.py`
 
 ```python
@@ -117,6 +142,11 @@ Also implement the trainer: AdamW, cosine schedule, gradient clipping at 1.0, EM
   *(If this fails badly, note it and continue — it is a capability experiment, not a gate.)*
 - `test_never_returns_means` — generation output is integer-valued and has non-zero variance
   conditional on cond.
+- `test_cross_mix_matches_v20` — the ported Bernoulli cross-mix reproduces
+  `reference/learn_spatialcpav20.py` on fixed inputs and a fixed seed (or, failing bitwise
+  reproduction, matches its donor-frequency distribution — see §4b).
+- `test_cross_mix_emits_real_counts` — every emitted value equals some donor's count for that gene;
+  no value is a blend of two donors.
 
 ## Definition of done
 

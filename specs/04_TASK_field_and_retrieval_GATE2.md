@@ -121,9 +121,33 @@ let the model memorise section identity and it will not generalise to a new z.
 retrieval → linear head predicting the top-32 expression PCs of held-in cells. (The full generative
 heads do not exist yet; this isolates the backbone's representational quality.)
 
+### The evaluation set — read this before writing the probe (settled, SPEC_QUESTIONS C1)
+
+Real cells exist only on the sectioning planes, so an oblique query plane passes through very few of
+them. Three rules make the angles comparable; **all three are part of the criterion, and
+`reports/gate2.md` must state the contract and the numbers it produced.**
+
+1. **Membership.** The evaluation set at angle θ is every training-section cell within
+   `thickness / 2` of the query plane, pooled across all training sections. Report `n` per angle.
+2. **Equal `n` across angles.** Subsample every angle's set to the smallest of them, with an
+   explicit seed, and evaluate on that. Reporting `n` is not enough: R² is a variance-explained
+   ratio and its sampling error, and the mix of tissue it covers, both move with `n`, so an
+   unsubsampled comparison partly measures sample size. Report the common `n` and the pre-subsample
+   `n` per angle. If the common `n` falls below a floor (a new `Config` field, added by T04, e.g.
+   `gate2_min_cells_per_angle`), **thicken the fixture's slabs and re-run — do not lower the floor
+   and do not drop an angle.**
+3. **Leave-own-section-out retrieval.** For every evaluated cell, its **own source section is
+   excluded from the retrieval candidate pool, at every angle** — the same exclusion the model
+   would face for a genuinely unseen plane. Without it, a cell in the 90° strip retrieves in-plane
+   neighbours a few micrometres away *inside its own section*: the oblique plane becomes trivially
+   easy, R²(90°) rises to meet R²(0°), and **GATE 2 passes while hiding exactly the equivariance
+   failure it exists to detect**. This needs a `Config` flag (added by T04, e.g.
+   `retrieval_exclude_source_section`, default `True`) plumbed through `retrieve()`'s candidate
+   filter beside `exclude_z`, and an acceptance test (below) that fails if the exclusion is dropped.
+
 ### G2.1 — Oblique parity (**the gate**)
 Reconstruct held-in cells from planes at dihedral angles 0°, 15°, 30°, 45°, 60°, 90° to the
-sectioning plane. Report R² per angle.
+sectioning plane, on the evaluation set defined above. Report R² per angle, with `n`.
 
 **Required: `min_angle R² ≥ 0.90 × R²(0°)`.**
 
@@ -158,14 +182,21 @@ one-hot, the model is copying the nearest cell and will fail on wide gaps.
 - `test_bbox_query_outside` — querying outside the bbox clamps and warns, does not crash.
 - `test_retrieval_excludes_holdout` — `exclude_z` is honoured; a test asserts no held-out section
   index is ever returned.
+- `test_retrieval_excludes_source_section` — with `retrieval_exclude_source_section=True`, no
+  returned neighbour shares the query cell's `section_id`. Pair it with
+  `test_source_section_exclusion_changes_oblique_R2`: with the exclusion **off**, R²(90°) rises
+  measurably on the fixture. That second test is what stops the exclusion from being quietly
+  dropped later — if it ever passes with no difference, the exclusion is not plumbed through.
 - `test_niche_density_adaptive` — doubling all coordinates leaves niche vectors unchanged.
 - `test_relative_position_only` — translating the whole volume by a constant leaves outputs
   unchanged (catches absolute-coordinate leakage).
 
 ## Definition of done
 
-`reports/gate2.md` with the angle-vs-R² table and all four criteria passing. `PROGRESS.md` updated
-with the oblique parity ratio — that number goes in the paper.
+`reports/gate2.md` with the angle-vs-R² table and all four criteria passing, **and the evaluation-set
+contract stated in full**: the slab half-thickness, the common `n` after subsampling, the
+pre-subsample `n` per angle, the subsample seed, and confirmation that own-section retrieval was
+excluded. `PROGRESS.md` updated with the oblique parity ratio — that number goes in the paper.
 
 ## Do NOT
 

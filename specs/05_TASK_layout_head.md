@@ -65,7 +65,15 @@ phi(d) = +inf          if d < r0          (hard core)
    the requested density and the intensity and repulsion are inconsistent).
 
 **Fitting `r0`, `R`, `gamma` — leakage-free, from training sections only:**
-- `r0` = 5th percentile of nearest-neighbour distances pooled over training sections.
+- `r0` = **1st** percentile of nearest-neighbour distances pooled over training sections
+  (`Config.repulsion_r0_percentile`, default `1.0`; `5.0` is kept as the selectable alternative).
+  Settled, SPEC_QUESTIONS B6: at the 5th percentile, 5% of *real* pairs are by construction closer
+  than `r0`, so `test_hardcore_respected` (no generated pair closer than `r0`) forces the generated
+  layout to be strictly more regular than the tissue it imitates — which then pushes against
+  `test_pcf_matches_real`. The 1st percentile leaves the soft repulsion (`gamma`, `R`) to carry the
+  shape of `g(r)`, which is what it is fitted for. **Record which percentile was used** in
+  `reports/benchmark.md` and in `PROGRESS.md`: it is a knob that changes a published point-process
+  number, so a run that used the alternative has to say so.
 - `R` = distance at which the empirical pair-correlation function `g(r)` first reaches 1.0.
 - `gamma` fitted by 1-D search so the *simulated* `g(r)` matches the empirical `g(r)` on training
   sections (minimise L2 over `r ∈ [r0, R]`). Provide `fit_repulsion(vol) -> RepulsionParams`.

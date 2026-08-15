@@ -92,15 +92,36 @@ Acceptance tests:
 - `test_calibrator_bracket_respects_the_caps` — on a narrow-field-of-view volume the bracket's upper
   end is the extent cap, not the fitted-multiple cap.
 
-Per gene-module calibration (Leiden clusters of gene embedding space) remains **out of scope** —
-`ell` parameterises the latent field and gene modules only exist downstream of the decoder
-(SPEC_QUESTIONS A2). Report per-module Moran's I agreement as a diagnostic instead.
+**One global `ell`, and per-module agreement as a diagnostic only** (settled, SPEC_QUESTIONS A2).
+The original spec calibrated `ell` per gene-module (Leiden clusters of gene embedding space, ~10
+modules), which is not implementable as written: `ell` parameterises the **latent** field (`d_h = 64`
+channels queried at cell positions) and gene modules only exist downstream of the decoder, so "the
+`ell` for module *m*" would require the field to know which latent channels that module reads from —
+not a property the decoder is constrained to have. Calibrate **one global**
+`ell = (ell_x, ell_y, ell_z)` — which is also what GATE 1's monotonicity and unimodality criteria are
+defined on — and report per-module Moran's I agreement as a **diagnostic table** in
+`reports/config_selection_*.md`, not as a target.
+
+*Escalation, if the diagnostic is poor.* The cheap version is to partition the `d_h` latent channels
+into groups with their own `ell` and add a loss tying gene modules to channel groups. `T03`'s
+`with_lengthscale` already makes the field side free (a grouped field is a channel-wise
+concatenation of rescaled copies of one realisation, no redraw and no new state), so the cost is all
+in the tying loss. **That is a design change and must be decided explicitly, with the diagnostic
+table as the evidence — not improvised inside the calibration loop.**
 
 ```python
 def calibrate_detection(model, vol, cfg) -> DetectionCalibration
 ```
 Per-gene affine correction on the `pi` logit so generated detection rates match the flanking
 sections'. Fit on LOSO reconstructions; apply at generation.
+
+**Calibrate the mean–variance relation too, not just `pi`** (settled; `design/v23_design.md` §3.5
+asks for both and `specs/` had only `pi` — SPEC_QUESTIONS D-table). Add a per-gene correction on
+`log theta` fitted the same way, so the generated mean–variance curve matches the flanking sections'
+rather than only their detection rates. The two are not substitutes: `pi` moves the zeros and
+`theta` moves the spread of the non-zeros, and T06's `test_mean_variance_relation` (log-log slope
+within 15%) is the property this protects at inference. `DetectionCalibration` carries both
+corrections and records which sections it was fitted on.
 
 ```python
 def calibrate_anchor_weight(model, vol, cfg) -> IsotonicRegressor
