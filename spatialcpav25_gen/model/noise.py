@@ -216,13 +216,18 @@ class GaussianRandomField(nn.Module):
       in this process, another process, or another machine. This is the property the
       intersection-consistency claim needs — both branches sample the same number of
       points along the shared line — and it is asserted with ``torch.equal``.
-    * Change the *shape* of the batch (query a point alone, or with a different
-      ``grf_chunk_points``) and float32 matmul is free to reassociate its sum over the M
-      features: torch dispatches a matrix-*vector* kernel for a one-row batch, and BLAS
-      vendors block the reduction differently. The values then agree to a few 1e-6 rather
-      than exactly. That is a property of float32 GEMM, not of the field, and it is
-      asserted with a tolerance rather than papered over with padding that would only
-      appear to guarantee more.
+    * **Batch size does not matter either.** Queries are evaluated in fixed-size chunks
+      with the last one zero-padded, so every matmul is ``(grf_chunk_points, M) @ (M,
+      d_h)`` whatever ``N`` is, and a one-row query returns bit-identical values to the
+      same point inside a batch of four thousand. Without the padding it would not: torch
+      dispatches a matrix-*vector* kernel for one row, whose reduction order over the M
+      features differs, and the answer lands ~1e-5 away.
+    * The one thing that does change the arithmetic is ``cfg.grf_chunk_points`` itself,
+      because the chunk size *is* the matmul's row count and a different shape may pick a
+      different kernel (measured: 0.0 between 97, 512 and 1024 rows, 2e-6 against a single
+      100000-row matmul). No padding can remove that, and nothing load-bearing rests on
+      it: ``grf_chunk_points`` is a frozen ``Config`` field, so within one run every query
+      goes through the same shape.
     """
 
     directions: Tensor
@@ -287,28 +292,43 @@ class GaussianRandomField(nn.Module):
         """``(N, 3)`` micrometres -> ``(N, d_h)`` float32.
 
         Differentiable with respect to ``xyz``; the random draws are buffers and carry no
-        gradient. Evaluated in chunks of ``cfg.grf_chunk_points`` so that the ``(N, M)``
-        feature matrix never has to exist in full — at ``N = 1e6``, ``M = 4096`` it would
-        be 16 GB — and, more to the point, so that each ``(chunk, M)`` block stays in
-        cache: the same query is three times slower with a chunk that has to round-trip
-        through main memory.
+        gradient.
+
+        Evaluated in **fixed-size** chunks of ``cfg.grf_chunk_points``, the last one
+        zero-padded to full width. Chunking keeps the ``(N, M)`` feature matrix from ever
+        existing in full — at ``N = 1e6``, ``M = 4096`` it would be 16 GB — and keeps each
+        ``(chunk, M)`` block in cache, which is worth a factor of three. Padding buys the
+        stronger property: every matmul in every query is
+        ``(chunk, M) @ (M, d_h)``, the same shape, so BLAS picks the same kernel with the
+        same blocking and the same reduction order over the M features, and a point's value
+        does not depend on how many other points were asked for. Without it a one-row query
+        is dispatched to a matrix-*vector* kernel and lands ~1e-5 away from the same point
+        inside a batch — which would leave "exact by construction" (G1.2, and T07's
+        ``L_cross``) resting on the caller happening to use matching batch sizes. The cost
+        is at most ``chunk - 1`` wasted rows per query.
         """
         points = _as_points(xyz)
         if self.cfg.debug_shapes:
             assert points.ndim == 2, points.shape
             assert points.shape[1] == 3, points.shape
+        n_points = int(points.shape[0])
         chunk = int(self.cfg.grf_chunk_points)
         blocks: list[Tensor] = []
-        for start in range(0, int(points.shape[0]), chunk):
-            phase = torch.addmm(self.phase32, points[start : start + chunk], self.omega32.T)
-            blocks.append(torch.cos(phase) @ self.amplitude32)
+        for start in range(0, n_points, chunk):
+            block = points[start : start + chunk]
+            padding = chunk - int(block.shape[0])
+            if padding:
+                block = torch.cat([block, block.new_zeros((padding, 3))], dim=0)
+            phase = torch.addmm(self.phase32, block, self.omega32.T)
+            values = torch.cos(phase) @ self.amplitude32
+            blocks.append(values[: chunk - padding] if padding else values)
         out = (
             torch.cat(blocks, dim=0)
             if blocks
             else torch.zeros((0, self.latent_dim), dtype=torch.float32)
         )
         if self.cfg.debug_shapes:
-            assert out.shape == (points.shape[0], self.latent_dim), out.shape
+            assert out.shape == (n_points, self.latent_dim), out.shape
         return out
 
     def evaluate_numpy(self, xyz: npt.NDArray[Any]) -> npt.NDArray[np.float32]:
@@ -384,12 +404,15 @@ class GaussianRandomField(nn.Module):
 
 def _check_ell(ell: tuple[float, float, float]) -> tuple[float, float, float]:
     """Validate a length-scale triple and return it as floats."""
-    values = tuple(float(v) for v in ell)
-    if len(values) != 3:
+    raw = tuple(ell)
+    if len(raw) != 3:
         raise ValueError(f"ell must be (ell_x, ell_y, ell_z), got {ell!r}")
-    if not all(math.isfinite(v) and v > 0.0 for v in values):
+    # Unpacked rather than built with tuple(...), so the return type is the fixed-length
+    # tuple the signature promises without a cast for mypy to call redundant.
+    ell_x, ell_y, ell_z = (float(v) for v in raw)
+    if not all(math.isfinite(v) and v > 0.0 for v in (ell_x, ell_y, ell_z)):
         raise ValueError(f"ell must be finite and strictly positive micrometres, got {ell!r}")
-    return cast("tuple[float, float, float]", values)
+    return (ell_x, ell_y, ell_z)
 
 
 def _as_points(xyz: npt.NDArray[Any] | Tensor, dtype: torch.dtype = torch.float32) -> Tensor:

@@ -29,6 +29,49 @@ table covers everything that has been done to the repository.
 | GATE 1 (T03) | GRF prior halves median Moran's I error vs i.i.d.; per-gene r > 0.7; `I_gen` monotone in `ell` over the calibration bracket; `I_gen(ell)` unimodal with its maximiser ≥ the fitted `ell` | **PASSED** — error ratio **0.130** (< 0.5), r **0.917** (> 0.7), smallest step over the bracket **+0.028** (> 0), fitted vs best-matching `ell` **8 %** (< 25 %), unimodality violation **0.000** (< 0.0069), maximiser **2.52×** the fitted `ell` (≥ 1×) | `reports/gate1.md` |
 | GATE 2 (T04) | oblique R² ≥ 0.90 × axis-aligned R² | not reached | `reports/gate2.md` |
 
+## Open risks carried forward
+
+| # | Risk | Raised | Owed to | Decision due |
+|---|---|---|---|---|
+| R1 | **`ell_z` cannot be resolved by a 9-section stack.** The fit returns **561 µm** against a **200 µm** ground truth on the gate fixture (353 µm at the 1000 µm field of view). | T03 | T04, T07 | **before T07** |
+
+### R1 — fitted `ell_z` is an upper bound, and SEFL depends on the anisotropy
+
+A 9-section stack at 50 µm spacing spans **400 µm**, so the largest along-z lag the variogram can
+form is 400 µm. A 200 µm correlation length has decayed to `matern(2) ≈ 0.14` there — the empirical
+variogram reaches only **35 %** of its fitted sill at the largest lag (60 % on the narrow fixture), so
+the fit is extrapolating past its data and reads high. `fit_lengthscale_from_sections` warns
+(`LengthscaleFitWarning`, `Config.variogram_min_saturation = 0.75`) rather than returning the number
+quietly, and GATE 1 records it.
+
+**This is real-volume geometry, not a fixture artefact.** Serial-section datasets are tens of
+sections at 10–50 µm; the z extent is small by construction and always will be. It matters because
+SEFL's claim to oblique correctness rests on `ell` being *anisotropic*: an oblique plane mixes the
+in-plane and along-z correlation structure, so a `ell_z` that is 2.8× too long makes a 45° section's
+in-plane correlation wrong by a factor that depends on the angle — precisely the error the design
+says the anisotropy exists to remove (`design/v23_sectioning_equivariance.md` §2, point 3). T04's
+GATE 2 (oblique parity ≥ 0.90 × axis-aligned) is the first place a wrong `ell_z` can show up, and
+T07's `L_thick` and `L_cross` are the first places it can be trained on.
+
+Three candidate remedies, none yet chosen:
+
+1. **Joint fit under a shared anisotropy prior.** Fit `(ell_xy, ell_z)` together against the in-plane
+   *and* along-z variograms with a prior on the ratio `ell_z / ell_xy` (tissue anisotropy is bounded
+   in practice), so the under-determined direction is regularised by the well-determined one rather
+   than left to extrapolation. Cheapest; the fit is already a grid scan, so it becomes a 2-D scan.
+2. **Calibrate `ell_z` at inference against between-section correlation**, the way T09 already
+   calibrates `ell_xy` against Moran's I: hold out a flanking section, generate it, and match the
+   *observed* section-to-section correlation decay rather than the fitted one. Leakage-free by the
+   same construction as T09 §2, and it measures the quantity that actually matters instead of a
+   parameter of a model of it.
+3. **Treat the fitted value as an upper bound and gate on it.** Keep the warning, pass `ell_z` to
+   T09 as a bracket endpoint rather than a value, and add an `ell_z` criterion to T09's gates so a
+   volume that cannot constrain it fails loudly instead of silently generating over-smooth z
+   structure.
+
+My inclination is 2 with 1 as the initialiser, but the decision needs T04's oblique numbers to be
+made on evidence rather than taste. **Do not start T07 without settling it.**
+
 ## Numbers the paper needs (fill in as tasks land)
 
 | Quantity | Source task | Value |
@@ -37,7 +80,7 @@ table covers everything that has been done to the repository.
 | GRF vs i.i.d. Moran's I error ratio | T03 | **0.130** (median \|I_gen − I_real\|: GRF 0.0552, i.i.d. 0.4233); Geary's C ratio 0.130; per-gene r 0.917 (GRF) vs 0.377 (i.i.d.). Gate fixture, 3000 µm FOV |
 | Fitted `ell = (ℓx, ℓy, ℓz)` | T03 / T09 | gate fixture (3000 µm): **(102.9, 102.9, 561.1) µm** vs ground truth (120, 120, 200), i.e. ℓxy −14 %; 1000 µm fixture: (141.5, 141.5, 353) µm, +18 %. `ell_z` is extrapolated on both (the 400 µm stack reaches 35 % / 60 % of the fitted sill) and warns |
 | `I_gen(ell)` maximiser (bounds T09's calibration bracket) | T03 / T09 | **0.086 × in-plane extent** at 3000 µm FOV (2.52× the fitted `ell`), **0.112 ×** at 1000 µm (0.79× the fitted `ell`) |
-| GRF query throughput | T03 | **2.9 × 10⁵ points/s** (10⁶ points, M = 4096, d_h = 64) on the reference 4-core Xeon @ 2.10 GHz; 8× the points cost 6.6–8.0× the time |
+| GRF query throughput | T03 | **2.9 × 10⁵ points/s** (10⁶ points, M = 4096, d_h = 64) on the reference 4-core Xeon @ 2.10 GHz — 2.0–3.5 × 10⁵ across runs, the spread being machine load; 8× the points cost 6.6–9.7× the time (ideal 8, quadratic 64) |
 | Oblique parity ratio | T04 | — |
 | Fitted repulsion `r0`, `R`, `gamma`; Potts `beta` | T05 | — |
 | Detection-rate r; gene–gene covariance vs independent-donor; mean–variance slope | T06 | — |
@@ -438,8 +481,8 @@ the gate.**
 | G1.3g-a `I_gen(ell)` unimodal | violation < 2 SE = 0.0069 | **0.0000** | PASS |
 | G1.3g-b maximiser ≥ fitted `ell` | ≥ 1× | **2.52×** (259 µm = 0.086 × extent) | PASS |
 | G1.4a same seed, second process | 0 differing | **0** | PASS |
-| G1.4b throughput (recorded) | — | **2.9–3.5 × 10⁵ points/s**, reference 4-core Xeon @ 2.10 GHz | REPORT |
-| G1.4c 8× points vs time | < 12× | **6.6–8.0×** | PASS |
+| G1.4b throughput (recorded) | — | **2.0–3.5 × 10⁵ points/s** across runs, reference 4-core Xeon @ 2.10 GHz | REPORT |
+| G1.4c 8× points vs time | < 12× | **6.6–9.7×** | PASS |
 
 `make check` green (ruff, `mypy --strict` on 9 files, **73 fast tests in 32 s**); `make test-all`
 **79 passed in 2 min 1 s**, gate tests included.
@@ -456,3 +499,38 @@ below the peak. **Neither cap is a guarantee; T09's maximum detection is the rea
 not lower `calibration_ell_max_extent_frac` to make the criterion pass on the narrow fixture: the
 value is the one specified, and the measurement that would justify changing it is the same one the
 criterion checks.
+
+### T03 (amended, second pass) — bitwise batch stability, mypy, and the `ell_z` risk (2026-08-15)
+
+**1. `mypy --strict` is green again.** The redundant cast in `_check_ell` is gone: the triple is now
+built by unpacking (`ell_x, ell_y, ell_z = (float(v) for v in raw)`) instead of `tuple(...)` plus a
+cast, so the return type is the fixed-length tuple the signature promises under any mypy version.
+The two remaining casts (`scaled_distance`, `evaluate_numpy`) are still load-bearing under the pinned
+numpy 1.26 stubs.
+
+**2. Batch-size stability is now bitwise, by padding — the reframing was wrong and is reverted.**
+`forward` evaluates **fixed-size** chunks and zero-pads the last one, so every matmul in every query
+is `(grf_chunk_points, M) @ (M, d_h)`: same shape, same kernel, same reduction order over the M
+features, whatever `N` is. Measured on the reference box, a query of **1, 2, 137, 400, 1023, 1024,
+1025, 4000 or 4096** points is now `torch.equal` to the same points inside a 4096-point batch —
+including the 1-row case that previously landed 1.03e-05 away because torch dispatched a
+matrix-*vector* kernel. `test_batch_shape_does_not_change_a_single_value` asserts exactly the sizes
+requested, with `torch.equal`. Cost: at most `chunk - 1` wasted rows per query (a 1-point query now
+costs what a 1024-point one does, ~3 ms); throughput at 10⁶ points is unchanged.
+
+**One case remains non-bitwise, and it is not the one L_cross depends on.** Two fields whose
+`Config.grf_chunk_points` *differ* can disagree by ~2e-6: the chunk size **is** the matmul's row
+count, so changing it changes the shape and may change the kernel. Padding cannot remove that — there
+is no shape that is simultaneously two shapes. Measured: 0.0 between chunks of 97, 512 and 1024 rows,
+2.0e-6 against a single 100000-row matmul. Nothing load-bearing rests on it: `grf_chunk_points` is a
+frozen `Config` field, so within one run — and therefore within `L_cross`, which queries one field
+object twice — every query goes through the same shape and the values are bitwise identical. G1.2's
+"exact by construction" stands as written, and `test_chunk_boundaries_do_not_change_a_single_value`
+records both halves: `torch.equal` across chunk *boundaries* at a fixed chunk size, `< 1e-5` across
+different chunk sizes.
+
+**3. `ell_z` is recorded as open risk R1** (see the section above), carried to T04 and T07 with the
+three candidate remedies and a decision due before T07.
+
+`reports/gate1.md` regenerated; all gate criteria unchanged in verdict. `make check` green
+(73 fast tests), `make test-all` green (79 tests).

@@ -242,33 +242,50 @@ def test_field_is_pure_and_depends_only_on_position(field: GaussianRandomField) 
     assert torch.equal(field(points[shuffled]), full[shuffled])
 
 
-def test_batch_shape_changes_nothing_that_matters(field: GaussianRandomField) -> None:
-    """Query the same points in a differently shaped batch and the values follow.
+def test_batch_shape_does_not_change_a_single_value(field: GaussianRandomField) -> None:
+    """A point's value does not depend on how many other points were asked for. Bitwise.
 
-    Not bitwise, and deliberately so: float32 GEMM may reassociate its sum over the M
-    features when the batch shape changes — torch dispatches a matrix-*vector* kernel for a
-    one-row batch, and BLAS vendors block the reduction differently, which is why this
-    assertion has to hold on an Apple laptop as well as on the reference Linux box. The
-    tolerance is 1e-5 on a unit-variance field, i.e. five orders below the signal.
+    ``forward`` evaluates fixed-size chunks and zero-pads the last one, so every matmul in
+    every query is ``(grf_chunk_points, M) @ (M, d_h)`` — the same shape, therefore the
+    same kernel, blocking and reduction order over the M features. Without the padding a
+    one-row query is dispatched to a matrix-*vector* kernel and lands ~1e-5 away, which
+    would make "exact by construction" (G1.2, T07's ``L_cross``) depend on the caller
+    happening to use matching batch sizes.
+
+    The sizes below straddle the default 1024-point chunk deliberately: 1 (the GEMV case),
+    2, 137, 400, and 4000 (multi-chunk, with a padded tail).
     """
-    points = np.random.default_rng(9).uniform(0.0, 900.0, size=(400, 3))
+    points = np.random.default_rng(9).uniform(0.0, 900.0, size=(4096, 3))
     full = field(points)
-    for lo, hi in ((0, 1), (137, 139), (0, 64), (7, 400)):
-        gap = float((field(points[lo:hi]) - full[lo:hi]).abs().max())
-        assert gap < 1e-5, f"points[{lo}:{hi}] differs from the full batch by {gap:.3e}"
+    for n in (1, 2, 137, 400, 4000):
+        assert torch.equal(field(points[:n]), full[:n]), (
+            f"a {n}-point query differs from the same points inside a 4096-point batch by "
+            f"{float((field(points[:n]) - full[:n]).abs().max()):.3e}"
+        )
 
 
-def test_chunking_does_not_change_the_answer(cfg: Config, ell: tuple[float, float, float]) -> None:
-    """``grf_chunk_points`` is a performance knob and nothing else.
+def test_chunk_boundaries_do_not_change_a_single_value(
+    cfg: Config, ell: tuple[float, float, float]
+) -> None:
+    """Values are bitwise stable across chunk *boundaries*, and near-stable across chunk sizes.
 
-    Tolerance rather than ``torch.equal`` for the same reason as the test above: a
-    different chunk size is a differently shaped matmul, and float32 GEMM is free to
-    reassociate. Measured at 0.0 on the reference box; the bound is what is portable.
+    Two fields differing only in ``grf_chunk_points`` are two different arithmetic
+    programs: the chunk size *is* the matmul's row count, so a different value picks a
+    different kernel. That is a property of BLAS, not something padding can remove, and it
+    does not touch anything load-bearing — ``grf_chunk_points`` is a frozen ``Config``
+    field, so within one run every query goes through the same shape (asserted above).
+    Measured gap on the reference box: 0.0 between 97, 512 and 1024, and 2.0e-6 against a
+    single 100000-row matmul.
     """
-    points = np.random.default_rng(12).uniform(0.0, 900.0, size=(1000, 3))
-    a = GaussianRandomField(cfg.replace(grf_chunk_points=97), ell, seed=13)(points)
-    b = GaussianRandomField(cfg.replace(grf_chunk_points=100_000), ell, seed=13)(points)
-    assert float((a - b).abs().max()) < 1e-5
+    points = np.random.default_rng(12).uniform(0.0, 900.0, size=(3000, 3))
+    reference = GaussianRandomField(cfg, ell, seed=13)(points)
+    # Same field, queried in pieces that fall either side of the chunk boundary.
+    field = GaussianRandomField(cfg, ell, seed=13)
+    for cut in (1, cfg.grf_chunk_points - 1, cfg.grf_chunk_points, cfg.grf_chunk_points + 1):
+        assert torch.equal(field(points[:cut]), reference[:cut])
+    for chunk in (97, 512, 100_000):
+        other = GaussianRandomField(cfg.replace(grf_chunk_points=chunk), ell, seed=13)(points)
+        assert float((other - reference).abs().max()) < 1e-5
 
 
 def test_gradient_flows_to_positions(field: GaussianRandomField) -> None:
