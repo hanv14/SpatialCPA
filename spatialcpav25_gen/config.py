@@ -156,6 +156,46 @@ class Config:
     """One of ``TEXT_POOLINGS``. MedCPT's query encoder is trained with CLS pooling, so
     that is the default; ``mean`` is the alternative (see SPEC_QUESTIONS C3)."""
 
+    text_batch_size: int = 32
+    """Descriptors encoded per forward pass of the frozen text encoder."""
+
+    text_max_length: int = 512
+    """Token budget per descriptor; longer descriptors are truncated."""
+
+    gene_meta_path: str = "resources/gene_meta.parquet"
+    """Local gene-metadata table (columns: symbol, full_name, summary, aliases,
+    ensembl_id) that ``gene_descriptor`` reads. Built once by ``build_gene_meta``; never
+    fetched at train or test time."""
+
+    text_allow_network: bool = False
+    """Permit ``build_gene_meta`` to query mygene.info. Off by default: nothing in the
+    training or test path may reach the network (T02 "Do NOT"), so going online is an
+    explicit, one-off opt-in when the table is built."""
+
+    mygene_species: str = "human,mouse"
+    """Species queried when ``build_gene_meta`` goes online; the datasets in T10 are
+    mouse and human."""
+
+    distill_hidden: int = 256
+    """Hidden width of the text -> free-residual distillation head ``psi``
+    (768 -> distill_hidden -> out_dim)."""
+
+    text_diag_knn_k: int = 10
+    """Neighbours used by ``text_embedding_diagnostics``: both the k nearest text
+    neighbours whose purity is reported and the degree of the gene-gene co-expression
+    graph the modules are found on."""
+
+    text_diag_leiden_resolution: float = 1.0
+    """Resolution of the Leiden partition of the gene-gene co-expression graph."""
+
+    text_diag_leiden_iterations: int = 2
+    """Leiden refinement passes. Fixed rather than -1 (run to convergence) so the
+    diagnostic is reproducible."""
+
+    text_diag_max_pairs: int = 200_000
+    """Cap on the gene pairs entering the text/co-expression Spearman. Above it a seeded
+    subsample of pairs is used; G = 20k genes would otherwise be 2e8 pairs."""
+
     # ----------------------------------------------------------------------------------
     # noise field (T03)
     # ----------------------------------------------------------------------------------
@@ -518,6 +558,13 @@ class Config:
             "text_dim_in": self.text_dim_in,
             "gene_emb_dim": self.gene_emb_dim,
             "ctx_emb_dim": self.ctx_emb_dim,
+            "text_batch_size": self.text_batch_size,
+            "text_max_length": self.text_max_length,
+            "distill_hidden": self.distill_hidden,
+            "text_diag_knn_k": self.text_diag_knn_k,
+            "text_diag_leiden_resolution": self.text_diag_leiden_resolution,
+            "text_diag_leiden_iterations": self.text_diag_leiden_iterations,
+            "text_diag_max_pairs": self.text_diag_max_pairs,
             "matern_nu": self.matern_nu,
             "n_rff": self.n_rff,
             "ell_xy": self.ell_xy,

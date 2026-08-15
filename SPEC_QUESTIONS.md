@@ -242,6 +242,39 @@ every held-out section is an interpolation target. This changes the fold counts 
 give 3 and 4 held-out sections at parities 0 and 1, and 5 consecutive-3 folds); T10's regime
 bookkeeping should read them from `split_holdout` rather than assuming.
 
+### C12. `GeneMeta` and the cell-type ontology record are never defined — **RESOLVED in T02** (raised in T02)
+T02 types `gene_descriptor(symbol, meta: GeneMeta | None)` and `celltype_descriptor(name, ontology:
+dict | None)` but defines neither shape; `GeneMeta` appears nowhere else in `specs/`. *Resolution
+(T02):* `GeneMeta` is a frozen dataclass in `data/text.py` with exactly the parquet columns the spec
+lists (`symbol, full_name, summary, aliases, ensembl_id`), `aliases` as a `tuple[str, ...]`. The
+ontology record is read for optional `"label"` and `"definition"` keys (Cell Ontology's own field
+names); a non-empty dict carrying neither raises rather than degrading to the raw label, so a
+wrong-shaped record cannot pass silently. If T06/T10 want more ontology fields in the descriptor
+(synonyms, term id), adding them changes every cached vector — decide before the first real run.
+
+### C13. `text_embedding_diagnostics` is stochastic but its signature has no seed — **RESOLVED in T02** (raised in T02)
+Two of its three numbers are stochastic: the Leiden partition of the co-expression graph, and the
+gene-pair subsample when `G` is large. Convention 3 requires an explicit seed. *Resolution (T02):*
+the signature gains a required keyword-only `seed: int`; nothing else changes.
+
+### C14. `resources/gene_meta.parquet` is described as "shipped" but nothing can build it offline — **OPEN** (raised in T02)
+T02 says `GeneMeta` "comes from a local table shipped in `resources/gene_meta.parquet`", and also
+forbids network access at train or test time. The repository has no such table and cannot generate a
+real one without going online once. *Resolution so far (T02):* `build_gene_meta(symbols, cfg)`
+writes the table at `Config.gene_meta_path`, hitting mygene.info only when
+`Config.text_allow_network=True`, and `scripts/build_gene_meta.py` is the one-off online step;
+without it every descriptor is the bare symbol, which is legal, warned about
+(`GeneMetaUnavailableWarning`) and much weaker. **Someone has to run that script on a networked
+machine and commit the resulting table before the first real training run**, or the paper's text
+channel is symbols only. Not resolvable inside the offline test environment.
+
+### C15. The distillation loss's reduction is unspecified — **PROPOSED** (raised in T02)
+T02 writes `|| distill(t) - stopgrad(r) ||^2` over known entities, which is a sum over V entities and
+out_dim components; used directly, its scale rides on the panel width, so `Config.w_distill=0.1`
+would mean something different for a 200-gene and a 20 000-gene panel. *Proposal (T02):* it is a
+**mean** over entities and components, so the weight transfers across panels. Revisit at T06 if the
+term turns out to be too weak at `w_distill=0.1`.
+
 ## D. In the design docs but missing from `specs/11_COVERAGE_MATRIX.md`
 
 The matrix says an unmapped design component is an omission to be flagged. These are the ones I

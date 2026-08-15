@@ -5,3 +5,9 @@ scratchpad_*.py
 
 # v15 benchmark outputs (regenerate with `python run_spatialcpa_v15.py`)
 results_v15/
+
+# T02 text-embedding cache (Config.text_cache_dir); rebuilt from resources/gene_meta.parquet
+.cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
