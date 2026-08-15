@@ -143,10 +143,43 @@ Wire as config overrides so each is a one-line entry:
 | A2 | `w_autocorr=w_profile=w_distribution=0` | contribution of metric-aware training |
 | A3 | `text_emb=lookup-only` | text channel's value on seen genes |
 | A4 | repulsion off (Poisson layout) | point-process realism |
-| A5 | `w_z=0` in retrieval | the specific competing-method flaw |
+| A5 | `w_z=0` in retrieval | the specific competing-method flaw — **must be run in the wide-gap regime, see below** |
 | A6 | Gaussian mean decoder | sparsity/dispersion preservation |
 | A7 | `w_cross=w_thick=w_prog=0` | SEFL's contribution |
 | A8 | `loss_prog_WRONG` enabled | **negative control** — wrongly constraining equivariant quantities should be *worse* |
+
+### A5 must be run in the wide-gap regime (measured at T04's GATE 2)
+
+**Do not report A5 from the `alternating` holdout, and do not report it with the whole stack
+admissible.** GATE 2's G2.3 measured the ablation both ways on the synthetic fixture, with the two
+arms sharing a training seed so that initialisation, batch order and per-step rotations were
+identical and the retrieval score was the only difference:
+
+| Candidate pool | R² lost by `w_z = 0` at fractional depth 0.2 / 0.5 / 0.8 |
+|---|---|
+| Two flanking sections, the near one 1 spacing away and the far one 4 (the wide-gap regime) | **+0.0303 / +0.0034 / +0.0486** |
+| Whole stack admissible | +0.0004 / +0.0034 / +0.0019 — **inside the noise** |
+
+The reason is mechanical, not statistical. With every section admissible, the *nearest* section is
+always in the pool and in-plane distance alone already ranks it first, so the z term has nothing
+left to decide. It earns its place only when the evidence is far and asymmetric — which is the
+regime in-silico sectioning actually lives in, and the one the competing method's score cannot see.
+Run whole-stack and A5 reports a **null result for a term that demonstrably works**, which would be
+a false negative in the paper's own ablation table.
+
+Concretely, A5 must be reported at `consecutive-3` and `consecutive-5` (the regimes where the gap to
+the nearest real section is 2–3 spacings), and `reports/benchmark.md` must state which holdout
+regime each A5 number came from. Reporting it at `alternating` as well is fine as a second row,
+labelled as the dense-evidence control, but it is not the headline.
+
+**Check `retrieval_candidates_per_section` before trusting any A5 number.** The invariant that makes
+the retrieval score do anything at all is about the candidate **union**:
+`candidates_per_section × n_admissible_sections` must exceed `retrieval_k`, or the top-K returns the
+whole pool and the score decides nothing. A wide-gap holdout is exactly where the number of
+admissible sections is smallest, so this is exactly where it bites. `Config.validate` enforces
+`retrieval_candidates_per_section >= retrieval_k` and `RetrievalIndex.query` warns at runtime
+(`InertScoreWarning`) when a query's union falls to `K` or below. **An A5 run that emits that
+warning is void.**
 
 ## 5. Capability experiments
 

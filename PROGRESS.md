@@ -11,7 +11,7 @@ Status values: `TODO` | `IN PROGRESS` | `BLOCKED` | `DONE`.
 | T01 | Config and data contracts | `specs/01_TASK_config_and_data.md` | `config.py`, `data/schema.py`, `data/loaders.py`, synthetic fixture | — | DONE |
 | T02 | Text-grounded embeddings | `specs/02_TASK_text_embeddings.md` | `data/text.py`, `model/embeddings.py`, MedCPT cache, distillation head | — | DONE |
 | T03 | 3D GRF noise field | `specs/03_TASK_noise_field_GATE1.md` | `model/noise.py`, `scripts/gate1_report.py`, `reports/gate1.md` | **GATE 1** | DONE — **GATE 1 passes** on the 3000 µm gate fixture |
-| T04 | Anatomical field + retrieval | `specs/04_TASK_field_and_retrieval_GATE2.md` | `model/field.py`, `model/retrieval.py`, `scripts/gate2_report.py`, `reports/gate2.md` | **GATE 2** | DONE — **GATE 2 passes**, oblique parity **0.941** |
+| T04 | Anatomical field + retrieval | `specs/04_TASK_field_and_retrieval_GATE2.md` | `model/field.py`, `model/retrieval.py`, `scripts/gate2_report.py`, `reports/gate2.md` | **GATE 2** | **BLOCKED** — code complete, **GATE 2 fails on G2.1d** (fixed-denominator oblique parity **0.886** < 0.90). Awaiting the SPEC_QUESTIONS C16 decision; **T05 does not start** |
 | T05 | Layout head | `specs/05_TASK_layout_head.md` | `model/layout.py`, intensity + Strauss sampler + Potts marks | — | TODO |
 | T06 | Expression head + ZINB decoder | `specs/06_TASK_expression_head.md` | `model/expression.py`, `model/spatialcpav25_gen.py`, `losses/reconstruction.py` | — | TODO |
 | T07 | SEFL consistency losses | `specs/07_TASK_sefl_losses.md` | `losses/sefl.py`, `infer/planes.py`, EMA teacher, collapse alarm | — | TODO |
@@ -27,7 +27,7 @@ table covers everything that has been done to the repository.
 | Gate | Criterion | Status | Report |
 |---|---|---|---|
 | GATE 1 (T03) | GRF prior halves median Moran's I error vs i.i.d.; per-gene r > 0.7; `I_gen` monotone in `ell` over the calibration bracket; `I_gen(ell)` unimodal with its maximiser ≥ the fitted `ell` | **PASSED** — error ratio **0.130** (< 0.5), r **0.917** (> 0.7), smallest step over the bracket **+0.028** (> 0), fitted vs best-matching `ell` **8 %** (< 25 %), unimodality violation **0.000** (< 0.0069), maximiser **2.52×** the fitted `ell` (≥ 1×) | `reports/gate1.md` |
-| GATE 2 (T04) | oblique R² ≥ 0.90 × axis-aligned R², on an equal-`n` evaluation set with own-section retrieval excluded; held-out z ≥ 0.8 × neighbouring z; `w_z = 0` costs R² at fractional depths 0.2/0.8 but not 0.5; attention entropy > 0.5 log K | **PASSED** — oblique parity **0.941** (≥ 0.90), z-interpolation **1.097** (≥ 0.80), `w_z` ablation **+0.030** at 0.2 / **+0.049** at 0.8 vs **+0.003** at 0.5 (< 0.01), entropy **3.422** nats (> 1.733) | `reports/gate2.md` |
+| GATE 2 (T04) | oblique R² ≥ 0.90 × axis-aligned R², on an equal-`n` evaluation set with own-section retrieval excluded; held-out z ≥ 0.8 × neighbouring z; `w_z = 0` costs R² at fractional depths 0.2/0.8 but not 0.5; attention entropy > 0.5 log K | **FAILED on G2.1d.** Oblique parity **0.886** on a fixed denominator (< 0.90); 0.941 on the spec's per-set denominator, which is not comparable across angles. Everything else passes: z-interpolation **1.097** (≥ 0.80), `w_z` ablation **+0.030** at 0.2 / **+0.049** at 0.8 vs **+0.003** at 0.5 (< 0.01), entropy **3.422** nats (> 1.733). The failure is attributed to the evaluation contract, not the backbone — see SPEC_QUESTIONS C16 | `reports/gate2.md` |
 
 ## Open risks carried forward
 
@@ -89,7 +89,7 @@ made on evidence rather than taste. **Do not start T07 without settling it.**
 | Fitted `ell = (ℓx, ℓy, ℓz)` | T03 / T09 | gate fixture (3000 µm): **(102.9, 102.9, 561.1) µm** vs ground truth (120, 120, 200), i.e. ℓxy −14 %; 1000 µm fixture: (141.5, 141.5, 353) µm, +18 %. `ell_z` is extrapolated on both (the 400 µm stack reaches 35 % / 60 % of the fitted sill) and warns |
 | `I_gen(ell)` maximiser (bounds T09's calibration bracket) | T03 / T09 | **0.086 × in-plane extent** at 3000 µm FOV (2.52× the fitted `ell`), **0.112 ×** at 1000 µm (0.79× the fitted `ell`) |
 | GRF query throughput | T03 | **2.9 × 10⁵ points/s** (10⁶ points, M = 4096, d_h = 64) on the reference 4-core Xeon @ 2.10 GHz — 2.0–3.5 × 10⁵ across runs, the spread being machine load; 8× the points cost 6.6–9.7× the time (ideal 8, quadratic 64) |
-| Oblique parity ratio | T04 | **0.941** = min over 15°–90° of R² ÷ R²(0°), worst angle 30°. R² by angle 0.4169 / 0.4154 / 0.3922 / 0.3990 / 0.4067 / 0.4386 at 0/15/30/45/60/90°, equal `n` = 1011 per angle (seed 20260815), own source section excluded from retrieval at every angle, gate fixture, 3000 µm FOV. Not monotone in the angle — 90° is the best, the minimum is mid-sweep — so this is scatter, not a directional bias |
+| Oblique parity ratio | T04 | **Contested — do not quote until SPEC_QUESTIONS C16 is decided.** Three numbers, same probe: **0.941** on the spec's per-set denominator (not comparable across angles), **0.886** on a fixed denominator (the number a paper can quote; **fails** the 0.90 gate), **0.960** with the depth-mix confound also removed. Fixed-denominator R² by angle 0.4536 / 0.4152 / 0.4018 / 0.4125 / 0.4219 / 0.4386 at 0/15/30/45/60/90°, equal `n` = 1011 (seed 20260815), own source section excluded at every angle, gate fixture 3000 µm FOV |
 | Attention entropy ÷ log K | T04 / T06 | **0.987** (3.422 nats, K = 32). Passes G2.4's `> 0.5 log K` at the *opposite* extreme from collapse: the probe averages its donors rather than selecting among them. T06 should watch it fall |
 | Fitted repulsion `r0`, `R`, `gamma`; Potts `beta` | T05 | — |
 | Detection-rate r; gene–gene covariance vs independent-donor; mean–variance slope | T06 | — |
@@ -607,6 +607,12 @@ monotone in the angle. 90° is the **best** angle and the minimum sits mid-sweep
 sampling scatter across six 1011-cell subsets, not the steady 0° → 90° decay a directionally biased
 basis would produce. That decay is what the gate was written to catch and it is not there.
 
+> **SUPERSEDED by the T04 follow-ups entry below (same day).** 0.941 uses a *per-set* R² denominator,
+> which is not comparable across angles. On a fixed denominator the ratio is **0.886 and the gate
+> FAILS**. Do not quote 0.941. The "not monotone in the angle" reading above also does not survive:
+> on a fixed denominator the shape is monotone-ish and the whole of it is attributable to depth mix,
+> not to sampling scatter. See SPEC_QUESTIONS C16.
+
 `make check` green (ruff, `mypy --strict` on 11 files, **128 fast tests in 29 s**);
 `pytest -m gate` **9 passed in 6 min 26 s** (GATE 1's four, GATE 2's four, and the slow half of the
 own-section-exclusion pair).
@@ -685,3 +691,78 @@ in T10 must do the same.
   gap-aware dropout curriculum, whole-volume rotation augmentation via `RotationContext`, the
   multi-orientation ensemble, oblique parity ≥ 0.90, and the data-frame Fourier axis. Nothing in
   either design doc that T04 owns is missing from the matrix.
+
+### T04 follow-ups (2026-08-15) — **GATE 2 re-opened: G2.1 FAILS on a fixed denominator**
+
+Four review follow-ups. The first turned the gate verdict over.
+
+**1. Fixed-denominator R² (G2.1d, and it fails).** The per-set denominator makes
+`R²(θ)/R²(0°)` a ratio of two different questions: each angle's R² was taken about *its own* set's
+mean, and the sets differ in composition. `Fit` now stores the residuals and derives both:
+`r2_set` (the spec's formula) and `r2_fixed` (`1 − SSE/(n·V)` with `V` the per-cell target variance
+over all 121 500 training cells, shared by every angle). Also added for G2.2 as G2.2b.
+
+| | per-set denominator (G2.1a) | fixed denominator (G2.1d) |
+|---|---|---|
+| oblique parity ratio | 0.941 **PASS** | **0.886 FAIL** (required ≥ 0.90) |
+| R² by angle 0/15/30/45/60/90° | .4169 / .4154 / .3922 / .3990 / .4067 / .4386 | .4536 / .4152 / .4018 / .4125 / .4219 / .4386 |
+
+It moved materially, and it moved the verdict. **The number a paper can quote is 0.886, and it is
+below the gate.**
+
+**Where the gap comes from, measured.** Fixing one confound exposed a larger one. Under C1's
+membership rule a 0° plane through the centre selects **exactly one section** — the middle one, the
+best-supported depth — while every oblique plane draws ~23 % of its cells from the two **edge**
+sections. Per-section fixed R²: **0.284** (z = 0) and **0.366** (z = 400) against **0.414–0.471**
+for the interior; a cell at the top or bottom of the stack has evidence on one side only, which is a
+fact about depth, not angle. Predicting each angle's R² from its section mix alone, with the angle
+playing no part: 0.4179 / 0.4166 / 0.4163 / 0.4189 / 0.4188 at 15/30/45/60/90° — **flat to 0.0027**,
+and reproducing the measured values. Diagnostic **G2.1e** removes the confound by taking the 0° arm
+over the coronal planes at every section: ratio **0.960**.
+
+**specs/04's own remedy was run and did nothing.** Raising `n_plane_orientations` 4 → 8 (343 s vs
+215 s for the doubled parameter count) moves G2.1d by **+0.0009**: 0.8858 → 0.8867 (G2.1a
+0.9410 → 0.9419, G2.1e 0.9596 → 0.9601). If oblique parity were limited by the basis concentrating
+capacity on axis-aligned planes — the failure this gate exists to catch — that is exactly the
+intervention that should have moved it. Remedy 2 (augmentation reaches coords/planes/retrieval/GRF)
+is enforced by construction and tested.
+
+**Consequence: T04 is BLOCKED and T05 does not start.** The decision is `SPEC_QUESTIONS` **C16**:
+accept 0.886 and go to a steerable backbone, or amend C1 so the 0° arm is depth-representative and
+re-run at 0.960. I recommend the second and have **not** taken it — it is a change to a settled
+contract made after seeing the number it changes.
+
+**A second bug, found while running the remedy.** `gate2_probes` cached on
+`(id(vol), seed, steps)` and ignored `cfg`, so the first P = 4 vs P = 8 comparison silently returned
+the P = 4 probes for both arms and reported "no change" for a change that was never made — the
+remedy specs/04 mandates on failure would have been unrunnable, and would have looked like evidence.
+`Config` is frozen and hashes by value, so it is now part of the key. The P = 8 numbers above are
+from the fixed version.
+
+**2. `InertScoreWarning` — the candidate-pool invariant is about the union.**
+`Config.validate` enforces `retrieval_candidates_per_section >= retrieval_k`, which covers a single
+admissible section. It cannot cover the runtime case: what the top-K selects from is
+`candidates_per_section × n_admissible_sections`, and the section count is not a config field —
+`exclude_z`, the z window, the own-section exclusion and above all the **gap-aware dropout** shrink
+it per query, at inference, where the retrieval branch is load-bearing. `RetrievalIndex.query` now
+counts queries whose admissible union fell to `K` or below and warns once per call, naming every
+exclusion that could have caused it. Three tests: it fires when the union is exactly K, it does not
+fire on the default config, and `Config.validate` still rejects a cap below `retrieval_k`.
+
+**3. `specs/10` — ablation A5 must be run in the wide-gap regime.** Written into §4 with G2.3's
+measured table: two-flank pool **+0.0303 / +0.0034 / +0.0486** at fractional depths 0.2 / 0.5 / 0.8,
+whole stack **+0.0004 / +0.0034 / +0.0019** (inside the noise). With every section admissible the
+nearest one is always in the pool and in-plane distance alone already ranks it first, so a
+whole-stack A5 reports a **null result for a term that demonstrably works**. A5 is now required at
+`consecutive-3` / `consecutive-5`, `reports/benchmark.md` must state which regime each number came
+from, and **an A5 run that emits `InertScoreWarning` is void**.
+
+**4. `specs/06` — the attention must become selective, not merely avoid collapse.** New acceptance
+test `test_retrieval_attention_becomes_selective`. G2.4 is one-sided and T04 passed it at
+**0.987 × log K**, i.e. near-uniform averaging — safe and useless, and equivalent to a fixed kernel
+smoother. T06 must drive mean attention entropy **down by at least 0.05 × log K** while staying
+above the 0.5 log K collapse line, log it every epoch beside T07's per-gene-variance collapse alarm,
+and put the trajectory in `reports/benchmark.md`. Carried as open risk **R2**.
+
+`make check` green (ruff, `mypy --strict` on 11 files, **131 fast tests in 32 s**).
+`pytest -m gate` **8 passed, 1 failed** — `test_gate2_1_oblique_parity`, correctly, on G2.1d.

@@ -147,6 +147,21 @@ Also implement the trainer: AdamW, cosine schedule, gradient clipping at 1.0, EM
   reproduction, matches its donor-frequency distribution — see §4b).
 - `test_cross_mix_emits_real_counts` — every emitted value equals some donor's count for that gene;
   no value is a blend of two donors.
+- `test_retrieval_attention_becomes_selective` — **carried over from GATE 2 (T04), which could not
+  test it.** G2.4 requires mean attention entropy over the `K` retrieved donors to exceed
+  `0.5 log K`; it is a one-sided criterion, written to catch *collapse* onto a single donor. T04's
+  linear probe passed it at **0.987 × log K** — i.e. at the opposite extreme, near-uniform: the
+  attention was **averaging** its 32 donors, not selecting among them. Averaging is a safe default
+  and a useless one: it is what makes the retrieval branch equivalent to a fixed kernel smoother,
+  and it is the reason G2.4 alone cannot show the branch is load-bearing.
+
+  So T06's requirement is a *direction*, not a floor. With the flow-matching head trained, mean
+  attention entropy must move **DOWN** from T04's 0.987 × log K — record the number and assert a
+  fall of at least 0.05 × log K — while staying above the `0.5 log K` collapse line. Both bounds
+  matter and they are different failures: no movement means the head never learned that some donors
+  are better evidence than others, and a fall through 0.5 log K means it has collapsed to copying
+  its nearest neighbour and will fail on wide gaps. Log the value every epoch beside the collapse
+  alarm on per-gene variance (T07 §3), and put the trajectory in `reports/benchmark.md`.
 
 ## Definition of done
 

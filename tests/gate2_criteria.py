@@ -280,21 +280,92 @@ def predict(
     )
 
 
-def r_squared(prediction: npt.NDArray[np.float32], target: npt.NDArray[np.float32]) -> float:
-    """Variance-explained ``R^2`` pooled over the PC dimensions of one evaluation set.
+@dataclass(frozen=True)
+class Fit:
+    """One evaluation set's residuals, and the two ``R^2`` they support.
 
-    ``1 - SSE / SST`` with ``SST`` taken about the *evaluation set's own* mean, summed over
-    all ``expr_pca_dim`` targets. Pooled rather than averaged per component: a per-component
-    mean would let the many low-variance components, whose R^2 is noise, dominate the
-    headline number.
+    Two denominators, because they answer different questions and the difference is not
+    cosmetic when the sets differ in composition:
+
+    ``r2_set``
+        ``1 - SSE / SST`` with ``SST`` about the **evaluation set's own** mean. The natural
+        "how much of *this* set's variance is explained", and what the spec's
+        ``R^2(theta) / R^2(0 deg)`` reads as. But it is *not* comparable across angles: a
+        0 degree strip is a single section, whose target variance is entirely in-plane,
+        while a 90 degree strip spans the stack and carries the along-z variance as well.
+        The denominator moves with the angle, so a ratio of two of them is a ratio of two
+        different questions.
+    ``r2_fixed``
+        ``1 - SSE / (n * V)`` with ``V`` the per-cell target variance over **all** training
+        cells, fixed once and shared by every angle. The denominator is then a property of
+        the volume, not of the strip, so the ratio compares like with like: it is a
+        statement about the model's error per cell and nothing else.
+
+    Both are reported. ``r2_fixed`` is the one that belongs in the paper.
+    """
+
+    sse: float
+    """Residual sum of squares over the set, summed across all target dimensions."""
+    n: int
+    """Cells in the set."""
+    sst_set: float
+    """Total sum of squares about the set's own mean."""
+    fixed_variance: float
+    """``V``: per-cell target variance over all training cells."""
+
+    @property
+    def r2_set(self) -> float:
+        """``1 - SSE / SST``, denominator from this set. Not comparable across sets."""
+        return 1.0 - self.sse / self.sst_set if self.sst_set > 0.0 else float("nan")
+
+    @property
+    def r2_fixed(self) -> float:
+        """``1 - SSE / (n * V)``, denominator fixed over the whole volume. Comparable."""
+        total = self.n * self.fixed_variance
+        return 1.0 - self.sse / total if total > 0.0 else float("nan")
+
+
+def fit_residuals(
+    prediction: npt.NDArray[np.float32],
+    target: npt.NDArray[np.float32],
+    fixed_variance: float,
+) -> Fit:
+    """Store one evaluation set's residuals so both ``R^2`` can be derived from them.
+
+    Pooled over the PC dimensions rather than averaged per component: a per-component mean
+    would let the many low-variance components, whose R^2 is noise, dominate the headline
+    number.
     """
     if prediction.shape != target.shape:
-        raise ValueError(f"r_squared: shape mismatch {prediction.shape} vs {target.shape}")
+        raise ValueError(f"fit_residuals: shape mismatch {prediction.shape} vs {target.shape}")
     if prediction.shape[0] < 2:
-        return float("nan")
-    residual = float(((prediction - target) ** 2).sum())
-    total = float(((target - target.mean(axis=0, keepdims=True)) ** 2).sum())
-    return 1.0 - residual / total if total > 0.0 else float("nan")
+        raise ValueError("fit_residuals: an evaluation set needs at least 2 cells")
+    return Fit(
+        sse=float(((prediction - target) ** 2).sum()),
+        n=int(prediction.shape[0]),
+        sst_set=float(((target - target.mean(axis=0, keepdims=True)) ** 2).sum()),
+        fixed_variance=float(fixed_variance),
+    )
+
+
+def per_cell_variance(targets: npt.NDArray[np.float32]) -> float:
+    """``V``: the target variance per cell, summed over the PC dimensions, over all cells.
+
+    The fixed denominator every angle shares. Computed rather than assumed to be
+    ``expr_pca_dim``: the PC scores *are* standardised to unit variance by
+    ``ExpressionPCs``, so ``V`` comes out at the dimension count today, but a change to that
+    normalisation must move this number rather than silently invalidate the comparison.
+    """
+    return float(targets.var(axis=0).sum())
+
+
+def r_squared(prediction: npt.NDArray[np.float32], target: npt.NDArray[np.float32]) -> float:
+    """``R^2`` with the set's own mean as the denominator. ``Fit.r2_set``, standalone.
+
+    Kept for the within-set comparisons (G2.3's ablation arms, which are evaluated on
+    *identical* cells and so share a denominator by construction).
+    """
+    return fit_residuals(prediction, target, fixed_variance=1.0).r2_set
 
 
 # --------------------------------------------------------------------------------------
@@ -399,12 +470,19 @@ class Gate2Probes:
     """The depths of the two training sections flanking it."""
 
 
-_PROBE_CACHE: dict[tuple[int, int, int], Gate2Probes] = {}
+_PROBE_CACHE: dict[tuple[int, int, int, Config], Gate2Probes] = {}
 
 
 def gate2_probes(cfg: Config, vol: Volume, *, seed: int, steps: int = PROBE_STEPS) -> Gate2Probes:
-    """Train (or return the cached) probes for this volume and seed."""
-    key = (id(vol), int(seed), int(steps))
+    """Train (or return the cached) probes for this volume, seed, step budget **and config**.
+
+    ``cfg`` is part of the key, and that is not defensive: without it, comparing two configs
+    in one process — which is exactly what GATE 2's own failure remedy asks for, raising
+    ``n_plane_orientations`` 4 -> 8 and re-running — silently returns the first config's
+    probes for the second, and the comparison reports "no change" for a change that was never
+    made. ``Config`` is a frozen dataclass, so it hashes by value and this is exact.
+    """
+    key = (id(vol), int(seed), int(steps), cfg)
     cached = _PROBE_CACHE.get(key)
     if cached is not None:
         return cached
@@ -455,18 +533,25 @@ def measure_g2_1(cfg: Config, vol: Volume, *, seed: int, steps: int = PROBE_STEP
     probes = gate2_probes(cfg, vol, seed=seed, steps=steps)
     trained = probes.main
     sets = evaluation_sets(trained.index, vol, cfg)
+    variance = per_cell_variance(trained.targets)
 
-    scores: dict[float, float] = {}
+    fits: dict[float, Fit] = {}
     for angle, rows in sets.rows.items():
         prediction = predict(trained, trained.index.coords[rows], trained.neighbours[rows])
-        scores[angle] = r_squared(prediction, trained.targets[rows])
+        fits[angle] = fit_residuals(prediction, trained.targets[rows], variance)
 
+    scores = {a: f.r2_set for a, f in fits.items()}
+    fixed = {a: f.r2_fixed for a, f in fits.items()}
+    ratio, worst_angle = _parity(scores)
+    fixed_ratio, fixed_worst = _parity(fixed)
     baseline = scores[0.0]
-    oblique = {a: s for a, s in scores.items() if a != 0.0}
-    worst_angle = min(oblique, key=lambda a: oblique[a])
-    ratio = oblique[worst_angle] / baseline if baseline > 0 else float("nan")
+    # How far apart the per-set denominators of G2.1a actually are: the reason G2.1d exists.
+    per_cell_sst = [f.sst_set / f.n for f in fits.values()]
+    spread = max(per_cell_sst) / min(per_cell_sst)
 
     exclusion = measure_exclusion_effect(cfg, vol, seed=seed, steps=steps)
+    depth = measure_depth_mix(trained, sets, variance)
+    mean_edge_share = float(np.mean([v for a, v in depth.edge_share.items() if a != 0.0]))
     return GateSection(
         key="G2.1",
         title="Oblique parity (the gate)",
@@ -475,7 +560,8 @@ def measure_g2_1(cfg: Config, vol: Volume, *, seed: int, steps: int = PROBE_STEP
                 key="G2.1a",
                 description=(
                     "min over oblique angles of R^2, as a fraction of R^2 at 0 deg "
-                    f"(worst angle {worst_angle:g} deg), on {sets.common_n} cells per angle"
+                    f"(worst angle {worst_angle:g} deg), on {sets.common_n} cells per angle. "
+                    "Per-set denominator, i.e. the spec's ratio as literally written"
                 ),
                 measured=ratio,
                 threshold=OBLIQUE_PARITY_THRESHOLD,
@@ -485,6 +571,31 @@ def measure_g2_1(cfg: Config, vol: Volume, *, seed: int, steps: int = PROBE_STEP
                     + ", ".join(f"{a:g} deg {scores[a]:.4f}" for a in ANGLES_DEG)
                     + "; pre-subsample n: "
                     + ", ".join(f"{a:g} deg {sets.pre_subsample_n[a]}" for a in ANGLES_DEG)
+                    + ". Each angle's denominator is its own set's variance, which is not the "
+                    "same quantity across angles — see G2.1d, which is the number to quote"
+                ),
+            ),
+            Criterion(
+                key="G2.1d",
+                description=(
+                    "the same ratio with a **fixed** denominator: the per-cell target "
+                    f"variance over all {trained.index.n_cells} training cells "
+                    f"(V = {variance:.4f}), shared by every angle "
+                    f"(worst angle {fixed_worst:g} deg). **This is the number for the paper**"
+                ),
+                measured=fixed_ratio,
+                threshold=OBLIQUE_PARITY_THRESHOLD,
+                comparison=">=",
+                note=(
+                    "R^2 by angle: "
+                    + ", ".join(f"{a:g} deg {fixed[a]:.4f}" for a in ANGLES_DEG)
+                    + ". A 0 deg strip is one section and carries only in-plane target "
+                    "variance; a 90 deg strip spans the stack and carries the along-z "
+                    "variance too, so the per-set denominators of G2.1a differ by "
+                    f"{spread:.2f}x "
+                    "across angles and the ratio of two of them is a ratio of two different "
+                    "questions. Fixing the denominator makes the comparison a statement "
+                    "about the model's error per cell and nothing else"
                 ),
             ),
             Criterion(
@@ -499,6 +610,38 @@ def measure_g2_1(cfg: Config, vol: Volume, *, seed: int, steps: int = PROBE_STEP
                     f"excluded from retrieval at every angle "
                     f"(Config.retrieval_exclude_source_section="
                     f"{cfg.retrieval_exclude_source_section})"
+                ),
+            ),
+            Criterion(
+                key="G2.1e",
+                description=(
+                    "diagnostic: the same fixed-denominator ratio with the **depth-mix "
+                    "confound removed** — the 0 deg arm taken over the coronal planes at "
+                    "every section rather than the single central one, so both sides of the "
+                    "ratio are depth-representative"
+                ),
+                measured=(
+                    min(v for a, v in fixed.items() if a != 0.0) / depth.coronal_pooled
+                    if depth.coronal_pooled > 0
+                    else float("nan")
+                ),
+                threshold=None,
+                comparison="report",
+                note=(
+                    "per-section R^2: "
+                    + ", ".join(
+                        f"z={depth.section_z[s]:.0f} um {depth.per_section[s]:.4f}"
+                        for s in sorted(depth.per_section)
+                    )
+                    + ". The two EDGE sections are the outliers, and every oblique angle "
+                    f"draws ~{100 * mean_edge_share:.0f}% "
+                    "of its cells from them while the 0 deg set draws none — it is one "
+                    "interior section. R^2 predicted from section mix alone, ignoring the "
+                    "angle entirely: "
+                    + ", ".join(f"{a:g} deg {depth.predicted[a]:.4f}" for a in ANGLES_DEG)
+                    + " — flat across every oblique angle and reproducing the measured values, "
+                    "which is what says the angle dependence is depth mix and not direction. "
+                    f"Depth-representative 0 deg arm: {depth.coronal_pooled:.4f}"
                 ),
             ),
             Criterion(
@@ -520,13 +663,89 @@ def measure_g2_1(cfg: Config, vol: Volume, *, seed: int, steps: int = PROBE_STEP
         ],
         artifacts={
             "r2": scores,
+            "r2_fixed": fixed,
+            "fits": fits,
+            "fixed_variance": variance,
+            "n_train_cells": trained.index.n_cells,
             "sets": sets,
             "worst_angle": worst_angle,
             "ratio": ratio,
+            "fixed_worst_angle": fixed_worst,
+            "fixed_ratio": fixed_ratio,
             "exclusion": exclusion,
+            "depth": depth,
             "losses": trained.losses,
         },
     )
+
+
+@dataclass(frozen=True)
+class DepthMix:
+    """How much of the angle dependence is depth mix rather than angle.
+
+    The confound this measures is structural, not statistical, and it was invisible until
+    G2.1's denominator was fixed. Under the C1 membership rule a 0 degree query plane through
+    the volume's centre selects **exactly one section** — the middle one — while every
+    oblique plane draws roughly a fifth of its cells from the two *edge* sections, which have
+    training and retrieval evidence on one side only and are reconstructed markedly worse for
+    that reason alone. So `R^2(theta) / R^2(0 deg)` compares "the best-supported depth in the
+    stack" against "a depth-representative sample", and part of what it reports is the depth
+    mix rather than the angle.
+    """
+
+    per_section: dict[int, float]
+    """section index -> fixed-denominator R^2 over all of that section's cells."""
+    section_z: dict[int, float]
+    """section index -> depth in micrometres."""
+    edge_share: dict[float, float]
+    """angle -> fraction of its evaluation set drawn from the two edge sections."""
+    predicted: dict[float, float]
+    """angle -> R^2 predicted from its section mix alone, ignoring the angle entirely."""
+    coronal_pooled: float
+    """R^2 of a depth-representative 0 degree arm: the coronal planes at *every* section,
+    pooled with equal counts, instead of the single central one."""
+
+
+def measure_depth_mix(trained: TrainedProbe, sets: EvaluationSets, variance: float) -> DepthMix:
+    """Attribute the angle dependence to section mix. Costs one pass over the sections."""
+    index = trained.index
+    per_section: dict[int, float] = {}
+    for s in range(index.n_sections):
+        rows = np.nonzero(index.section_index == s)[0].astype(np.intp)
+        per_section[s] = fit_residuals(
+            predict(trained, index.coords[rows], trained.neighbours[rows]),
+            trained.targets[rows],
+            variance,
+        ).r2_fixed
+
+    edge = {0, index.n_sections - 1}
+    edge_share: dict[float, float] = {}
+    predicted: dict[float, float] = {}
+    for angle, rows in sets.rows.items():
+        counts = np.bincount(index.section_index[rows], minlength=index.n_sections)
+        share = counts / max(counts.sum(), 1)
+        edge_share[angle] = float(sum(share[s] for s in edge))
+        predicted[angle] = float(sum(share[s] * per_section[s] for s in range(index.n_sections)))
+
+    # A depth-representative 0 degree arm: every section contributes equally, which is what
+    # the oblique arms already do. R^2_fixed is linear in the residual sum, so pooling
+    # equal-sized per-section draws is exactly the mean of the per-section values.
+    coronal_pooled = float(np.mean(list(per_section.values())))
+    return DepthMix(
+        per_section=per_section,
+        section_z={s: float(index.section_z[s]) for s in range(index.n_sections)},
+        edge_share=edge_share,
+        predicted=predicted,
+        coronal_pooled=coronal_pooled,
+    )
+
+
+def _parity(scores: dict[float, float]) -> tuple[float, float]:
+    """``(min over oblique angles / value at 0 deg, the worst angle)``."""
+    baseline = scores[0.0]
+    oblique = {a: s for a, s in scores.items() if a != 0.0}
+    worst = min(oblique, key=lambda a: oblique[a])
+    return (oblique[worst] / baseline if baseline > 0 else float("nan")), worst
 
 
 def measure_exclusion_effect(
@@ -582,21 +801,30 @@ def measure_g2_2(cfg: Config, vol: Volume, *, seed: int, steps: int = PROBE_STEP
     held_xyz = np.concatenate(
         [np.asarray(held.coords, dtype=np.float64), np.full((held.n_cells, 1), held.z)], axis=1
     )
+    variance = per_cell_variance(trained.targets)
     held_targets = trained.index.expression_pcs.project(held.counts)
     held_idx, _ = trained.index.query(held_xyz, set(), seed=_seed_for(seed, 30))
-    held_r2 = r_squared(predict(trained, held_xyz, held_idx), held_targets)
+    held_fit = fit_residuals(predict(trained, held_xyz, held_idx), held_targets, variance)
 
-    neighbour_r2: dict[float, float] = {}
+    neighbour_fits: dict[float, Fit] = {}
     for z in probes.holdout_neighbour_z:
         rows = np.nonzero(np.abs(trained.index.section_z[trained.index.section_index] - z) < 1e-6)[
             0
         ].astype(np.intp)
-        neighbour_r2[float(z)] = r_squared(
+        neighbour_fits[float(z)] = fit_residuals(
             predict(trained, trained.index.coords[rows], trained.neighbours[rows]),
             trained.targets[rows],
+            variance,
         )
+    held_r2 = held_fit.r2_set
+    neighbour_r2 = {z: f.r2_set for z, f in neighbour_fits.items()}
     mean_neighbour = float(np.mean(list(neighbour_r2.values())))
     ratio = held_r2 / mean_neighbour if mean_neighbour > 0 else float("nan")
+
+    mean_neighbour_fixed = float(np.mean([f.r2_fixed for f in neighbour_fits.values()]))
+    fixed_ratio = (
+        held_fit.r2_fixed / mean_neighbour_fixed if mean_neighbour_fixed > 0 else float("nan")
+    )
 
     return GateSection(
         key="G2.2",
@@ -618,13 +846,34 @@ def measure_g2_2(cfg: Config, vol: Volume, *, seed: int, steps: int = PROBE_STEP
                     "its own section is excluded from retrieval for the neighbouring z too, "
                     "so both sides face the same evidence gap"
                 ),
-            )
+            ),
+            Criterion(
+                key="G2.2b",
+                description=(
+                    "the same ratio with the **fixed** denominator (per-cell target variance "
+                    f"over all training cells, V = {variance:.4f})"
+                ),
+                measured=fixed_ratio,
+                threshold=Z_INTERPOLATION_THRESHOLD,
+                comparison=">=",
+                note=(
+                    f"held-out {held_fit.r2_fixed:.4f} vs "
+                    + ", ".join(f"z={z:g} um {f.r2_fixed:.4f}" for z, f in neighbour_fits.items())
+                    + ". The three sets here are whole sections of one volume, so their own "
+                    "variances are close and the two denominators barely differ — unlike "
+                    "G2.1, where the strips have genuinely different composition"
+                ),
+            ),
         ],
         artifacts={
             "held_r2": held_r2,
+            "held_fit": held_fit,
             "neighbour_r2": neighbour_r2,
+            "neighbour_fits": neighbour_fits,
             "held_z": float(held.z),
             "ratio": ratio,
+            "fixed_ratio": fixed_ratio,
+            "fixed_variance": variance,
         },
     )
 

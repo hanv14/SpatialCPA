@@ -25,6 +25,7 @@ from spatialcpav25_gen.data.schema import HeldOutSections, Volume
 from spatialcpav25_gen.model.retrieval import (
     PAD_INDEX,
     EmptyCandidatePoolWarning,
+    InertScoreWarning,
     RetrievalAttention,
     RetrievalIndex,
     attention_entropy,
@@ -451,3 +452,46 @@ def test_source_section_exclusion_changes_oblique_R2(  # noqa: N802 - the spec n
         "own-section neighbour a few micrometres away is a near-copy of the query cell. No "
         "change means the exclusion is not reaching the candidate filter."
     )
+
+
+def test_inert_score_warns_when_the_union_is_no_larger_than_k(
+    cfg: Config, volume: Volume, query_cells: tuple[np.ndarray, np.ndarray]
+) -> None:
+    """The invariant is about the candidate **union**, not the per-section cap.
+
+    ``Config.validate`` enforces ``candidates_per_section >= retrieval_k``, which covers a
+    single admissible section. It cannot cover the runtime case: ``exclude_z``, the z window
+    and — the one that bites at inference — the gap-aware dropout all shrink the number of
+    admissible sections per query. When the union falls to K, the top-K returns the whole
+    pool and the three-term score decides nothing, silently.
+    """
+    xyz, owner = query_cells
+    # One admissible section either side, at exactly retrieval_k / 2 candidates each.
+    narrow = RetrievalIndex(
+        volume,
+        cfg.replace(
+            retrieval_z_window=1.2,
+            retrieval_k=32,
+            retrieval_candidates_per_section=32,
+        ),
+    )
+    with pytest.warns(InertScoreWarning, match="the retrieval score decided nothing"):
+        narrow.query(xyz, set(), seed=0, source_section=owner)
+
+
+def test_no_inert_warning_when_the_pool_is_large_enough(
+    index: RetrievalIndex, query_cells: tuple[np.ndarray, np.ndarray]
+) -> None:
+    import warnings as _warnings
+
+    xyz, owner = query_cells
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error", InertScoreWarning)
+        index.query(xyz, set(), seed=0, source_section=owner)
+
+
+def test_config_rejects_a_candidate_cap_below_k() -> None:
+    from spatialcpav25_gen.config import ConfigError
+
+    with pytest.raises(ConfigError, match="retrieval_candidates_per_section"):
+        Config().replace(retrieval_candidates_per_section=16, retrieval_k=32)

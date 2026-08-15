@@ -24,6 +24,7 @@ from spatialcpav25_gen.model.noise import (
 )
 from spatialcpav25_gen.model.retrieval import (
     EmptyCandidatePoolWarning,
+    InertScoreWarning,
     RetrievalAttention,
     RetrievalIndex,
     attention_entropy,
@@ -34,6 +35,7 @@ __all__ = [
     "EmptyCandidatePoolWarning",
     "EntityEmbeddings",
     "GaussianRandomField",
+    "InertScoreWarning",
     "LengthscaleFit",
     "RetrievalAttention",
     "RetrievalIndex",

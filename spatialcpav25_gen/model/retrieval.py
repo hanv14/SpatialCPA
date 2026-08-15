@@ -61,6 +61,7 @@ from spatialcpav25_gen.data.schema import Volume, to_xyz
 __all__ = [
     "EmptyCandidatePoolWarning",
     "ExpressionPCs",
+    "InertScoreWarning",
     "RetrievalAttention",
     "RetrievalIndex",
     "attention_entropy",
@@ -79,6 +80,25 @@ _Z_MATCH_FRAC = 1e-3
 spacing. Exact float equality on a depth that has been through a float32 coordinate array
 and back would silently fail to exclude the section it names, which is a leak, not a
 rounding detail."""
+
+
+class InertScoreWarning(UserWarning):
+    """The candidate pool was no larger than K, so the retrieval score chose nothing.
+
+    The invariant that makes the score meaningful is about the **union** of candidates, not
+    the per-section cap: ``retrieval_candidates_per_section`` bounds each admissible
+    section's contribution, but what the top-K actually selects from is
+    ``candidates_per_section x n_admissible_sections``. When that product falls to ``K`` or
+    below, the top-K takes the whole pool and the three-term score — in-plane distance, z
+    proximity, niche similarity — has no effect whatsoever on which donors are returned.
+
+    ``Config.validate`` enforces ``retrieval_candidates_per_section >= retrieval_k``, which
+    guarantees the invariant for a *single* admissible section. It cannot guarantee it at
+    runtime, because the number of admissible sections is not a config field: ``exclude_z``,
+    the z window, the own-section exclusion and — especially — the gap-aware section dropout
+    all shrink it per query, and dropout does so *at inference*, which is where the retrieval
+    branch is load-bearing. Hence a warning rather than a validation rule.
+    """
 
 
 class EmptyCandidatePoolWarning(UserWarning):
@@ -318,10 +338,11 @@ class RetrievalIndex:
         out_idx = np.full((n, k), PAD_INDEX, dtype=np.intp)
         out_weights = np.zeros((n, k), dtype=np.float64)
         empty = 0
+        inert = 0
         chunk = int(self.cfg.retrieval_query_chunk)
         for start in range(0, n, chunk):
             stop = min(start + chunk, n)
-            block_idx, block_weights, block_empty = self._query_chunk(
+            block_idx, block_weights, block_empty, block_inert = self._query_chunk(
                 points[start:stop],
                 section_allowed,
                 owner[start:stop],
@@ -332,6 +353,25 @@ class RetrievalIndex:
             out_idx[start:stop] = block_idx
             out_weights[start:stop] = block_weights
             empty += block_empty
+            inert += block_inert
+
+        if inert:
+            warnings.warn(
+                f"RetrievalIndex.query: {inert} of {n} query point(s) had a candidate union of "
+                f"at most Config.retrieval_k={k} cells, so the top-K returned the whole pool "
+                "and the retrieval score decided nothing for them (specimen "
+                f"{self.specimen_id!r}). The invariant is about the union — "
+                f"retrieval_candidates_per_section={self.cfg.retrieval_candidates_per_section} "
+                f"x the number of admissible sections — not the per-section cap, and the "
+                f"number of admissible sections shrinks with exclude_z ({len(exclude_z)} "
+                f"excluded), the z window ({self.cfg.retrieval_z_window} x "
+                f"{self.median_spacing:g} um), the own-section exclusion "
+                f"({self.cfg.retrieval_exclude_source_section}) and the gap-aware dropout "
+                f"(applied: {apply_dropout}). Raise retrieval_candidates_per_section or widen "
+                "retrieval_z_window: the z-proximity term is inert for these queries.",
+                InertScoreWarning,
+                stacklevel=2,
+            )
 
         if empty:
             warnings.warn(
@@ -357,8 +397,13 @@ class RetrievalIndex:
         seed: int,
         offset: int,
         apply_dropout: bool,
-    ) -> tuple[IntArray, FloatArray, int]:
-        """Score and rank one chunk of queries. Returns ``(idx, weights, n_empty)``."""
+    ) -> tuple[IntArray, FloatArray, int, int]:
+        """Score and rank one chunk of queries.
+
+        Returns ``(idx, weights, n_empty, n_inert)`` — the last being the number of queries
+        whose admissible candidate union was no larger than ``K``, so the top-K selected all
+        of it and the score decided nothing (:class:`InertScoreWarning`).
+        """
         n = points.shape[0]
         k = int(self.cfg.retrieval_k)
         per_section = int(self.cfg.retrieval_candidates_per_section)
@@ -396,7 +441,13 @@ class RetrievalIndex:
         idx[:, :take] = np.where(keep, best_idx, PAD_INDEX)
         weights = np.zeros((n, k), dtype=np.float64)
         weights[:, :take] = _masked_softmax(best_score, keep, self.cfg.retrieval_score_temperature)
-        return idx, weights, int((~keep.any(axis=1)).sum())
+        pool = valid.sum(axis=1)
+        return (
+            idx,
+            weights,
+            int((~keep.any(axis=1)).sum()),
+            int(((pool > 0) & (pool <= k)).sum()),
+        )
 
     def _gather_candidates(
         self,

@@ -393,6 +393,54 @@ would mean something different for a 200-gene and a 20 000-gene panel. *Proposal
 **mean** over entities and components, so the weight transfers across panels. Revisit at T06 if the
 term turns out to be too weak at `w_distill=0.1`.
 
+### C16. GATE 2's 0° arm is one section, and it is the best-supported one — **OPEN, blocks T05** (raised in T04)
+
+C1 settled the evaluation set: pooled cells within `thickness/2` of the query plane, equal `n` across
+angles, own source section excluded from retrieval. Two defects surfaced only once the R² denominator
+was fixed (see below); the first is now fixed, the second needs a decision.
+
+**Defect 1 — the denominator (fixed).** C1 made `n` comparable but not the *denominator*.
+`R²(θ)/R²(0°)` with each angle's R² taken about its own set's mean is a ratio of two different
+questions: a 0° strip is one section, whose target variance is entirely in-plane, while a 90° strip
+spans the stack. Measured, the per-cell denominators differ by 1.07× across the six angles. **Fixed
+at T04**: G2.1d divides by the per-cell target variance over *all* training cells, shared by every
+angle. Both numbers are reported. The verdict changes: 0.941 per-set → **0.886 fixed**, against a
+required 0.90.
+
+**Defect 2 — the depth mix (OPEN).** Under C1's membership rule a 0° plane through the volume's
+centre selects **exactly one section**, the middle one — which is the *best-supported depth in the
+stack* — while every oblique plane draws ~23% of its cells from the two **edge** sections, which have
+training and retrieval evidence on one side only. Measured per-section fixed R²: edges **0.284** and
+**0.366**, interior **0.414–0.471**. Predicting each angle's R² from its section mix alone, with the
+angle playing no part, gives 0.4179 / 0.4166 / 0.4163 / 0.4189 / 0.4188 at 15/30/45/60/90° — flat to
+0.0027, and reproducing the measured values. **The angle dependence in G2.1d is depth mix.**
+
+Corroborating evidence that it is not the backbone: specs/04's own first remedy, raising
+`n_plane_orientations` 4 → 8, moves the gate number by **+0.0009** (0.8858 → 0.8867). If oblique
+parity were limited by the basis concentrating capacity on axis-aligned planes — the failure GATE 2
+exists to catch — that is exactly the intervention that should have moved it.
+
+*Two readings, and the choice changes the number the paper quotes:*
+
+1. **Accept 0.886 as the verdict.** GATE 2 has failed and the next step is specs/04's remedy 3, a
+   steerable/equivariant backbone — a design change. The P = 8 null result and the mix attribution
+   both argue against this reading.
+2. **Amend C1 so the 0° arm is depth-representative** — pooled over the coronal planes at *every*
+   section rather than the single central one — and re-run. That is diagnostic G2.1e, which reads
+   **0.960**. Defensible on C1's own terms (C1 exists to stop the ratio measuring sample size; this
+   is the same defect one level down, measuring depth support), but it is a change to a settled
+   contract made *after* seeing the number it changes, so it has to be a decision on the record.
+
+*Recommendation:* **2**, with the amendment dated here and **both** numbers (0.886 single-plane,
+0.960 depth-matched) reported in the paper. Not adopted unilaterally: T04 stops at the failed gate,
+per specs/04's "Do NOT proceed to T05 without G2.1 passing".
+
+*A third option worth pricing if 2 is rejected:* keep C1's single-plane 0° arm and **drop the edge
+sections from every angle's evaluation set**. That equalises support rather than the mix, costs ~22%
+of the oblique `n` (the common `n` would fall from 1011 to ~780, still above
+`Config.gate2_min_cells_per_angle = 500`), and has the merit of removing the confound at source
+rather than averaging over it.
+
 ## D. In the design docs but missing from `specs/11_COVERAGE_MATRIX.md` — **all five settled 2026-08-15**
 
 The matrix says an unmapped design component is an omission to be flagged. These were the ones I
