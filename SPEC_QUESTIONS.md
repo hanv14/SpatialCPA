@@ -420,26 +420,55 @@ Corroborating evidence that it is not the backbone: specs/04's own first remedy,
 parity were limited by the basis concentrating capacity on axis-aligned planes — the failure GATE 2
 exists to catch — that is exactly the intervention that should have moved it.
 
-*Two readings, and the choice changes the number the paper quotes:*
+**specs/04's escalation was run in full, and it is exhausted.**
 
-1. **Accept 0.886 as the verdict.** GATE 2 has failed and the next step is specs/04's remedy 3, a
-   steerable/equivariant backbone — a design change. The P = 8 null result and the mix attribution
-   both argue against this reading.
-2. **Amend C1 so the 0° arm is depth-representative** — pooled over the coronal planes at *every*
-   section rather than the single central one — and re-run. That is diagnostic G2.1e, which reads
-   **0.960**. Defensible on C1's own terms (C1 exists to stop the ratio measuring sample size; this
-   is the same defect one level down, measuring depth support), but it is a change to a settled
-   contract made *after* seeing the number it changes, so it has to be a decision on the record.
+| Escalation step | Result |
+|---|---|
+| 1. `n_plane_orientations` 4 → 8, criterion unchanged | **0.8867** — still below 0.90; the intervention moved the gate number by **+0.0009** |
+| 2. Augmentation reaches coords / planes / retrieval / GRF | **Verified by mutation.** Leaving each channel un-rotated in turn changes the result: coords 0.0117 per field feature, GRF 1.121 per noise channel, retrieval 40.3 of K = 32 neighbours, plane normals 0.890. All four are wired |
+| 2b. "A full forward pass is equivariant" | **0.0078**, i.e. **0.78 %** of the target spread, across 16 random poses with the rotation bound to the field. Cannot be 0 by construction (B5); under 1 % is what a working augmentation looks like |
+| 3. Steerable backbone | **Not applied.** A design decision for the spec's owner |
 
-*Recommendation:* **2**, with the amendment dated here and **both** numbers (0.886 single-plane,
-0.960 depth-matched) reported in the paper. Not adopted unilaterally: T04 stops at the failed gate,
-per specs/04's "Do NOT proceed to T05 without G2.1 passing".
+**Two further defects in the measurement, both found while running the escalation.**
 
-*A third option worth pricing if 2 is rejected:* keep C1's single-plane 0° arm and **drop the edge
-sections from every angle's evaluation set**. That equalises support rather than the mix, costs ~22%
-of the oblique `n` (the common `n` would fall from 1011 to ~780, still above
-`Config.gate2_min_cells_per_angle = 500`), and has the merit of removing the confound at source
-rather than averaging over it.
+*The nine coronal arms do not cluster* (the test that could have rejected the depth-mix
+account): 0.2912 / 0.4234 / 0.4364 / 0.4280 / 0.4567 / 0.4532 / 0.4625 / 0.4715 / 0.3642, spread
+**0.180**. But the shape matters as much as the range — the *interior* seven span 0.4234–0.4715
+(spread 0.0481, just inside the 0.05 that would have counted as tight), and the whole spread is the
+two edge sections. GATE 2's central arm is 0.4567 against a nine-arm mean of 0.4208: the
+single-plane baseline **flatters the denominator by 8.5 %**, and against the mean the worst oblique
+angle reads **0.9547**.
+
+*The criterion cannot resolve the shortfall at this `n`.* Re-drawing the equal-`n` evaluation sets
+12 times with the probe untouched gives a ratio of **0.8971 ± 0.0168**, range 0.8718–0.9248, with
+**6 of 12 draws below 0.90**. The shortfall being judged is 0.0029 against a draw-to-draw σ of
+0.0168. `n = 1011` is set by the 90° strip, which is *every cell it has* rather than a subsample, so
+this is a property of the fixture's slab thickness, not of the seed.
+
+The residual U among the oblique angles (0.021 after stratifying by section and a 6×6 in-plane grid;
+an in-plane distance-to-boundary stratification was tried first and rejected, moving it by 0.0008)
+is the same size as the per-angle draw noise (σ up to 0.0075), so it is not evidence of a
+directional mechanism either.
+
+*Three readings, and the choice changes the number the paper quotes:*
+
+1. **Accept 0.886 and escalate to a steerable backbone** — specs/04's literal instruction once
+   remedies 1 and 2 are exhausted, which they now are. Against it: remedies 1 and 2 came back
+   negative, i.e. neither mechanism the gate was written to catch is present.
+2. **Thicken the fixture's slabs and re-run.** C1 already names slab thickening as the response
+   when the evaluation set is too small; here `n` clears the floor but not the *resolution* the
+   criterion needs. It raises `n` at every angle, touches no contract, and is the only option that
+   makes the criterion able to answer the question it asks. **Cheapest, and it is not a redefinition
+   of the criterion.**
+3. **Amend C1 so the 0° arm is depth-representative** — pooled over the coronal planes at every
+   section — and re-run, giving **0.955**. Defensible on C1's own terms, but it is a change to a
+   settled contract made after seeing the number it changes.
+
+*Recommendation:* **2 first, then re-read the gate.** It is the only option that removes a defect
+without either redefining the criterion or committing to a large design change; and if the ratio is
+still below 0.90 at a resolution that can distinguish it, that is a real result and reading 1
+follows on evidence. **Not adopted unilaterally — T04 stops at the failed gate**, per specs/04's
+"Do NOT proceed to T05 without G2.1 passing", and `Config.gate2_min_cells_per_angle` is untouched.
 
 ## D. In the design docs but missing from `specs/11_COVERAGE_MATRIX.md` — **all five settled 2026-08-15**
 

@@ -11,7 +11,7 @@ Status values: `TODO` | `IN PROGRESS` | `BLOCKED` | `DONE`.
 | T01 | Config and data contracts | `specs/01_TASK_config_and_data.md` | `config.py`, `data/schema.py`, `data/loaders.py`, synthetic fixture | — | DONE |
 | T02 | Text-grounded embeddings | `specs/02_TASK_text_embeddings.md` | `data/text.py`, `model/embeddings.py`, MedCPT cache, distillation head | — | DONE |
 | T03 | 3D GRF noise field | `specs/03_TASK_noise_field_GATE1.md` | `model/noise.py`, `scripts/gate1_report.py`, `reports/gate1.md` | **GATE 1** | DONE — **GATE 1 passes** on the 3000 µm gate fixture |
-| T04 | Anatomical field + retrieval | `specs/04_TASK_field_and_retrieval_GATE2.md` | `model/field.py`, `model/retrieval.py`, `scripts/gate2_report.py`, `reports/gate2.md` | **GATE 2** | **BLOCKED** — code complete, **GATE 2 fails on G2.1d** (fixed-denominator oblique parity **0.886** < 0.90). Awaiting the SPEC_QUESTIONS C16 decision; **T05 does not start** |
+| T04 | Anatomical field + retrieval | `specs/04_TASK_field_and_retrieval_GATE2.md` | `model/field.py`, `model/retrieval.py`, `scripts/gate2_report.py`, `reports/gate2.md` | **GATE 2** | **BLOCKED — escalation exhausted.** Code complete; **GATE 2 fails on G2.1d** (fixed-denominator oblique parity **0.8858**, **0.8867** at 8 orientations). specs/04's remedies 1 and 2 both came back negative; remedy 3 (steerable backbone) is a design decision, not applied. **T05 does not start** — SPEC_QUESTIONS C16 |
 | T05 | Layout head | `specs/05_TASK_layout_head.md` | `model/layout.py`, intensity + Strauss sampler + Potts marks | — | TODO |
 | T06 | Expression head + ZINB decoder | `specs/06_TASK_expression_head.md` | `model/expression.py`, `model/spatialcpav25_gen.py`, `losses/reconstruction.py` | — | TODO |
 | T07 | SEFL consistency losses | `specs/07_TASK_sefl_losses.md` | `losses/sefl.py`, `infer/planes.py`, EMA teacher, collapse alarm | — | TODO |
@@ -763,6 +763,92 @@ test `test_retrieval_attention_becomes_selective`. G2.4 is one-sided and T04 pas
 smoother. T06 must drive mean attention entropy **down by at least 0.05 × log K** while staying
 above the 0.5 log K collapse line, log it every epoch beside T07's per-gene-variance collapse alarm,
 and put the trajectory in `reports/benchmark.md`. Carried as open risk **R2**.
+
+`make check` green (ruff, `mypy --strict` on 11 files, **131 fast tests in 32 s**).
+`pytest -m gate` **8 passed, 1 failed** — `test_gate2_1_oblique_parity`, correctly, on G2.1d.
+
+### T04 escalation (2026-08-15) — specs/04's remedies run in full; **GATE 2 still fails**
+
+Four steps, in the order specs/04 prescribes on a G2.1 failure. The criterion was **not**
+redefined: G2.1d is measured unchanged throughout.
+
+**1. `n_plane_orientations` 4 → 8.** G2.1d = **0.8867**, still below 0.90; the doubled
+orientation ensemble moved the gate number by **+0.00086** (G2.1a 0.9410 → 0.9419). This is the
+direct test of the directional-capacity hypothesis the U-shaped profile suggests, and it is
+negative.
+
+**2. Augmentation completeness — verified by mutation, not by assertion.** A channel whose omission
+changes nothing is a channel that is not wired, and an invariance assertion cannot detect that.
+Leaving each channel un-rotated in turn:
+
+| channel left un-rotated | effect |
+|---|---|
+| coords | 0.0117 mean \|Δ\| per field feature |
+| GRF query points | 1.1207 mean \|Δ\| per noise channel |
+| retrieval neighbourhoods | **40.3 of K = 32** neighbours change per cell |
+| plane normals | 0.8899 max component change |
+
+All four register: the rotation reaches everything. And it **achieved** what it exists for — the
+trained probe's prediction for a fixed cell varies by **0.0078**, i.e. **0.78 %** of the target
+spread, across 16 random poses with the rotation bound to the field. That is the spec's "a full
+forward pass is equivariant … (approximately) the same result", answered with a number; it cannot be
+0 by construction (SPEC_QUESTIONS B5).
+
+*The first version of this measurement had the very bug it exists to catch*: it compared an
+**unbound** field against model-frame coordinates, so the field read them as data-frame positions,
+judged 85 % of them outside the bbox and clamped. It reported a coords effect of 0.086 against the
+correct 0.0117 and a pose spread of 0.070 against 0.0078 — an order of magnitude. Fixed before the
+numbers above were taken.
+
+**3. R² for the coronal plane at each of the nine sections**, each at the common `n` = 1011:
+
+| section z (µm) | 0 | 50 | 100 | 150 | 200 | 250 | 300 | 350 | 400 |
+|---|---|---|---|---|---|---|---|---|---|
+| coronal arm R² | **0.2912** | 0.4234 | 0.4364 | 0.4280 | 0.4567 | 0.4532 | 0.4625 | 0.4715 | **0.3642** |
+
+They **do not** cluster: spread **0.180**, against the 0.05 fixed in advance as the level that would
+have *rejected* the depth-mix account and left 0.8858 standing alone. But the shape matters as much
+as the range — the interior seven span 0.4234–0.4715 (spread **0.0481**, just inside that same 0.05)
+and the whole spread is the two **edge** sections. GATE 2's own 0° arm is the central section,
+0.4567, against a nine-arm mean of 0.4208: the single-plane baseline **flatters the denominator by
+8.5 %**, and against the mean the worst oblique angle reads **0.9547**. A finding, not a substitute
+criterion.
+
+**4. The profile is U-shaped, and what that implies.** Fixed-denominator R² by angle: 0° 0.4536,
+15° 0.4152, 30° **0.4018**, 45° 0.4125, 60° 0.4219, 90° 0.4386 — highest at 0°, minimum at 30°,
+recovering monotonically to 90°, which is the *second best* angle. The two candidate mechanisms make
+opposite predictions and the shape discriminates between them:
+
+* **A triplane basis** concentrating capacity on axis-aligned planes would be worst at intermediate
+  angles and better at both ends (0° carried by XY, 90° by XZ/YZ, 30–45° by neither). **The observed
+  U is superficially exactly this signature** — which is why step 1 had to be run rather than argued
+  about. It came back at +0.0009.
+* **Depth mix** predicts the 0°-vs-oblique step and *nothing* among the oblique angles. Measured, the
+  section-mix prediction is flat to 0.0027 across 15–90°, so it accounts for the step and none of
+  the U.
+
+So the U among the oblique angles is left over by both. Two further attributions bound it. Adding a
+6×6 in-plane grid to the section stratification cuts the unexplained range from 0.0347 to **0.0209**
+(an in-plane *distance-to-boundary* stratification was tried first and **rejected** — it moved the
+residual by 0.0008, so the in-plane analogue of the edge-section effect is not the mechanism). And
+re-drawing the equal-`n` evaluation sets 12 times with the probe untouched gives a ratio of
+**0.8971 ± 0.0168**, range 0.8718–0.9248, with **6 of 12 draws below 0.90**; per-angle σ reaches
+0.0075.
+
+**That last number governs how the gate should be read.** The shortfall being judged is 0.0029
+against a draw-to-draw σ of 0.0168, and the residual U (0.0209) is the same size as the per-angle
+draw noise (0.0075 × ~2 angles). At `n` = 1011 — set by the 90° strip, which is *every cell it has*
+rather than a subsample — **the criterion cannot resolve 0.886 from 0.90**. This does not convert the
+failure into a pass; it says the fixture is underpowered for the criterion as written, which is a
+third defect alongside the denominator and the depth mix.
+
+**Conclusion — stopped, as instructed.** specs/04's remedies 1 and 2 are exhausted and both came
+back negative; remedy 3 is a steerable/equivariant backbone, which is a **design decision for the
+spec's owner and has not been applied**. `Config.gate2_min_cells_per_angle` is untouched, no
+threshold moved, and the criterion was not redefined. The options and their evidence are in
+SPEC_QUESTIONS **C16**; my recommendation there is to **thicken the fixture's slabs first** — the
+one change that raises `n` at every angle without touching a contract or committing to a redesign —
+and then re-read the gate at a resolution that can actually distinguish 0.886 from 0.90.
 
 `make check` green (ruff, `mypy --strict` on 11 files, **131 fast tests in 32 s**).
 `pytest -m gate` **8 passed, 1 failed** — `test_gate2_1_oblique_parity`, correctly, on G2.1d.

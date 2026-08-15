@@ -67,6 +67,7 @@ from spatialcpav25_gen.config import Config
 from spatialcpav25_gen.data.schema import Section, Volume
 from spatialcpav25_gen.model.field import RotationContext, TriplaneField
 from spatialcpav25_gen.model.retrieval import (
+    PAD_INDEX,
     RetrievalAttention,
     RetrievalIndex,
     attention_entropy,
@@ -1082,4 +1083,560 @@ def measure_g2_4(cfg: Config, vol: Volume, *, seed: int, steps: int = PROBE_STEP
             ),
         ],
         artifacts={"entropy": entropy, "log_k": limit, "mean_valid_neighbours": mean_valid},
+    )
+
+
+# --------------------------------------------------------------------------------------
+# The four follow-up measurements a failed G2.1 owes (specs/04's escalation path)
+# --------------------------------------------------------------------------------------
+
+
+CORONAL_ARM_SPREAD_TIGHT = 0.05
+"""How close the nine coronal arms must cluster, in absolute R^2, for "the central section
+was a representative baseline" to hold — and therefore for the depth-mix explanation of
+G2.1d's failure to be **rejected**. Chosen before the measurement was run: it is a tenth of
+the R^2 level, i.e. the point at which choosing one section over another moves the gate
+ratio by less than a hundredth."""
+
+POSE_INVARIANCE_SAMPLES = 16
+"""Random poses the trained probe is evaluated under, for the achieved-equivariance check."""
+POSE_INVARIANCE_CELLS = 4096
+
+
+def measure_coronal_arms(
+    cfg: Config, vol: Volume, *, seed: int, steps: int = PROBE_STEPS
+) -> GateSection:
+    """R^2 of the 0 degree arm placed at **each** of the sections, at the common ``n``.
+
+    The criterion's own construction, applied nine times instead of once. GATE 2 takes its
+    denominator from a single coronal plane through the volume's centre; whether that is a
+    representative baseline or a lucky one is a question with an answer, and this is it.
+
+    Reported, never asserted, and deliberately **not** substituted for G2.1d. If the nine
+    cluster tightly the depth-mix account of the failure is wrong and 0.8858 stands on its
+    own; if they spread, the single central arm was unrepresentative and the finding is that
+    the contract needs amending — a decision for the spec's owner, not for this module.
+    """
+    probes = gate2_probes(cfg, vol, seed=seed, steps=steps)
+    trained = probes.main
+    sets = evaluation_sets(trained.index, vol, cfg)
+    variance = per_cell_variance(trained.targets)
+    common = sets.common_n
+
+    gen = np.random.default_rng(SUBSAMPLE_SEED)
+    arms: dict[int, float] = {}
+    for s in range(trained.index.n_sections):
+        rows = np.nonzero(trained.index.section_index == s)[0].astype(np.intp)
+        pick = np.sort(gen.choice(rows, size=min(common, rows.size), replace=False)).astype(np.intp)
+        arms[s] = fit_residuals(
+            predict(trained, trained.index.coords[pick], trained.neighbours[pick]),
+            trained.targets[pick],
+            variance,
+        ).r2_fixed
+
+    values = np.asarray(list(arms.values()))
+    spread = float(values.max() - values.min())
+    interior = np.asarray([v for s, v in arms.items() if 0 < s < trained.index.n_sections - 1])
+    centre = trained.index.n_sections // 2
+    worst_oblique = min(
+        fit_residuals(
+            predict(trained, trained.index.coords[rows], trained.neighbours[rows]),
+            trained.targets[rows],
+            variance,
+        ).r2_fixed
+        for angle, rows in sets.rows.items()
+        if angle != 0.0
+    )
+
+    return GateSection(
+        key="G2.1f",
+        title="Is the central-section 0 degree arm a representative baseline?",
+        criteria=[
+            Criterion(
+                key="G2.1f-a",
+                description=(
+                    f"spread of R^2 across the {trained.index.n_sections} coronal arms, one "
+                    f"per section, each at the common n = {common}. Tight (< "
+                    f"{CORONAL_ARM_SPREAD_TIGHT}) would REJECT the depth-mix account of "
+                    "G2.1d's failure and leave the gate number standing on its own"
+                ),
+                measured=spread,
+                threshold=None,
+                comparison="report",
+                note=(
+                    ", ".join(
+                        f"z={trained.index.section_z[s]:.0f} um {arms[s]:.4f}" for s in sorted(arms)
+                    )
+                    + f". Interior sections span {interior.min():.4f}-{interior.max():.4f} "
+                    f"(spread {interior.max() - interior.min():.4f}); the two edges are the "
+                    f"outliers. GATE 2's actual 0 deg arm is the central section, "
+                    f"{arms[centre]:.4f}"
+                ),
+            ),
+            Criterion(
+                key="G2.1f-b",
+                description=(
+                    "the central arm GATE 2 uses, as a fraction of the mean over all nine "
+                    "arms — how much the single-plane baseline flatters the denominator"
+                ),
+                measured=arms[centre] / float(values.mean()),
+                threshold=None,
+                comparison="report",
+                note=(
+                    f"central {arms[centre]:.4f} vs mean over all arms {values.mean():.4f}. "
+                    f"The worst oblique angle is {worst_oblique:.4f}, so the ratio reads "
+                    f"{worst_oblique / arms[centre]:.4f} against the central arm and "
+                    f"{worst_oblique / values.mean():.4f} against the mean"
+                ),
+            ),
+        ],
+        artifacts={"arms": arms, "spread": spread, "common_n": common},
+    )
+
+
+def measure_support_attribution(
+    cfg: Config, vol: Volume, *, seed: int, steps: int = PROBE_STEPS, n_bins: int = 6
+) -> GateSection:
+    """How much of the angle profile is **which cells were sampled** rather than direction.
+
+    The depth-mix attribution (G2.1e's basis) stratifies by section only, and it leaves a
+    residual that is itself U-shaped. This goes one level further and stratifies by
+    ``(section, in-plane distance-to-boundary bin)``, then predicts each angle's R^2 from its
+    bin mix alone, with the angle again playing no part.
+
+    The hypothesis being tested is that the *same* mechanism operates in-plane as along z: a
+    cell near a boundary has neighbours on one side only and is reconstructed worse for that
+    reason. A 90 degree strip is a band through the middle of every section, so it is
+    in-plane *central* everywhere; a 30 degree strip wanders towards the in-plane edges. If
+    the two-way stratification flattens the residual that the section-only one leaves, the
+    angle profile is support geometry end to end.
+    """
+    probes = gate2_probes(cfg, vol, seed=seed, steps=steps)
+    trained = probes.main
+    index = trained.index
+    sets = evaluation_sets(index, vol, cfg)
+    variance = per_cell_variance(trained.targets)
+
+    # Per-cell squared error over every training cell, once.
+    errors = np.empty(index.n_cells, dtype=np.float64)
+    for start in range(0, index.n_cells, PROBE_EVAL_CHUNK):
+        block = slice(start, start + PROBE_EVAL_CHUNK)
+        prediction = predict(trained, index.coords[block], trained.neighbours[block])
+        errors[block] = ((prediction - trained.targets[block]) ** 2).sum(axis=1)
+
+    lo = vol.bbox[0].astype(np.float64)
+    hi = vol.bbox[1].astype(np.float64)
+    # A coarse in-plane grid, not a distance-to-boundary bin. The boundary hypothesis was
+    # tested first and rejected — stratifying by margin moved the residual by 0.0008 — so
+    # this asks the more general question: is the residual explained by *where in the section*
+    # the strip lands, whatever the reason? The fixture's regions are y bands and its
+    # ground-truth field carries low-frequency sinusoids, so per-cell error has in-plane
+    # structure that a margin bin cannot see.
+    span = np.maximum(hi[:2] - lo[:2], 1e-9)
+    cell_xy = np.clip(
+        ((index.coords[:, :2] - lo[None, :2]) / span[None, :] * n_bins).astype(np.intp),
+        0,
+        n_bins - 1,
+    )
+    in_plane_bin = cell_xy[:, 0] * n_bins + cell_xy[:, 1]
+    cell_bin = index.section_index * (n_bins * n_bins) + in_plane_bin
+
+    n_strata = index.n_sections * n_bins * n_bins
+    stratum_error = np.zeros(n_strata)
+    stratum_count = np.zeros(n_strata)
+    np.add.at(stratum_error, cell_bin, errors)
+    np.add.at(stratum_count, cell_bin, 1.0)
+    mean_error = np.divide(
+        stratum_error, np.maximum(stratum_count, 1.0), out=np.zeros(n_strata), where=True
+    )
+
+    section_only: dict[float, float] = {}
+    two_way: dict[float, float] = {}
+    measured: dict[float, float] = {}
+    for angle, rows in sets.rows.items():
+        measured[angle] = fit_residuals(
+            predict(trained, index.coords[rows], trained.neighbours[rows]),
+            trained.targets[rows],
+            variance,
+        ).r2_fixed
+        counts = np.bincount(cell_bin[rows], minlength=n_strata)
+        share = counts / max(counts.sum(), 1)
+        two_way[angle] = 1.0 - float((share * mean_error).sum()) / variance
+        by_section = counts.reshape(index.n_sections, -1).sum(axis=1)
+        section_share = by_section / max(by_section.sum(), 1)
+        section_error = stratum_error.reshape(index.n_sections, -1).sum(axis=1) / np.maximum(
+            stratum_count.reshape(index.n_sections, -1).sum(axis=1), 1.0
+        )
+        section_only[angle] = 1.0 - float((section_share * section_error).sum()) / variance
+
+    oblique = [a for a in ANGLES_DEG if a != 0.0]
+    residual_section = {a: measured[a] - section_only[a] for a in oblique}
+    residual_two_way = {a: measured[a] - two_way[a] for a in oblique}
+    span_section = max(residual_section.values()) - min(residual_section.values())
+    span_two_way = max(residual_two_way.values()) - min(residual_two_way.values())
+
+    return GateSection(
+        key="G2.1g",
+        title="Is the angle profile boundary support, or direction?",
+        criteria=[
+            Criterion(
+                key="G2.1g-a",
+                description=(
+                    "range across the oblique angles of (measured R^2 - R^2 predicted from "
+                    "SECTION mix alone). What the depth-mix account leaves unexplained"
+                ),
+                measured=span_section,
+                threshold=None,
+                comparison="report",
+                note=", ".join(f"{a:g} deg {residual_section[a]:+.4f}" for a in oblique),
+            ),
+            Criterion(
+                key="G2.1g-b",
+                description=(
+                    f"the same range after stratifying by (section, {n_bins}x{n_bins} "
+                    "in-plane grid cell). A fall towards 0 says the remaining angle profile "
+                    "is which cells the strip happened to sample, not direction"
+                ),
+                measured=span_two_way,
+                threshold=None,
+                comparison="report",
+                note=", ".join(f"{a:g} deg {residual_two_way[a]:+.4f}" for a in oblique),
+            ),
+        ],
+        artifacts={
+            "measured": measured,
+            "section_only": section_only,
+            "two_way": two_way,
+            "residual_section": residual_section,
+            "residual_two_way": residual_two_way,
+        },
+    )
+
+
+def measure_augmentation_completeness(
+    cfg: Config, vol: Volume, *, seed: int, steps: int = PROBE_STEPS
+) -> GateSection:
+    """Independently verify the rotation reaches **all four** channels, and what it achieved.
+
+    specs/04's second escalation step on a G2.1 failure: "verify rotation augmentation is
+    actually applied to *all* of coords/planes/retrieval/GRF". A *partial* rotation — one
+    channel left in the wrong frame while the others move — is a live hypothesis for exactly
+    the signature G2.1d shows, because it would train the field against a geometry that
+    disagrees with its own evidence.
+
+    Two independent checks, because each catches what the other cannot:
+
+    **(a) Mutation.** For each channel in turn, leave it un-rotated while the other three
+    rotate, and measure how far the result moves from the correctly-rotated one. A channel
+    whose omission changes *nothing* is a channel that is not wired, or is inert; every one
+    of the four must register. This is the check that a passing equivariance assertion cannot
+    make, because an unwired channel satisfies invariance trivially.
+
+    **(b) Achieved equivariance of the full forward pass.** The trained probe is evaluated on
+    the same cells under :data:`POSE_INVARIANCE_SAMPLES` random poses. The triplane lookup is
+    not invariant by construction — that *is* the augmentation (SPEC_QUESTIONS B5) — so this
+    cannot be asserted at zero. What it can do is measure whether the augmentation
+    **achieved** what it exists for: the spread of the model's prediction for one fixed cell
+    across poses, against the spread of the targets it is predicting. Small means the trained
+    field is effectively orientation-agnostic; large means it is not, and the oblique deficit
+    would then have a mechanism.
+    """
+    from spatialcpav25_gen.model.field import RotationContext, random_rotation
+    from spatialcpav25_gen.model.noise import GaussianRandomField
+
+    probes = gate2_probes(cfg, vol, seed=seed, steps=steps)
+    trained = probes.main
+    index = trained.index
+    centre = vol.bbox.mean(axis=0).astype(np.float64)
+    rotation = random_rotation(_seed_for(seed, 50))
+
+    gen = np.random.default_rng(_seed_for(seed, 51))
+    pick = np.sort(
+        gen.choice(index.n_cells, size=min(POSE_INVARIANCE_CELLS, index.n_cells), replace=False)
+    ).astype(np.intp)
+    xyz = index.coords[pick]
+    owner = index.section_index[pick]
+
+    context = RotationContext(cfg, rotation, centre, requires=())
+    model_frame = context.to_model(xyz)
+
+    # --- (a) mutation, one channel at a time --------------------------------------------
+    # The correct arm **binds the rotation to the field**, so the field knows its pose and
+    # recovers the data frame for its Fourier encoding. Comparing an unbound field against
+    # model-frame coordinates would itself be the partial-rotation mistake this measurement
+    # exists to rule out — and it is: unbound, the field reads model-frame points as data
+    # frame, decides most of them are outside the bbox, and clamps.
+    field = trained.probe.field
+    with (
+        RotationContext(cfg, rotation, centre, requires=(), fields=(field,)),
+        torch.no_grad(),
+    ):
+        correct_field = field(torch.from_numpy(model_frame.astype(np.float32))).numpy()
+    with torch.no_grad():
+        # coords un-rotated: the field would be queried in the data frame while the rest moves
+        broken_field = field(torch.from_numpy(xyz.astype(np.float32))).numpy()
+    coords_effect = float(np.abs(correct_field - broken_field).mean())
+
+    grf = GaussianRandomField(cfg, (cfg.ell_xy, cfg.ell_xy, cfg.ell_z), _seed_for(seed, 52))
+    with torch.no_grad():
+        correct_noise = grf(context.to_data(model_frame).astype(np.float32)).numpy()
+        broken_noise = grf(model_frame.astype(np.float32)).numpy()
+    grf_effect = float(np.abs(correct_noise - broken_noise).mean())
+
+    correct_idx, _ = index.query(
+        context.to_data(model_frame), set(), seed=_seed_for(seed, 53), source_section=owner
+    )
+    broken_idx, _ = index.query(model_frame, set(), seed=_seed_for(seed, 53), source_section=owner)
+    retrieval_effect = float(
+        np.mean(
+            [
+                len((set(a) - {PAD_INDEX}) ^ (set(b) - {PAD_INDEX}))
+                for a, b in zip(correct_idx, broken_idx, strict=True)
+            ]
+        )
+    )
+
+    normals = np.tile(np.array([0.0, 0.0, 1.0]), (8, 1))
+    origins = np.tile(centre, (8, 1))
+    _, rotated_normals = context.planes(origins, normals)
+    planes_effect = float(np.abs(rotated_normals - normals).max())
+
+    # --- (b) achieved equivariance of the full forward pass ------------------------------
+    predictions = []
+    tokens, mask = index.neighbour_tokens(xyz, trained.neighbours[pick])
+    for i in range(POSE_INVARIANCE_SAMPLES):
+        pose = RotationContext(
+            cfg,
+            random_rotation(_seed_for(seed, 54, i)),
+            centre,
+            requires=(),
+            fields=(trained.probe.field,),
+        )
+        # Bound, not merely applied to the coordinates: the whole point of the check is the
+        # *complete* transform, field included.
+        with pose, torch.no_grad():
+            predictions.append(
+                trained.probe(
+                    torch.from_numpy(pose.to_model(xyz).astype(np.float32)), tokens, mask
+                ).numpy()
+            )
+    stack = np.stack(predictions, axis=0)
+    across_poses = float(stack.std(axis=0).mean())
+    target_scale = float(trained.targets[pick].std(axis=0).mean())
+
+    return GateSection(
+        key="G2.1h",
+        title="Rotation augmentation: does it reach all four channels, and what did it achieve?",
+        criteria=[
+            Criterion(
+                key="G2.1h-a",
+                description=(
+                    "MUTATION: leaving **coords** un-rotated changes the field's output by "
+                    "this much (mean |delta| per feature). Must be > 0 or the channel is not wired"
+                ),
+                measured=coords_effect,
+                threshold=0.0,
+                comparison=">",
+            ),
+            Criterion(
+                key="G2.1h-b",
+                description=(
+                    "MUTATION: leaving **GRF query points** in the model frame instead of "
+                    "mapping them back changes the noise by this much"
+                ),
+                measured=grf_effect,
+                threshold=0.0,
+                comparison=">",
+            ),
+            Criterion(
+                key="G2.1h-c",
+                description=(
+                    "MUTATION: querying **retrieval** in the model frame instead of the data "
+                    "frame changes this many of the K neighbours per cell, on average"
+                ),
+                measured=retrieval_effect,
+                threshold=0.0,
+                comparison=">",
+                note=f"out of K = {cfg.retrieval_k}",
+            ),
+            Criterion(
+                key="G2.1h-d",
+                description=(
+                    "MUTATION: **plane normals** move under the rotation (max component "
+                    "change). A plane whose origin moved and whose normal did not is a "
+                    "different plane, and the mistake is invisible downstream"
+                ),
+                measured=planes_effect,
+                threshold=0.0,
+                comparison=">",
+            ),
+            Criterion(
+                key="G2.1h-e",
+                description=(
+                    "ACHIEVED EQUIVARIANCE: spread of the trained probe's prediction for one "
+                    f"fixed cell across {POSE_INVARIANCE_SAMPLES} random poses, as a fraction "
+                    "of the spread of the targets it predicts. 0 would be exact equivariance"
+                ),
+                measured=across_poses / target_scale if target_scale > 0 else float("nan"),
+                threshold=None,
+                comparison="report",
+                note=(
+                    f"absolute {across_poses:.4f} against a target sd of {target_scale:.4f}. "
+                    "The triplane lookup is not invariant by construction — that is the "
+                    "augmentation (SPEC_QUESTIONS B5) — so this measures what training "
+                    "achieved, not what the architecture guarantees"
+                ),
+            ),
+        ],
+        artifacts={
+            "coords": coords_effect,
+            "grf": grf_effect,
+            "retrieval": retrieval_effect,
+            "planes": planes_effect,
+            "pose_spread": across_poses,
+            "target_scale": target_scale,
+        },
+    )
+
+
+def measure_escalation(
+    cfg: Config, vol: Volume, *, seed: int, steps: int = PROBE_STEPS, orientations: int = 8
+) -> GateSection:
+    """specs/04's first escalation on a G2.1 failure: raise ``n_plane_orientations`` and re-run.
+
+    The criterion is re-measured **unchanged** — same evaluation sets, same fixed denominator,
+    same threshold. Only ``Config.n_plane_orientations`` differs, which doubles the triplane's
+    parameter count and is the intervention that should move the number if the deficit is the
+    basis concentrating capacity on axis-aligned planes.
+    """
+    escalated = cfg.replace(n_plane_orientations=orientations)
+    base = measure_g2_1(cfg, vol, seed=seed, steps=steps)
+    raised = measure_g2_1(escalated, vol, seed=seed, steps=steps)
+
+    def _ratio(section: GateSection, key: str) -> float:
+        return float(next(c for c in section.criteria if c.key == key).measured)
+
+    delta = _ratio(raised, "G2.1d") - _ratio(base, "G2.1d")
+    return GateSection(
+        key="G2.1-esc",
+        title=(
+            f"Escalation: n_plane_orientations {cfg.n_plane_orientations} -> {orientations} "
+            "(specs/04's first remedy)"
+        ),
+        criteria=[
+            Criterion(
+                key="G2.1-esc-a",
+                description=(
+                    f"G2.1d, the fixed-denominator oblique-parity ratio, at "
+                    f"n_plane_orientations = {orientations}. The criterion is unchanged"
+                ),
+                measured=_ratio(raised, "G2.1d"),
+                threshold=OBLIQUE_PARITY_THRESHOLD,
+                comparison=">=",
+                note=(
+                    f"P = {cfg.n_plane_orientations}: {_ratio(base, 'G2.1d'):.4f}; "
+                    f"P = {orientations}: {_ratio(raised, 'G2.1d'):.4f}. Per-set ratio "
+                    f"(G2.1a) {_ratio(base, 'G2.1a'):.4f} -> {_ratio(raised, 'G2.1a'):.4f}"
+                ),
+            ),
+            Criterion(
+                key="G2.1-esc-b",
+                description=(
+                    "how much doubling the orientation ensemble moved the gate number. If the "
+                    "deficit were directional capacity, this is the intervention that should "
+                    "have moved it"
+                ),
+                measured=delta,
+                threshold=None,
+                comparison="report",
+                note=(
+                    "fixed R^2 by angle at P = "
+                    f"{orientations}: "
+                    + ", ".join(
+                        f"{a:g} deg {raised.artifacts['r2_fixed'][a]:.4f}" for a in ANGLES_DEG
+                    )
+                ),
+            ),
+        ],
+        artifacts={"base": base, "raised": raised, "delta": delta, "orientations": orientations},
+    )
+
+
+SUBSAMPLE_REPEAT_SEEDS = 12
+"""Independent equal-``n`` draws of the evaluation sets, for the stability check."""
+
+
+def measure_ratio_stability(
+    cfg: Config, vol: Volume, *, seed: int, steps: int = PROBE_STEPS
+) -> GateSection:
+    """How much of G2.1d is the **draw**? Re-subsample the evaluation sets and re-measure.
+
+    The single most decisive number for reading a 0.886 against a 0.90 threshold, and the
+    cheapest: no probe is retrained, the model is untouched, and only the seeded equal-``n``
+    draw changes. C1 fixed ``n`` across angles precisely because R^2's sampling error moves
+    with it; what C1 did *not* do is say how large that error is at the ``n`` the fixture
+    supports. This measures it.
+
+    If the ratio's spread across draws is comparable to the 0.014 shortfall, then 0.886 and
+    0.90 are not distinguishable at this sample size and the gate is being decided by the
+    draw — which is a finding about the fixture (its slabs are too thin to give the 90 degree
+    strip more than ~1000 cells), not about the backbone. If the spread is small, the
+    shortfall is real.
+    """
+    probes = gate2_probes(cfg, vol, seed=seed, steps=steps)
+    trained = probes.main
+    variance = per_cell_variance(trained.targets)
+
+    ratios: list[float] = []
+    per_angle: dict[float, list[float]] = {a: [] for a in ANGLES_DEG}
+    for repeat in range(SUBSAMPLE_REPEAT_SEEDS):
+        sets = evaluation_sets(trained.index, vol, cfg, seed=_seed_for(seed, 60, repeat))
+        fixed: dict[float, float] = {}
+        for angle, rows in sets.rows.items():
+            fixed[angle] = fit_residuals(
+                predict(trained, trained.index.coords[rows], trained.neighbours[rows]),
+                trained.targets[rows],
+                variance,
+            ).r2_fixed
+            per_angle[angle].append(fixed[angle])
+        ratios.append(_parity(fixed)[0])
+
+    values = np.asarray(ratios)
+    below = int((values < OBLIQUE_PARITY_THRESHOLD).sum())
+    return GateSection(
+        key="G2.1i",
+        title="Is the shortfall real, or the draw?",
+        criteria=[
+            Criterion(
+                key="G2.1i-a",
+                description=(
+                    f"standard deviation of the G2.1d ratio across {SUBSAMPLE_REPEAT_SEEDS} "
+                    "independent equal-n draws of the same evaluation sets, same probe"
+                ),
+                measured=float(values.std(ddof=1)),
+                threshold=None,
+                comparison="report",
+                note=(
+                    f"mean {values.mean():.4f}, min {values.min():.4f}, max {values.max():.4f}; "
+                    f"{below} of {SUBSAMPLE_REPEAT_SEEDS} draws fall below the "
+                    f"{OBLIQUE_PARITY_THRESHOLD:g} threshold. The shortfall being judged is "
+                    f"{OBLIQUE_PARITY_THRESHOLD - values.mean():+.4f}"
+                ),
+            ),
+            Criterion(
+                key="G2.1i-b",
+                description=(
+                    "the largest per-angle standard deviation across the same draws — how "
+                    "much a single angle's R^2 moves on the draw alone"
+                ),
+                measured=max(float(np.std(v, ddof=1)) for v in per_angle.values()),
+                threshold=None,
+                comparison="report",
+                note=", ".join(
+                    f"{a:g} deg {np.mean(per_angle[a]):.4f} +/- {np.std(per_angle[a], ddof=1):.4f}"
+                    for a in ANGLES_DEG
+                ),
+            ),
+        ],
+        artifacts={"ratios": ratios, "per_angle": per_angle},
     )

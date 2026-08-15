@@ -43,10 +43,15 @@ from tests.gate2_criteria import (  # noqa: E402
     PROBE_LR,
     PROBE_STEPS,
     gate2_probes,
+    measure_augmentation_completeness,
+    measure_coronal_arms,
+    measure_escalation,
     measure_g2_1,
     measure_g2_2,
     measure_g2_3,
     measure_g2_4,
+    measure_ratio_stability,
+    measure_support_attribution,
 )
 
 # The interpretation below is written by hand against the numbers this script produced on
@@ -55,62 +60,17 @@ from tests.gate2_criteria import (  # noqa: E402
 INTERPRETATION = """\
 ### What the numbers mean
 
-**G2.1d fails at {fixed_ratio:.3f} against a required 0.90, and the failure is in the
-evaluation contract, not in the backbone.** That claim is not an excuse; it is the
-conclusion of two measurements reported below, either of which could have gone the other
-way. Everything else passes.
+**G2.1d fails at {fixed_ratio:.3f} against a required 0.90. The gate has not passed and T05
+does not start.** Everything else passes. The escalation section below reports what specs/04
+prescribes on a failure, and what it found.
 
-**The two denominators, and why the verdict flipped.** G2.1a divides each angle's R^2 by its
-**own** set's variance — the spec's ratio as literally written — and reports
-**{ratio:.3f}**. Those denominators are not the same quantity, so the ratio partly answers
-"how much variance was there to explain". G2.1d fixes the denominator to the per-cell target
-variance over all {n_train_cells} training cells (V = {fixed_variance:.4f}) and reports
-**{fixed_ratio:.3f}**. The move from {ratio:.3f} to {fixed_ratio:.3f} is {movement}, and it
-is the fixed-denominator number that a paper can quote, so **the gate does not pass on the
-number that matters**.
-
-**Where the remaining gap comes from — measured, not argued.** Fixing the denominator removed
-one confound and exposed a larger one. Under the C1 membership rule a 0 degree query plane
-through the volume's centre selects **exactly one section**, the middle one, while every
-oblique plane draws about {edge_pct:.0f}% of its cells from the two **edge** sections. The
-per-section fixed R^2 is
-
-{per_section_table}
-
-— the edge sections at {edge_lo:.3f} and {edge_hi:.3f} against {interior_lo:.3f}-{interior_hi:.3f}
-for the interior. A cell at the top or bottom of the stack has training and retrieval evidence
-on one side only, which is a fact about *depth*, not about the angle of the query plane. So
-`R^2(theta) / R^2(0 deg)` is comparing the best-supported depth in the stack against a
-depth-representative sample.
-
-The attribution is quantitative, not a story. Predicting each angle's R^2 from its section
-mix alone — weighting the per-section values by the mix, with the angle playing no part —
-gives {predicted_list}. Those are flat across every oblique angle to within {predicted_spread:.4f},
-and they reproduce the measured values. **The angle-dependence in G2.1d is depth mix.**
-
-**Diagnostic G2.1e removes it**: take the 0 degree arm over the coronal planes at *every*
-section rather than the single central one, so both sides of the ratio are
-depth-representative. The ratio is then **{depth_ratio:.3f}**. Nothing about the model
-changed between G2.1d and G2.1e — only which cells the denominator was measured on.
-
-**The spec's own remedy was run and did nothing.** specs/04 says that on a G2.1 failure the
-first step is to raise `n_plane_orientations` 4 -> 8 and re-run. Measured, on the same
-fixture and seed (`n_plane_orientations=8`, 343 s against 215 s for the doubled parameter
-count):
-
-| | P = 4 | P = 8 |
-|---|---|---|
-| G2.1a per-set ratio | 0.9410 | 0.9419 |
-| G2.1d fixed ratio | **0.8858** | **0.8867** |
-| G2.1e depth-matched | 0.9596 | 0.9601 |
-
-Doubling the orientation ensemble moves the gate number by **+0.0009**. If oblique parity
-were limited by the basis concentrating capacity on axis-aligned planes — the failure this
-gate exists to catch — doubling the ensemble is precisely the intervention that should have
-moved it. It did not. The spec's remedy 2, that rotation augmentation reaches coords, planes,
-retrieval and GRF queries, is enforced by construction: `RotationContext` refuses to exit
-with a required channel un-transformed, and `test_rotation_augmentation_is_not_inert` asserts
-the triplane lookup actually moves.
+**The two denominators.** G2.1a divides each angle's R^2 by its **own** set's variance — the
+spec's ratio as literally written — and reports **{ratio:.3f}**. Those denominators are not
+the same quantity across angles, so part of that ratio answers "how much variance was there
+to explain". G2.1d fixes the denominator to the per-cell target variance over all
+{n_train_cells} training cells (V = {fixed_variance:.4f}), shared by every angle, and reports
+**{fixed_ratio:.3f}**. The move is {movement}. The fixed-denominator number is the one a paper
+can quote, and it is below threshold.
 
 **How to read R^2 = {r2_0:.2f}.** A *linear* read-out of 32 expression PCs from
 [field, retrieval-context] after {steps} steps — deliberately weak, so the number reflects
@@ -118,12 +78,28 @@ the backbone and not a head that could compensate for it. The gate is a ratio, a
 of every comparison see the same budget, so the absolute level is not the quantity under
 test.
 
+**The profile is U-shaped, not monotone in angle.** Fixed-denominator R^2 runs
+{r2_fixed_list}: highest at 0 deg, falling to a minimum at {fixed_worst_angle:g} deg, then
+recovering monotonically to 90 deg, which is the *second best* angle. This matters for the
+diagnosis, because the two failure modes it could indicate make opposite predictions:
+
+* A triplane basis concentrating capacity on axis-aligned planes would be worst at the
+  *intermediate* angles and better at both ends — 0 deg is carried by the XY plane, 90 deg by
+  XZ/YZ, and 30-45 deg by neither. **The observed U-shape is superficially exactly this
+  signature**, and it is the reason the escalation below had to be run rather than argued
+  about.
+* Depth mix predicts something different: 0 deg is high because it is a single interior
+  section, and every oblique angle should then be roughly equal to every other. Measured, the
+  section-mix prediction is {predicted_list} — flat to {predicted_spread:.4f}, i.e. it
+  accounts for the 0-deg-vs-oblique step and none of the U among the oblique angles.
+
+Neither account is complete on its own, which is why the escalation section separates them.
+
 **Depth is interpolated, not memorised.** With the middle section removed from training
 entirely, the probe reconstructs its cells at **{g22:.1%}** of what it achieves on the two
-neighbouring training sections ({g22_fixed:.1%} on the fixed denominator — the three sets
-here are whole sections of one volume, so their variances are close and the choice barely
-matters, unlike G2.1). Above 100%, not merely above the required 80%: there is no dip at the
-held-out z, so `fourier_bands_z = {bands_z}` and the TV_z penalty are doing their job.
+neighbouring training sections ({g22_fixed:.1%} on the fixed denominator). Above 100%, not
+merely above the required 80%: there is no dip at the held-out z, so
+`fourier_bands_z = {bands_z}` and the TV_z penalty are doing their job.
 
 **The z term earns its place — in the wide-gap regime specifically.** Setting
 `retrieval_w_z = 0`, which reproduces the competing method's omission exactly, costs at
@@ -134,15 +110,14 @@ both arms share a training seed, so initialisation, batch order and per-step rot
 identical and the retrieval score is the only difference. Diagnostic G2.3c is the other side
 — with the *whole* stack admissible the three deltas are {g23c}, inside the noise, because
 the nearest section is always in the pool and in-plane distance alone already ranks it first.
-This is why specs/10 now requires ablation A5 to be run in the wide-gap regime: run
-whole-stack, A5 would report a null result for a term that demonstrably works.
+This is why specs/10 now requires ablation A5 to be run in the wide-gap regime.
 
 **Retrieval has not collapsed to copying.** Mean attention entropy is {g24:.3f} nats against
 the required 0.5 log K = {g24_threshold:.3f}. Read the margin the right way round: the
 criterion is one-sided, and this probe sits at the opposite extreme — {g24_frac:.1%} of
 log K, i.e. near-uniform. The attention is *averaging* its {k} donors, not selecting among
-them. GATE 2 has shown only that the attention has not collapsed. specs/06 now requires T06
-to drive this number **down** by at least 0.05 log K while staying above the collapse line.
+them. specs/06 now requires T06 to drive this **down** by at least 0.05 log K while staying
+above the collapse line.
 
 ### Two bugs this gate found
 
@@ -150,71 +125,164 @@ to drive this number **down** by at least 0.05 log K while staying above the col
 in-plane cells of each admissible section entered the ranking, so whenever just two sections
 were admissible — a held-out run, the gap-aware dropout, any wide-gap inference — the
 candidate union was exactly K, the top-K selected all of it, and **the retrieval score
-decided nothing**. The z term was silently inert in precisely the regime it exists for. G2.3
-measured the ablation as a no-op, which is what exposed it. The default is now 64, and
-`Config.validate` refuses `retrieval_candidates_per_section < retrieval_k`.
+decided nothing**. G2.3 measured the ablation as a no-op, which is what exposed it. Default
+now 64; `Config.validate` refuses a cap below `retrieval_k`; and because the invariant is
+about the *union* rather than the per-section cap, `RetrievalIndex.query` also warns at
+runtime (`InertScoreWarning`) when a query's admissible union falls to K or below.
 
-That rule is necessary but not sufficient, because **the invariant is about the union, not
-the per-section cap**: what the top-K selects from is
-`candidates_per_section x n_admissible_sections`, and the number of admissible sections is
-not a config field — `exclude_z`, the z window, the own-section exclusion and above all the
-gap-aware dropout shrink it *per query*, at inference. `RetrievalIndex.query` now also warns
-at runtime (`InertScoreWarning`) with the count of affected queries, naming every exclusion
-that could have caused it.
-
-**2. The probe cache ignored the config.** `gate2_probes` keyed on
-`(id(vol), seed, steps)`, so the first P = 4 vs P = 8 comparison returned the P = 4 probes
-for both arms and reported "no change" for a change that was never made — the remedy the
-spec mandates on failure would have been silently unrunnable. `Config` is a frozen dataclass
-and hashes by value, so it is now part of the key. The P = 8 numbers above are from the
-fixed version.
+**2. The probe cache ignored the config.** `gate2_probes` keyed on `(id(vol), seed, steps)`,
+so the first P = 4 vs P = 8 comparison returned the P = 4 probes for both arms and reported
+"no change" for a change that was never made — the remedy specs/04 mandates on failure would
+have been silently unrunnable. `Config` is frozen and hashes by value; it is now in the key.
 
 Nothing about the gate's thresholds was touched.
 """
 
+ESCALATION = r"""
+## Escalation — what specs/04 prescribes on a G2.1 failure, and what it found
+
+### 1. Raise `n_plane_orientations` 4 -> 8, re-measure G2.1d unchanged
+
+**{esc_ratio:.4f}** — still below 0.90. Doubling the orientation ensemble, and with it the
+triplane's parameter count, moved the gate number by **{esc_delta:+.4f}**.
+
+That is the direct test of the directional-capacity hypothesis the U-shape suggests, and it
+comes back negative. If oblique parity were limited by the basis concentrating capacity on
+axis-aligned planes, adding four more maximally-separated orientations is precisely the
+intervention that should have moved it.
+
+### 2. Verify the augmentation reaches all four channels
+
+A *partial* rotation — one channel left in the wrong frame while the others move — would
+produce this signature, so it is checked by **mutation** rather than by assertion: leave each
+channel un-rotated in turn and measure whether anything changes. A channel whose omission
+changes nothing is a channel that is not wired, and an invariance assertion cannot detect
+that, because an unwired channel satisfies invariance trivially.
+
+| channel left un-rotated | effect |
+|---|---|
+| coords | {aug_coords:.4f} mean \|delta\| per field feature |
+| GRF query points | {aug_grf:.4f} mean \|delta\| per noise channel |
+| retrieval neighbourhoods | {aug_retrieval:.1f} of K = {k} neighbours change per cell |
+| plane normals | {aug_planes:.4f} max component change |
+
+All four register. The augmentation is complete.
+
+**And it achieved what it exists for.** The trained probe's prediction for a fixed cell,
+evaluated under {pose_samples} random poses with the rotation bound to the field, varies by
+**{aug_pose:.4f}** — **{aug_pose_frac:.2%}** of the spread of the targets it is predicting.
+That is the spec's "a full forward pass is equivariant … (approximately) the same result",
+answered with a number. It cannot be exactly zero: the triplane lookup is not invariant by
+construction, and that non-invariance *is* the augmentation (SPEC_QUESTIONS B5). Under 1% is
+what "the augmentation worked" looks like.
+
+*(Writing this measurement is itself how the partial-rotation failure mode was confirmed to
+be detectable: the first version compared an **unbound** field against model-frame
+coordinates, so the field read them as data-frame positions, decided 85% of them were outside
+the bounding box, and clamped. It reported a coords effect of 0.086 instead of the correct
+{aug_coords:.4f}, and a pose spread of 0.070 instead of {aug_pose:.4f} — an order of
+magnitude, from exactly the mistake this section exists to rule out.)*
+
+### 3. R^2 for the coronal plane at each of the nine sections
+
+The criterion's own construction, applied nine times instead of once, each at the common
+n = {common_n}:
+
+{arms_table}
+
+They **do not** cluster tightly: spread **{arms_spread:.4f}**, against the {tight:g} that
+would have rejected the depth-mix account and left {fixed_ratio:.4f} standing on its own. But
+read the shape, not just the range — the *interior* seven span {interior_lo:.4f}-{interior_hi:.4f}
+(spread {interior_spread:.4f}, just inside that same {tight:g}), and the whole of the spread
+is the two **edge** sections at {edge_lo:.4f} and {edge_hi:.4f}. A cell at the top or bottom
+of the stack has evidence on one side only, which is a fact about depth, not about the angle
+of a query plane.
+
+GATE 2's actual 0 deg arm is the central section at {central_arm:.4f}, against a mean over
+all nine of {arms_mean:.4f} — the single-plane baseline flatters the denominator by
+**{arms_flatter:.1%}**. Against that mean the worst oblique angle reads
+**{arms_ratio:.4f}**. **This is a finding, not a substitute criterion**: it says the C1
+contract has a defect, and amending a settled contract after seeing the number it changes is
+a decision for the spec's owner.
+
+### 4. Is the residual U real? — the measurement's own resolution
+
+Two further attributions, both reported because they bound how much of the profile is
+mechanism and how much is the draw.
+
+**Which cells were sampled.** Stratifying by section alone leaves an unexplained range of
+{res_section:.4f} across the oblique angles ({res_section_list}). Adding a
+6x6 in-plane grid cuts it to **{res_grid:.4f}** ({res_grid_list}) — a 40% reduction, not an
+elimination. An in-plane distance-to-boundary stratification was tried first and **rejected**:
+it moved the residual by 0.0008, so the in-plane analogue of the edge-section effect is not
+what is happening.
+
+**The draw.** Re-running G2.1d on {repeats} independent equal-`n` draws of the same evaluation
+sets, with the probe untouched and only the subsample seed changing, gives a ratio of
+**{stab_mean:.4f} +/- {stab_sd:.4f}**, range {stab_min:.4f}-{stab_max:.4f}, with
+**{stab_below} of {repeats} draws falling below the 0.90 threshold**. Per angle the standard
+deviation reaches {stab_angle_sd:.4f}.
+
+**This is the number that governs how the gate should be read.** The shortfall being judged
+is {shortfall:.4f} against a draw-to-draw standard deviation of {stab_sd:.4f}. At the sample
+size this fixture supports — n = {common_n}, set by the 90 deg strip, which is every cell it
+has rather than a subsample — **the criterion cannot resolve 0.886 from 0.90**. The residual
+U among the oblique angles ({res_grid:.4f} after stratification) is the same size as the draw
+noise ({stab_angle_sd:.4f} per angle), so it is not evidence of a directional mechanism
+either.
+
+That does **not** convert the failure into a pass. It says the fixture is underpowered for
+the criterion as written, which is a third finding, alongside the denominator and the depth
+mix.
+"""
+
 RECOMMENDATION = """\
-### Recommendation
+### Recommendation — stop here
 
-**GATE 2 does not pass as specified. T05 does not start until the contract question below is
-settled.** specs/04's "Do NOT" is explicit: do not proceed to T05 without G2.1 passing.
+**GATE 2 fails at {fixed_ratio:.4f}. specs/04's escalation is exhausted: eight orientations
+changed nothing, and the augmentation is verified complete. Per specs/04 the next step is a
+steerable / equivariant backbone, and that is a design decision, not a fix to apply.** T05
+does not start.
 
-The decision that has to be made is *which measurement G2.1 is*, and it is not mine to make
-unilaterally, because it changes the number the paper quotes:
+What the escalation established, so the decision can be made on evidence:
 
-1. **Accept G2.1d = {fixed_ratio:.3f} as the verdict.** The gate has failed, and the next step
-   is specs/04's remedy 3 — a steerable / equivariant backbone, a design change. **The
-   evidence argues against this reading**: the spec's remedy 1 (P = 4 -> 8) moved the number
-   by +0.0009, which is what says the residual is not directional capacity, and the section-mix
-   attribution accounts for essentially all of it.
-2. **Amend the C1 evaluation contract so the 0 degree arm is depth-representative** — pooled
-   over the coronal planes at every section rather than the single central one — and re-run.
-   That is diagnostic G2.1e, which reads **{depth_ratio:.3f}**. The amendment is defensible on
-   its own terms: C1 already exists to stop the ratio measuring sample size, and this is the
-   same defect one level down (it measures depth support instead). But it is a change to a
-   settled contract, made after seeing the number it changes, so it needs to be a decision on
-   the record and not a quiet edit.
+1. **It is not directional capacity.** P = 4 -> 8 moved the gate number by {esc_delta:+.4f}.
+2. **It is not a partial rotation.** All four channels register under mutation, and the
+   trained probe's prediction for a fixed cell varies by {aug_pose_frac:.2%} of the target
+   spread across {pose_samples} random poses.
+3. **The 0 deg denominator is unrepresentative.** The nine coronal arms spread
+   {arms_spread:.4f}; the central one GATE 2 uses flatters the denominator by
+   {arms_flatter:.1%}, and against the mean of all nine the worst oblique angle reads
+   {arms_ratio:.4f}.
+4. **The criterion cannot resolve the shortfall at this sample size.** Across {repeats}
+   equal-`n` draws the ratio is {stab_mean:.4f} +/- {stab_sd:.4f}, with {stab_below} of
+   {repeats} below threshold.
 
-My recommendation is **2**, on the strength of the P = 8 null result and the mix attribution,
-with the amendment written into SPEC_QUESTIONS as a dated decision and both numbers
-({fixed_ratio:.3f} single-plane, {depth_ratio:.3f} depth-matched) reported in the paper. What
-I have **not** done is pick 2 and declare a pass.
+Points 3 and 4 are defects in the measurement; point 1 and 2 rule out the two mechanisms the
+gate was written to catch. **Taken together they say the honest reading of {fixed_ratio:.4f}
+is "the fixture cannot answer this question", not "the backbone is not equivariant enough".**
+A steerable backbone is a large commitment to make against a number that is
+{stab_below}-of-{repeats} coin flips, so before spending it, the cheaper options are worth
+pricing:
 
-Four things carry forward either way:
+* **Thicken the fixture's slabs.** C1 already names this as the response to a common `n`
+  below the floor; here `n` clears the floor but not the resolution the criterion needs. It
+  is the one change that raises `n` at every angle without touching the contract, and specs/04
+  already sanctions it.
+* **Amend C1's 0 deg arm to be depth-representative** (SPEC_QUESTIONS C16), which is a
+  contract change and needs to be recorded as one.
+* **Accept and escalate to a steerable backbone**, which is the spec's literal instruction.
 
-1. **Quote the fixed-denominator ratio, and say which one it is.** G2.1a's {ratio:.3f} is the
-   spec's literal formula and is not comparable across angles, because each angle's
-   denominator is its own strip's variance. Measured on the 3000 um synthetic fixture; not
-   yet a statement about real tissue, which is T10's E3.
-2. **This gate constrains the backbone, not the generator.** The probe is a linear read-out;
-   the flow-matching head (T06) and the SEFL losses (T07) can still break oblique parity, and
-   T07's `L_cross` is where intersection consistency gets its own measurement. Re-check the
-   ratio after T07 rather than assuming it survives.
-3. **The attention is near-uniform** ({g24_frac:.1%} of log K). G2.4 is satisfied at the
-   opposite extreme from collapse. specs/06 now requires T06 to drive it down by at least
-   0.05 log K while staying above the 0.5 log K collapse line.
-4. **Open risk R1 (`ell_z` reads high) is untouched by this gate.** GATE 2's probe is
-   deterministic and never queries the GRF, so a wrong `ell_z` cannot show up here. It stays
-   open, owed to T07, exactly as `reports/gate1.md` left it.
+I have not chosen among these. Four things carry forward whichever is chosen:
+
+1. **Quote the fixed-denominator ratio and say which one it is.** G2.1a's {ratio:.3f} is the
+   spec's literal formula and is not comparable across angles.
+2. **This gate constrains the backbone, not the generator.** T06's flow-matching head and
+   T07's SEFL losses can still break oblique parity; re-measure after T07.
+3. **The attention is near-uniform** ({g24_frac:.1%} of log K) — specs/06 now requires T06 to
+   drive it down by at least 0.05 log K while staying above the collapse line.
+4. **Open risk R1 (`ell_z` reads high) is untouched by this gate**, since the probe is
+   deterministic and never queries the GRF. Still owed to T07.
 """
 
 
@@ -323,6 +391,75 @@ def _per_section_table(depth: Any) -> str:
     return "\n".join([header, rule, values])
 
 
+def _escalation(
+    sections: dict[str, GateSection], follow_ups: dict[str, GateSection], cfg: Config
+) -> str:
+    """Fill the hand-written escalation section with the numbers actually measured."""
+    from tests.gate2_criteria import (
+        CORONAL_ARM_SPREAD_TIGHT,
+        OBLIQUE_PARITY_THRESHOLD,
+        POSE_INVARIANCE_SAMPLES,
+        SUBSAMPLE_REPEAT_SEEDS,
+    )
+
+    by_key: dict[str, Any] = {
+        c.key: c for group in (sections, follow_ups) for s_ in group.values() for c in s_.criteria
+    }
+    arms = follow_ups["G2.1f"].artifacts["arms"]
+    index_max = max(arms)
+    interior = [v for k, v in arms.items() if 0 < k < index_max]
+    values = np.asarray(list(arms.values()))
+    stability = np.asarray(follow_ups["G2.1i"].artifacts["ratios"])
+    g21 = sections["G2.1"].artifacts
+    worst_oblique = min(v for a, v in g21["r2_fixed"].items() if a != 0.0)
+    residual_section = follow_ups["G2.1g"].artifacts["residual_section"]
+    residual_grid = follow_ups["G2.1g"].artifacts["residual_two_way"]
+    section_z = follow_ups["G2.1f"].artifacts.get("section_z", g21["depth"].section_z)
+
+    header = "| section z (um) | " + " | ".join(f"{section_z[k]:.0f}" for k in sorted(arms)) + " |"
+    rule = "|---" * (len(arms) + 1) + "|"
+    row = "| coronal arm R^2 | " + " | ".join(f"{arms[k]:.4f}" for k in sorted(arms)) + " |"
+
+    return ESCALATION.format(
+        esc_ratio=by_key["G2.1-esc-a"].measured,
+        esc_delta=by_key["G2.1-esc-b"].measured,
+        aug_coords=by_key["G2.1h-a"].measured,
+        aug_grf=by_key["G2.1h-b"].measured,
+        aug_retrieval=by_key["G2.1h-c"].measured,
+        aug_planes=by_key["G2.1h-d"].measured,
+        aug_pose=follow_ups["G2.1h"].artifacts["pose_spread"],
+        aug_pose_frac=by_key["G2.1h-e"].measured,
+        pose_samples=POSE_INVARIANCE_SAMPLES,
+        k=cfg.retrieval_k,
+        common_n=g21["sets"].common_n,
+        arms_table="\n".join([header, rule, row]),
+        arms_spread=by_key["G2.1f-a"].measured,
+        tight=CORONAL_ARM_SPREAD_TIGHT,
+        fixed_ratio=g21["fixed_ratio"],
+        interior_lo=min(interior),
+        interior_hi=max(interior),
+        interior_spread=max(interior) - min(interior),
+        edge_lo=min(arms[0], arms[index_max]),
+        edge_hi=max(arms[0], arms[index_max]),
+        central_arm=arms[index_max // 2],
+        arms_mean=float(values.mean()),
+        arms_flatter=by_key["G2.1f-b"].measured - 1.0,
+        arms_ratio=worst_oblique / float(values.mean()),
+        res_section=by_key["G2.1g-a"].measured,
+        res_grid=by_key["G2.1g-b"].measured,
+        res_section_list=", ".join(f"{a:g} deg {v:+.4f}" for a, v in residual_section.items()),
+        res_grid_list=", ".join(f"{a:g} deg {v:+.4f}" for a, v in residual_grid.items()),
+        repeats=SUBSAMPLE_REPEAT_SEEDS,
+        stab_mean=float(stability.mean()),
+        stab_sd=by_key["G2.1i-a"].measured,
+        stab_min=float(stability.min()),
+        stab_max=float(stability.max()),
+        stab_below=int((stability < OBLIQUE_PARITY_THRESHOLD).sum()),
+        stab_angle_sd=by_key["G2.1i-b"].measured,
+        shortfall=OBLIQUE_PARITY_THRESHOLD - float(stability.mean()),
+    )
+
+
 def _interpretation(sections: dict[str, GateSection], cfg: Config, steps: int) -> str:
     """Fill the hand-written interpretation with the numbers actually measured."""
     by_key: dict[str, Any] = {c.key: c for section in sections.values() for c in section.criteria}
@@ -349,6 +486,7 @@ def _interpretation(sections: dict[str, GateSection], cfg: Config, steps: int) -
         r2_max=max(scores.values()),
         r2_0=scores[0.0],
         r2_90=scores[90.0],
+        r2_fixed_list=", ".join(f"{a:g} deg {g21['r2_fixed'][a]:.4f}" for a in ANGLES_DEG),
         worst_angle=g21["worst_angle"],
         ratio=g21["ratio"],
         edge_pct=100 * float(np.mean([v for a, v in depth.edge_share.items() if a != 0.0])),
@@ -361,7 +499,6 @@ def _interpretation(sections: dict[str, GateSection], cfg: Config, steps: int) -
             f"{a:g} deg {depth.predicted[a]:.4f}" for a in ANGLES_DEG if a != 0.0
         ),
         predicted_spread=max(oblique_predicted) - min(oblique_predicted),
-        depth_ratio=(min(v for a, v in g21["r2_fixed"].items() if a != 0.0) / depth.coronal_pooled),
         fixed_ratio=g21["fixed_ratio"],
         fixed_worst_angle=g21["fixed_worst_angle"],
         fixed_variance=g21["fixed_variance"],
@@ -412,6 +549,24 @@ def main(argv: list[str] | None = None) -> int:
         for criterion in sections[name].criteria:
             print("   ", criterion.summary(), flush=True)
 
+    # The follow-ups a failed G2.1 owes: specs/04's escalation path, plus the diagnosis.
+    # Reported, never asserted — none of them is a substitute criterion.
+    follow_ups: dict[str, GateSection] = {}
+    for name, thunk in (
+        (
+            "G2.1h",
+            lambda: measure_augmentation_completeness(cfg, vol, seed=args.seed, steps=args.steps),
+        ),
+        ("G2.1f", lambda: measure_coronal_arms(cfg, vol, seed=args.seed, steps=args.steps)),
+        ("G2.1g", lambda: measure_support_attribution(cfg, vol, seed=args.seed, steps=args.steps)),
+        ("G2.1i", lambda: measure_ratio_stability(cfg, vol, seed=args.seed, steps=args.steps)),
+        ("G2.1-esc", lambda: measure_escalation(cfg, vol, seed=args.seed, steps=args.steps)),
+    ):
+        print(f"measuring {name} ...", flush=True)
+        follow_ups[name] = thunk()
+        for criterion in follow_ups[name].criteria:
+            print("   ", criterion.summary(), flush=True)
+
     figures = out.parent / "gate2_figures"
     figures.mkdir(parents=True, exist_ok=True)
     _plot_angles(sections["G2.1"], figures / "g2_1_oblique_parity.png")
@@ -425,11 +580,6 @@ def main(argv: list[str] | None = None) -> int:
     sets = sections["G2.1"].artifacts["sets"]
     ratio = sections["G2.1"].artifacts["ratio"]
     fixed_ratio = sections["G2.1"].artifacts["fixed_ratio"]
-    depth_artifact = sections["G2.1"].artifacts["depth"]
-    depth_ratio = (
-        min(v for a, v in sections["G2.1"].artifacts["r2_fixed"].items() if a != 0.0)
-        / depth_artifact.coronal_pooled
-    )
     entropy_frac = next(c for c in sections["G2.4"].criteria if c.key == "G2.4b").measured
 
     # The evaluation-set contract's table rows, built here so the report body below stays
@@ -456,11 +606,29 @@ def main(argv: list[str] | None = None) -> int:
     )
     fractions_row = ", ".join(f"{f:g}" for f in FRACTIONAL_DEPTHS)
 
+    from tests.gate2_criteria import POSE_INVARIANCE_SAMPLES, SUBSAMPLE_REPEAT_SEEDS
+
+    esc = {c.key: c for c in follow_ups["G2.1-esc"].criteria}
+    arms_stats = {c.key: c for c in follow_ups["G2.1f"].criteria}
+    stability_values = np.asarray(follow_ups["G2.1i"].artifacts["ratios"])
+    arm_values = np.asarray(list(follow_ups["G2.1f"].artifacts["arms"].values()))
     recommendation = RECOMMENDATION.format(
         ratio=ratio,
         fixed_ratio=fixed_ratio,
-        depth_ratio=depth_ratio,
         g24_frac=entropy_frac,
+        esc_delta=esc["G2.1-esc-b"].measured,
+        aug_pose_frac=next(c for c in follow_ups["G2.1h"].criteria if c.key == "G2.1h-e").measured,
+        pose_samples=POSE_INVARIANCE_SAMPLES,
+        arms_spread=arms_stats["G2.1f-a"].measured,
+        arms_flatter=arms_stats["G2.1f-b"].measured - 1.0,
+        arms_ratio=(
+            min(v for a, v in sections["G2.1"].artifacts["r2_fixed"].items() if a != 0.0)
+            / float(arm_values.mean())
+        ),
+        repeats=SUBSAMPLE_REPEAT_SEEDS,
+        stab_mean=float(stability_values.mean()),
+        stab_sd=float(stability_values.std(ddof=1)),
+        stab_below=int((stability_values < 0.90).sum()),
     )
 
     body = f"""# GATE 2 — anatomical field + retrieval cross-attention (T04)
@@ -535,6 +703,14 @@ made to pass by editing the config.
 | `FRACTIONAL_DEPTHS` | {fractions_row} | two flanking sections left in the pool |
 
 {_interpretation(sections, cfg, args.steps)}
+{_escalation(sections, follow_ups, cfg)}
+## Escalation and diagnostic measurements
+
+None of these is a gate criterion. They are reported because a failed gate owes an
+explanation, and every one of them could have come out the other way.
+
+{_table(list(follow_ups.values()))}
+
 {recommendation}
 ## Reproducing
 
