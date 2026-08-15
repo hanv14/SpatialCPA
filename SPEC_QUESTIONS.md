@@ -175,20 +175,53 @@ variance **exact** rather than approximate; the 0.02 threshold stands and measur
 (and < 1e-9 algebraically). `E[A_c A_cᵀ] = I` is unchanged, so the covariance function is not
 affected — G1.1 confirms.
 
-### B4. `test_relative_position_only` (T04) is false for the full model — **PROPOSED**
+### B4. `test_relative_position_only` (T04) is false for the full model — **RESOLVED in T04**
 "Translating the whole volume by a constant leaves outputs unchanged" cannot hold end-to-end: the
 GRF realisation is a function of absolute position (`ξ(p + t) ≠ ξ(p)` by construction — that is the
 point of T03), and the triplane is bbox-relative only if the bbox is translated with the data.
-*Proposal:* scope the test to the retrieval branch's neighbour encoding, which is where the
-absolute-coordinate leakage the spec is guarding against would actually appear.
+*Decision:* as proposed. `test_relative_position_only` is scoped to the retrieval branch's neighbour
+encoding — it translates the volume by `(1234.5, −678.25, 900)` µm, rebuilds the index, and asserts
+that the retrieved neighbour **set**, the donor weights and the encoded **tokens** are unchanged.
+That is where the leakage the spec guards against would appear, and where it would do the damage.
+Tolerance 1e-3, not 0: `Section.coords` is float32 (Convention 4), so a 1234.5 µm translation is not
+exactly representable and in-plane distances move by ~1e-4 µm; a token carrying an absolute
+coordinate would differ by ~1e3.
 
-### B5. Rotation equivariance vs data-frame Fourier encoding (T04) — **PROPOSED**
+### B5. Rotation equivariance vs data-frame Fourier encoding (T04) — **RESOLVED in T04 (the proposal was not implementable; see below)**
 The spec asks for both "encoding a fixed cell must be invariant to the augmentation rotation" and "a
-full forward pass is equivariant: rotate inputs, inverse-rotate outputs, get the same result". These
-are consistent only under a precise statement of which frame each quantity lives in.
-*Proposal:* state the contract as `F(R·p | volume rotated by R) == F(p | volume unrotated)` with the
-data-frame encoding carried through `RotationContext`, write it in the module docstring, and make
-the two tests assert the two halves of it.
+full forward pass is equivariant: rotate inputs, inverse-rotate outputs, get the same result".
+
+**The proposed contract `F(R·p | volume rotated by R) == F(p | volume unrotated)` cannot be
+implemented without making the augmentation an exact no-op**, and that is not a subtlety about
+frames — it is arithmetic. The triplane feature planes are fixed arrays indexed by fixed axes. Such
+a lookup is invariant to a continuous rotation *only* if it undoes the rotation before indexing; and
+a triplane that undoes the rotation is trained identically whether the augmentation is on or off.
+The design's fix (a) — "rotate the entire volume … forces the field to be orientation-agnostic",
+`design/v23_sectioning_equivariance.md` §2.1 — would then do nothing, GATE 2 would be measuring fix
+(b), the multi-orientation ensemble, alone, and it would appear to be testing both. That is the same
+class of failure C1(a) identifies for own-section retrieval: a gate that passes while hiding what it
+exists to detect.
+
+*Decision (T04):* implement the design's semantics and state the contract per channel, in
+`model/field.py`'s docstring and in a table. `RotationContext` carries one rotation `R` and the four
+channels behave differently **on purpose**:
+
+| Channel | Under the augmentation |
+|---|---|
+| `fourier_encode` | **invariant** — evaluated in the data frame, before `R` |
+| GRF query points | **invariant** — the context maps them *back* to the data frame, so the realisation stays attached to the tissue and T03's exact intersection consistency survives across steps |
+| retrieval neighbourhoods | **invariant** — identity, weights and the tokens' relative positions are data-frame quantities |
+| triplane lookup | **not invariant, deliberately** — this *is* the augmentation |
+
+The spec's two tests then assert the two halves: `test_rotation_equivariance` checks the three
+invariant channels agree to 1e-3 relative under three random rotations, and
+`test_rotation_augmentation_is_not_inert` is a **negative control** asserting the triplane lookup
+moves by > 10% relative — so nobody can later "fix" the equivariance test by undoing the rotation.
+`RotationContext` additionally refuses to exit with a required channel un-transformed
+(`RotationError`), which is the "impossible to rotate one and forget another" the spec asks for.
+
+*Consequence to carry forward:* GATE 2's oblique parity therefore rests on **both** fixes, which is
+what the design intends, and the gate is strictly harder than under the proposed contract.
 
 ### B6. Hard-core radius fights the pair-correlation test (T05) — **RESOLVED (decided 2026-08-15)**
 `r0` = 5th percentile of real nearest-neighbour distances, and `test_hardcore_respected` forbids any

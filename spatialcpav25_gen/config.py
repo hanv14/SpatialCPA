@@ -28,6 +28,7 @@ __all__ = [
     "HOLDOUT_MODES",
     "LAYOUT_MODES",
     "PRIOR_MODES",
+    "ROTATION_BIASES",
     "TEXT_EMB_MODES",
     "TEXT_POOLINGS",
     "Config",
@@ -40,6 +41,7 @@ __all__ = [
 # --------------------------------------------------------------------------------------
 
 LAYOUT_MODES: Final[frozenset[str]] = frozenset({"field", "hybrid", "resample"})
+ROTATION_BIASES: Final[frozenset[str]] = frozenset({"uniform", "axial"})
 PRIOR_MODES: Final[frozenset[str]] = frozenset({"correlated", "iid"})
 EXPR_MODES: Final[frozenset[str]] = frozenset({"zinb-flow", "cross-mix", "auto-blend"})
 TEXT_EMB_MODES: Final[frozenset[str]] = frozenset({"medcpt", "lookup"})
@@ -307,15 +309,30 @@ class Config:
     rotation_aug: bool = True
     """Apply the whole-volume rotation augmentation during training."""
 
+    rotation_bias: str = "uniform"
+    """One of ``ROTATION_BIASES``. ``uniform`` draws from Haar measure on SO(3);
+    ``axial`` is the anatomically plausible bias of ``design/v23_sectioning_equivariance.md``
+    §2.1(a) - a free spin about the sectioning axis plus a tilt of at most
+    ``rotation_bias_max_tilt_deg``, i.e. the poses a block actually gets mounted in."""
+
+    rotation_bias_max_tilt_deg: float = 30.0
+    """Largest tilt away from the sectioning axis under ``rotation_bias="axial"``."""
+
     field_mlp_hidden: int = 256
     """Hidden width of the field MLP."""
+
+    field_mlp_layers: int = 3
+    """Linear layers in the field MLP (the spec's "3-layer MLP"). Must be >= 2: one layer
+    would make the field a linear read-out of the triplane features."""
 
     tv_z_weight: float = 1e-3
     """Weight of the total-variation-along-z penalty on the unrotated orientation."""
 
     field_dim: int = 128
-    """d_f: width of the field feature F(x, y, z). *Provisional* - T04 sets the real
-    default; no value is fixed in ``specs/``."""
+    """d_f: width of the field feature F(x, y, z). T04 confirms T01's provisional 128 as the
+    real default: it is twice ``retrieval_ctx_dim`` and half ``field_mlp_hidden``, so the
+    field carries the larger share of the conditioning signal, which is what the design
+    intends (the field carries anatomy, retrieval carries realism)."""
 
     # ----------------------------------------------------------------------------------
     # retrieval (T04)
@@ -338,16 +355,75 @@ class Config:
     """Weight of the niche-similarity term in the retrieval score."""
 
     retrieval_ctx_dim: int = 64
-    """d_ctx: width of the retrieval cross-attention output. *Provisional* - T04 sets the
-    real default."""
+    """d_ctx: width of the retrieval cross-attention output. T04 confirms 64 as the real
+    default - four heads of width 16, and half the field's width."""
 
     retrieval_n_heads: int = 4
-    """Heads in the retrieval cross-attention. *Provisional* - T04 sets the real
-    default."""
+    """Heads in the retrieval cross-attention. T04 confirms 4 as the real default; the
+    score has three named terms (in-plane distance, z proximity, niche similarity) and the
+    heads are what let the attention weight them differently per query."""
+
+    retrieval_exclude_source_section: bool = True
+    """Exclude a query cell's **own** section from its retrieval candidate pool.
+
+    Load-bearing for GATE 2 (SPEC_QUESTIONS C1a): without it, a cell evaluated on a 90
+    degree query plane retrieves in-plane neighbours a few micrometres away *inside its own
+    section*, the oblique plane becomes trivially easy, and the gate passes while hiding
+    exactly the equivariance failure it exists to detect. ``False`` is the setting
+    ``test_source_section_exclusion_changes_oblique_R2`` measures against."""
+
+    retrieval_score_temperature: float = 1.0
+    """Temperature of the softmax turning retrieval scores into donor weights. The score's
+    leading term is an in-plane distance in units of the median nearest-neighbour distance,
+    so a temperature of 1 means "one neighbour spacing costs one nat"."""
+
+    retrieval_candidates_per_section: int = 64
+    """In-plane nearest candidates taken from each allowed section before scoring.
+
+    The score is monotone decreasing in in-plane distance at fixed z and niche, so the
+    global top-K is contained in the per-section top-``retrieval_candidates_per_section``
+    union unless the niche term reorders more than this many cells within one section.
+
+    It must comfortably exceed ``retrieval_k`` (``validate`` enforces ``>=``), and that is
+    load-bearing rather than a safety margin: when only two sections are admissible — a
+    held-out run, the gap-aware dropout, a wide-gap inference — a cap of ``retrieval_k / 2``
+    makes the union exactly ``K`` candidates, the top-K selects all of them, and **the score
+    stops choosing anything at all**. The z term is then silently inert in precisely the
+    wide-gap regime it exists for. Found by GATE 2's G2.3, which measured the ablation as a
+    no-op until the cap was raised."""
+
+    retrieval_query_chunk: int = 4096
+    """Query points scored per chunk. The candidate block is
+    ``(chunk, n_sections x retrieval_candidates_per_section, niche_dim)``, which at the
+    defaults is a few million floats; chunking keeps it off the heap for whole-volume
+    queries."""
+
+    niche_knn_k: int = 8
+    """Neighbours defining the *first* niche radius. The radius is the distance to the
+    k-th in-plane nearest neighbour rather than a fixed micrometre value, so the niche
+    transfers across datasets with different cell densities (T04 §2)."""
+
+    niche_n_scales: int = 3
+    """Spatial scales the niche composition is computed at (the spec's "3 spatial
+    scales")."""
+
+    niche_scale_factor: float = 2.0
+    """Ratio between consecutive niche radii: scale ``s`` uses the
+    ``niche_knn_k * niche_scale_factor ** s``-th nearest neighbour's distance."""
+
+    section_dropout_max_sections: int = 1
+    """Sections dropped from the candidate pool when the gap-aware curriculum fires. One
+    is the spec's "the nearest section(s)"; raising it makes the curriculum harsher."""
 
     expr_pca_dim: int = 32
     """Expression PCs used for neighbour tokens, the GATE 2 probe target, and the
     Sinkhorn basis (T08). GATE 2 specifies the top 32."""
+
+    gate2_min_cells_per_angle: int = 500
+    """Floor on the common cell count GATE 2's angles are subsampled to (SPEC_QUESTIONS
+    C1b). Below it the fixture's slabs are thickened and the gate re-run - the floor is
+    never lowered and no angle is ever dropped, because both would make the oblique-parity
+    ratio partly a statement about sample size."""
 
     # ----------------------------------------------------------------------------------
     # layout (T05)
@@ -633,6 +709,7 @@ class Config:
             ("text_emb_mode", self.text_emb_mode, TEXT_EMB_MODES),
             ("decoder", self.decoder, DECODERS),
             ("text_pooling", self.text_pooling, TEXT_POOLINGS),
+            ("rotation_bias", self.rotation_bias, ROTATION_BIASES),
         ]
         for name, value, allowed in choices:
             if value not in allowed:
@@ -675,12 +752,22 @@ class Config:
             "triplane_channels": self.triplane_channels,
             "n_plane_orientations": self.n_plane_orientations,
             "field_mlp_hidden": self.field_mlp_hidden,
+            "field_mlp_layers": self.field_mlp_layers,
             "field_dim": self.field_dim,
+            "rotation_bias_max_tilt_deg": self.rotation_bias_max_tilt_deg,
             "retrieval_k": self.retrieval_k,
             "retrieval_z_window": self.retrieval_z_window,
             "retrieval_ctx_dim": self.retrieval_ctx_dim,
             "retrieval_n_heads": self.retrieval_n_heads,
+            "retrieval_score_temperature": self.retrieval_score_temperature,
+            "retrieval_candidates_per_section": self.retrieval_candidates_per_section,
+            "retrieval_query_chunk": self.retrieval_query_chunk,
+            "niche_knn_k": self.niche_knn_k,
+            "niche_n_scales": self.niche_n_scales,
+            "niche_scale_factor": self.niche_scale_factor,
+            "section_dropout_max_sections": self.section_dropout_max_sections,
             "expr_pca_dim": self.expr_pca_dim,
+            "gate2_min_cells_per_angle": self.gate2_min_cells_per_angle,
             "potts_iters": self.potts_iters,
             "potts_knn_k": self.potts_knn_k,
             "layout_n_mc": self.layout_n_mc,
@@ -795,6 +882,30 @@ class Config:
             raise ConfigError(
                 f"Config.variogram_n_bins={self.variogram_n_bins} must be >= 3: a nugget, a "
                 "sill and a length-scale cannot be fitted to fewer points"
+            )
+        if self.field_mlp_layers < 2:
+            raise ConfigError(
+                f"Config.field_mlp_layers={self.field_mlp_layers} must be >= 2; a single "
+                "layer makes the field a linear read-out of the triplane features"
+            )
+        if self.niche_scale_factor <= 1.0:
+            raise ConfigError(
+                f"Config.niche_scale_factor={self.niche_scale_factor!r} must be > 1: the "
+                "niche's scales must be distinct"
+            )
+        if not 0.0 < self.rotation_bias_max_tilt_deg <= 180.0:
+            raise ConfigError(
+                f"Config.rotation_bias_max_tilt_deg={self.rotation_bias_max_tilt_deg!r} "
+                "must lie in (0, 180]"
+            )
+        if self.retrieval_candidates_per_section < self.retrieval_k:
+            raise ConfigError(
+                f"Config.retrieval_candidates_per_section="
+                f"{self.retrieval_candidates_per_section} is below "
+                f"Config.retrieval_k={self.retrieval_k}. With two admissible sections the "
+                "candidate union would then be at most K, the top-K would select all of it, "
+                "and the retrieval score would decide nothing — silently, and exactly in the "
+                "wide-gap regime the z-proximity term exists for"
             )
         if self.retrieval_ctx_dim % self.retrieval_n_heads != 0:
             raise ConfigError(

@@ -11,7 +11,7 @@ Status values: `TODO` | `IN PROGRESS` | `BLOCKED` | `DONE`.
 | T01 | Config and data contracts | `specs/01_TASK_config_and_data.md` | `config.py`, `data/schema.py`, `data/loaders.py`, synthetic fixture | — | DONE |
 | T02 | Text-grounded embeddings | `specs/02_TASK_text_embeddings.md` | `data/text.py`, `model/embeddings.py`, MedCPT cache, distillation head | — | DONE |
 | T03 | 3D GRF noise field | `specs/03_TASK_noise_field_GATE1.md` | `model/noise.py`, `scripts/gate1_report.py`, `reports/gate1.md` | **GATE 1** | DONE — **GATE 1 passes** on the 3000 µm gate fixture |
-| T04 | Anatomical field + retrieval | `specs/04_TASK_field_and_retrieval_GATE2.md` | `model/field.py`, `model/retrieval.py`, `scripts/gate2_report.py`, `reports/gate2.md` | **GATE 2** | TODO |
+| T04 | Anatomical field + retrieval | `specs/04_TASK_field_and_retrieval_GATE2.md` | `model/field.py`, `model/retrieval.py`, `scripts/gate2_report.py`, `reports/gate2.md` | **GATE 2** | DONE — **GATE 2 passes**, oblique parity **0.941** |
 | T05 | Layout head | `specs/05_TASK_layout_head.md` | `model/layout.py`, intensity + Strauss sampler + Potts marks | — | TODO |
 | T06 | Expression head + ZINB decoder | `specs/06_TASK_expression_head.md` | `model/expression.py`, `model/spatialcpav25_gen.py`, `losses/reconstruction.py` | — | TODO |
 | T07 | SEFL consistency losses | `specs/07_TASK_sefl_losses.md` | `losses/sefl.py`, `infer/planes.py`, EMA teacher, collapse alarm | — | TODO |
@@ -27,13 +27,21 @@ table covers everything that has been done to the repository.
 | Gate | Criterion | Status | Report |
 |---|---|---|---|
 | GATE 1 (T03) | GRF prior halves median Moran's I error vs i.i.d.; per-gene r > 0.7; `I_gen` monotone in `ell` over the calibration bracket; `I_gen(ell)` unimodal with its maximiser ≥ the fitted `ell` | **PASSED** — error ratio **0.130** (< 0.5), r **0.917** (> 0.7), smallest step over the bracket **+0.028** (> 0), fitted vs best-matching `ell` **8 %** (< 25 %), unimodality violation **0.000** (< 0.0069), maximiser **2.52×** the fitted `ell` (≥ 1×) | `reports/gate1.md` |
-| GATE 2 (T04) | oblique R² ≥ 0.90 × axis-aligned R² | not reached | `reports/gate2.md` |
+| GATE 2 (T04) | oblique R² ≥ 0.90 × axis-aligned R², on an equal-`n` evaluation set with own-section retrieval excluded; held-out z ≥ 0.8 × neighbouring z; `w_z = 0` costs R² at fractional depths 0.2/0.8 but not 0.5; attention entropy > 0.5 log K | **PASSED** — oblique parity **0.941** (≥ 0.90), z-interpolation **1.097** (≥ 0.80), `w_z` ablation **+0.030** at 0.2 / **+0.049** at 0.8 vs **+0.003** at 0.5 (< 0.01), entropy **3.422** nats (> 1.733) | `reports/gate2.md` |
 
 ## Open risks carried forward
 
 | # | Risk | Raised | Owed to | Decision due |
 |---|---|---|---|---|
-| R1 | **`ell_z` cannot be resolved by a 9-section stack.** The fit returns **561 µm** against a **200 µm** ground truth on the gate fixture (353 µm at the 1000 µm field of view). | T03 | T04, T07 | **before T07** |
+| R1 | **`ell_z` cannot be resolved by a 9-section stack.** The fit returns **561 µm** against a **200 µm** ground truth on the gate fixture (353 µm at the 1000 µm field of view). | T03 | T07 | **before T07** |
+| R2 | **GATE 2's attention is near-uniform** (0.987 × log K): the retrieval branch averages its K donors rather than selecting among them, so G2.4 passes at the opposite extreme from the collapse it forbids. Whether a *selective* attention preserves oblique parity is untested. | T04 | T06 | **at T06** |
+
+**R1 update at T04.** GATE 2 could not test it and did not: the probe is deterministic and never
+queries the GRF, so a wrong `ell_z` has no path into the oblique-parity number. The risk is unchanged
+and the decision is still owed before T07 — T04's oblique numbers, which were supposed to inform the
+choice, turn out not to bear on it. Remedy 2 (calibrate `ell_z` against observed between-section
+correlation) is therefore still the inclination, and it will have to be decided on T07's `L_cross`
+evidence rather than on this gate's.
 
 ### R1 — fitted `ell_z` is an upper bound, and SEFL depends on the anisotropy
 
@@ -81,7 +89,8 @@ made on evidence rather than taste. **Do not start T07 without settling it.**
 | Fitted `ell = (ℓx, ℓy, ℓz)` | T03 / T09 | gate fixture (3000 µm): **(102.9, 102.9, 561.1) µm** vs ground truth (120, 120, 200), i.e. ℓxy −14 %; 1000 µm fixture: (141.5, 141.5, 353) µm, +18 %. `ell_z` is extrapolated on both (the 400 µm stack reaches 35 % / 60 % of the fitted sill) and warns |
 | `I_gen(ell)` maximiser (bounds T09's calibration bracket) | T03 / T09 | **0.086 × in-plane extent** at 3000 µm FOV (2.52× the fitted `ell`), **0.112 ×** at 1000 µm (0.79× the fitted `ell`) |
 | GRF query throughput | T03 | **2.9 × 10⁵ points/s** (10⁶ points, M = 4096, d_h = 64) on the reference 4-core Xeon @ 2.10 GHz — 2.0–3.5 × 10⁵ across runs, the spread being machine load; 8× the points cost 6.6–9.7× the time (ideal 8, quadratic 64) |
-| Oblique parity ratio | T04 | — |
+| Oblique parity ratio | T04 | **0.941** = min over 15°–90° of R² ÷ R²(0°), worst angle 30°. R² by angle 0.4169 / 0.4154 / 0.3922 / 0.3990 / 0.4067 / 0.4386 at 0/15/30/45/60/90°, equal `n` = 1011 per angle (seed 20260815), own source section excluded from retrieval at every angle, gate fixture, 3000 µm FOV. Not monotone in the angle — 90° is the best, the minimum is mid-sweep — so this is scatter, not a directional bias |
+| Attention entropy ÷ log K | T04 / T06 | **0.987** (3.422 nats, K = 32). Passes G2.4's `> 0.5 log K` at the *opposite* extreme from collapse: the probe averages its donors rather than selecting among them. T06 should watch it fall |
 | Fitted repulsion `r0`, `R`, `gamma`; Potts `beta` | T05 | — |
 | Detection-rate r; gene–gene covariance vs independent-donor; mean–variance slope | T06 | — |
 | Consistency/reconstruction loss ratio; collapse-alarm history | T07 | — |
@@ -556,3 +565,123 @@ Two `Config` fields are **named but deliberately not added yet** —
 `retrieval_exclude_source_section` and `gate2_min_cells_per_angle` — because nothing reads them until
 T04 and the floor's value should come from T04's own measurement of how many cells each angle's slab
 holds. The spec names both as `Config` fields so Convention 1 still binds when they land.
+
+### T04 — anatomical field + retrieval cross-attention (2026-08-15) — **GATE 2 PASSES**
+
+**Built.** `spatialcpav25_gen/model/field.py` (`TriplaneField`, `fourier_encode`, `random_rotation`,
+`orientation_rotations`, `RotationContext`), `spatialcpav25_gen/model/retrieval.py`
+(`RetrievalIndex`, `RetrievalAttention`, `ExpressionPCs`, `attention_entropy`),
+`tests/test_field.py` (32 fast + 4 gate), `tests/test_retrieval.py` (23 fast + 1 gate),
+`tests/gate2_criteria.py`, `scripts/gate2_report.py`, `reports/gate2.md`.
+
+Sixteen new `Config` fields, all documented, no constant outside `Config`: `rotation_bias`,
+`rotation_bias_max_tilt_deg`, `field_mlp_layers`, `retrieval_exclude_source_section`,
+`retrieval_score_temperature`, `retrieval_candidates_per_section`, `retrieval_query_chunk`,
+`niche_knn_k`, `niche_n_scales`, `niche_scale_factor`, `section_dropout_max_sections`,
+`gate2_min_cells_per_angle`, plus `ROTATION_BIASES`. `field_dim = 128` and
+`retrieval_ctx_dim = 64` / `retrieval_n_heads = 4` were T01 *provisional*; T04 confirms them as the
+real defaults with the reason written into the field docstrings.
+
+**GATE 2 — PASS.** `reports/gate2.md`, `scripts/gate2_report.py` exits 0. The probe is
+`TriplaneField` + `RetrievalAttention` → a **linear** head on 32 expression PCs, 240 Adam steps,
+batch 2048, lr 3e-3, rotation augmentation live, on the 3000 µm gate fixture.
+
+| Criterion | Required | Measured | |
+|---|---|---|---|
+| G2.1a oblique parity — **the gate** | `min_angle R² ≥ 0.90 × R²(0°)` | **0.941** (worst angle 30°) | PASS |
+| G2.1b R²(0°), the denominator | > 0 | **0.4169** | PASS |
+| G2.1c own-section exclusion still plumbed through | ΔR²(90°) > 0 | **+0.0784** (0.4386 → 0.5170 with it off) | PASS |
+| G2.2a held-out z vs neighbouring z | ≥ 0.80 | **1.097** (0.4155 vs 0.3744 / 0.3833) | PASS |
+| G2.3a `w_z = 0` costs R² at f = 0.2 / 0.8 | > 0 | **+0.0303** at 0.2, **+0.0486** at 0.8 | PASS |
+| G2.3b … and barely at f = 0.5 | \|Δ\| < 0.01 | **+0.0034** | PASS |
+| G2.3c same, whole stack admissible (diagnostic) | — | +0.0004 / +0.0034 / +0.0019 | REPORT |
+| G2.4a attention entropy | > 0.5 log K = 1.733 | **3.422 nats** | PASS |
+| G2.4b entropy ÷ log K (diagnostic) | — | **0.987** | REPORT |
+
+**R² by angle** (equal `n` = 1011, subsample seed 20260815, own source section excluded at every
+angle, slab half-thickness 12.5 µm, pre-subsample `n` = 13500 / 4021 / 1985 / 1410 / 1145 / 1011):
+0° **0.4169**, 15° 0.4154, 30° **0.3922**, 45° 0.3990, 60° 0.4067, 90° **0.4386**.
+
+**Oblique parity ratio for the paper: 0.941.** Note the shape as well as the number — R² is *not*
+monotone in the angle. 90° is the **best** angle and the minimum sits mid-sweep at 30°, which is
+sampling scatter across six 1011-cell subsets, not the steady 0° → 90° decay a directionally biased
+basis would produce. That decay is what the gate was written to catch and it is not there.
+
+`make check` green (ruff, `mypy --strict` on 11 files, **128 fast tests in 29 s**);
+`pytest -m gate` **9 passed in 6 min 26 s** (GATE 1's four, GATE 2's four, and the slow half of the
+own-section-exclusion pair).
+
+**One real bug, found by G2.3 and fixed.** `retrieval_candidates_per_section` was 16 against
+`retrieval_k = 32`. Only the 16 in-plane nearest cells of each admissible section entered the
+ranking, so whenever just **two** sections were admissible — a held-out run, the gap-aware dropout,
+any wide-gap inference — the candidate union was exactly K, the top-K selected all of it, and **the
+retrieval score decided nothing**. The z-proximity term was silently inert in precisely the regime
+it exists for, and G2.3 measured the ablation as a no-op (deltas −0.019 at f = 0.2 / 0.8, i.e. the
+*wrong sign*) until the cap was raised. Default now 64, and `Config.validate` refuses
+`retrieval_candidates_per_section < retrieval_k` with the reason written out. No threshold was
+touched.
+
+**A second measurement artefact, worth recording because it nearly became a finding.** The first
+G2.3 run trained the `w_z = 1` and `w_z = 0` arms from *independent* seeds and reported +0.024 /
++0.031 / +0.033 — a clean-looking pass at the asymmetric depths and a failure of "barely affecting
+0.5". With the two arms sharing a training seed (identical init, batch order and per-step rotations)
+the same three numbers collapse to +0.000 / +0.003 / +0.002. The original signal was
+training-trajectory noise, comparable in size to the effect. Both arms now share a seed; ablation A5
+in T10 must do the same.
+
+**Deviations from the spec, and why.**
+
+1. **`test_rotation_equivariance` is not the test the spec literally describes** (SPEC_QUESTIONS B5,
+   now resolved). "A full forward pass is equivariant: rotate inputs, inverse-rotate outputs, get
+   the same result" is unsatisfiable *and* self-defeating for a triplane: a lookup table on fixed
+   axes is rotation-invariant only if it undoes the rotation, and a triplane that undoes the
+   rotation trains identically with the augmentation on or off — the design's fix (a) would be an
+   exact no-op and GATE 2 would be measuring fix (b) alone while appearing to test both. So the
+   contract is stated **per channel** (Fourier encoding, GRF queries and retrieval are invariant;
+   the triplane lookup is not, deliberately) and asserted in both directions:
+   `test_rotation_equivariance` for the invariant channels at 1e-3, and
+   `test_rotation_augmentation_is_not_inert` as a **negative control** for the triplane. The full
+   argument is in `SPEC_QUESTIONS.md` B5 and in `model/field.py`'s docstring. Net effect: the gate
+   is *harder* than under the literal reading.
+2. **The orientation set is a spherical Fibonacci hemisphere lattice, not a tetrahedron.** The spec
+   says "tetrahedral / maximally-separated". A tetrahedron has no meaning at `P = 8`, which is
+   GATE 2's own first remedy, and the lattice is defined at every `P`, is deterministic, and puts
+   orientation 0 at the identity — which `tv_z_penalty` needs, since that is the only set whose
+   third axis is the sectioning axis.
+3. **`fourier_encode` takes coordinates already normalised to [-1, 1] in the data frame.** The
+   spec's signature `(xyz_data_frame, cfg)` has no bounding box to normalise against and `Config`
+   has no volume in it; `TriplaneField` does the normalisation and the requirement is documented on
+   the parameter. Signature unchanged.
+4. **Three additive keyword arguments**, each because the spec's signature has nowhere to put a
+   per-query quantity: `RetrievalIndex.query(..., source_section=)` (C1a requires the own-section
+   exclusion "beside `exclude_z`", and it is per-query, not global) and `apply_dropout=` (the
+   gap-aware curriculum must be off on evaluation paths by default, so a metric cannot randomise
+   itself), plus `RetrievalAttention.attend()` beside `forward()` so G2.4 can read the attention
+   weights without `forward` returning a tuple.
+5. **Neighbour type/region are one-hot in the token, not `EntityEmbeddings`.** A one-hot followed
+   by the attention's key/value `Linear` *is* a learned embedding — same parameters, one fewer
+   module — and it keeps T04 runnable without T02's text vectors. T06 swaps in `EntityEmbeddings`
+   when the observation token is assembled.
+6. **G2.3's fractional depths are realised by exclusion, not by moving cells**, and only the two
+   designated flanks are left in the pool, with `retrieval_z_window` widened to 5 spacings for that
+   measurement (identically in both arms) because the 0.2 / 0.8 configurations put one flank four
+   spacings away — outside the default window of 3, where the ablation would have been measuring
+   `retrieval_z_window` instead of `retrieval_w_z`.
+
+**Carried forward.**
+
+* **The attention is near-uniform** (0.987 × log K). G2.4 is one-sided — it forbids collapse onto a
+  single donor — and this probe sits at the *opposite* extreme: it averages its 32 donors rather
+  than selecting among them. GATE 2 has shown the attention has not collapsed, not that it is
+  selective. T06 should watch this number fall as the head learns to select, and treat a drop below
+  0.5 log K as the collapse alarm.
+* **This gate constrains the backbone, not the generator.** The probe is a linear read-out; T06's
+  flow-matching head and T07's SEFL losses can still break oblique parity. Re-measure after T07.
+* **Open risk R1 (`ell_z` reads high) is untouched.** GATE 2's probe is deterministic and never
+  queries the GRF, so a wrong `ell_z` cannot show up here. Still open, still owed to T07.
+* **Coverage matrix.** All ten T04 rows are implemented: the Fourier half of the observation token,
+  the anisotropic encoding with the axis-order test, the triplane + TV_z, retrieval cross-attention
+  with the density-adaptive niche, the z-proximity term (`retrieval_w_z`, ablation A5), the
+  gap-aware dropout curriculum, whole-volume rotation augmentation via `RotationContext`, the
+  multi-orientation ensemble, oblique parity ≥ 0.90, and the data-frame Fourier axis. Nothing in
+  either design doc that T04 owns is missing from the matrix.
