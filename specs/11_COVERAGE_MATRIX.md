@@ -27,7 +27,7 @@ is an omission — flag it rather than skipping it.**
 | Gene subsampling `genes_per_step` | T06 | what makes panel width irrelevant |
 | Metric-aware LOSO losses (Moran, Geary, profiles, Sinkhorn) | T08 | leakage enforced by type |
 | Uncertainty-gated anchoring (replaces alpha/gap flags) | T09 | isotonic `w(v)` |
-| Leakage-free length-scale + detection calibration | T09 | flanking sections only |
+| Leakage-free length-scale + detection calibration | T09 | flanking sections only; **unimodal objective** — bracket capped, maximum located, `target_unreachable` status (T03/GATE 1) |
 | Automatic per-dataset config selection | T09 | coordinate descent, ~10 fits |
 | No-regression guarantee | T09, T01 | `test_selector_can_recover_v20_config` |
 | Six target metrics + two v20 metric bug fixes | T10 | Pearson-as-Spearman; `argsort` ties |
@@ -44,6 +44,7 @@ is an omission — flag it rather than skipping it.**
 | Anisotropic `ell = (ℓx, ℓy, ℓz)` fitted from sections | T03 | what makes oblique quantitatively right |
 | Continuity in 3D → exact intersection consistency | T03 (G1.2), T07 | bitwise-equality test |
 | `with_lengthscale` without redrawing | T03 | calibration loop stability |
+| **Unimodal `I_gen(ell)`; calibration bracket + maximum detection** | T03 (G1.3g), T09 §2 | measured in `reports/gate1.md`; `calibration_ell_max_extent_frac`, `calibration_ell_max_fitted_multiple` |
 | Rotation augmentation over the whole volume | T04 | `RotationContext` |
 | Multi-orientation triplane ensemble | T04 | `n_plane_orientations=4` |
 | **Oblique parity ≥ 0.90 × axis-aligned** | T04 | GATE 2 |
@@ -73,7 +74,7 @@ is an omission — flag it rather than skipping it.**
 
 | Gate | Spec | Criterion | If it fails |
 |---|---|---|---|
-| GATE 1 | T03 | GRF prior halves Moran's I error vs. i.i.d.; `I_gen` monotone in `ell` | **Stop.** The method's core mechanism does not work; report before building anything else. |
+| GATE 1 | T03 | GRF prior halves Moran's I error vs. i.i.d.; `I_gen` monotone in `ell` **over the calibration bracket** and unimodal with its maximiser at or above the fitted `ell` (G1.3g); measured on the 3000 µm gate fixture | **Stop.** The method's core mechanism does not work; report before building anything else. |
 | GATE 2 | T04 | oblique R² ≥ 0.90 × axis-aligned | Raise orientations to 8, verify augmentation covers everything, then **stop** — a steerable backbone is a design change. |
 
 ## Deliberate negative controls

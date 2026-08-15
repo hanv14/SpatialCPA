@@ -77,6 +77,11 @@ __all__ = [
 
 _TWO_PI = 2.0 * math.pi
 
+_VARIOGRAM_WEIGHT_FLOOR = 1e-9
+"""Guard on Cressie's ``N(h) / gamma(h)^2`` weights: a bin with zero semivariance would
+otherwise carry infinite weight. Not a tunable — it exists so a division cannot explode.
+"""
+
 FloatArray = npt.NDArray[np.float64]
 
 
@@ -205,11 +210,19 @@ class GaussianRandomField(nn.Module):
     physical position only** — never on which points happen to have been generated
     (T03 "Do NOT"), which is what makes two intersecting sections agree.
 
-    One measured caveat on "bitwise": a batch of one row is dispatched by torch to a
-    matrix-*vector* kernel whose reduction order over the M features differs from the
-    matrix-matrix one, so a single point queried alone matches the same point inside a
-    batch to a few ulps (~2e-6) rather than exactly. Every batch size from 2 up, and every
-    chunk size, agrees bit for bit.
+    The exact contract on "identical", which is what G1.2 and T07's ``L_cross`` rest on:
+
+    * **Identical points in an identically shaped batch give bitwise identical values**,
+      in this process, another process, or another machine. This is the property the
+      intersection-consistency claim needs — both branches sample the same number of
+      points along the shared line — and it is asserted with ``torch.equal``.
+    * Change the *shape* of the batch (query a point alone, or with a different
+      ``grf_chunk_points``) and float32 matmul is free to reassociate its sum over the M
+      features: torch dispatches a matrix-*vector* kernel for a one-row batch, and BLAS
+      vendors block the reduction differently. The values then agree to a few 1e-6 rather
+      than exactly. That is a property of float32 GEMM, not of the field, and it is
+      asserted with a tolerance rather than papered over with padding that would only
+      appear to guarantee more.
     """
 
     directions: Tensor
@@ -301,24 +314,19 @@ class GaussianRandomField(nn.Module):
     def evaluate_numpy(self, xyz: npt.NDArray[Any]) -> npt.NDArray[np.float32]:
         """Evaluate the field through numpy. ``(N, 3)`` micrometres -> ``(N, d_h)`` float32.
 
-        The same arithmetic as :meth:`forward` in the same order and the same precision,
-        so the two agree to within BLAS's freedom to reassociate (~1e-6); used where
-        dragging a torch tensor around would be noise, e.g. the variogram fitting and the
-        gate report.
+        The numpy-facing path: numpy in, numpy out, no tensor to carry around — used by
+        the variogram fit, the gate report and anything else doing analysis rather than
+        training.
+
+        It *delegates* to :meth:`forward` rather than re-implementing the arithmetic in
+        numpy. A second implementation would be a second thing to keep in step, and its
+        float32 matmul would reassociate differently from torch's — a divergence of a few
+        1e-6 that varies by BLAS vendor and platform, so the two paths could only ever
+        have been compared with a tolerance. Delegating makes them equal by construction,
+        on every machine.
         """
-        points = np.asarray(xyz, dtype=np.float32)
-        if points.ndim != 2 or points.shape[1] != 3:
-            raise ValueError(f"GaussianRandomField expects (N, 3) coordinates, got {points.shape}")
-        points = np.ascontiguousarray(points)
-        omega = self.omega32.detach().numpy()
-        phase = self.phase32.detach().numpy()
-        amplitude = self.amplitude32.detach().numpy()
-        chunk = int(self.cfg.grf_chunk_points)
-        out = np.empty((points.shape[0], self.latent_dim), dtype=np.float32)
-        for start in range(0, points.shape[0], chunk):
-            block = points[start : start + chunk]
-            out[start : start + chunk] = np.cos(block @ omega.T + phase) @ amplitude
-        return out
+        values = self.forward(xyz).detach().numpy()
+        return cast("npt.NDArray[np.float32]", values.astype(np.float32, copy=False))
 
     def covariance(
         self, p: npt.NDArray[Any] | Tensor, q: npt.NDArray[Any] | Tensor
@@ -711,7 +719,7 @@ def _finish_bins(
 def _fit_matern_variogram(
     lags: FloatArray,
     gamma: FloatArray,
-    weights: FloatArray,
+    counts: FloatArray,
     cfg: Config,
     *,
     lo: float,
@@ -723,12 +731,21 @@ def _fit_matern_variogram(
     The two linear parameters have a closed form given ``ell``, so the fit is a scan over
     a log-spaced grid of ``cfg.variogram_n_ell_grid`` length-scales with a weighted 2x2
     solve inside — boring, has no starting point to get wrong, and cannot land in a local
-    minimum. Bins are weighted by their pair count.
+    minimum.
+
+    Bins are weighted by Cressie's ``N(h) / gamma(h)^2`` rather than by ``N(h)`` alone.
+    The semivariogram estimator's variance grows roughly with ``gamma(h)^2``, so pair
+    counts on their own make the fit a fit to the *large* lags — where the pairs are, and
+    where a real tissue's large-scale trend lives — and bias the length-scale. Measured on
+    the synthetic fixture, whose ground-truth in-plane length is 120 um: pair-count weights
+    give 137.6 um at a 1000 um field of view and 95.2 um at 3000 um, Cressie's give
+    137.6 um and 106.6 um. Better at the wider field of view, neutral at the narrower one.
 
     Returns ``(ell, nugget, sill, rmse)``.
     """
     if not 0.0 < lo < hi:
         raise VariogramError(f"{axis} variogram: empty length-scale search range [{lo}, {hi}]")
+    weights = counts / np.maximum(gamma, _VARIOGRAM_WEIGHT_FLOOR) ** 2
     grid = np.geomspace(lo, hi, int(cfg.variogram_n_ell_grid))
     best: tuple[float, float, float, float] | None = None
     best_sse = math.inf

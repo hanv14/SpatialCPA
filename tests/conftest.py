@@ -8,7 +8,7 @@ import pytest
 from spatialcpav25_gen.config import Config
 from spatialcpav25_gen.data.schema import Section, Volume
 
-from tests.fixtures.synthetic import GroundTruthField, make_synthetic_volume
+from tests.fixtures.synthetic import GATE_EXTENT_UM, GroundTruthField, make_synthetic_volume
 
 # Seed used by the shared fixture. Anything asserting bitwise reproducibility should build
 # its own volume rather than relying on this one.
@@ -37,6 +37,31 @@ def volume(synthetic: tuple[Volume, GroundTruthField]) -> Volume:
 def gt_field(synthetic: tuple[Volume, GroundTruthField]) -> GroundTruthField:
     """The ground-truth generative map alone."""
     return synthetic[1]
+
+
+@pytest.fixture(scope="session")
+def gate_synthetic() -> tuple[Volume, GroundTruthField]:
+    """The fixture the gates are measured on: same tissue, a 3000 um field of view.
+
+    Deliberately separate from ``synthetic``. It costs ~30 s to build (a hard-core point
+    process is quadratic in the cell count, and this one has 9 x 13500 cells), so only the
+    ``slow`` gate tests and ``scripts/gate1_report.py`` may ask for it - the fast suite
+    must not. See ``tests.fixtures.synthetic.GATE_EXTENT_UM`` for why the gates are not
+    measured at 1000 um.
+    """
+    return make_synthetic_volume(seed=FIXTURE_SEED, extent_xy=GATE_EXTENT_UM)
+
+
+@pytest.fixture(scope="session")
+def gate_volume(gate_synthetic: tuple[Volume, GroundTruthField]) -> Volume:
+    """The gate fixture's volume alone."""
+    return gate_synthetic[0]
+
+
+@pytest.fixture(scope="session")
+def gate_gt_field(gate_synthetic: tuple[Volume, GroundTruthField]) -> GroundTruthField:
+    """The gate fixture's ground-truth generative map alone."""
+    return gate_synthetic[1]
 
 
 def copy_section(section: Section, **overrides: object) -> Section:

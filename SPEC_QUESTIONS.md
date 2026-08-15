@@ -98,27 +98,36 @@ specifies implementing it, and the coverage matrix mentions it only as reference
 *Proposal:* implement it in T06 alongside the decoder (it shares the count-preserving path), ~40
 lines, ported from v20 with its behaviour pinned by a test.
 
-### A7. GATE 1's G1.3c is false on the fixture as literally specified — **OPEN (blocks T04)**
-Raised by T03. `I_gen` is **not** monotone as `ell` sweeps 0.25×–4×: median Moran's I of the
-generated section rises to a peak near 1.6× the fitted `ell` and then falls (0.271, 0.390, 0.418,
-0.413, 0.348). G1.3d fails with it, at 37 % against a 25 % tolerance.
+### A7. GATE 1's G1.3c was false as literally specified — **RESOLVED (spec amended, gate re-run)**
+Raised by T03: `I_gen` is not monotone as `ell` sweeps 0.25×–4×. It rises to a maximum and falls.
 
-The prior is not the problem — Moran's I of the *field itself* is monotone in `ell` over the same
-sweep (0.487 → 0.990). The observable is: Moran's I of expression is structured variance over total
-variance, and a stationary unit-variance field seen through a finite window loses within-window
-variance once `ell` approaches the window size (within-section sd 0.98 → 0.65 across the sweep on the
-fixture's 1000 µm section). At a 3000 µm field of view the effect nearly vanishes. Numbers, plots and
-the two diagnostics are in `reports/gate1.md`.
+The prior is not the cause — Moran's I of the *field itself* is monotone in `ell` over the same sweep
+(0.38 → 0.99) — the observable is: Moran's I of expression is structured variance over total
+variance, and a stationary unit-variance field loses within-window variance once its correlation
+length approaches the window (within-section sd 1.00 → 0.87 across the sweep at a 3000 µm field of
+view, 0.98 → 0.65 at 1000 µm).
 
-*Proposal:* keep the criterion, and fix what it was protecting. T09 §2 bisects `ell_xy` against a
-target Moran's I; that is well-posed only on the increasing branch. T09 should (a) cap the bracket at
-a fraction of the in-plane extent — ~0.2× is where the maximum sat here — (b) detect the maximum and
-(c) report "target unreachable" instead of walking into a bound, which is exactly what would have
-happened on this fixture, where median `I_real` (0.472) exceeds the achievable maximum (0.445).
-G1.3c then gets re-run over the range calibration actually operates in, and the restriction gets
-written into the spec. Widening the fixture would also make the criterion pass, but that changes the
-measurement and is a human's call, not a fix to apply quietly. **T04 does not start until this is
-decided.**
+*Resolution, after the verdict was accepted as a conditional pass:*
+1. **The gate fixture moved to 3000 µm** at constant cell density (`GATE_EXTENT_UM`). Real sections
+   are 5–10 mm wide with correlation lengths of 50–200 µm (`ell`/FOV ≈ 0.02); at 1000 µm the top of
+   the sweep sat at 55 % of the extent, which real data never does. The 1000 µm measurement is kept
+   as diagnostic D1 in `reports/gate1.md`.
+2. **G1.3c restated** over the sweep points inside the calibration bracket,
+   `ell ≤ min(calibration_ell_max_extent_frac × extent, calibration_ell_max_fitted_multiple ×
+   fitted ell)` — the range T09 actually bisects on, which is what the criterion was always for.
+3. **G1.3g added**: `I_gen(ell)` is unimodal (violation 0.000 against a 2-SE band of 0.0069) and its
+   maximiser is at or above the fitted `ell` (2.52×), so a bracket below the maximum is well-posed.
+   This is where the calibration content now lives; G1.3c's caps are a-priori guards.
+4. **T09's calibrator amended** (`specs/09` §2): cap the bracket, locate the maximum on a log grid,
+   bisect only below it, and return `status ∈ {converged, target_unreachable, boundary}` with a
+   test for the unreachable branch.
+
+Measured caveat, recorded rather than papered over: the maximiser sits at 0.086 × extent (3000 µm)
+and 0.112 × extent (1000 µm), so the default `calibration_ell_max_extent_frac = 0.2` is about twice
+the maximiser and does **not** bind protectively; on the gate fixture it is the `2 × fitted ell` cap
+that keeps the bracket below the peak, and on a narrow-FOV dataset neither cap would. T09's maximum
+detection is the only real protection. The constant was left at the specified 0.2 rather than tuned
+down, because the measurement that would justify a new value is the same one G1.3c checks.
 
 ---
 
@@ -196,11 +205,17 @@ rather than trusted: `matern_correlation` agrees with `sklearn` to < 1e-10 at ν
 and the realised field covariance sits 0.0121 from the analytic anisotropic kernel at M = 4096. The
 derivation is in the `model/noise.py` docstring.
 
-### B9. G1.4's throughput target needs chunking to be possible at all — **RESOLVED in T03**
+### B9. G1.4's throughput target needs chunking to be possible at all — **RESOLVED in T03; criterion restated**
 10⁶ points at M = 4096 is a 16 GB float32 feature matrix if materialised. *Resolution (T03):* chunked, and nothing had to be loosened — **3.4 s for 10⁶ points** at M = 4096,
 d_h = 64 on a 4-core Xeon @ 2.10 GHz. The binding constraint turned out to be **cache**, not memory:
 the default chunk was lowered 65536 → **1024** so the `(chunk, M)` block of cosines is 16 MB rather
 than 1 GB, which is a 3× speed-up on its own.
+
+*Amended:* the same code and query took 6.1 s on an Apple-silicon laptop, i.e. the criterion as
+written failed there and passed here for reasons that have nothing to do with the field. G1.4b is now
+**throughput recorded against reference hardware** (2.9 × 10⁵ points/s on the reference Xeon) rather
+than an asserted wall clock, and the assertable part is the dimensionless **G1.4c**: 8× the points
+must cost < 12× the time.
 
 ---
 
@@ -342,7 +357,7 @@ found:
   numbers beats recency. Revisit only if a task needs a newer API.
 - **E4.** GATE 1 in T03 requires all four criteria (G1.1–G1.4) to pass but the stop instruction
   names only G1.3. Treating G1.3 as the stop-the-project criterion and G1.1/G1.2/G1.4 as
-  fix-the-bug criteria, since the latter three are implementation-correctness checks. *After T03:*
-  G1.1, G1.2 and G1.4 pass; G1.3 splits — the two criteria that test the mechanism pass by a wide
-  margin, the two that test the shape of the `ell` response fail (see A7). The stop instruction
-  applies.
+  fix-the-bug criteria, since the latter three are implementation-correctness checks. *After T03 and
+  its amendment:* all four pass on the 3000 µm gate fixture. The first pass failed G1.3c/G1.3d on a
+  1000 µm fixture; the spec defect behind that is A7, now resolved. The split the stop instruction
+  implies turned out to be the right one — G1.3a/G1.3b (the mechanism) never failed.

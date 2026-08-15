@@ -47,7 +47,7 @@ extra = [
 dev = [
   "pytest==8.2.0",
   "pytest-xdist==3.6.1",
-  "ruff==0.4.4",
+  "ruff==0.14.14",
   "mypy==1.10.0",
   "types-PyYAML==6.0.12.20240311",
   "types-tqdm==4.66.0.20240417",
@@ -121,8 +121,6 @@ ignore = [
   "D203",    # incompatible with D211
   "D213",    # incompatible with D212
   "ANN401",  # allow Any where a library forces it
-  "ANN101",  # annotating `self` is not a thing anyone does (deprecated upstream)
-  "ANN102",  # ditto `cls`
   "E731",
   "N803",    # (N, G)-style maths names: X, W, A are the paper's names
   "N806",
@@ -136,7 +134,11 @@ convention = "numpy"
 "scripts/**" = ["D", "ANN"]
 
 [tool.ruff.lint.flake8-pytest-style]
+# Both spellings are a lint error under *some* ruff version: 0.4.4 defaults to requiring
+# parentheses on fixtures and marks, newer versions default to forbidding them. Pinning
+# both explicitly means `@pytest.mark.slow` and `@pytest.fixture` lint clean either way.
 fixture-parentheses = false
+mark-parentheses = false
 
 [tool.ruff.format]
 quote-style = "double"

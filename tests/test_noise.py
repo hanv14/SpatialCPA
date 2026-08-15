@@ -29,7 +29,13 @@ from spatialcpav25_gen.model.noise import (
     scaled_distance,
 )
 
-from tests.fixtures.synthetic import GroundTruthField, make_synthetic_volume
+from tests.fixtures.synthetic import (
+    DEFAULT_CELL_DENSITY,
+    DEFAULT_EXTENT_UM,
+    GATE_EXTENT_UM,
+    GroundTruthField,
+    make_synthetic_volume,
+)
 from tests.gate1_criteria import (
     measure_g1_1,
     measure_g1_2,
@@ -132,10 +138,19 @@ def test_with_lengthscale_preserves_seed(
 
 
 def test_torch_numpy_agree(field: GaussianRandomField) -> None:
-    """The two evaluation paths agree to < 1e-5."""
+    """The two evaluation paths agree to < 1e-5 — in fact exactly, on every machine.
+
+    ``evaluate_numpy`` delegates to the torch path rather than re-implementing the
+    arithmetic, so the tolerance the spec allows is not needed: a second float32 matmul
+    would reassociate differently from torch's, by a few 1e-6 that vary with the BLAS
+    vendor, and the difference would have been a portability trap rather than information.
+    """
     points = np.random.default_rng(5).uniform(-500.0, 500.0, size=(2048, 3))
-    gap = float(np.abs(field(points).numpy() - field.evaluate_numpy(points)).max())
+    torch_values = field(points).numpy()
+    numpy_values = field.evaluate_numpy(points)
+    gap = float(np.abs(torch_values - numpy_values).max())
     assert gap < 1e-5, f"max |torch - numpy| = {gap:.3e}"
+    assert np.array_equal(torch_values, numpy_values), "the numpy path delegates; expect equality"
 
 
 def test_fit_lengthscale_recovers_truth(
@@ -214,31 +229,46 @@ def test_same_seed_is_bitwise_identical(cfg: Config, ell: tuple[float, float, fl
 
 
 def test_field_is_pure_and_depends_only_on_position(field: GaussianRandomField) -> None:
-    """Querying a point set in a different order, or alone, gives the same values.
+    """Reordering the points reorders the values and changes nothing else.
 
     The property the "Do NOT" section is about: the noise at a point may not depend on
     which other points were generated with it. A graph-smoothing prior would fail this.
+    The query keeps its shape here, so the assertion is bitwise — that is the guarantee
+    G1.2 and T07's ``L_cross`` are built on.
     """
     points = np.random.default_rng(9).uniform(0.0, 900.0, size=(400, 3))
     full = field(points)
     shuffled = np.random.default_rng(10).permutation(points.shape[0])
     assert torch.equal(field(points[shuffled]), full[shuffled])
-    # ... and a subset queried on its own, with the chunk boundaries in different places.
-    assert torch.equal(field(points[137:139]), full[137:139])
-    assert torch.equal(field(points[:64]), full[:64])
-    # A one-row query is the single exception: torch dispatches a matrix-*vector* kernel,
-    # whose reduction order over the M features differs from the matrix-matrix one, so the
-    # result agrees to a few ulps rather than exactly. Documented in the module docstring;
-    # everything the model does queries batches.
-    assert float((field(points[:1]) - full[:1]).abs().max()) < 1e-5
+
+
+def test_batch_shape_changes_nothing_that_matters(field: GaussianRandomField) -> None:
+    """Query the same points in a differently shaped batch and the values follow.
+
+    Not bitwise, and deliberately so: float32 GEMM may reassociate its sum over the M
+    features when the batch shape changes — torch dispatches a matrix-*vector* kernel for a
+    one-row batch, and BLAS vendors block the reduction differently, which is why this
+    assertion has to hold on an Apple laptop as well as on the reference Linux box. The
+    tolerance is 1e-5 on a unit-variance field, i.e. five orders below the signal.
+    """
+    points = np.random.default_rng(9).uniform(0.0, 900.0, size=(400, 3))
+    full = field(points)
+    for lo, hi in ((0, 1), (137, 139), (0, 64), (7, 400)):
+        gap = float((field(points[lo:hi]) - full[lo:hi]).abs().max())
+        assert gap < 1e-5, f"points[{lo}:{hi}] differs from the full batch by {gap:.3e}"
 
 
 def test_chunking_does_not_change_the_answer(cfg: Config, ell: tuple[float, float, float]) -> None:
-    """``grf_chunk_points`` is a performance knob and nothing else."""
+    """``grf_chunk_points`` is a performance knob and nothing else.
+
+    Tolerance rather than ``torch.equal`` for the same reason as the test above: a
+    different chunk size is a differently shaped matmul, and float32 GEMM is free to
+    reassociate. Measured at 0.0 on the reference box; the bound is what is portable.
+    """
     points = np.random.default_rng(12).uniform(0.0, 900.0, size=(1000, 3))
     a = GaussianRandomField(cfg.replace(grf_chunk_points=97), ell, seed=13)(points)
     b = GaussianRandomField(cfg.replace(grf_chunk_points=100_000), ell, seed=13)(points)
-    assert torch.equal(a, b)
+    assert float((a - b).abs().max()) < 1e-5
 
 
 def test_gradient_flows_to_positions(field: GaussianRandomField) -> None:
@@ -361,40 +391,44 @@ def _assert_gate(section) -> None:  # type: ignore[no-untyped-def]
     )
 
 
-@pytest.mark.slow()
-@pytest.mark.gate()
+@pytest.mark.slow
+@pytest.mark.gate
 def test_gate1_1_covariance_correctness(cfg: Config) -> None:
     """G1.1 — realised covariance matches the analytic anisotropic Matern, and improves with M."""
     _assert_gate(measure_g1_1(cfg, seed=GATE_SEED))
 
 
-@pytest.mark.slow()
-@pytest.mark.gate()
-def test_gate1_2_intersection_consistency(cfg: Config, volume: Volume) -> None:
+@pytest.mark.slow
+@pytest.mark.gate
+def test_gate1_2_intersection_consistency(cfg: Config, gate_volume: Volume) -> None:
     """G1.2 — two planes crossing inside the bbox get identical noise along the line."""
-    _assert_gate(measure_g1_2(cfg, volume, seed=GATE_SEED))
+    _assert_gate(measure_g1_2(cfg, gate_volume, seed=GATE_SEED))
 
 
-@pytest.mark.slow()
-@pytest.mark.gate()
+@pytest.mark.slow
+@pytest.mark.gate
 def test_gate1_3_autocorrelation_transfer(
-    cfg: Config, volume: Volume, gt_field: GroundTruthField
+    cfg: Config, gate_volume: Volume, gate_gt_field: GroundTruthField
 ) -> None:
-    """G1.3 — the decisive test: a correlated prior preserves spatial autocorrelation."""
+    """G1.3 — the decisive test: a correlated prior preserves spatial autocorrelation.
+
+    Measured on the gate fixture (3000 um field of view), not on the fast suite's 1000 um
+    one: see ``tests.fixtures.synthetic.GATE_EXTENT_UM``.
+    """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", LengthscaleFitWarning)
-        section = measure_g1_3(cfg, volume, gt_field, seed=GATE_SEED)
+        section = measure_g1_3(cfg, gate_volume, gate_gt_field, seed=GATE_SEED)
     _assert_gate(section)
 
 
-@pytest.mark.slow()
-@pytest.mark.gate()
+@pytest.mark.slow
+@pytest.mark.gate
 def test_gate1_4_determinism_and_scaling(cfg: Config) -> None:
     """G1.4 — same seed in another process, and a million queries inside the budget."""
     _assert_gate(measure_g1_4(cfg, seed=GATE_SEED))
 
 
-@pytest.mark.slow()
+@pytest.mark.slow
 def test_gate1_measurements_are_reproducible(cfg: Config) -> None:
     """The gate's own numbers do not move between runs; a gate that jittered would be noise."""
     first = measure_g1_1(cfg, seed=GATE_SEED)
@@ -407,3 +441,28 @@ def test_fixture_volume_is_the_one_the_gate_uses(volume: Volume) -> None:
     other, _ = make_synthetic_volume(seed=0)
     assert volume.section_ids == other.section_ids
     assert np.array_equal(volume.sections[0].coords, other.sections[0].coords)
+
+
+def test_default_fixture_is_unchanged_by_the_extent_parameter(volume: Volume) -> None:
+    """Widening the field of view is opt-in: the default fixture is what T01/T02 measured.
+
+    ``n_cells_per_section=None`` derives the count from ``cell_density * extent_xy ** 2``,
+    so the gate fixture is a wider field of view at the same tissue density rather than a
+    sparser tissue — the kNN-graph statistics every gate criterion is defined on would
+    otherwise move for a reason that has nothing to do with the field.
+    """
+    assert volume.sections[0].n_cells == 1500
+    assert float(volume.bbox[1, 0] - volume.bbox[0, 0]) < DEFAULT_EXTENT_UM
+    density = volume.sections[0].n_cells / DEFAULT_EXTENT_UM**2
+    assert abs(density - DEFAULT_CELL_DENSITY) < 1e-9
+
+
+@pytest.mark.slow
+def test_gate_fixture_holds_density_and_widens_the_window(gate_volume: Volume) -> None:
+    """The gate fixture is 3x wider with 9x the cells, i.e. the same tissue seen wider."""
+    extent = float(gate_volume.bbox[1, 0] - gate_volume.bbox[0, 0])
+    assert extent > 0.99 * GATE_EXTENT_UM
+    assert gate_volume.sections[0].n_cells == int(DEFAULT_CELL_DENSITY * GATE_EXTENT_UM**2)
+    # Nearest-neighbour distance is what every kNN-graph statistic is scaled by; it must
+    # not move when the window does.
+    assert abs(gate_volume.median_nn_dist - 13.9) < 0.5

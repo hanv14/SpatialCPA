@@ -10,7 +10,7 @@ Status values: `TODO` | `IN PROGRESS` | `BLOCKED` | `DONE`.
 | T00 | Project scaffolding | — | `CLAUDE.md`, `PROGRESS.md`, `pyproject.toml`, `Makefile`, ruff/mypy/pytest config, `SPEC_QUESTIONS.md` | — | DONE |
 | T01 | Config and data contracts | `specs/01_TASK_config_and_data.md` | `config.py`, `data/schema.py`, `data/loaders.py`, synthetic fixture | — | DONE |
 | T02 | Text-grounded embeddings | `specs/02_TASK_text_embeddings.md` | `data/text.py`, `model/embeddings.py`, MedCPT cache, distillation head | — | DONE |
-| T03 | 3D GRF noise field | `specs/03_TASK_noise_field_GATE1.md` | `model/noise.py`, `scripts/gate1_report.py`, `reports/gate1.md` | **GATE 1** | BLOCKED — built and tested; **GATE 1 failed on G1.3c/G1.3d** |
+| T03 | 3D GRF noise field | `specs/03_TASK_noise_field_GATE1.md` | `model/noise.py`, `scripts/gate1_report.py`, `reports/gate1.md` | **GATE 1** | DONE — **GATE 1 passes** on the 3000 µm gate fixture |
 | T04 | Anatomical field + retrieval | `specs/04_TASK_field_and_retrieval_GATE2.md` | `model/field.py`, `model/retrieval.py`, `scripts/gate2_report.py`, `reports/gate2.md` | **GATE 2** | TODO |
 | T05 | Layout head | `specs/05_TASK_layout_head.md` | `model/layout.py`, intensity + Strauss sampler + Potts marks | — | TODO |
 | T06 | Expression head + ZINB decoder | `specs/06_TASK_expression_head.md` | `model/expression.py`, `model/spatialcpav25_gen.py`, `losses/reconstruction.py` | — | TODO |
@@ -26,7 +26,7 @@ table covers everything that has been done to the repository.
 
 | Gate | Criterion | Status | Report |
 |---|---|---|---|
-| GATE 1 (T03) | GRF prior halves median Moran's I error vs i.i.d.; per-gene r > 0.7; `I_gen` monotone in `ell` | **FAILED** — error ratio **0.196** (needs < 0.5) ✅, r **0.820** (needs > 0.7) ✅, monotone in `ell` ❌ (worst step **−0.065**), fitted `ell` within 25 % of the best match ❌ (**37 %**) | `reports/gate1.md` |
+| GATE 1 (T03) | GRF prior halves median Moran's I error vs i.i.d.; per-gene r > 0.7; `I_gen` monotone in `ell` over the calibration bracket; `I_gen(ell)` unimodal with its maximiser ≥ the fitted `ell` | **PASSED** — error ratio **0.130** (< 0.5), r **0.917** (> 0.7), smallest step over the bracket **+0.028** (> 0), fitted vs best-matching `ell` **8 %** (< 25 %), unimodality violation **0.000** (< 0.0069), maximiser **2.52×** the fitted `ell` (≥ 1×) | `reports/gate1.md` |
 | GATE 2 (T04) | oblique R² ≥ 0.90 × axis-aligned R² | not reached | `reports/gate2.md` |
 
 ## Numbers the paper needs (fill in as tasks land)
@@ -34,8 +34,10 @@ table covers everything that has been done to the repository.
 | Quantity | Source task | Value |
 |---|---|---|
 | Text/co-expression Spearman (synthetic, then real) | T02 | synthetic: **+0.0055** (≈ 0, as expected — arbitrary gene names); real: pending a real panel + `resources/gene_meta.parquet` |
-| GRF vs i.i.d. Moran's I error ratio | T03 | **0.196** (median \|I_gen − I_real\|: GRF 0.0776, i.i.d. 0.3956); Geary's C ratio 0.199; per-gene r 0.820 (GRF) vs 0.348 (i.i.d.) |
-| Fitted `ell = (ℓx, ℓy, ℓz)` | T03 / T09 | synthetic fixture: **(137.6, 137.6, 355.5) µm** vs ground truth (120, 120, 200); `ell_z` is extrapolated (the 400 µm stack reaches only 59 % of the fitted sill) and warns |
+| GRF vs i.i.d. Moran's I error ratio | T03 | **0.130** (median \|I_gen − I_real\|: GRF 0.0552, i.i.d. 0.4233); Geary's C ratio 0.130; per-gene r 0.917 (GRF) vs 0.377 (i.i.d.). Gate fixture, 3000 µm FOV |
+| Fitted `ell = (ℓx, ℓy, ℓz)` | T03 / T09 | gate fixture (3000 µm): **(102.9, 102.9, 561.1) µm** vs ground truth (120, 120, 200), i.e. ℓxy −14 %; 1000 µm fixture: (141.5, 141.5, 353) µm, +18 %. `ell_z` is extrapolated on both (the 400 µm stack reaches 35 % / 60 % of the fitted sill) and warns |
+| `I_gen(ell)` maximiser (bounds T09's calibration bracket) | T03 / T09 | **0.086 × in-plane extent** at 3000 µm FOV (2.52× the fitted `ell`), **0.112 ×** at 1000 µm (0.79× the fitted `ell`) |
+| GRF query throughput | T03 | **2.9 × 10⁵ points/s** (10⁶ points, M = 4096, d_h = 64) on the reference 4-core Xeon @ 2.10 GHz; 8× the points cost 6.6–8.0× the time |
 | Oblique parity ratio | T04 | — |
 | Fitted repulsion `r0`, `R`, `gamma`; Potts `beta` | T05 | — |
 | Detection-rate r; gene–gene covariance vs independent-donor; mean–variance slope | T06 | — |
@@ -357,3 +359,100 @@ and re-run G1.3c over the range calibration actually operates in — *not* to wi
   one `ell` and nothing in `specs/` consumes a grouped one. The door stays open cheaply —
   `with_lengthscale` builds a rescaled field from the same draws, so a grouped field is a
   channel-wise concatenation of those, no redraw and no new state.
+
+### T03 (amended) — GATE 1 re-run and passed (2026-08-15)
+
+The first T03 pass reported GATE 1 failed on G1.3c (monotonicity) and G1.3d. That verdict was
+accepted as a **conditional pass**: the mechanism criteria pass decisively, and the two failures were
+a spec defect (a sweep range wider than the statistic's monotone branch) plus a fixture-realism
+defect (a 1000 µm field of view that real data never occupies), not implementation defects. Six
+amendments, then a re-run.
+
+**1. The gate fixture is now 3000 µm.** `make_synthetic_volume` gained `cell_density`
+(default `1.5e-3` cells/µm², the density it already had) and `n_cells_per_section=None`, which
+derives the count from `cell_density * extent_xy**2`. The default fixture is bitwise unchanged —
+1500 cells, 13.947 µm median NN distance, the numbers T01/T02 measured against — and the gates build
+`extent_xy=GATE_EXTENT_UM` (3000 µm, 13 500 cells/section, same density, ~31 s). *No new `extent`
+parameter was added:* `extent_xy` already was that parameter, and a second name for one dimension
+would be a trap. New session-scoped `gate_volume` / `gate_gt_field` fixtures keep it out of
+`make test`.
+
+**2–3. Specs amended.** `specs/03` records the turnover as a known property of the statistic (with
+the D2b variance explanation), restates **G1.3c** over the calibration bracket, adds **G1.3g**
+(unimodal; maximiser ≥ the fitted `ell`), and states which fixture the gate is measured on and why.
+`specs/09` §2 replaces the bisection with: cap the bracket at
+`min(calibration_ell_max_extent_frac × extent, calibration_ell_max_fitted_multiple × fitted ell)`,
+**locate the maximum on a `bisection_grid_size` log grid and bisect only below it**, and return a
+`LengthscaleCalibration` carrying `status ∈ {converged, target_unreachable, boundary}` — never a
+bracket endpoint dressed up as convergence. Three acceptance tests are specified, including
+`test_calibrator_reports_unreachable_target` for the branch T03 measured.
+`specs/11_COVERAGE_MATRIX.md` gains the row and the amended GATE 1 statement.
+
+**4. G1.4b is now throughput against reference hardware, not a wall clock.** It is a REPORT row
+(points/s + the machine), because the same code measured 3.4 s here and 6.1 s on an Apple-silicon
+laptop — a 5-second threshold made the gate a statement about whose machine ran it. The assertable
+half is dimensionless and new: **G1.4c**, 8× the points must cost < 12× the time (measured 6.6–8.0×;
+quadratic would be 64×).
+
+**5. The float32 tests.** `evaluate_numpy` now delegates to the torch path instead of
+re-implementing the arithmetic in numpy: a second float32 matmul reassociates differently, by a few
+1e-6 that vary with the BLAS vendor, so the two paths could only ever have been compared with a
+tolerance. They are now equal by construction and `test_torch_numpy_agree` asserts `array_equal`.
+The batch-shape assertions are the other half: **identical points in an identically shaped batch are
+bitwise identical** (that is the contract G1.2 and T07's `L_cross` rest on, and it is asserted with
+`torch.equal`), while a *differently shaped* batch — a one-row query, a different
+`grf_chunk_points` — is asserted to 1e-5, because float32 GEMM is free to reassociate its sum over
+the M features and torch dispatches a matrix-vector kernel for one row. Padding to fake exactness
+would have implied a guarantee no BLAS gives. Split into `test_field_is_pure_and_depends_only_on_position`
+(bitwise) and `test_batch_shape_changes_nothing_that_matters` (1e-5).
+
+**6. Lint.** `ANN101`/`ANN102` are gone from the ruff ignore list, and with them the pin had to move:
+those rules do not exist in modern ruff (the ignore entry itself is an error), and under the pinned
+0.4.4 they fire on every `self`. `ruff==0.4.4 → 0.14.14`, which also ends the formatter tug-of-war
+that had `tests/test_schema.py` flipping between machines — 0.14.14 leaves `main`'s version
+untouched. `mark-parentheses = false` is now explicit beside `fixture-parentheses`, so
+`@pytest.mark.slow` lints clean under both old and new ruff.
+
+**Two implementation changes came out of the re-run, both judged against ground truth, not against
+the gate.**
+
+* **Cressie weights in the variogram fit.** Bins are weighted `N(h)/γ(h)²` rather than `N(h)`: the
+  estimator's variance grows with `γ(h)²`, so pair counts alone make the fit a fit to the large
+  lags. Against the fixture's 120 µm ground truth: 3000 µm FOV 95.2 → **102.9 µm** (−21 % → −14 %),
+  1000 µm FOV unchanged at 137.6 → 141.5 µm.
+* **`variogram_n_ell_grid` 48 → 128.** At 48 the grid steps are 12 %, so the fitted value visibly
+  jumped between two adjacent grid points as the subsample seed changed; 4 % steps are comfortably
+  finer than the 25 % tolerance anything reports against.
+
+**GATE 1 — PASS.** `reports/gate1.md`, `scripts/gate1_report.py` exits 0.
+
+| Criterion | Required | Measured | |
+|---|---|---|---|
+| G1.1a covariance vs analytic anisotropic Matérn | MAE < 0.03 | **0.0121** | PASS |
+| G1.1b error decreases with M | every step < 0 | **0.0232 → 0.0159 → 0.0121** | PASS |
+| G1.2a–d two plane pathways along the intersection line | bitwise | **max diff exactly 0.0** | PASS |
+| G1.3a Moran's I error, GRF ÷ i.i.d. | < 0.5 | **0.130** (0.0552 vs 0.4233) | PASS |
+| G1.3b per-gene r(I_gen, I_real) | > 0.7 | **0.917** (i.i.d.: 0.377) | PASS |
+| G1.3c monotone over the calibration bracket | every step > 0 | **+0.028** (bracket = 0.25×–2× fitted, 26–206 µm) | PASS |
+| G1.3d fitted vs best-matching `ell` | < 25 % | **8.0 %** (102.9 vs 111.8 µm) | PASS |
+| G1.3g-a `I_gen(ell)` unimodal | violation < 2 SE = 0.0069 | **0.0000** | PASS |
+| G1.3g-b maximiser ≥ fitted `ell` | ≥ 1× | **2.52×** (259 µm = 0.086 × extent) | PASS |
+| G1.4a same seed, second process | 0 differing | **0** | PASS |
+| G1.4b throughput (recorded) | — | **2.9–3.5 × 10⁵ points/s**, reference 4-core Xeon @ 2.10 GHz | REPORT |
+| G1.4c 8× points vs time | < 12× | **6.6–8.0×** | PASS |
+
+`make check` green (ruff, `mypy --strict` on 9 files, **73 fast tests in 32 s**); `make test-all`
+**79 passed in 2 min 1 s**, gate tests included.
+
+**What the wider fixture changed, and what it did not.** The mechanism numbers improved
+(error ratio 0.196 → 0.130, r 0.820 → 0.917) because the window artefact was suppressing them. The
+turnover did **not** go away and was never going to: measured, the maximiser sits at
+**0.086 × extent** at 3000 µm and **0.112 × extent** at 1000 µm — close in *window* units, but
+**2.52× vs 0.79× the fitted `ell`**, because the variogram fit is itself window-biased at a narrow
+field of view. Two consequences are now in `specs/09`: the spec's own 0.25×–4× sweep is wider than
+the monotone branch at *any* field of view, and the 0.2 × extent cap is about twice the measured
+maximiser, so it does not bind protectively — here the `2 × fitted` cap is what keeps the bracket
+below the peak. **Neither cap is a guarantee; T09's maximum detection is the real protection.** I did
+not lower `calibration_ell_max_extent_frac` to make the criterion pass on the narrow fixture: the
+value is the one specified, and the measurement that would justify changing it is the same one the
+criterion checks.

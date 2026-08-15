@@ -35,7 +35,35 @@ from scipy.spatial import cKDTree
 from spatialcpav25_gen.config import Config
 from spatialcpav25_gen.data.schema import Section, Volume
 
-__all__ = ["GroundTruthField", "make_synthetic_volume", "volume_to_anndata"]
+__all__ = [
+    "DEFAULT_CELL_DENSITY",
+    "DEFAULT_EXTENT_UM",
+    "GATE_EXTENT_UM",
+    "GroundTruthField",
+    "make_synthetic_volume",
+    "volume_to_anndata",
+]
+
+DEFAULT_EXTENT_UM = 1000.0
+"""In-plane side of the default fixture, micrometres. Small on purpose: the fast suite
+builds it on every run and a hard-core point process is quadratic in the cell count."""
+
+GATE_EXTENT_UM = 3000.0
+"""In-plane side of the fixture the gates are measured on.
+
+A 1000 um section puts the top of GATE 1's 0.25x - 4x length-scale sweep at 55% of the
+field of view, a regime real data never occupies: real sections are 5-10 mm wide with
+correlation lengths of 50-200 um, i.e. ell / FOV ~ 0.02. Measuring the gate there made a
+window artefact — a stationary field loses within-window variance once its correlation
+length approaches the window — look like a property of the prior. At 3000 um the same
+sweep tops out at 13% of the field of view. The 1000 um result is kept as a diagnostic in
+`reports/gate1.md` rather than deleted; it is a real property of the statistic."""
+
+DEFAULT_CELL_DENSITY = 1.5e-3
+"""Cells per square micrometre, in-plane: the density of the default fixture
+(1500 cells in a 1000 x 1000 um square). ``n_cells_per_section=None`` holds it fixed as
+``extent_xy`` changes, so a wider fixture is a wider *field of view* and not a sparser
+tissue - nearest-neighbour distance, and with it every kNN-graph statistic, stays put."""
 
 
 @dataclass(frozen=True)
@@ -157,7 +185,7 @@ class GroundTruthField:
 def make_synthetic_volume(
     n_sections: int = 9,
     spacing: float = 50.0,
-    n_cells_per_section: int = 1500,
+    n_cells_per_section: int | None = None,
     n_genes: int = 200,
     n_types: int = 6,
     autocorr_length: float = 120.0,
@@ -165,7 +193,8 @@ def make_synthetic_volume(
     seed: int = 0,
     *,
     autocorr_length_z: float = 200.0,
-    extent_xy: float = 1000.0,
+    extent_xy: float = DEFAULT_EXTENT_UM,
+    cell_density: float = DEFAULT_CELL_DENSITY,
     thickness: float | None = None,
     latent_dim: int = 8,
     n_rff: int = 1024,
@@ -184,9 +213,14 @@ def make_synthetic_volume(
     ----------
     n_sections, spacing
         Stack geometry: ``n_sections`` planes ``spacing`` micrometres apart.
-    n_cells_per_section, extent_xy
-        Cells per section, placed by a hard-core point process in a
-        ``extent_xy`` x ``extent_xy`` micrometre square.
+    n_cells_per_section, extent_xy, cell_density
+        Cells per section, placed by a hard-core point process in an
+        ``extent_xy`` x ``extent_xy`` micrometre square. ``n_cells_per_section=None``
+        (the default) derives the count from ``cell_density * extent_xy ** 2``, so
+        widening ``extent_xy`` widens the field of view at constant tissue density; the
+        default 1000 um extent gives the 1500 cells every earlier task measured against.
+        The gates are measured at ``extent_xy=GATE_EXTENT_UM`` (3000 um) - see that
+        constant for why.
     n_genes, n_types
         Panel width and number of cell types. Type prevalences are deliberately uneven
         and include one rare (~2%) type, which T05's ``test_rare_types_survive`` needs.
@@ -225,6 +259,13 @@ def make_synthetic_volume(
     """
     if n_sections < 3:
         raise ValueError(f"make_synthetic_volume: n_sections must be >= 3, got {n_sections}")
+    if n_cells_per_section is None:
+        n_cells_per_section = round(cell_density * extent_xy**2)
+    if n_cells_per_section < 1:
+        raise ValueError(
+            f"make_synthetic_volume: n_cells_per_section must be >= 1, got "
+            f"{n_cells_per_section} (cell_density={cell_density}, extent_xy={extent_xy})"
+        )
     if z_gradient_genes > n_genes or sparse_genes + dense_genes > n_genes:
         raise ValueError("make_synthetic_volume: more special genes than genes")
 

@@ -51,18 +51,50 @@ guarantees coherence.
 ## 2. Calibration — `spatialcpav25_gen/infer/calibrate.py`, all leakage-free
 
 ```python
-def calibrate_lengthscale(model, vol: TrainingVolume, cfg) -> tuple[float, float, float]
+def calibrate_lengthscale(model, vol: TrainingVolume, cfg) -> LengthscaleCalibration
 ```
 Bisection on `ell_xy` so the **generated** section's mean Moran's I matches the mean Moran's I of the
-**flanking training sections**. 6–8 iterations. Per gene-module (Leiden clusters of gene embedding
-space, ~10 modules), since autocorrelation length is gene-dependent. `ell_z` from between-section
-correlation decay (T03's `fit_lengthscale_from_sections`).
+**flanking training sections**. 6–8 iterations. `ell_z` from between-section correlation decay
+(T03's `fit_lengthscale_from_sections`).
 
 Ground truth is never consulted. Assert in a test that the calibrator's signature cannot accept
 held-out sections.
 
-T03/GATE 1 established that mean `I_gen` is monotone in `ell`; if bisection fails to bracket, fall
-back to a grid search over 12 values and log a warning.
+**The objective is unimodal, not monotone (T03/GATE 1, measured).** Mean `I_gen` rises with `ell`,
+turns over, and falls: Moran's I of expression is structured variance over total variance, and a
+stationary field loses within-window variance once its correlation length approaches the section.
+The maximiser was measured at 0.086 of the in-plane extent on the 3000 µm gate fixture and 0.112 on
+the 1000 µm one — and at 2.5× and 0.8× the *fitted* `ell` respectively, because the variogram fit is
+itself window-biased at a narrow field of view. A bisection that ignores this walks into a boundary
+and returns it as if it were an answer. The calibrator therefore:
+
+1. **Caps the bracket** at
+   `ell_max = min(cfg.calibration_ell_max_extent_frac * extent, cfg.calibration_ell_max_fitted_multiple * ell_fitted)`
+   (0.2 × extent and 2 × fitted by default) and starts from `ell_min = cfg.variogram_ell_min_factor *
+   median_nn_dist`. Neither cap is a guarantee — 0.2 × extent is about twice the measured maximiser —
+   so they bound the search, they do not define it.
+2. **Locates the maximum** on the bracket before bisecting: evaluate `I_gen` on a
+   `cfg.bisection_grid_size`-point log grid, take the maximiser, and bisect only on
+   `[ell_min, ell_argmax]`, which is monotone by construction.
+3. **Returns a status.** `LengthscaleCalibration` carries `ell`, `status ∈ {"converged",
+   "target_unreachable", "boundary"}`, the achieved `I_gen` and the target. When the target mean
+   Moran's I exceeds `max(I_gen)` over the bracket there is **no root**: return the maximiser with
+   `status="target_unreachable"` and log a warning naming both numbers. Never return a bracket
+   endpoint as though bisection had converged (Convention 6 — no silent fallbacks).
+
+Acceptance tests:
+- `test_calibrator_recovers_a_reachable_target` — plant a target inside the achievable range;
+  `status == "converged"` and the achieved `I_gen` is within tolerance.
+- `test_calibrator_reports_unreachable_target` — plant a target above `max(I_gen)`; the calibrator
+  returns `status == "target_unreachable"`, the returned `ell` **is** the grid maximiser, and it does
+  not sit at either bracket endpoint. This is the branch T03 measured and the one a naive bisection
+  gets wrong.
+- `test_calibrator_bracket_respects_the_caps` — on a narrow-field-of-view volume the bracket's upper
+  end is the extent cap, not the fitted-multiple cap.
+
+Per gene-module calibration (Leiden clusters of gene embedding space) remains **out of scope** —
+`ell` parameterises the latent field and gene modules only exist downstream of the decoder
+(SPEC_QUESTIONS A2). Report per-module Moran's I agreement as a diagnostic instead.
 
 ```python
 def calibrate_detection(model, vol, cfg) -> DetectionCalibration

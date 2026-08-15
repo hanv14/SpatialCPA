@@ -244,10 +244,13 @@ class Config:
     variogram_min_pairs_per_bin: int = 32
     """Bins holding fewer pairs than this are dropped as too noisy to fit against."""
 
-    variogram_n_ell_grid: int = 48
+    variogram_n_ell_grid: int = 128
     """Log-spaced candidate length-scales scanned by the variogram fit. The two linear
     parameters (nugget, sill) are solved in closed form at each candidate, so this is the
-    whole optimiser: no starting point, no local minima."""
+    whole optimiser: no starting point, no local minima. It is also the fit's resolution -
+    128 points over the ~200x search range are 4% apart, comfortably finer than the 25%
+    tolerance T03's GATE 1 and T09's calibrator report against; at 48 the 12% quantisation
+    was visible as the fitted value jumping between two adjacent grid points."""
 
     variogram_ell_min_factor: float = 0.5
     """Lower end of the length-scale search, as a multiple of the median nearest-neighbour
@@ -508,6 +511,33 @@ class Config:
     bisection_max_iter: int = 8
     """Bisection iterations in the length-scale calibrator."""
 
+    calibration_ell_max_fitted_multiple: float = 2.0
+    """Upper end of the length-scale calibration bracket, as a multiple of the ``ell``
+    ``fit_lengthscale_from_sections`` returns (T09; also the cap GATE 1's G1.3c
+    monotonicity criterion is stated over, together with
+    ``calibration_ell_max_extent_frac`` - whichever binds first).
+
+    ``I_gen(ell)`` turns over at the point where the generated section's neighbourhood
+    correlation overtakes the real one, which GATE 1 measures at 2.5x the fitted ``ell`` on
+    the 3000 um gate fixture and 1.6x on the 1000 um one - i.e. near the *tissue's*
+    correlation length rather than at a fixed fraction of the window. The spec's own
+    0.25x - 4x sweep is therefore wider than the monotone branch whatever the field of
+    view, and a bracket has to be capped in these units as well as in the window's."""
+
+    calibration_ell_max_extent_frac: float = 0.2
+    """Upper end of the length-scale calibration bracket, as a fraction of the sections'
+    in-plane extent (T09; also the cap GATE 1's G1.3c monotonicity criterion is stated
+    over).
+
+    Mean Moran's I of *generated* expression is not monotone in ``ell`` over an unbounded
+    range: it is a ratio of spatially structured variance to total variance, and a
+    stationary unit-variance field loses within-window variance once its correlation
+    length approaches the window, so ``I_gen(ell)`` rises, turns over and falls. Bisecting
+    across the maximum is ill-posed. Measured on the synthetic fixture the maximiser sits
+    near 0.07-0.22 of the in-plane extent depending on the field of view, so this cap is
+    at the top of that range rather than safely below it - T09 must find the maximum
+    rather than trust the cap (see ``reports/gate1.md``)."""
+
     bisection_grid_size: int = 12
     """Grid size for the fallback search when bisection fails to bracket."""
 
@@ -673,6 +703,8 @@ class Config:
             "n_uncertainty_samples": self.n_uncertainty_samples,
             "bisection_max_iter": self.bisection_max_iter,
             "bisection_grid_size": self.bisection_grid_size,
+            "calibration_ell_max_extent_frac": self.calibration_ell_max_extent_frac,
+            "calibration_ell_max_fitted_multiple": self.calibration_ell_max_fitted_multiple,
             "epochs": self.epochs,
             "batch_cells": self.batch_cells,
             "lr": self.lr,
@@ -711,6 +743,7 @@ class Config:
             "sefl_warmup_frac": self.sefl_warmup_frac,
             "variogram_min_structured_frac": self.variogram_min_structured_frac,
             "variogram_min_saturation": self.variogram_min_saturation,
+            "calibration_ell_max_extent_frac": self.calibration_ell_max_extent_frac,
         }
         for name, value in unit_interval.items():
             if not 0.0 <= value <= 1.0:
