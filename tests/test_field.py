@@ -39,10 +39,12 @@ from spatialcpav25_gen.model.noise import GaussianRandomField
 
 from tests.gate2_criteria import (
     ANGLES_DEG,
+    measure_augmentation_completeness,
     measure_g2_1,
     measure_g2_2,
     measure_g2_3,
     measure_g2_4,
+    measure_ratio_stability,
 )
 
 # A deliberately small field: these tests are about the contract, not about capacity, and
@@ -557,8 +559,46 @@ def _assert_gate(section) -> None:  # type: ignore[no-untyped-def]
 @pytest.mark.slow
 @pytest.mark.gate
 def test_gate2_1_oblique_parity(cfg: Config, gate_volume: Volume) -> None:
-    """**The gate.** ``min_angle R^2 >= 0.90 x R^2(0 deg)`` on the equal-n evaluation set."""
+    """**The gate.** Depth-matched oblique parity >= 0.90, plus the edge-excluded check.
+
+    Both arms of the ratio are depth-representative (specs/04, amended after T04): the 0 deg
+    arm is the mean over coronal planes at *every* section, not the central one. G2.1b is the
+    independent construction — both arms restricted to interior sections — so the verdict
+    rests on two matched measurements rather than on averaging the edge contamination away.
+    """
     _assert_gate(measure_g2_1(cfg, gate_volume, seed=0))
+
+
+@pytest.mark.slow
+@pytest.mark.gate
+def test_gate2_1h_augmentation_is_complete(cfg: Config, gate_volume: Volume) -> None:
+    """Every rotation channel is wired: mutation, not assertion.
+
+    A permanent criterion, not a one-off diagnostic. A partial rotation — one channel left in
+    the wrong frame — produces exactly the signature a directional deficit does, and an
+    invariance assertion cannot tell the two apart, because an *unwired* channel satisfies
+    invariance trivially. This is what let T04's oblique deficit be diagnosed rather than
+    guessed at, so it stays in the gate.
+    """
+    _assert_gate(measure_augmentation_completeness(cfg, gate_volume, seed=0))
+
+
+@pytest.mark.slow
+@pytest.mark.gate
+def test_gate2_1i_draw_noise_floor(cfg: Config, gate_volume: Volume) -> None:
+    """The criterion's own resolution, re-measured every time the gate runs.
+
+    A permanent criterion. Without the draw-to-draw floor, T04's 0.021 residual across the
+    oblique angles was uninterpretable — it could have been a directional mechanism or it
+    could have been the subsample, and no amount of argument distinguishes them. It reports
+    rather than asserts: what it must never do is go unmeasured, because then a future
+    shortfall is read as a deficit without anyone knowing whether the measurement can see it.
+    """
+    section = measure_ratio_stability(cfg, gate_volume, seed=0)
+    _assert_gate(section)
+    ratios = np.asarray(section.artifacts["ratios"])
+    assert ratios.size >= 2
+    assert np.isfinite(ratios).all()
 
 
 @pytest.mark.slow

@@ -51,7 +51,7 @@ is an omission — flag it rather than skipping it.**
 | **Unimodal `I_gen(ell)`; calibration bracket + maximum detection** | T03 (G1.3g), T09 §2 | measured in `reports/gate1.md`; `calibration_ell_max_extent_frac`, `calibration_ell_max_fitted_multiple` |
 | Rotation augmentation over the whole volume | T04 | `RotationContext` |
 | Multi-orientation triplane ensemble | T04 | `n_plane_orientations=4` |
-| **Oblique parity ≥ 0.90 × axis-aligned** | T04 | GATE 2; evaluation set = pooled cells within `thickness/2`, **equal `n` across angles** and **own source section excluded from retrieval** (C1) |
+| **Oblique parity ≥ 0.90 × axis-aligned** | T04 | GATE 2; evaluation set = pooled cells within `thickness/2`, **equal `n` across angles** and **own source section excluded from retrieval** (C1). Criterion amended at T04 (C16): **both arms depth-matched** — the 0° arm is the mean over coronal planes at every section — plus a required interior-only check, and a **fixed** R² denominator. Measured 0.955 / 0.979 |
 | Fourier low-frequency axis follows the data frame | T04 | the silent-bug test |
 | Plane geometry, `intersect`, `random_plane_pair` | T07 | hand-computed test cases |
 | Curved / anatomy-following surfaces | T07, T09 | `generate_curved` |
@@ -79,7 +79,7 @@ is an omission — flag it rather than skipping it.**
 | Gate | Spec | Criterion | If it fails |
 |---|---|---|---|
 | GATE 1 | T03 | GRF prior halves Moran's I error vs. i.i.d.; `I_gen` monotone in `ell` **over the calibration bracket** and unimodal with its maximiser at or above the fitted `ell` (G1.3g); measured on the 3000 µm gate fixture | **Stop.** The method's core mechanism does not work; report before building anything else. |
-| GATE 2 | T04 | oblique R² ≥ 0.90 × axis-aligned, on an equal-`n` evaluation set with own-section retrieval excluded | Raise orientations to 8, verify augmentation covers everything, then **stop** — a steerable backbone is a design change. |
+| GATE 2 | T04 | **depth-matched** oblique R² ≥ 0.90 (G2.1a) **and** the interior-only check (G2.1b), on equal-`n` sets with own-section retrieval excluded; plus permanent G2.1h (augmentation complete, by mutation) and G2.1i (draw-noise floor) | Raise orientations to 8, verify augmentation covers everything *by mutation*, check the shortfall exceeds the G2.1i floor, then **stop** — a steerable backbone is a design change. **Ran at T04: 8 orientations bought +0.00086, all channels verified wired.** |
 
 ## Deliberate negative controls
 

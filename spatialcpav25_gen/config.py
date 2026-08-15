@@ -296,8 +296,16 @@ class Config:
     """Channels C per feature plane."""
 
     n_plane_orientations: int = 4
-    """Triplane sets, each at a fixed maximally-separated rotation. GATE 2's first
-    remedy is raising this to 8."""
+    """Triplane sets, each at a fixed maximally-separated rotation.
+
+    **Stays at 4, and that is a measurement, not a default nobody revisited.** GATE 2's first
+    escalation on an oblique-parity failure is raising this to 8; T04 ran it. Doubling the
+    ensemble bought **+0.00086** on the gate ratio (0.8858 -> 0.8867 on the superseded
+    single-plane criterion) for **2x the feature-plane memory** — 21 M parameters against
+    10.5 M at the default resolutions, and ~60% more wall clock per probe. The deficit it was
+    meant to address turned out not to be directional at all (`reports/gate2.md`, escalation
+    section), so the memory buys nothing. Raise it only against a *new* measurement showing a
+    directional deficit, not on the strength of the spec naming it as a remedy."""
 
     fourier_bands_xy: int = 8
     """Fourier positional-encoding bands in-plane."""

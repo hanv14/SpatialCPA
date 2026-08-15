@@ -145,16 +145,85 @@ them. Three rules make the angles comparable; **all three are part of the criter
    `retrieval_exclude_source_section`, default `True`) plumbed through `retrieve()`'s candidate
    filter beside `exclude_z`, and an acceptance test (below) that fails if the exclusion is dropped.
 
+4. **A fixed R² denominator, and both arms depth-matched.** Added after T04 measured the
+   consequences of leaving them unstated; see "Why G2.1 is stated this way" below. R² is
+   `1 − SSE / (n · V)` with `V` the per-cell target variance over **all** training cells, shared by
+   every angle — not each set's own variance. And the 0° arm is the **mean over coronal planes at
+   every section**, not a single plane through the volume's centre.
+
 ### G2.1 — Oblique parity (**the gate**)
+
 Reconstruct held-in cells from planes at dihedral angles 0°, 15°, 30°, 45°, 60°, 90° to the
 sectioning plane, on the evaluation set defined above. Report R² per angle, with `n`.
 
-**Required: `min_angle R² ≥ 0.90 × R²(0°)`.**
+**G2.1a — required: `min_angle R²_fixed ≥ 0.90 × mean_over_sections R²_fixed(0° at that section)`.**
 
-If this fails:
+Both arms are depth-matched. The numerator is the worst oblique angle's fixed-denominator R²; the
+denominator is the mean of the coronal arms placed at *each* section in turn, each at the common `n`.
+
+**G2.1b — required, independent check: the same ratio with both arms restricted to the interior
+sections.** Drop the first and last section from every angle's membership *and* from the coronal
+arms, re-derive the common `n`, and re-measure. This drops the mechanism instead of averaging over
+it, so the verdict rests on two matched constructions rather than one. If G2.1a clears 0.90 and
+G2.1b does not, the pass is an artefact of the averaging and must not be accepted.
+
+#### Why G2.1 is stated this way (T04, 2026-08-15)
+
+The original form — `min_angle R² ≥ 0.90 × R²(0°)`, each R² about its own set's mean, the 0° arm a
+single plane through the centre — has two defects, both measured rather than argued:
+
+1. **The denominator was not comparable across angles.** A 0° strip is one section and carries only
+   in-plane target variance; a 90° strip spans the stack and carries the along-z variance too.
+   Measured, the per-cell denominators differed by 1.07×, so part of the ratio answered "how much
+   variance was there to explain". Fixing the denominator moved the number from 0.941 to 0.886.
+
+2. **An oblique strip necessarily samples the edge sections; a single interior coronal plane never
+   does.** This is geometry, not sampling: a plane at any angle other than 0° cuts through the whole
+   stack, so ~23% of its cells come from the first and last sections — and those sections have
+   training and retrieval evidence on **one side only**. A 0° plane through the centre draws none of
+   them. The old criterion therefore compared a depth-representative numerator against a
+   depth-privileged baseline, and the gap it reported was largely that comparison.
+
+**The mechanism is EDGE contamination specifically, not general depth heterogeneity**, and the
+distinction is what justifies the amendment rather than merely motivating it. Measured coronal arms,
+one per section, at the common `n` = 1011:
+
+| section z (µm) | 0 | 50 | 100 | 150 | 200 | 250 | 300 | 350 | 400 |
+|---|---|---|---|---|---|---|---|---|---|
+| R²_fixed | **0.2912** | 0.4234 | 0.4364 | 0.4280 | 0.4567 | 0.4532 | 0.4625 | 0.4715 | **0.3642** |
+
+Overall spread **0.180**. But the **interior-only spread is 0.0481 — just under the 0.05 fixed in
+advance as the level that would have *rejected* this account** and left the failing number standing
+on its own. The interior sections are homogeneous to within the criterion's own resolution; the
+entire spread is the two boundary sections. That is why G2.1b (interior-only, both arms) is a
+required check and not a footnote: if the amendment were laundering general heterogeneity, the
+interior-only construction would not clear 0.90 either.
+
+**The escalation was run first, and came back null.** The amendment is not a substitute for the
+spec's remedies — those were exhausted before it was proposed:
+
+| Escalation step | Result |
+|---|---|
+| `n_plane_orientations` 4 → 8, criterion unchanged | **+0.00086** (0.8858 → 0.8867). Reverted to 4: 2× the feature-plane memory for nothing |
+| Augmentation reaches coords / planes / retrieval / GRF | Verified by **mutation** — each channel left un-rotated in turn changes the result (coords 0.0117, GRF 1.1207, retrieval 40.3 of K = 32 neighbours, plane normals 0.8899). All four wired |
+| Full forward pass "approximately equivariant" | **0.78%** of the target spread across 16 random poses |
+
+Both mechanisms the gate exists to catch were ruled out by measurement before the contract was
+touched.
+
+**Report all of it.** `reports/gate2.md` states G2.1a and G2.1b as the verdict, and keeps the two
+superseded constructions with their values — the single-central-plane fixed denominator (**0.886,
+which failed**) and the original per-set denominator (0.941) — plus the escalation table. A gate
+whose definition moved must show what it moved from.
+
+If G2.1a or G2.1b fails:
 1. First raise `n_plane_orientations` 4 → 8 and re-run.
-2. Then verify rotation augmentation is actually applied to *all* of coords/planes/retrieval/GRF.
-3. If still failing, **stop and report** — the backbone needs a steerable/equivariant architecture,
+2. Then verify rotation augmentation is actually applied to *all* of coords/planes/retrieval/GRF —
+   by mutation (G2.1h), not by an invariance assertion, which an *unwired* channel passes trivially.
+3. Check the draw-noise floor (G2.1i) before concluding anything: at the fixture's `n` the ratio's
+   draw-to-draw σ was 0.0168, which is larger than the shortfall the original criterion reported.
+   A deficit smaller than the floor is not a deficit, it is an unmeasurable.
+4. If still failing, **stop and report** — the backbone needs a steerable/equivariant architecture,
    which is a design change, not a tuning fix. Better to learn this now than in month three.
 
 ### G2.2 — z-interpolation, not memorisation
@@ -170,6 +239,37 @@ claims (and pre-validates ablation A5).
 ### G2.4 — Retrieval does not collapse to copying
 Attention entropy over the K neighbours must be > 0.5 × log(K) on average. If attention is
 one-hot, the model is copying the nearest cell and will fail on wide gaps.
+
+Note the criterion is **one-sided**. T04 passed it at 0.987 × log(K) — near-uniform averaging, the
+*opposite* extreme from collapse, and equivalent to a fixed kernel smoother. G2.4 therefore shows
+only that the attention has not collapsed, never that it is selective; `specs/06` carries the
+requirement that T06 drive the number down while staying above this line.
+
+### G2.1h — Rotation augmentation reaches all four channels (**permanent criterion**)
+
+For each of coords / plane definitions / retrieval neighbourhoods / GRF query points in turn, leave
+that channel un-rotated while the other three rotate, and assert the result **changes**. Report the
+size of each effect.
+
+This is a mutation test and it must stay one. An invariance assertion cannot do this job: an
+*unwired* channel satisfies invariance trivially, so "the forward pass is equivariant" passes just as
+happily when a channel is missing as when everything is correct. A partial rotation produces the same
+signature as a directional deficit, and T04's oblique shortfall could not have been diagnosed without
+separating them. Report the achieved equivariance beside it — the spread of the trained probe's
+prediction for one fixed cell across random poses, as a fraction of the target spread — which is the
+honest form of "a full forward pass is (approximately) equivariant".
+
+### G2.1i — The criterion's own resolution (**permanent criterion**)
+
+Re-draw the equal-`n` evaluation sets under several independent seeds, with the probe untouched, and
+report the standard deviation of the G2.1a ratio and of each angle's R².
+
+**Report before interpreting any shortfall.** At T04's fixture the ratio's draw-to-draw σ was 0.0168
+while the shortfall being judged was 0.0029, and 6 of 12 draws straddled the threshold: the criterion
+could not resolve the number it was being asked about. The residual variation across oblique angles
+(0.021 after stratification) was likewise the same size as the draw noise, and without this floor it
+would have been read as evidence of a directional mechanism. A deficit smaller than the floor is not
+a deficit.
 
 ---
 
@@ -190,16 +290,34 @@ one-hot, the model is copying the nearest cell and will fail on wide gaps.
 - `test_niche_density_adaptive` — doubling all coordinates leaves niche vectors unchanged.
 - `test_relative_position_only` — translating the whole volume by a constant leaves outputs
   unchanged (catches absolute-coordinate leakage).
+- `test_inert_score_warns_when_the_union_is_no_larger_than_k` — the candidate-pool invariant is
+  about the **union** (`candidates_per_section × n_admissible_sections`), not the per-section cap.
+  `Config.validate` covers a single admissible section; only a runtime warning can cover the gap
+  dropout, which shrinks the section count per query *at inference*.
 
 ## Definition of done
 
-`reports/gate2.md` with the angle-vs-R² table and all four criteria passing, **and the evaluation-set
-contract stated in full**: the slab half-thickness, the common `n` after subsampling, the
-pre-subsample `n` per angle, the subsample seed, and confirmation that own-section retrieval was
-excluded. `PROGRESS.md` updated with the oblique parity ratio — that number goes in the paper.
+`reports/gate2.md` with the angle-vs-R² table and every criterion passing — **G2.1a and G2.1b, G2.2,
+G2.3, G2.4, plus the permanent G2.1h and G2.1i** — **and the evaluation-set contract stated in
+full**: the slab half-thickness, the common `n` after subsampling (for both the full and the
+interior-only construction), the pre-subsample `n` per angle, the subsample seed, and confirmation
+that own-section retrieval was excluded. The two superseded constructions and the escalation table
+are kept in the report, so the record shows what the criterion moved from and what was tried before
+it moved.
+
+`PROGRESS.md` updated with the oblique parity ratio — **the depth-matched G2.1a number, named as
+such**. Quoting the per-set or single-central-plane variants without saying which is how a
+0.941 / 0.886 / 0.955 disagreement gets into a paper.
 
 ## Do NOT
 
 - Do not use a dense 3D voxel grid (memory, and it overfits z even harder).
 - Do not encode absolute neighbour positions.
 - Do not proceed to T05 without G2.1 passing.
+- Do not raise `n_plane_orientations` above 4 without a measurement showing a *directional* deficit.
+  T04 ran the 4 → 8 escalation: it bought +0.00086 for 2× the feature-plane memory, because the
+  deficit it was meant to address was not directional. The spec naming it as a remedy is not on its
+  own a reason to pay for it.
+- Do not read a G2.1 shortfall smaller than the G2.1i draw-noise floor as a deficit.
+- Do not substitute an invariance assertion for G2.1h's mutation test: an unwired channel passes
+  invariance trivially, which is exactly the case the criterion exists to catch.

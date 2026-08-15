@@ -403,10 +403,34 @@ class EvaluationSets:
     seed: int
 
 
+def interior_sections(index: RetrievalIndex) -> set[int]:
+    """The sections that are not at either end of the stack.
+
+    The **edge** sections — the first and the last — have training and retrieval evidence on
+    one side only, and reconstruct markedly worse for that reason alone. Restricting both
+    arms of the parity ratio to the interior is the independent check that the depth-matched
+    criterion does not rest on averaging that contamination away (specs/04 G2.1b).
+    """
+    return set(range(1, index.n_sections - 1))
+
+
 def evaluation_sets(
-    index: RetrievalIndex, vol: Volume, cfg: Config, *, seed: int = SUBSAMPLE_SEED
+    index: RetrievalIndex,
+    vol: Volume,
+    cfg: Config,
+    *,
+    seed: int = SUBSAMPLE_SEED,
+    sections: set[int] | None = None,
 ) -> EvaluationSets:
     """Build the per-angle evaluation sets under the C1 contract.
+
+    Parameters
+    ----------
+    sections
+        Restrict membership to these section indices. ``None`` (the default) is the contract
+        as written; :func:`interior_sections` is the edge-excluded variant, which drops the
+        two boundary sections from **every** angle before the equal-``n`` subsample so that
+        the ratio's two arms are matched on support as well as on ``n``.
 
     Raises
     ------
@@ -418,10 +442,15 @@ def evaluation_sets(
     """
     half = slab_half_thickness(vol)
     centre = vol.bbox.mean(axis=0).astype(np.float64)
+    allowed = (
+        np.ones(index.n_cells, dtype=bool)
+        if sections is None
+        else np.isin(index.section_index, list(sections))
+    )
     members: dict[float, IntArray] = {}
     for angle in ANGLES_DEG:
         offset = (index.coords - centre[None, :]) @ plane_normal(angle)
-        members[angle] = np.nonzero(np.abs(offset) <= half)[0].astype(np.intp)
+        members[angle] = np.nonzero((np.abs(offset) <= half) & allowed)[0].astype(np.intp)
 
     pre = {angle: int(rows.size) for angle, rows in members.items()}
     common = min(pre.values())
@@ -529,157 +558,6 @@ def _volume_without(vol: Volume, index: int) -> Volume:
 # --------------------------------------------------------------------------------------
 
 
-def measure_g2_1(cfg: Config, vol: Volume, *, seed: int, steps: int = PROBE_STEPS) -> GateSection:
-    """Reconstruction R^2 per dihedral angle, on the equal-``n`` evaluation set."""
-    probes = gate2_probes(cfg, vol, seed=seed, steps=steps)
-    trained = probes.main
-    sets = evaluation_sets(trained.index, vol, cfg)
-    variance = per_cell_variance(trained.targets)
-
-    fits: dict[float, Fit] = {}
-    for angle, rows in sets.rows.items():
-        prediction = predict(trained, trained.index.coords[rows], trained.neighbours[rows])
-        fits[angle] = fit_residuals(prediction, trained.targets[rows], variance)
-
-    scores = {a: f.r2_set for a, f in fits.items()}
-    fixed = {a: f.r2_fixed for a, f in fits.items()}
-    ratio, worst_angle = _parity(scores)
-    fixed_ratio, fixed_worst = _parity(fixed)
-    baseline = scores[0.0]
-    # How far apart the per-set denominators of G2.1a actually are: the reason G2.1d exists.
-    per_cell_sst = [f.sst_set / f.n for f in fits.values()]
-    spread = max(per_cell_sst) / min(per_cell_sst)
-
-    exclusion = measure_exclusion_effect(cfg, vol, seed=seed, steps=steps)
-    depth = measure_depth_mix(trained, sets, variance)
-    mean_edge_share = float(np.mean([v for a, v in depth.edge_share.items() if a != 0.0]))
-    return GateSection(
-        key="G2.1",
-        title="Oblique parity (the gate)",
-        criteria=[
-            Criterion(
-                key="G2.1a",
-                description=(
-                    "min over oblique angles of R^2, as a fraction of R^2 at 0 deg "
-                    f"(worst angle {worst_angle:g} deg), on {sets.common_n} cells per angle. "
-                    "Per-set denominator, i.e. the spec's ratio as literally written"
-                ),
-                measured=ratio,
-                threshold=OBLIQUE_PARITY_THRESHOLD,
-                comparison=">=",
-                note=(
-                    "R^2 by angle: "
-                    + ", ".join(f"{a:g} deg {scores[a]:.4f}" for a in ANGLES_DEG)
-                    + "; pre-subsample n: "
-                    + ", ".join(f"{a:g} deg {sets.pre_subsample_n[a]}" for a in ANGLES_DEG)
-                    + ". Each angle's denominator is its own set's variance, which is not the "
-                    "same quantity across angles — see G2.1d, which is the number to quote"
-                ),
-            ),
-            Criterion(
-                key="G2.1d",
-                description=(
-                    "the same ratio with a **fixed** denominator: the per-cell target "
-                    f"variance over all {trained.index.n_cells} training cells "
-                    f"(V = {variance:.4f}), shared by every angle "
-                    f"(worst angle {fixed_worst:g} deg). **This is the number for the paper**"
-                ),
-                measured=fixed_ratio,
-                threshold=OBLIQUE_PARITY_THRESHOLD,
-                comparison=">=",
-                note=(
-                    "R^2 by angle: "
-                    + ", ".join(f"{a:g} deg {fixed[a]:.4f}" for a in ANGLES_DEG)
-                    + ". A 0 deg strip is one section and carries only in-plane target "
-                    "variance; a 90 deg strip spans the stack and carries the along-z "
-                    "variance too, so the per-set denominators of G2.1a differ by "
-                    f"{spread:.2f}x "
-                    "across angles and the ratio of two of them is a ratio of two different "
-                    "questions. Fixing the denominator makes the comparison a statement "
-                    "about the model's error per cell and nothing else"
-                ),
-            ),
-            Criterion(
-                key="G2.1b",
-                description="R^2 at 0 deg (axis-aligned), the denominator of the ratio",
-                measured=baseline,
-                threshold=0.0,
-                comparison=">",
-                note=(
-                    f"slab half-thickness {sets.half_thickness:g} um, common n "
-                    f"{sets.common_n}, subsample seed {sets.seed}, own source section "
-                    f"excluded from retrieval at every angle "
-                    f"(Config.retrieval_exclude_source_section="
-                    f"{cfg.retrieval_exclude_source_section})"
-                ),
-            ),
-            Criterion(
-                key="G2.1e",
-                description=(
-                    "diagnostic: the same fixed-denominator ratio with the **depth-mix "
-                    "confound removed** — the 0 deg arm taken over the coronal planes at "
-                    "every section rather than the single central one, so both sides of the "
-                    "ratio are depth-representative"
-                ),
-                measured=(
-                    min(v for a, v in fixed.items() if a != 0.0) / depth.coronal_pooled
-                    if depth.coronal_pooled > 0
-                    else float("nan")
-                ),
-                threshold=None,
-                comparison="report",
-                note=(
-                    "per-section R^2: "
-                    + ", ".join(
-                        f"z={depth.section_z[s]:.0f} um {depth.per_section[s]:.4f}"
-                        for s in sorted(depth.per_section)
-                    )
-                    + ". The two EDGE sections are the outliers, and every oblique angle "
-                    f"draws ~{100 * mean_edge_share:.0f}% "
-                    "of its cells from them while the 0 deg set draws none — it is one "
-                    "interior section. R^2 predicted from section mix alone, ignoring the "
-                    "angle entirely: "
-                    + ", ".join(f"{a:g} deg {depth.predicted[a]:.4f}" for a in ANGLES_DEG)
-                    + " — flat across every oblique angle and reproducing the measured values, "
-                    "which is what says the angle dependence is depth mix and not direction. "
-                    f"Depth-representative 0 deg arm: {depth.coronal_pooled:.4f}"
-                ),
-            ),
-            Criterion(
-                key="G2.1c",
-                description=(
-                    "turning the own-section exclusion OFF raises R^2 at 90 deg by this much "
-                    "(the standing check that the exclusion is still plumbed through)"
-                ),
-                measured=exclusion["delta"],
-                threshold=0.0,
-                comparison=">",
-                note=(
-                    f"R^2(90 deg) = {exclusion['strict']:.4f} with the exclusion, "
-                    f"{exclusion['permissive']:.4f} without it. If this ever reaches 0 the "
-                    "exclusion is not reaching the gate's candidate filter and the gate can "
-                    "pass while hiding the failure it exists to detect (SPEC_QUESTIONS C1a)."
-                ),
-            ),
-        ],
-        artifacts={
-            "r2": scores,
-            "r2_fixed": fixed,
-            "fits": fits,
-            "fixed_variance": variance,
-            "n_train_cells": trained.index.n_cells,
-            "sets": sets,
-            "worst_angle": worst_angle,
-            "ratio": ratio,
-            "fixed_worst_angle": fixed_worst,
-            "fixed_ratio": fixed_ratio,
-            "exclusion": exclusion,
-            "depth": depth,
-            "losses": trained.losses,
-        },
-    )
-
-
 @dataclass(frozen=True)
 class DepthMix:
     """How much of the angle dependence is depth mix rather than angle.
@@ -738,6 +616,232 @@ def measure_depth_mix(trained: TrainedProbe, sets: EvaluationSets, variance: flo
         edge_share=edge_share,
         predicted=predicted,
         coronal_pooled=coronal_pooled,
+    )
+
+
+def _parity(scores: dict[float, float]) -> tuple[float, float]:
+    """``(min over oblique angles / value at 0 deg, the worst angle)``."""
+    baseline = scores[0.0]
+    oblique = {a: s for a, s in scores.items() if a != 0.0}
+    worst = min(oblique, key=lambda a: oblique[a])
+    return (oblique[worst] / baseline if baseline > 0 else float("nan")), worst
+
+
+def coronal_arms(
+    trained: TrainedProbe,
+    variance: float,
+    common_n: int,
+    *,
+    seed: int = SUBSAMPLE_SEED,
+    sections: set[int] | None = None,
+) -> dict[int, float]:
+    """The 0 degree arm placed at **each** section, at the common ``n``. ``{section: R^2}``.
+
+    The criterion's own construction applied once per section instead of once in the middle
+    of the stack. This is the denominator of the depth-matched parity ratio (specs/04 G2.1a
+    as amended): an oblique strip necessarily samples every section, including the two at the
+    stack's boundary, while a single interior coronal plane samples none of them — so a
+    single-plane denominator compares a depth-representative numerator against a
+    depth-privileged baseline.
+    """
+    index = trained.index
+    chosen = range(index.n_sections) if sections is None else sorted(sections)
+    gen = np.random.default_rng(seed)
+    arms: dict[int, float] = {}
+    for s in chosen:
+        rows = np.nonzero(index.section_index == s)[0].astype(np.intp)
+        pick = np.sort(gen.choice(rows, size=min(common_n, rows.size), replace=False)).astype(
+            np.intp
+        )
+        arms[s] = fit_residuals(
+            predict(trained, index.coords[pick], trained.neighbours[pick]),
+            trained.targets[pick],
+            variance,
+        ).r2_fixed
+    return arms
+
+
+def _angle_fits(trained: TrainedProbe, sets: EvaluationSets, variance: float) -> dict[float, Fit]:
+    """Fit every angle's evaluation set. ``{angle: Fit}``."""
+    return {
+        angle: fit_residuals(
+            predict(trained, trained.index.coords[rows], trained.neighbours[rows]),
+            trained.targets[rows],
+            variance,
+        )
+        for angle, rows in sets.rows.items()
+    }
+
+
+def measure_g2_1(cfg: Config, vol: Volume, *, seed: int, steps: int = PROBE_STEPS) -> GateSection:
+    """Oblique parity, **depth-matched on both arms** — the gate as specs/04 now states it.
+
+    The numerator is the worst oblique angle's fixed-denominator R^2; the denominator is the
+    mean over coronal arms at *every* section rather than the single central one. Both arms
+    are then depth-representative, which the original construction was not: an oblique strip
+    necessarily samples the two boundary sections and a single interior coronal plane never
+    does.
+
+    G2.1d and G2.1e below keep the superseded constructions and their values, so the record
+    shows what was measured and why the criterion moved.
+    """
+    probes = gate2_probes(cfg, vol, seed=seed, steps=steps)
+    trained = probes.main
+    variance = per_cell_variance(trained.targets)
+
+    sets = evaluation_sets(trained.index, vol, cfg)
+    fits = _angle_fits(trained, sets, variance)
+    scores = {a: f.r2_set for a, f in fits.items()}
+    fixed = {a: f.r2_fixed for a, f in fits.items()}
+    per_set_ratio, per_set_worst = _parity(scores)
+    single_plane_ratio, single_plane_worst = _parity(fixed)
+
+    arms = coronal_arms(trained, variance, sets.common_n)
+    arm_mean = float(np.mean(list(arms.values())))
+    worst_angle = min((a for a in fixed if a != 0.0), key=lambda a: fixed[a])
+    matched_ratio = fixed[worst_angle] / arm_mean if arm_mean > 0 else float("nan")
+
+    # The edge-excluded variant: both arms restricted to interior sections, so the ratio
+    # rests on two matched constructions rather than on averaging the contamination away.
+    interior = interior_sections(trained.index)
+    interior_sets = evaluation_sets(trained.index, vol, cfg, sections=interior)
+    interior_fits = _angle_fits(trained, interior_sets, variance)
+    interior_fixed = {a: f.r2_fixed for a, f in interior_fits.items()}
+    interior_arms = coronal_arms(trained, variance, interior_sets.common_n, sections=interior)
+    interior_arm_mean = float(np.mean(list(interior_arms.values())))
+    interior_worst = min((a for a in interior_fixed if a != 0.0), key=lambda a: interior_fixed[a])
+    interior_ratio = (
+        interior_fixed[interior_worst] / interior_arm_mean
+        if interior_arm_mean > 0
+        else float("nan")
+    )
+
+    per_cell_sst = [f.sst_set / f.n for f in fits.values()]
+    spread = max(per_cell_sst) / min(per_cell_sst)
+    exclusion = measure_exclusion_effect(cfg, vol, seed=seed, steps=steps)
+    depth = measure_depth_mix(trained, sets, variance)
+    mean_edge_share = float(np.mean([v for a, v in depth.edge_share.items() if a != 0.0]))
+    edge_values = [arms[0], arms[trained.index.n_sections - 1]]
+    interior_values = [v for k, v in arms.items() if k in interior]
+
+    return GateSection(
+        key="G2.1",
+        title="Oblique parity, depth-matched on both arms (the gate)",
+        criteria=[
+            Criterion(
+                key="G2.1a",
+                description=(
+                    "**THE GATE.** min over oblique angles of fixed-denominator R^2 "
+                    f"(worst angle {worst_angle:g} deg), divided by the mean over coronal "
+                    f"arms at all {trained.index.n_sections} sections. Both arms "
+                    f"depth-matched, {sets.common_n} cells each"
+                ),
+                measured=matched_ratio,
+                threshold=OBLIQUE_PARITY_THRESHOLD,
+                comparison=">=",
+                note=(
+                    "R^2 by angle: "
+                    + ", ".join(f"{a:g} deg {fixed[a]:.4f}" for a in ANGLES_DEG)
+                    + f"; coronal-arm mean {arm_mean:.4f} over "
+                    + ", ".join(f"{v:.4f}" for v in arms.values())
+                ),
+            ),
+            Criterion(
+                key="G2.1b",
+                description=(
+                    "independent check: the same ratio with **both** arms restricted to the "
+                    f"{len(interior)} interior sections, so neither side carries edge "
+                    f"contamination (worst angle {interior_worst:g} deg, "
+                    f"{interior_sets.common_n} cells each)"
+                ),
+                measured=interior_ratio,
+                threshold=OBLIQUE_PARITY_THRESHOLD,
+                comparison=">=",
+                note=(
+                    "interior-only R^2 by angle: "
+                    + ", ".join(f"{a:g} deg {interior_fixed[a]:.4f}" for a in ANGLES_DEG)
+                    + f"; interior coronal-arm mean {interior_arm_mean:.4f}. Two matched "
+                    "constructions, not one: this drops the mechanism rather than averaging "
+                    "over it"
+                ),
+            ),
+            Criterion(
+                key="G2.1c",
+                description=(
+                    "turning the own-section exclusion OFF raises R^2 at 90 deg by this much "
+                    "(the standing check that the exclusion is still plumbed through)"
+                ),
+                measured=exclusion["delta"],
+                threshold=0.0,
+                comparison=">",
+                note=(
+                    f"R^2(90 deg) = {exclusion['strict']:.4f} with the exclusion, "
+                    f"{exclusion['permissive']:.4f} without it. If this ever reaches 0 the "
+                    "exclusion is not reaching the gate's candidate filter and the gate can "
+                    "pass while hiding the failure it exists to detect (SPEC_QUESTIONS C1a)."
+                ),
+            ),
+            Criterion(
+                key="G2.1d",
+                description=(
+                    "SUPERSEDED, kept as the record: the same fixed denominator against the "
+                    "**single central** coronal plane, which is how the criterion read before "
+                    "specs/04 was amended. It FAILED at this value"
+                ),
+                measured=single_plane_ratio,
+                threshold=None,
+                comparison="report",
+                note=(
+                    f"worst angle {single_plane_worst:g} deg; the central arm is "
+                    f"{arms[trained.index.n_sections // 2]:.4f} against a nine-arm mean of "
+                    f"{arm_mean:.4f}, so the single-plane baseline flatters the denominator "
+                    f"by {100 * (arms[trained.index.n_sections // 2] / arm_mean - 1):.1f}%. "
+                    f"Edge sections {edge_values[0]:.4f} and {edge_values[1]:.4f} against an "
+                    f"interior mean of {float(np.mean(interior_values)):.4f}; every oblique "
+                    f"angle draws {100 * mean_edge_share:.0f}% of its cells from them and a "
+                    "single interior coronal plane draws none"
+                ),
+            ),
+            Criterion(
+                key="G2.1e",
+                description=(
+                    "SUPERSEDED, kept as the record: the spec's original **per-set** "
+                    "denominator, each angle's R^2 taken about its own set's mean"
+                ),
+                measured=per_set_ratio,
+                threshold=None,
+                comparison="report",
+                note=(
+                    f"worst angle {per_set_worst:g} deg. Not comparable across angles: the "
+                    f"per-cell denominators differ by {spread:.2f}x, so the ratio partly "
+                    "answers 'how much variance was there to explain'"
+                ),
+            ),
+        ],
+        artifacts={
+            "r2": scores,
+            "r2_fixed": fixed,
+            "fits": fits,
+            "fixed_variance": variance,
+            "n_train_cells": trained.index.n_cells,
+            "sets": sets,
+            "arms": arms,
+            "arm_mean": arm_mean,
+            "worst_angle": worst_angle,
+            "ratio": matched_ratio,
+            "per_set_ratio": per_set_ratio,
+            "single_plane_ratio": single_plane_ratio,
+            "interior_ratio": interior_ratio,
+            "interior_fixed": interior_fixed,
+            "interior_arms": interior_arms,
+            "interior_arm_mean": interior_arm_mean,
+            "interior_common_n": interior_sets.common_n,
+            "interior_worst_angle": interior_worst,
+            "edge_values": edge_values,
+            "exclusion": exclusion,
+            "depth": depth,
+            "losses": trained.losses,
+        },
     )
 
 
@@ -1504,10 +1608,15 @@ def measure_escalation(
 ) -> GateSection:
     """specs/04's first escalation on a G2.1 failure: raise ``n_plane_orientations`` and re-run.
 
-    The criterion is re-measured **unchanged** — same evaluation sets, same fixed denominator,
-    same threshold. Only ``Config.n_plane_orientations`` differs, which doubles the triplane's
-    parameter count and is the intervention that should move the number if the deficit is the
-    basis concentrating capacity on axis-aligned planes.
+    Measured against **G2.1d**, the single-central-plane criterion that was failing at the
+    time — unchanged in every other respect, only ``Config.n_plane_orientations`` differing.
+    That is what makes it evidence: the intervention is the one that should move the number
+    if the deficit is the basis concentrating capacity on axis-aligned planes.
+
+    Reported, not asserted. The criterion it was run against has since been superseded
+    (specs/04, amended after this came back null), so asserting its threshold here would put a
+    permanent FAIL row inside a passing gate for a criterion that no longer exists. The value
+    is kept because an amended gate has to show what was tried before the definition moved.
     """
     escalated = cfg.replace(n_plane_orientations=orientations)
     base = measure_g2_1(cfg, vol, seed=seed, steps=steps)
@@ -1527,12 +1636,13 @@ def measure_escalation(
             Criterion(
                 key="G2.1-esc-a",
                 description=(
-                    f"G2.1d, the fixed-denominator oblique-parity ratio, at "
-                    f"n_plane_orientations = {orientations}. The criterion is unchanged"
+                    "G2.1d — the superseded single-central-plane criterion, which was failing "
+                    f"at the time — re-measured at n_plane_orientations = {orientations}. Still "
+                    f"below the {OBLIQUE_PARITY_THRESHOLD:g} it was being judged against"
                 ),
                 measured=_ratio(raised, "G2.1d"),
-                threshold=OBLIQUE_PARITY_THRESHOLD,
-                comparison=">=",
+                threshold=None,
+                comparison="report",
                 note=(
                     f"P = {cfg.n_plane_orientations}: {_ratio(base, 'G2.1d'):.4f}; "
                     f"P = {orientations}: {_ratio(raised, 'G2.1d'):.4f}. Per-set ratio "

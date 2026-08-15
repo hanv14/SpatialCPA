@@ -14,6 +14,19 @@ method cannot regress below the previous version.
 
 ## 1. Generation — `spatialcpav25_gen/infer/generate.py`
 
+> ⚠️ **Open risk R3, raised at T04: reconstruction is far worse near the stack's ends.** Measured on
+> the gate fixture, per-section R² of the T04 probe was **0.2912** at the first section and
+> **0.3642** at the last, against an interior mean of **0.4474** — a 20–35 % deficit at the boundary.
+> The mechanism is one-sided evidence: a cell at z = 0 has training sections and retrieval donors
+> above it only. This is **real-volume geometry, not a fixture artefact** — every serial-section
+> dataset has two ends — and it lands squarely here, because `generate_section` is routinely asked
+> for planes at or beyond the outermost sections, where the model is extrapolating rather than
+> interpolating. Treat generation outside the interior as a distinct, worse regime: report it
+> separately, and consider surfacing an explicit boundary flag on the emitted AnnData (`uns`) rather
+> than letting a caller assume uniform quality across the stack. The uncertainty gate (§below) is the
+> natural place for it — the latent variance it already estimates should be elevated there, and if it
+> is *not*, that is itself a finding.
+
 ```python
 def generate_section(model, plane: Plane, vol: TrainingVolume, cfg: Config, seed: int) -> AnnData
 ```

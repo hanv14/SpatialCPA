@@ -181,6 +181,26 @@ admissible sections is smallest, so this is exactly where it bites. `Config.vali
 (`InertScoreWarning`) when a query's union falls to `K` or below. **An A5 run that emits that
 warning is void.**
 
+### Stratify every headline metric by distance to the stack boundary
+
+**Open risk R3, raised at T04.** The T04 probe reconstructed the two **edge** sections at R²
+**0.2912** and **0.3642** against an interior mean of **0.4474**. The cause is one-sided evidence at
+the volume boundary, it is a property of serial sectioning rather than of the fixture, and it is
+large enough to move a pooled average.
+
+Two consequences for this task:
+
+1. **Report boundary and interior separately** for the six `paper_*` metrics, not just pooled. A
+   method that is strong in the interior and weak at the ends is a different claim from one that is
+   uniformly mediocre, and the pooled number cannot distinguish them. If the baselines degrade at the
+   boundary too — SpatialZ interpolates between flanking slices and has no flanks there either — that
+   comparison is itself a result worth a row.
+2. **Check the holdout regimes for boundary loading.** `alternating` holds out interior sections by
+   construction (`split_holdout` never holds out the first or last), so it under-samples the regime
+   where the model is weakest, while `consecutive-5` on a short stack pushes the held-out run close
+   to an end. State which regime each headline number came from and how much boundary tissue it
+   contained; otherwise a regime change silently moves the metric.
+
 ## 5. Capability experiments
 
 ```python

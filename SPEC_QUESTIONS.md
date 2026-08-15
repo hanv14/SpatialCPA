@@ -393,7 +393,7 @@ would mean something different for a 200-gene and a 20 000-gene panel. *Proposal
 **mean** over entities and components, so the weight transfers across panels. Revisit at T06 if the
 term turns out to be too weak at `w_distill=0.1`.
 
-### C16. GATE 2's 0° arm is one section, and it is the best-supported one — **OPEN, blocks T05** (raised in T04)
+### C16. GATE 2's 0° arm is one section, and it is the best-supported one — **RESOLVED (decided 2026-08-15; `specs/04` amended)** (raised in T04)
 
 C1 settled the evaluation set: pooled cells within `thickness/2` of the query plane, equal `n` across
 angles, own source section excluded from retrieval. Two defects surfaced only once the R² denominator
@@ -450,25 +450,45 @@ an in-plane distance-to-boundary stratification was tried first and rejected, mo
 is the same size as the per-angle draw noise (σ up to 0.0075), so it is not evidence of a
 directional mechanism either.
 
-*Three readings, and the choice changes the number the paper quotes:*
+*Decision (2026-08-15): amend the criterion, and amend `specs/04` rather than leaving it at report
+level.* **G2.1 is now stated on two depth-matched constructions, both required:**
 
-1. **Accept 0.886 and escalate to a steerable backbone** — specs/04's literal instruction once
-   remedies 1 and 2 are exhausted, which they now are. Against it: remedies 1 and 2 came back
-   negative, i.e. neither mechanism the gate was written to catch is present.
-2. **Thicken the fixture's slabs and re-run.** C1 already names slab thickening as the response
-   when the evaluation set is too small; here `n` clears the floor but not the *resolution* the
-   criterion needs. It raises `n` at every angle, touches no contract, and is the only option that
-   makes the criterion able to answer the question it asks. **Cheapest, and it is not a redefinition
-   of the criterion.**
-3. **Amend C1 so the 0° arm is depth-representative** — pooled over the coronal planes at every
-   section — and re-run, giving **0.955**. Defensible on C1's own terms, but it is a change to a
-   settled contract made after seeing the number it changes.
+- **G2.1a — the gate.** `min_angle R²_fixed ≥ 0.90 × mean_over_sections R²_fixed(0° at that section)`.
+  Both arms depth-representative. Measured **0.9547**.
+- **G2.1b — independent check.** The same ratio with both arms restricted to the interior sections,
+  re-deriving the common `n` (785). Measured **0.9795** — *higher* than G2.1a, on a construction that
+  drops the mechanism instead of averaging over it.
 
-*Recommendation:* **2 first, then re-read the gate.** It is the only option that removes a defect
-without either redefining the criterion or committing to a large design change; and if the ratio is
-still below 0.90 at a resolution that can distinguish it, that is a real result and reading 1
-follows on evidence. **Not adopted unilaterally — T04 stops at the failed gate**, per specs/04's
-"Do NOT proceed to T05 without G2.1 passing", and `Config.gate2_min_cells_per_angle` is untouched.
+The reasoning is in `specs/04` under "Why G2.1 is stated this way", including the point that an
+oblique strip **necessarily** samples the edge sections while a single interior coronal plane never
+does — geometry, not sampling. The two superseded constructions are kept there and in
+`reports/gate2.md` with their values (0.941 per-set; **0.886** single-central-plane, which failed),
+so the record shows what the criterion moved from.
+
+**What made the amendment admissible rather than convenient**, in order:
+
+1. **The escalation was run first and came back null.** `n_plane_orientations` 4 → 8 moved the
+   failing number by **+0.00086**; all four rotation channels were verified wired by mutation; the
+   full forward pass is equivariant to **0.78 %** of the target spread. Both mechanisms the gate
+   exists to catch were excluded by measurement before the contract was touched.
+2. **The pre-registered test could have rejected it.** The nine coronal arms were required to
+   *spread* for the account to hold; a spread under 0.05 would have left 0.886 standing. Measured
+   **0.180** overall — and, decisively, **0.0481 interior-only**, just under that same 0.05. So the
+   mechanism is **edge contamination specifically**, not general depth heterogeneity, which is what
+   makes G2.1b a meaningful independent check rather than a restatement.
+3. **The residual U was explained by the same mechanism.** With edges dropped from both arms the
+   angle profile flattens to 0.4517 / 0.4436 / 0.4473 / 0.4396 / 0.4470 / 0.4660 — span 0.026, no
+   mid-sweep minimum. The angles that looked worst were the ones drawing the largest edge share.
+
+**`n_plane_orientations` reverted to 4** and the reason recorded in its `Config` docstring: +0.00086
+for 2× the feature-plane memory. **G2.1h** (augmentation completeness, by mutation) and **G2.1i**
+(draw-noise floor) are now **permanent criteria** in `specs/04` — they are what made the shortfall
+diagnosable, and without the noise floor the 0.021 residual would have been uninterpretable.
+
+**Carried forward as open risk R3**: the edge sections themselves reconstruct at 0.2912 and 0.3642
+against an interior mean of 0.4474. That is real-volume geometry, and it is now written into
+`specs/09` §1 (generation queries planes at or beyond the outermost sections) and `specs/10` §4
+(stratify headline metrics by distance to the boundary).
 
 ## D. In the design docs but missing from `specs/11_COVERAGE_MATRIX.md` — **all five settled 2026-08-15**
 
