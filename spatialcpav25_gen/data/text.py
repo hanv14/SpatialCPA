@@ -46,6 +46,7 @@ from spatialcpav25_gen.config import Config
 
 __all__ = [
     "GENE_META_COLUMNS",
+    "SPECIES_ENSEMBL_PREFIX",
     "SPECIES_TAXID",
     "EncoderBackend",
     "GeneMeta",
@@ -82,6 +83,26 @@ tell from the table that anything was wrong. A table that cannot say which organ
 cannot be checked. ``species_resolved`` is the **taxid** as a string, because that is what the API
 returns and what an assertion can be written against; ``species_requested`` is the name the caller
 used."""
+
+SPECIES_ENSEMBL_PREFIX: Final[dict[str, str]] = {
+    "human": "ENSG",
+    "mouse": "ENSMUSG",
+    "rat": "ENSRNOG",
+    "fruitfly": "FBgn",
+    "nematode": "WBGene",
+    "zebrafish": "ENSDARG",
+    "frog": "ENSXETG",
+    "pig": "ENSSSCG",
+    "chicken": "ENSGALG",
+    "macaque": "ENSMMUG",
+}
+"""Ensembl **gene**-id prefix per species, and the field every downstream join actually reads.
+
+Checking the ``taxid`` of the *hit* turned out not to be enough. A build whose ``species_resolved``
+was uniformly 10090 still wrote ENSMSIG (ground squirrel), ENSNVIG (mink), ENSMPUG (ferret) and
+ENSFALG (falcon) ids: the hit was the mouse one, but the id was taken from the wrong element of that
+hit's own ``ensembl`` list. So the id is validated on its own terms, against the prefix, and not
+inferred from the hit it came with."""
 
 SPECIES_TAXID: Final[dict[str, int]] = {
     "human": 9606,
@@ -421,6 +442,13 @@ def gene_meta_summary(path: str | Path) -> dict[str, Any]:
             {str(r["species_resolved"]) for r in records if r["species_resolved"]}
         ),
         "ensembl_prefixes": _ensembl_prefix_counts(records),
+        "expected_ensembl_prefix": sorted(
+            {
+                SPECIES_ENSEMBL_PREFIX[str(r["species_requested"])]
+                for r in records
+                if str(r["species_requested"]) in SPECIES_ENSEMBL_PREFIX
+            }
+        ),
     }
 
 
@@ -479,6 +507,33 @@ def _check_table_species(
         )
 
 
+def _check_ensembl_prefix(
+    records: Iterable[dict[str, Any]], requested_name: str, prefix: str
+) -> None:
+    """Raise if any stored ``ensembl_id`` is not this species'. The last line of defence.
+
+    Checked on the **stored value**, separately from the ``taxid`` of the hit it came from, because
+    the two turned out to be able to disagree: a build with a uniformly correct ``species_resolved``
+    wrote 748 ids belonging to four other mammals and a fly. ``ensembl_id`` is what every downstream
+    join reads, so it gets its own assertion rather than inheriting the hit's credibility.
+    """
+    wrong: dict[str, list[str]] = {}
+    for row in records:
+        value = _clean(row.get("ensembl_id"))
+        if value and not value.upper().startswith(prefix.upper()):
+            digits = next((i for i, ch in enumerate(value) if ch.isdigit()), len(value))
+            wrong.setdefault(value[:digits] or value, []).append(str(row.get("symbol")))
+    if wrong:
+        counts = {k: len(v) for k, v in sorted(wrong.items(), key=lambda kv: -len(kv[1]))}
+        example = next(iter(wrong.values()))[0]
+        raise GeneMetaError(
+            f"ensembl_id values are not {requested_name} ids (expected the {prefix!r} prefix): "
+            f"{counts} by prefix, e.g. symbol {example!r}. mygene's `ensembl` field includes "
+            "cross-species mappings, so an id has to be chosen by its prefix rather than by its "
+            "position in that field."
+        )
+
+
 def load_gene_meta(path: str | Path, *, species: str | None = None) -> dict[str, GeneMeta]:
     """Load a gene-metadata table into ``symbol -> GeneMeta``.
 
@@ -514,7 +569,11 @@ def load_gene_meta(path: str | Path, *, species: str | None = None) -> dict[str,
     table = _read_gene_meta_table(table_path)
     records = _records(table)
     if species is not None:
-        _check_table_species(records, resolve_species(species)[0], table_path)
+        name = resolve_species(species)[0]
+        _check_table_species(records, name, table_path)
+        prefix = SPECIES_ENSEMBL_PREFIX.get(name)
+        if prefix is not None:
+            _check_ensembl_prefix(records, name, prefix)
     return {str(row["symbol"]): GeneMeta.from_row(row) for row in records}
 
 
@@ -684,6 +743,7 @@ def _query_mygene(symbols: Sequence[str], cfg: Config) -> dict[str, dict[str, An
         visible rather than silent.
     """
     name, taxid = resolve_species(cfg.mygene_species)
+    prefix = SPECIES_ENSEMBL_PREFIX.get(name)
     client = load_mygene_client(cfg)
     hits = client.querymany(
         list(symbols),
@@ -727,20 +787,59 @@ def _query_mygene(symbols: Sequence[str], cfg: Config) -> dict[str, dict[str, An
 
     out: dict[str, dict[str, Any]] = {}
     ambiguous: list[str] = []
+    foreign_ids = 0
+    summary_lost_to_selection: list[str] = []
     for query, candidates in by_symbol.items():
         ranked = sorted(candidates, key=lambda hit: _hit_rank(hit, query), reverse=True)
         best = ranked[0]
         if len(ranked) > 1 and _is_exact(best, query) and _is_exact(ranked[1], query):
             ambiguous.append(query)
+        chosen_id = _ensembl_id(best.get("ensembl"), prefix)
+        if chosen_id is None and _ensembl_gene_ids(best.get("ensembl")):
+            # The hit carried ids, none of them this species': the case that used to be written.
+            foreign_ids += 1
+        if not _clean(best.get("summary")) and any(_clean(h.get("summary")) for h in ranked[1:]):
+            summary_lost_to_selection.append(query)
         out[query] = {
             "symbol": query,
             "full_name": _clean(best.get("name")),
             "summary": _clean(best.get("summary")),
             "aliases": list(_coerce_aliases(best.get("alias"))),
-            "ensembl_id": _ensembl_id(best.get("ensembl")),
+            "ensembl_id": chosen_id,
             "species_requested": name,
-            "species_resolved": str(taxid),
+            # Read from the hit, not from the request. Writing `str(taxid)` here made the column an
+            # echo of the argument: it could never disagree with it, so "species_resolved is uniformly
+            # 10090" was true by construction and looked like evidence when it was not.
+            "species_resolved": str(int(best.get("taxid", taxid))),
         }
+    if foreign_ids:
+        warnings.warn(
+            f"_query_mygene: {foreign_ids} {name} hit(s) carried Ensembl ids but none with the "
+            f"{prefix!r} prefix, so their ensembl_id is None rather than another organism's id. "
+            "mygene's `ensembl` field includes cross-species mappings; this is the case that used "
+            "to be written as if it were the gene's own id.",
+            GeneMetaUnavailableWarning,
+            stacklevel=2,
+        )
+    if summary_lost_to_selection:
+        warnings.warn(
+            f"_query_mygene: for {len(summary_lost_to_selection)} symbol(s) the selected hit has no "
+            f"summary while another {name} hit for the same symbol does (first: "
+            f"{summary_lost_to_selection[0]!r}). Hit selection, not the species filter, is costing "
+            "these summaries — report this count before concluding that this organism's summaries "
+            "are sparse.",
+            GeneMetaUnavailableWarning,
+            stacklevel=2,
+        )
+    if prefix is None:
+        warnings.warn(
+            f"_query_mygene: no Ensembl prefix is known for species {name!r}, so the stored "
+            "ensembl_id cannot be validated against it. Add the prefix to SPECIES_ENSEMBL_PREFIX.",
+            GeneMetaUnavailableWarning,
+            stacklevel=2,
+        )
+    else:
+        _check_ensembl_prefix(out.values(), name, prefix)
     if ambiguous:
         warnings.warn(
             f"_query_mygene: {len(ambiguous)} symbol(s) matched more than one {name} gene exactly "
@@ -753,13 +852,47 @@ def _query_mygene(symbols: Sequence[str], cfg: Config) -> dict[str, dict[str, An
     return out
 
 
-def _ensembl_id(value: Any) -> str | None:
-    """Pull a single Ensembl gene id out of mygene's dict-or-list-of-dicts field."""
+def _ensembl_gene_ids(value: Any) -> list[str]:
+    """Flatten mygene's ``ensembl`` field to every gene id in it. Dict, list of dicts, or scalar."""
     if isinstance(value, dict):
-        return _clean(value.get("gene"))
-    if isinstance(value, list) and value:
-        return _ensembl_id(value[0])
-    return _clean(value)
+        one = _clean(value.get("gene"))
+        return [one] if one else []
+    if isinstance(value, list):
+        out: list[str] = []
+        for item in value:
+            out.extend(_ensembl_gene_ids(item))
+        return out
+    one = _clean(value)
+    return [one] if one else []
+
+
+def _ensembl_id(value: Any, prefix: str | None) -> str | None:
+    """Pick the Ensembl gene id belonging to ``prefix``'s species. ``None`` if there is none.
+
+    **The bug this exists for.** The first version took ``value[0]`` of a dict-or-list field. A build
+    whose ``taxid`` filter demonstrably worked — ``species_resolved`` uniformly 10090 — still wrote
+    ENSMUSG 390, ENSMSIG 321, ENSNVIG 241, ENSMPUG 111, ENSFALG 73, FBgn 1. Since every other field of
+    those rows came from the mouse hit, the ids can only have come from a **non-mouse element of the
+    mouse hit's own ``ensembl`` list**, and taking element zero of it is a coin toss over whatever
+    orthologue mappings mygene chose to include.
+
+    So the id is selected by what it *is*, not by the position it occupies: the first id whose prefix
+    is the requested species'. If the field holds no id for that species the answer is ``None`` — an
+    absent id, which the descriptor never reads anyway, rather than another organism's id, which every
+    downstream join does.
+
+    ``prefix`` is ``None`` only when the species was given as a bare taxid this module has no prefix
+    for; then the first id is taken and :func:`_query_mygene` warns that it cannot be validated.
+    """
+    ids = _ensembl_gene_ids(value)
+    if not ids:
+        return None
+    if prefix is None:
+        return ids[0]
+    for candidate in ids:
+        if candidate.upper().startswith(prefix.upper()):
+            return candidate
+    return None
 
 
 # --------------------------------------------------------------------------------------

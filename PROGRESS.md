@@ -1568,3 +1568,64 @@ needs one run on a networked machine:
 pip install -e ".[extra]"
 python scripts/build_gene_meta.py --species mouse --symbols-from <panel>.txt
 ```
+
+### T02 (repaired, second pass) — `ensembl_id` came from the wrong element of the right hit (2026-08-16)
+
+**The report was not self-contradictory, and finding out why exposed a second defect of mine.**
+`species_resolved` uniformly `['10090']` alongside prefixes ENSMUSG 390 / ENSMSIG 321 / ENSNVIG 241 /
+ENSMPUG 111 / ENSFALG 73 / FBgn 1 is consistent: every other field of those rows came from the mouse
+hit, so the ids can only have come from a **non-mouse element of the mouse hit's own `ensembl` list**.
+mygene's `ensembl` field carries cross-species mappings and `_ensembl_id` took `value[0]` of it. A
+hit's `taxid` says nothing about which element of its `ensembl` field you then read.
+
+The honesty defect: **`species_resolved` was written as `str(taxid)` — the *requested* value.** It
+could never disagree with the argument, so "uniformly 10090" was true by construction and read as
+evidence when it was not. It now comes from `best["taxid"]`.
+
+**Fixes** (SPEC_QUESTIONS **B19a**), replayed on the reported response — 1138 rows, prefixes
+`{'None': 748, 'ENSMUSG': 390}`, 747 wrong-prefix hits reported, table accepted by the species gate:
+
+| fix | |
+|---|---|
+| `_ensembl_id(value, prefix)` | selects the id whose prefix is the requested species' (`SPECIES_ENSEMBL_PREFIX`, mouse `ENSMUSG`), wherever it sits in the list. No mouse id in the field → **`None`**, an absent id the descriptor never reads, rather than another organism's, which every join does |
+| `_check_ensembl_prefix` | asserts the **stored** value at build *and* load, separately from the taxid, because `ensembl_id` is what everything downstream reads and must not inherit the hit's credibility |
+| `species_resolved` | read from the hit, so the column is evidence rather than an echo of the request |
+| `gene_meta_summary` | also reports `expected_ensembl_prefix`, so the histogram is self-checking |
+
+**I could not print the raw response, and that is a container limit, not a choice.** mygene.info is
+403'd here (C14) — verified again: `--dump-raw` reaches the network layer and dies on
+`httpx.ProxyError: 403 Forbidden`. So `scripts/build_gene_meta.py --dump-raw SYMBOL` now exists to
+print it unfiltered on a machine that can reach the API:
+
+```
+python scripts/build_gene_meta.py --species mouse --dump-raw 1700057H15Rik
+```
+
+It dumps every hit as JSON plus a per-hit line (`taxid`, `symbol`, `_score`, whether a summary is
+present, the whole `ensembl` field). **This determines the fix's outcome on your data:** if each list
+also contains the mouse id further down, those 748 become real ENSMUSG ids; if it does not, they stay
+`None` and the mouse Ensembl ids simply are not in that response. My replay models the pessimistic
+case; the raw dump settles it.
+
+**Summary coverage 148/1138 — I am not asserting either answer.** What I can contribute is evidence
+and a discriminator, both now in place (SPEC_QUESTIONS **B20**):
+
+* *The panel does not explain it.* Of 1138 symbols only **33 (2.9%)** are RIKEN clones or predicted
+  genes; **1105 (97.1%)** are conventional named mouse genes (`A2m`, `Abca8a`, `Abcc9`, …). A 7× drop
+  from the human rate is not the panel's composition, so 13% should not be accepted on plausibility.
+* *A discriminator rather than an argument.* `_query_mygene` now counts symbols where **the selected
+  hit has no summary while another same-species hit for the same symbol does**, and warns with the
+  count. ≈ 0 means mouse summaries genuinely are sparse; a large count means my hit selection is
+  dropping them and the ranking needs a summary-aware tiebreak among otherwise equally good exact
+  same-species matches. One run answers it.
+
+**The fallback is proposed, not implemented**, as asked — human orthologue summary, explicitly
+labelled, with four constraints written into B20: a recorded `summary_taxid` provenance column rather
+than a substituted value; the orthologue resolved through `homologene` with a required 1:1 mapping and
+**never** by uppercasing the symbol (that is exactly the mistake that produced the all-human table);
+`gene_descriptor` rendering the provenance in the text ("Human orthologue PVALB: …") so neither the
+encoder nor a reader can mistake it; and T10's E1 reporting **both arms**, because importing human gene
+descriptions into a mouse model's text channel changes what the open-vocabulary claim is about. Gated
+by `Config.gene_summary_fallback`, default `"none"`, never overwriting a native summary.
+
+Five new tests (33 in `tests/test_text.py`), `make check` green.

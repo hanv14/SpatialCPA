@@ -21,6 +21,7 @@ Symbols that mygene.info does not resolve degrade to symbol-only rows and are re
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -59,6 +60,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="do not query mygene.info; write symbol-only rows",
     )
     parser.add_argument(
+        "--dump-raw",
+        metavar="SYMBOL",
+        default=None,
+        help=(
+            "print mygene.info's RAW response for one symbol and exit, without writing anything. "
+            "Use it to see the actual shape of the `ensembl` field rather than reasoning about it: "
+            "`--species mouse --dump-raw 1700057H15Rik`. Needs network access"
+        ),
+    )
+    parser.add_argument(
         "--merge",
         action="store_true",
         help=(
@@ -90,8 +101,44 @@ def read_symbols(args: argparse.Namespace) -> list[str]:
     return list(dict.fromkeys(symbols))
 
 
+def dump_raw(symbol: str, species: str) -> int:
+    """Print mygene.info's raw response for one symbol, exactly as the client returns it.
+
+    Deliberately does not write, filter or select anything: the point is to see the structure the
+    selection logic is choosing from. Written because a build whose ``taxid`` filter demonstrably
+    worked still emitted four other mammals' Ensembl ids, and the shape of the ``ensembl`` field
+    that made that possible could only be guessed at from outside.
+    """
+    from spatialcpav25_gen.data.text import load_mygene_client, resolve_species
+
+    name, taxid = resolve_species(species)
+    client = load_mygene_client(Config().replace(mygene_species=name))
+    hits = client.querymany(
+        [symbol],
+        scopes="symbol,alias",
+        fields="symbol,name,summary,alias,ensembl.gene,ensembl,taxid,entrezgene,_score",
+        species=name,
+        verbose=False,
+    )
+    print(f"# mygene.info raw response for {symbol!r}, species={name} (taxid {taxid})")
+    print(f"# {len(hits)} hit(s)\n")
+    print(json.dumps(hits, indent=2, sort_keys=True, default=str))
+    print(f"\n# taxids present: {sorted({h.get('taxid') for h in hits if isinstance(h, dict)})}")
+    for index, hit in enumerate(hits):
+        if not isinstance(hit, dict):
+            continue
+        print(
+            f"# hit {index}: taxid={hit.get('taxid')} symbol={hit.get('symbol')!r} "
+            f"score={hit.get('_score')} summary={'yes' if hit.get('summary') else 'no'} "
+            f"ensembl={hit.get('ensembl')!r}"
+        )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.dump_raw:
+        return dump_raw(args.dump_raw, args.species)
     symbols = read_symbols(args)
     if not symbols:
         print("no symbols given; pass some, or --symbols-from", file=sys.stderr)
@@ -116,6 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  with summary        {summary['with_summary']}/{summary['rows']}")
     print(f"  with ensembl_id     {summary['with_ensembl_id']}/{summary['rows']}")
     print(f"  ensembl prefixes    {summary['ensembl_prefixes']}")
+    print(f"  expected prefix     {summary['expected_ensembl_prefix']}")
     if summary["rows"] != len(symbols) and not args.merge:
         print(
             f"  !! {summary['rows']} rows for {len(symbols)} requested symbols without --merge; "

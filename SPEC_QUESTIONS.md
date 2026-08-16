@@ -720,6 +720,81 @@ keeps the mouse hit, so coverage should rise to whatever fraction of these 1138 
 NCBI summary. `scripts/build_gene_meta.py` now prints that number (`with summary N/rows`) as a
 property of the file; it has to be read off a run with network access.
 
+### B19a. `ensembl_id` came from the wrong element of the right hit (reported, fixed)
+The second report on the same build: `species_resolved` uniformly `['10090']` — the taxid filter
+working — while the Ensembl prefixes were ENSMUSG 390, ENSMSIG 321, ENSNVIG 241, ENSMPUG 111,
+ENSFALG 73, FBgn 1.
+
+**The two are not contradictory, and the reason matters.** Every other field of those rows came from
+the mouse hit, so the ids can only have come from a **non-mouse element of the mouse hit's own
+`ensembl` list**: mygene's `ensembl` field carries cross-species mappings, and `_ensembl_id` took
+`value[0]` of it — a coin toss over whatever orthologue mappings the record happened to include. The
+`taxid` of a hit says nothing about which element of its `ensembl` field you then read.
+
+*Two fixes, plus one honesty repair:*
+
+1. **`_ensembl_id(value, prefix)` selects by prefix**, not position: the first id whose prefix is the
+   requested species' (`SPECIES_ENSEMBL_PREFIX`, mouse `ENSMUSG`). A hit with ids but none of them
+   this species' now yields **`None`** — an absent id, which the descriptor never reads — rather than
+   another organism's, which every downstream join does. Counted and warned.
+2. **`_check_ensembl_prefix` asserts the stored value** at build *and* at load, separately from the
+   taxid check, because `ensembl_id` is the field everything downstream reads and it must not inherit
+   the hit's credibility.
+3. **`species_resolved` is now read from the hit** (`best["taxid"]`), not written as `str(taxid)` from
+   the *request*. As written it could never disagree with the argument, so "species_resolved is
+   uniformly 10090" was true **by construction** — it read as evidence and was not. That is why the
+   report looked self-contradictory.
+
+*Replayed on the reported response* (mouse hits throughout, `ensembl` mixed): 1138 rows, prefixes
+`{'None': 748, 'ENSMUSG': 390}`, 747 wrong-prefix hits reported, table accepted by the species gate.
+**Whether those 748 become `None` or become real ENSMUSG ids on the live API depends on whether the
+mouse id is present further down each list** — which needs the raw response, hence
+`scripts/build_gene_meta.py --dump-raw`.
+
+### B20. Mouse summary coverage is 148/1138 — sparse, or still a selection bug? — **OPEN, diagnostic added, fallback PROPOSED not implemented**
+Coverage fell from **1054/1138 (93%)** under the old human-leaning query to **148/1138 (13%)** once the
+query resolved mouse. 93% is the *human* rate; the question is whether 13% is the true mouse rate.
+
+*What is known.* The panel is **not** dominated by unannotatable symbols: of 1138, only **33 (2.9%)**
+are RIKEN clones (`*Rik`) or predicted genes (`Gm#####`); **1105 (97.1%)** are conventional named mouse
+genes (`A2m`, `Abca8a`, `Abcc9`, …). So the panel's composition does not explain a 7× drop, and 13%
+should not be accepted without evidence.
+
+*What distinguishes the two causes, added rather than argued.* `_query_mygene` now counts symbols where
+**the selected hit has no summary while another same-species hit for the same symbol does**, and warns
+with the count. That is the whole difference:
+
+* count ≈ 0 → mouse NCBI summaries genuinely are that sparse, and the fallback below is the question;
+* count large → hit selection is dropping summaries, and the ranking needs a summary-aware tiebreak
+  among otherwise equally good same-species exact matches (a *tiebreak*, never a preference strong
+  enough to pick a different gene).
+
+It cannot be measured in this container (mygene.info is 403'd — C14), so it is one run away:
+`python scripts/build_gene_meta.py --species mouse --symbols-from resources/mouse_panels_symbols.txt`
+prints `with summary N/rows` and emits the selection warning.
+
+*Proposed fallback, if sparsity is confirmed — the human orthologue's summary, explicitly labelled.*
+Matching the inclination stated in the report, with four constraints that are not optional:
+
+1. **A separate, recorded provenance field**, not a substituted value: new column `summary_taxid`
+   holding the taxid the summary came from (10090 native, 9606 orthologue, null none). Coverage is
+   then always reportable **split by source**, so "N/1138 have summaries" can never again mean two
+   different things.
+2. **The orthologue is resolved through `homologene`, never by uppercasing the symbol.** Uppercasing is
+   precisely the mistake that produced the all-human table (B19): `Slc17a7` matched `SLC17A7`
+   case-insensitively and silently. Require a **1:1** homologue and skip the gene when the mapping is
+   1:many — paralogous families are where an orthologue summary is most wrong and most plausible.
+3. **`gene_descriptor` renders the provenance in the text**, e.g.
+   `"Pvalb. parvalbumin. Human orthologue PVALB: <summary>"`, so both the frozen encoder and any human
+   reading the descriptors see it. Never as though it were the mouse gene's own summary.
+4. **T10's E1 reports both arms** (`gene_summary_fallback` off / on), because importing human gene
+   descriptions into a mouse model's text channel changes what the open-vocabulary claim is a claim
+   *about*. Same discipline as E1's existing two arms for `r_g = 0` vs `psi(t_g)`.
+
+Gated by `Config.gene_summary_fallback ∈ {"none", "ortholog"}`, default **`"none"`** until T10 has
+measured both arms. Never overwrites a native summary. **Not implemented pending the diagnostic and
+your decision.**
+
 ### C14. `resources/gene_meta.parquet` is described as "shipped" but nothing can build it offline — **OPEN, and now BLOCKING the paper's headline novelty** (raised in T02, escalated at T06)
 **Escalated at T06, with the measurement that makes it blocking.** Zero-shot decoding of
 never-trained genes measures **r = −0.368** on the synthetic fixture (B18) — the open-vocabulary claim

@@ -705,3 +705,159 @@ def test_committed_gene_meta_tables_are_species_checkable():
     if parked.exists():
         with pytest.raises(GeneMetaError, match="predates the species columns"):
             load_gene_meta(parked, species="mouse")
+
+
+# --------------------------------------------------------------------------------------
+# the ensembl_id, which the taxid filter does not protect
+# --------------------------------------------------------------------------------------
+#
+# A build whose taxid filter demonstrably worked — species_resolved uniformly 10090 — still wrote
+# ENSMUSG 390, ENSMSIG 321 (ground squirrel), ENSNVIG 241 (mink), ENSMPUG 111 (ferret), ENSFALG 73
+# (falcon), FBgn 1. Every other field of those rows came from the mouse hit, so the ids can only
+# have come from a non-mouse element of the mouse hit's OWN `ensembl` list, taken by position.
+
+
+class FakeMyGeneOrthologueIds:
+    """One mouse hit whose ``ensembl`` field is a list of cross-species mappings.
+
+    The reported structure: element zero is not the mouse id. ``Orphan1`` has no mouse id at all,
+    which is the case that must become ``None`` rather than another organism's id.
+    """
+
+    def querymany(self, qterms, **kwargs):
+        hits = []
+        for symbol in qterms:
+            ensembl = [
+                {"gene": "ENSMSIG00000011111"},
+                {"gene": "ENSNVIG00000022222"},
+                {"gene": "ENSMUSG00000033333"},
+            ]
+            if symbol == "Orphan1":
+                ensembl = [{"gene": "ENSFALG00000044444"}, {"gene": "FBgn0011111"}]
+            hits.append(
+                {
+                    "query": symbol,
+                    "symbol": symbol,
+                    "name": f"{symbol} full name",
+                    "summary": f"{symbol} does something",
+                    "taxid": TAXID_MOUSE,
+                    "ensembl": ensembl,
+                    "_score": 60.0,
+                }
+            )
+        return hits
+
+
+def test_ensembl_id_is_chosen_by_species_prefix(monkeypatch, cache_cfg):
+    """The stored id is the mouse one wherever the list puts it, and ``None`` when there is none."""
+    install_fake_mygene(monkeypatch, FakeMyGeneOrthologueIds())
+    online = cache_cfg.replace(text_allow_network=True, mygene_species="mouse")
+    with pytest.warns(GeneMetaUnavailableWarning, match="none with the 'ENSMUSG' prefix"):
+        table = build_gene_meta(["Gad1", "Orphan1"], online)
+
+    row = {r["symbol"]: r for r in table.to_dict(orient="records")}
+    assert row["Gad1"]["ensembl_id"] == "ENSMUSG00000033333", "not element zero, the mouse one"
+    assert row["Orphan1"]["ensembl_id"] is None, "a foreign id must not be stored as the gene's own"
+    # The taxid filter alone passes both of these, which is why the prefix is checked as well.
+    assert list(table["species_resolved"]) == [str(TAXID_MOUSE)] * 2
+
+    summary = gene_meta_summary(online.gene_meta_path)
+    assert summary["ensembl_prefixes"] == {"ENSMUSG": 1, "None": 1}
+    assert summary["expected_ensembl_prefix"] == ["ENSMUSG"]
+
+
+def test_foreign_ensembl_prefix_is_refused(monkeypatch, cache_cfg):
+    """A table holding another organism's ids raises, at build time and at load time."""
+    from spatialcpav25_gen.data.text import _check_ensembl_prefix
+
+    rows = [{"symbol": "Gad1", "ensembl_id": "ENSFALG00000000001"}]
+    with pytest.raises(GeneMetaError, match="not mouse ids"):
+        _check_ensembl_prefix(rows, "mouse", "ENSMUSG")
+
+    install_fake_mygene(monkeypatch, FakeMyGene(mouse_only=True))
+    online = cache_cfg.replace(text_allow_network=True, mygene_species="mouse")
+    build_gene_meta(["Gad1"], online)
+
+    import pandas as pd
+
+    table = pd.read_parquet(online.gene_meta_path)
+    table["ensembl_id"] = "ENSMSIG00000099999"
+    table.to_parquet(online.gene_meta_path, index=False)
+    with pytest.raises(GeneMetaError, match="ENSMUSG"):
+        load_gene_meta(online.gene_meta_path, species="mouse")
+
+
+def test_species_resolved_is_read_from_the_hit(monkeypatch, cache_cfg):
+    """``species_resolved`` comes from the response, so the column is evidence not an echo.
+
+    It used to be written as ``str(taxid)`` — the *requested* value — which could never disagree
+    with the request, so "species_resolved is uniformly 10090" was true by construction and read as
+    evidence when it was not.
+    """
+    from spatialcpav25_gen.data import text as text_mod
+
+    class MislabellingClient:
+        """Returns a hit whose taxid passes the filter; the column must quote the hit."""
+
+        def querymany(self, qterms, **kwargs):
+            return [
+                {
+                    "query": s,
+                    "symbol": s,
+                    "name": "n",
+                    "taxid": TAXID_MOUSE,
+                    "ensembl": {"gene": "ENSMUSG00000000001"},
+                }
+                for s in qterms
+            ]
+
+    monkeypatch.setattr(text_mod, "load_mygene_client", lambda _cfg: MislabellingClient())
+    online = cache_cfg.replace(text_allow_network=True, mygene_species="10090")
+    table = build_gene_meta(["Gad1"], online)
+    assert list(table["species_requested"]) == ["10090"]
+    assert list(table["species_resolved"]) == ["10090"]
+
+
+def test_summary_lost_to_selection_is_reported(monkeypatch, cache_cfg):
+    """When the chosen hit lacks a summary that a sibling hit has, say so.
+
+    The diagnostic that separates "this organism's summaries are sparse" from "hit selection is
+    dropping them" — the question raised when mouse coverage came back 148/1138 against the old
+    human-leaning query's 1054/1138.
+    """
+    from spatialcpav25_gen.data import text as text_mod
+
+    class TwoMouseHits:
+        def querymany(self, qterms, **kwargs):
+            hits = []
+            for s in qterms:
+                # the higher-scoring hit has no summary; a lower-scoring same-species one does
+                hits.append(
+                    {
+                        "query": s,
+                        "symbol": s,
+                        "name": f"{s} a",
+                        "taxid": TAXID_MOUSE,
+                        "ensembl": {"gene": "ENSMUSG00000000001"},
+                        "_score": 99.0,
+                    }
+                )
+                hits.append(
+                    {
+                        "query": s,
+                        "symbol": s,
+                        "name": f"{s} b",
+                        "summary": f"{s} is described here",
+                        "taxid": TAXID_MOUSE,
+                        "ensembl": {"gene": "ENSMUSG00000000002"},
+                        "_score": 10.0,
+                    }
+                )
+            return hits
+
+    monkeypatch.setattr(text_mod, "load_mygene_client", lambda _cfg: TwoMouseHits())
+    online = cache_cfg.replace(text_allow_network=True, mygene_species="mouse")
+    with pytest.warns(GeneMetaUnavailableWarning, match="selected hit has no summary"):
+        table = build_gene_meta(["Gad1"], online)
+    # Reported, not silently patched: choosing the sibling's summary would be merging two records.
+    assert table["summary"].isna().all()
