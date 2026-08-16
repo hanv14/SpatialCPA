@@ -38,13 +38,20 @@ Achievable ceiling (same cells, the fixture's true `mu`, only a fresh count draw
 | model (zinb-flow) | 9.316 | 7.443 | 0.1515 | 0.0336 | 0.9649 |
 | independent-donor D=3 | 7.783 | 5.403 | 0.1359 | 0.0731 | 0.9750 |
 
-**Fifty per cent of the baseline's 7.783 is 3.892, which is 1.7 BELOW the ceiling of 5.601** — so
-`specs/06`'s original criterion is unsatisfiable by any generator, the fixture's own generative law
-included (SPEC_QUESTIONS B16). The magnitude-error ratio here is 0.0336 / 0.0731 = **0.458**, but that
-decomposition was chosen after seeing which component the model won on, and **it does not hold out of
-sample**: on the wide-gap `consecutive-3` holdout the same model gives a magnitude error of 0.213
-against the baseline's 0.214, i.e. **ratio 0.995 and no advantage**. The model-versus-baseline
-covariance claim is **not established**; the chimerism table below is what is.
+**⛔ The model loses this comparison, and it must not be quoted as a win.** 9.316 against the
+baseline's 7.783, with a nearest-donor copy at 6.743 and the achievable ceiling at 5.601; at
+`consecutive-3` it is 17.7 against 11.3. `specs/06` and `specs/10` §2 carry the framing rule and
+`specs/08` carries the criterion that would change it.
+
+Two separate readings, kept apart on purpose:
+
+* **Fifty per cent of the baseline's 7.783 is 3.892, which is 1.7 BELOW the ceiling of 5.601**, so
+  `specs/06`'s original criterion is unsatisfiable by any generator, the fixture's own generative law
+  included (SPEC_QUESTIONS B16). That is model-free.
+* The magnitude/pattern columns give a ratio of 0.0336 / 0.0731 = 0.458, **but that decomposition was
+  chosen after seeing which component the model won on and it does not hold out of sample** — 0.995 at
+  `consecutive-3`, no advantage. It is **withdrawn as a criterion** and kept here only as a
+  diagnostic. The chimerism table below is where the covariance argument is established.
 
 ## Chimerism, isolated (donors held fixed, draw varied)
 

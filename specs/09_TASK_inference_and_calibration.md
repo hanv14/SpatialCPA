@@ -61,6 +61,33 @@ All share one GRF realisation per call, so the produced sections are **mutually 
 of one object. Expose `grf_seed` explicitly and document that reusing it across calls is what
 guarantees coherence.
 
+### `retrieval_z_window` must scale with the gap, not be fixed (measured at T06)
+
+`Config.retrieval_z_window = 3.0` is in units of the median section spacing, which is the right
+*unit* and the wrong *constant* once the holdout is wide. Measured at T06 on the `consecutive-3`
+holdout: the first training section is 200 µm from the next admissible one, so after the own-section
+exclusion (`retrieval_exclude_source_section`, load-bearing for GATE 2) its cells have **no admissible
+donor at all** inside 3 × 50 µm, and `EmptyCandidatePoolWarning` fires on **100–110 of every 512
+cells**. Their neighbour sets are fully masked and the attention returns its bias — i.e. the retrieval
+branch is silently absent for a fifth of the batch, in exactly the wide-gap regime the branch exists
+for.
+
+The warning did its job; the constant is the defect. T09 must make the window a function of the
+generation or holdout geometry rather than a fixed multiple:
+
+* the window has to admit at least the nearest admissible section *after* every exclusion, so its
+  floor is `(gap to the nearest admissible section) / median_spacing`, rounded up, not 3;
+* it is a calibration-time quantity like `ell`, and it belongs beside the length-scale calibrator in
+  §2 — leakage-free by the same construction, fitted on flanking training sections only;
+* `EmptyCandidatePoolWarning` firing on more than a negligible fraction of queries must be a
+  **failure** of the generation path, not a warning, once the window is derived: with a derived window
+  an empty pool means the geometry is genuinely impossible and the caller needs to know.
+
+`Config.retrieval_z_window` stays as the fallback and the ablation handle. T10 §4 carries the matching
+requirement for the ablation table: **A5 (`retrieval_w_z = 0`) must not be run at a fixed window**,
+or the ablation measures the window instead of the z term — the same trap T04's G2.3 fell into and
+recorded.
+
 ## 2. Calibration — `spatialcpav25_gen/infer/calibrate.py`, all leakage-free
 
 ```python

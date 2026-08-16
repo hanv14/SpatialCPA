@@ -1,0 +1,40 @@
+# Gene symbols of the STARmap Wang2018 3-D panel (data/starmap/), the real panel this
+# repository has locally and the one the competing method's published protocol uses.
+#
+# Committed so that closing SPEC_QUESTIONS C14 needs no guessing about which symbols to look up:
+#
+#     python scripts/build_gene_meta.py --symbols-from resources/starmap_panel_symbols.txt
+#
+# That command needs outbound access to mygene.info. It is NOT available in the container this file
+# was written in (see PROGRESS.md, T06 follow-ups): the agent proxy records
+# `connect_rejected ... gateway answered 403 to CONNECT, host mygene.info:443`, and the same 403
+# applies to rest.ensembl.org, eutils.ncbi.nlm.nih.gov, api.genenames.org and rest.uniprot.org. It
+# has to be run somewhere with a policy that allows one of them.
+Slc17a7
+Mgp
+Gad1
+Nov
+Rasgrf2
+Rorb
+Cux2
+Plcxd2
+Sulf2
+Ctgf
+Pcp4
+Sema3e
+Npy
+Sst
+Pvalb
+Vip
+Calb2
+Cck
+Reln
+Fos
+Egr1
+Prok2
+Egr2
+Bdnf
+Gja1
+Ctss
+Mbp
+Flt1

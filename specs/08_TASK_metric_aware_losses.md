@@ -121,11 +121,33 @@ class LOSOScheduler:
   metric-aware terms on vs. off; with them on, held-in Moran's agreement, marker-depth r, and
   localization must each be better. If any is not, report it — a loss that does not improve its own
   metric is either mis-specified or mis-weighted.
+- `test_metric_losses_close_the_covariance_loss` — **the success criterion for open risk R4, added at
+  T06 because T06 measured the failure and cannot fix it.** With the metric-aware terms on, the
+  generated section's gene–gene correlation Frobenius error against the held-out section must
+  **fall below the independent-donor baseline's 7.783** on the default `alternating` holdout **and
+  hold at `consecutive-3`** (where T06 measured 17.7 for the model against 11.3 for the baseline).
+  Both, not either: the default holdout alone is what let T06's withdrawn decomposition look like a
+  win. Report the pair with the achievable ceiling beside them (5.601 / 5.513 — see `specs/06` and
+  SPEC_QUESTIONS B16); a number below the ceiling is a bug in the measurement, not a result.
+
+  **If T08 cannot deliver both, the covariance claim is a mechanism claim only** — "per-gene
+  independent draws destroy covariance, a shared latent cannot" — and `specs/10` §2 must frame it
+  that way in the headline table and the paper text. That is a legitimate outcome, and it is a
+  smaller claim than the one the design set out to make, so it has to be *decided* rather than
+  drifted into: record the verdict in `PROGRESS.md` either way.
 
 ## Definition of done
 
 The on/off comparison above shows improvement on all three families. `PROGRESS.md` records the
 before/after table — it becomes ablation A2 in the paper.
+
+**Plus the R4 verdict.** T06 measured the pathology these losses exist to cure — the likelihood
+improving while distributional fidelity degrades (open risk **R4**, and SPEC_QUESTIONS **B10** is the
+same pathology on the layout intensity head). T08 is the first task with terms that could stop it, so
+T08 owns the verdict: either the covariance loss closes on both holdout regimes, or the claim is
+downgraded to a mechanism claim in `specs/10`. Note also that T06's `TRAIN_STEPS = 1200` is **early
+stopping chosen by measurement on this fixture**, which will not transfer to a real dataset; a
+principled stopping signal is internal LOSO on training sections, which is exactly what §4 builds.
 
 ## Do NOT
 

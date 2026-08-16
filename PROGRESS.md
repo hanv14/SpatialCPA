@@ -35,36 +35,45 @@ table covers everything that has been done to the repository.
 |---|---|---|---|---|
 | R1 | **`ell_z` cannot be resolved by a 9-section stack.** The fit returns **561 µm** against a **200 µm** ground truth on the gate fixture (353 µm at the 1000 µm field of view). | T03 | T07 | **before T07** |
 | R2 | ~~GATE 2's attention is near-uniform (0.987 × log K)~~ — **CLOSED at T06.** With the flow-matching head trained the entropy falls to **0.8563 × log K** (a fall of 0.132, required 0.05) and stays above the 0.5 collapse line. The query is what changed: T04's probe queried with the field feature alone, T06's with `[F(p), fourier(p), type_emb, region_emb, z_embed]`, and a query that knows its own cell type can prefer a donor that shares it. | T04 | T06 | **closed 2026-08-16** |
-| R4 | **The expression head overfits the likelihood.** 1200 → 2400 steps lowers the reconstruction NLL (1.589 → 1.578 nats/pair) while every distributional statistic of the *generated* section deteriorates: Frobenius covariance error 17.7 → 21.3, detection MAD 0.056 → 0.069. B10's shape on another head. Nothing in T06's loss set constrains distributional agreement. | T06 | T08, T09 | **at T08** |
+| R5 | **C14 blocks the paper's headline novelty.** Open-vocabulary decoding has no positive evidence: zero-shot is r = −0.368 on the fixture (B18) because arbitrary gene names carry no text signal, and `resources/gene_meta.parquet` cannot be built here — every gene-annotation host is 403'd by the network policy. Needs one command on a networked machine (see C14). | T02, T06 | T10 (E1) | **before the first real run** |
+| R4 | **Likelihood/fidelity divergence — one pathology, two heads.** Fitting by likelihood alone makes the likelihood better and the *generated section* worse. On the **layout intensity** head (SPEC_QUESTIONS B10, T05): recovered intensity correlation 0.97 → 0.28 over 300 → 1200 steps while the Poisson NLL keeps falling. On the **expression** head (T06): 1200 → 2400 steps lowers the ZINB NLL 1.589 → 1.578 nats/pair while Frobenius covariance error goes 17.7 → 21.3 and detection MAD 0.056 → 0.069. Neither head has a term that could stop it. **`TRAIN_STEPS = 1200` is early stopping fitted to this fixture and will not transfer to real data.** | T05 (B10), T06 | T08, T09 | **at T08** (criterion: `test_metric_losses_close_the_covariance_loss`) |
 | R3 | **The stack's ends reconstruct far worse than its interior.** Per-section R² was **0.2912** at the first section and **0.3642** at the last, against an interior mean of **0.4474** — a 20–35 % deficit. One-sided evidence at the volume boundary. | T04 | T09, T10 | **at T09** |
 
-### R4 — the expression head overfits the likelihood, and T06 has no term that could stop it
+### R4 — likelihood/fidelity divergence: one pathology, two heads, and 1200 steps is not a fix
 
-Measured at the wide-gap (`consecutive-3`) holdout, same model, same seed, only the step budget
-changing:
+B10 and what T06 first recorded as a separate risk are **the same failure**, and they are merged here
+so that nobody fixes one and thinks the class is closed. In both cases a head fitted by its own
+likelihood gets monotonically better at that likelihood while the *generated section* gets worse:
 
-| steps | recon (nats/pair) | Frobenius covariance error | detection MAD | covariance magnitude |
-|---|---|---|---|---|
-| 1200 | 1.589 | 17.75 | 0.0556 | 0.1728 |
-| 2400 | 1.578 | 21.29 | 0.0691 | 0.1753 |
-| real | — | 0 | 0 | 0.1425 |
+| head | fitted by | likelihood over the budget | fidelity over the same budget |
+|---|---|---|---|
+| layout intensity (T05, **B10**) | inhomogeneous Poisson NLL | keeps falling | recovered intensity r **0.97 → 0.28** (300 → 1200 steps, default basis) |
+| expression (T06, **R4**) | ZINB NLL | **1.589 → 1.578** nats/pair | Frobenius covariance **17.7 → 21.3**, detection MAD **0.056 → 0.069** (1200 → 2400 steps) |
 
-The likelihood improves and the generated section gets worse — the same shape as SPEC_QUESTIONS
-**B10** (the Poisson MLE of a flexible intensity), now on the expression head. It is not surprising:
-`forward_train` returns `recon`, `cfm`, `size`, `layout`, `distill` and `tv_z`, and **none of them is
-a statement about the distribution of a generated section**. The terms that are — Moran's I / Geary's
-C agreement, depth and per-type profiles, Sinkhorn distribution matching — are T08's, and their
-weights (`w_autocorr`, `w_profile`, `w_distribution`, all 0.5) already sit in `Config` with nothing
-to weight. The mean–variance (`log theta`) and detection calibrators are T09 §2's.
+Two partial mitigations exist and neither is a cure:
 
-Two consequences, both written into the specs:
+* **Capacity control on the intensity head** — `fourier_bands_for_lengthscale`, T06's answer to B10.
+  Real and trainer-level (every `CTFFlow` gets it), but partial: r still decays 0.979 → 0.861, just
+  2.6× less than the default basis's 0.835 → 0.527.
+* **Early stopping on the expression head** — `TRAIN_STEPS = 1200` in `tests/test_expression.py`.
+  **This is the part that must not be mistaken for a fix.** 1200 was chosen by measuring the fixture's
+  own degradation curve, which is a form of fitting to the test set, and on a real dataset there is no
+  such curve to read: the sections are fewer, the panel is wider, the degradation sets in at a
+  different step count, and nobody will know where. A stopping signal has to come from *inside the
+  training run* — internal LOSO over training sections, which is what `specs/08` §4 builds.
 
-* **T08 must report the same table.** If the metric-aware block does not reverse the sign of these
-  trajectories, its ablation (A2) has no case, and the natural stopping signal — internal LOSO on
-  training sections — is exactly what T08 builds.
-* **T06's `TRAIN_STEPS` is a measured choice, not a budget.** The acceptance tests run at 1200 steps
-  because more is worse, and the test's docstring says so, so nobody "improves" the suite by training
-  longer.
+**Why T06 could not fix it.** `forward_train` returns `recon`, `cfm`, `size`, `layout`, `distill` and
+`tv_z`. Not one of them is a statement about the distribution of a generated section; every one is a
+statement about the training data. The terms that would be are T08's — `w_autocorr`, `w_profile`,
+`w_distribution`, all sitting in `Config` at 0.5 with nothing yet to weight — and the mean–variance
+and detection calibrators are T09 §2's.
+
+**The success criterion is now written into `specs/08`** as
+`test_metric_losses_close_the_covariance_loss`: model Frobenius covariance error below the
+independent-donor baseline's **7.783** on the default holdout **and** holding at `consecutive-3`
+(where the model currently scores 17.7 against 11.3). If T08 cannot deliver both, the covariance claim
+is downgraded to a mechanism claim and `specs/10` §2 frames it that way — a decision to record, not to
+drift into.
 
 ### R3 — the boundary is a different regime, and it is not a fixture artefact
 
@@ -1402,3 +1411,83 @@ move with the grid size). **Where the remaining time actually sits is T01–T05,
 `test_expected_count_matches` 12.2 s, `test_fit_lengthscale_is_deterministic` 5.8 s,
 `test_poisson_nll_recovers_intensity` 5.5 s — and a later task that needs the headroom should look
 there.
+
+### T06 (second follow-up) — the covariance claim demoted in the specs, R4 merged, C14 escalated (2026-08-16)
+
+Five instructions, all carried out. No new measurements were needed for four of them; the fifth ran
+into a network policy and is reported as such rather than worked around.
+
+**1. The magnitude/pattern decomposition is withdrawn as a criterion.** `specs/06`'s acceptance
+section now names **`test_per_gene_independence_destroys_covariance` as the key test** and nothing
+else — the mechanism, donors held fixed and only the draw varied, whose direction and monotonicity are
+predicted by the paper's argument rather than selected after the fact. The decomposition survives only
+as a diagnostic in `reports/benchmark.md`, and the two assertions it carried are **deleted from the
+suite**: what remains is the mechanism test plus the strict xfail. `specs/06` and `specs/10` §2 both
+carry the table, under a ⛔ heading, stating that the model-versus-baseline comparison is a **loss** —
+model **9.316**, independent-donor **7.783**, nearest-copy 6.743, ceiling **5.601**, and worse at
+`consecutive-3` (17.7 vs 11.3) — and that no headline table, figure, abstract or methods sentence may
+claim this method preserves covariance *better than* the competing method until it reverses. `specs/10`
+also records *why* the rule is written down: T06's own first reading found a decomposition on which the
+model won by 2.2×, and only an out-of-sample check caught it.
+
+**2. `specs/08` gets the R4 success criterion**, as a named acceptance test:
+`test_metric_losses_close_the_covariance_loss` — model Frobenius covariance error must fall **below the
+independent-donor baseline's 7.783** on the default holdout **and hold at `consecutive-3`**. Both, not
+either, and the reason is on the record: the default holdout alone is what let the withdrawn
+decomposition look like a win. Reported with the ceiling beside it, since a number below 5.601 is a
+measurement bug and not a result. **If T08 cannot deliver both, the covariance claim is a mechanism
+claim only and `specs/10` §2 frames it that way** — recorded as a decision either way, in T08's
+definition of done.
+
+**3. R4 and B10 are now one risk.** Retitled *"likelihood/fidelity divergence: one pathology, two
+heads"*, with both curves in one table: the layout intensity head's recovered correlation 0.97 → 0.28
+while the Poisson NLL falls (B10, T05), and the expression head's ZINB NLL 1.589 → 1.578 while
+Frobenius covariance goes 17.7 → 21.3 and detection MAD 0.056 → 0.069 (T06). B10's entry in
+SPEC_QUESTIONS now points at R4 and says not to close one and assume the class is closed.
+**And it says plainly that `TRAIN_STEPS = 1200` is not a fix:** it is early stopping chosen by reading
+this fixture's own degradation curve, which is fitting to the test set, and on real data there is no
+such curve to read — fewer sections, wider panel, degradation at an unknown step count. The stopping
+signal has to come from inside the run, which is internal LOSO (`specs/08` §4).
+
+**4. `retrieval_z_window` must scale with the gap.** Written into `specs/09` §1 with the measurement:
+on `consecutive-3` the first training section is 200 µm from the next admissible one, so after the
+own-section exclusion its cells have **no admissible donor inside 3 × 50 µm** and
+`EmptyCandidatePoolWarning` fires on **100–110 of every 512 cells** — the retrieval branch is silently
+absent for a fifth of the batch, in exactly the wide-gap regime it exists for. Three requirements: the
+window's floor is the gap to the nearest admissible section (not 3), it is calibrated beside `ell` in
+§2 and is leakage-free by the same construction, and once derived an empty pool becomes a **failure**
+rather than a warning. `Config.retrieval_z_window` stays as the fallback and the ablation handle.
+`specs/10` §4 carries the matching rule: **A5 must not be run at a fixed window**, or the ablation
+measures the window instead of the z term — the trap G2.3 already fell into and recorded.
+
+**5. C14 cannot be closed from this container, and the reason is a network policy.** Measured, not
+assumed: the agent proxy logs `connect_rejected — gateway answered 403 to CONNECT` for
+`mygene.info:443`, and the same 403 applies to `rest.ensembl.org`, `eutils.ncbi.nlm.nih.gov`,
+`www.ncbi.nlm.nih.gov`, `api.genenames.org` and `rest.uniprot.org`. No gene-annotation host is
+reachable, so no work here produces a real table, and I did **not** commit an offline symbol-only one:
+`load_gene_meta` would then succeed and C14 would look closed while every descriptor is still a bare
+symbol. C14 is escalated to **blocking** and added to the risk table as **R5**, because the
+open-vocabulary claim is the paper's headline novelty and B18 leaves it with no positive evidence.
+
+What I could deliver towards it:
+
+* **`resources/starmap_panel_symbols.txt`** — the 28 real symbols of the STARmap Wang2018 3-D panel in
+  `data/starmap/`, the real panel this repository already has and the protocol the competing method
+  publishes against, with the provenance and the exact command in its header. Whoever has network
+  access has nothing left to decide.
+* **A defect in `scripts/build_gene_meta.py`, fixed** — and it is T02's script, found by using it:
+  `read_symbols` skipped neither blank lines nor `#` comments, so a symbol list with a provenance
+  header had its header looked up as gene symbols (38 "symbols" from a 28-gene file, the first being
+  `# Gene symbols of the STARmap...`). Now skipped, verified on the real file: 28/28 read.
+* **Confirmation that the offline path degrades loudly** — two `GeneMetaUnavailableWarning`s and a
+  printed `0/28 symbols carry metadata`, so the failure cannot pass unnoticed.
+
+The command, for a machine whose policy allows mygene.info:
+
+```
+pip install -e ".[extra]"      # mygene is in the `extra` group, not installed by default
+python scripts/build_gene_meta.py --symbols-from resources/starmap_panel_symbols.txt
+```
+
+A wider panel would be better than this one — 28 genes is a thin test of open vocabulary — so pass a
+larger real panel's symbols too if one is available.

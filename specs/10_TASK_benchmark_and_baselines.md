@@ -141,6 +141,28 @@ or subsequent baselines silently receive corrupted data. This has bitten people 
 For the alternating/consecutive regimes, generate at the same `alpha` positions the held-out sections
 occupy, so the comparison is like-for-like.
 
+### ⛔ The gene–gene covariance comparison is a LOSS as of T06. Framing rule for the paper.
+
+`run_independent_donor` exists to isolate chimerism, and T06 measured both halves of that comparison.
+They point opposite ways and the write-up must say so:
+
+| what | status |
+|---|---|
+| **the mechanism** — per-gene independent draws destroy covariance, a shared latent cannot | **established.** Donors held fixed, draw varied: retained |off-diag| 0.978 / 0.920 / 0.897 / 0.884 / 0.844 at D = 1/2/3/5/10, monotone, on both holdout regimes |
+| **the model beating the baseline on the correlation matrix** | **NOT established — it loses.** Frobenius error: model **9.316**, independent-donor **7.783**, nearest-copy 6.743, achievable ceiling **5.601**. Worse at `consecutive-3` (17.7 vs 11.3) |
+
+**Until T08's `test_metric_losses_close_the_covariance_loss` passes on both regimes, no headline
+table, figure, abstract or methods sentence may claim that this method preserves gene–gene covariance
+*better than* the competing method.** The claim it may make is the mechanism claim, and the chimerism
+table is the evidence for it. If T08 closes the loss, this section is updated with the numbers that
+closed it; if T08 cannot, the paper makes the smaller claim and says why — that is a decision to
+record in `PROGRESS.md`, not a gap to leave ambiguous.
+
+The reason this needs writing down rather than trusting: T06's *first* reading of its own measurement
+found a decomposition on which the model did win by 2.2×, and it took an out-of-sample check
+(`consecutive-3`, ratio 0.995) to establish that the decomposition had been chosen after seeing which
+component passed. The same temptation will exist when this table is assembled.
+
 ## 3. Harness — `spatialcpav25_gen/eval/benchmark.py`
 
 ```python
@@ -210,6 +232,15 @@ hole (nearest-neighbour distance distribution, `g(r)` from 0) rather than ones e
 the two processes agree by construction.
 
 ### A5 must be run in the wide-gap regime (measured at T04's GATE 2)
+
+**...and not at a fixed `retrieval_z_window`** (measured at T06). On the `consecutive-3` holdout the
+default window of 3 × median spacing leaves 100–110 of every 512 cells with **no admissible donor at
+all** after the own-section exclusion, so the retrieval branch is silently absent for a fifth of them
+and an ablation of `retrieval_w_z` would be measuring the window. `specs/09` §1 requires the window to
+be derived from the gap; A5 must be run against the derived window, with the empty-pool fraction
+reported beside the ablation delta. This is the same trap G2.3 fell into with
+`retrieval_candidates_per_section` and recorded — the ablation read as a no-op, with the wrong sign,
+until the cap was raised.
 
 **Do not report A5 from the `alternating` holdout, and do not report it with the whole stack
 admissible.** GATE 2's G2.3 measured the ablation both ways on the synthetic fixture, with the two

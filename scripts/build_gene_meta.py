@@ -59,7 +59,14 @@ def read_symbols(args: argparse.Namespace) -> list[str]:
 
             symbols += [str(name) for name in ad.read_h5ad(source).var_names]
         else:
-            symbols += [line.strip() for line in source.read_text().splitlines() if line.strip()]
+            # Blank lines and `#` comments are skipped: a committed symbol list wants a header
+            # saying where the panel came from, and without this the header lines are looked up as
+            # gene symbols. Found at T06 while writing resources/starmap_panel_symbols.txt.
+            symbols += [
+                stripped
+                for line in source.read_text().splitlines()
+                if (stripped := line.strip()) and not stripped.startswith("#")
+            ]
     return list(dict.fromkeys(symbols))
 
 

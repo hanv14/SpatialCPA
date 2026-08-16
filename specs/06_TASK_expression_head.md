@@ -143,31 +143,44 @@ Also implement the trainer: AdamW, cosine schedule, gradient clipping at 1.0, EM
   asks for **< 3.892**, which is **1.7 below the ceiling** — thirty-four times the ceiling's own
   draw-to-draw spread. Not a hard criterion: an unsatisfiable one.
 
-  So T06 replaces it with three things, all of which must be reported:
+  **The replacement criterion is the mechanism test, and only that** — the magnitude/pattern
+  decomposition T06 first proposed is **withdrawn as a criterion** (it was chosen after seeing which
+  component the model won on, and it gives 0.995 at `consecutive-3`, i.e. no advantage; kept only as
+  a reported diagnostic in `reports/benchmark.md`).
 
-  1. **The mechanism, isolated** (`test_per_gene_independence_destroys_covariance`, the amended key
-     test, and no trained model needed). Hold the donors *fixed* and vary only whether the draw is
-     per **cell** or per **gene** — that is the whole of the chimerism claim with the positional
-     confound removed. Required: mean |off-diagonal correlation| must fall monotonically as the
-     number of mixed donors grows, a verbatim copy must retain ≥ 0.90 of the real section's value,
-     and the competing method's `D = 3` must retain ≤ 0.85. Measured: **0.1360** (D = 1) → 0.1165 →
-     **0.1116** (D = 3) → 0.1074 → 0.1017 (D = 10) against a real **0.1425**, i.e. 22% of the
-     covariance magnitude lost at `D = 3`. **The paper's covariance argument is confirmed here.**
-  2. **Every arm against the measured ceiling**, with the systematic part `sqrt(err² − ceiling²)`
-     beside the raw Frobenius number, because noise and bias add in quadrature.
-  3. **The original criterion, kept by name and statistic as a strict `xfail`** at its measured
-     value, so the model's shortfall against it is on the record rather than reworded away, and a
-     later task that closes it breaks the suite until the record is updated (T05's precedent).
+  1. **`test_per_gene_independence_destroys_covariance` is the key test.** Hold the donors *fixed*
+     and vary only whether the draw is per **cell** or per **gene** — that is the whole of the
+     chimerism claim with the positional confound removed, it needs no trained model, and the
+     direction and monotonicity are predicted by the paper's argument *before* any measurement rather
+     than selected after. Required: mean |off-diagonal correlation| falls monotonically as the number
+     of mixed donors grows, a verbatim per-cell copy retains ≥ 0.95 of the real section's value, and
+     the per-gene draw over `Config.independent_donor_k` donors loses at least 0.05 more. Measured:
+     **0.978 / 0.920 / 0.897 / 0.884 / 0.844** at D = 1/2/3/5/10 against a real 0.1466, on the default
+     holdout, and **0.955 / 0.818 / 0.783 / 0.714** at `consecutive-3`. **This is where the paper's
+     covariance argument is established.**
+  2. **Every arm is reported against the measured ceiling**, with the systematic part
+     `sqrt(err² − ceiling²)` beside the raw Frobenius number, because noise and bias add in
+     quadrature.
+  3. **The original criterion keeps its name and statistic as a strict `xfail`**, so the model's
+     shortfall stays on the record and a later task that closes it breaks the suite until the record
+     is updated (T05's precedent).
 
-  **What this amendment does and does not establish, and the pre-registration status of each part.**
-  Part 1 is a *prediction* the paper's argument makes before any measurement (a loss monotone in the
-  donors mixed) and it is met on both holdout gaps. Part 2 is model-free and choice-free. But the
-  **model-versus-baseline** comparison — the magnitude-and-pattern decomposition — was chosen
-  **after** seeing which component the model won on, and it does not survive an out-of-sample check:
-  ratio 0.458 on the default holdout against **0.995 at `consecutive-3`**, i.e. no advantage there.
-  **T06 therefore does not establish that the shared latent preserves more covariance than the
-  competing method's sampler.** It establishes that the mechanism is real and that the stated
-  criterion could never have shown it either way. Closing the model half is R4's business (T08/T09).
+  ### ⛔ The model-versus-baseline covariance comparison is currently a LOSS. Do not quote it.
+
+  | arm | Frobenius error vs the held-out section |
+  |---|---|
+  | **model (`zinb-flow`)** | **9.316** |
+  | independent-donor baseline (`D = 3`) | **7.783** |
+  | verbatim nearest-donor copy (`D = 1`) | 6.743 |
+  | achievable ceiling (ideal draw) | **5.601** |
+
+  The model is **worse than the baseline it is supposed to beat**, on the default holdout and more so
+  at `consecutive-3` (17.7 vs 11.3). Until that reverses, the covariance argument is a **mechanism
+  claim only** — "per-gene independent draws destroy covariance, a shared latent cannot" — and no
+  paper text, figure, abstract or table may claim that this model preserves covariance *better than
+  the competing method*. `specs/08` carries the success criterion that would change this and
+  `specs/10` §2 carries the framing rule.
+
 - `test_sparsity_preserved` — per-gene detection rate: Pearson r > 0.95 vs. real; mean absolute
   difference < 0.05. Guards against the densification failure of earlier versions. **Measured on the
   default `alternating` holdout** (SPEC_QUESTIONS B17): the same model scores MAD 0.036 there and

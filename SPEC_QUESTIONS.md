@@ -248,7 +248,13 @@ warning to an error under pytest — so a production run degrades loudly while n
 measure a truncated pattern. Measured on the fixture: 1529 points placed from 2048 proposals, and the
 mean count over 50 seeds is within **0.50 %** of `N_expected` (limit 5 %).
 
-### B10. Fitting the Poisson intensity by MLE is ill-posed as specified (T05) — **RESOLVED in T05, two fixes, one open risk**
+### B10. Fitting the Poisson intensity by MLE is ill-posed as specified (T05) — **RESOLVED in T05, two fixes; the residual risk is now open risk R4, merged with T06's**
+**Merged at T06:** B10's open half and what T06 first filed as a separate risk are the *same*
+pathology — a head fitted by its own likelihood improving at that likelihood while the generated
+section degrades — on two different heads. They are tracked as the single named risk **R4** in
+`PROGRESS.md`, with the success criterion in `specs/08`. Do not close one and assume the class is
+closed.
+
 `test_poisson_nll_recovers_intensity` asks a neural intensity to be fitted by the process
 log-likelihood. Measured, that fit does **not** recover the truth; it exploits two degeneracies.
 
@@ -654,7 +660,46 @@ Two of its three numbers are stochastic: the Leiden partition of the co-expressi
 gene-pair subsample when `G` is large. Convention 3 requires an explicit seed. *Resolution (T02):*
 the signature gains a required keyword-only `seed: int`; nothing else changes.
 
-### C14. `resources/gene_meta.parquet` is described as "shipped" but nothing can build it offline — **OPEN** (raised in T02)
+### C14. `resources/gene_meta.parquet` is described as "shipped" but nothing can build it offline — **OPEN, and now BLOCKING the paper's headline novelty** (raised in T02, escalated at T06)
+**Escalated at T06, with the measurement that makes it blocking.** Zero-shot decoding of
+never-trained genes measures **r = −0.368** on the synthetic fixture (B18) — the open-vocabulary claim
+is the paper's headline novelty and it currently has *no* positive evidence, because the fixture's
+gene names are arbitrary strings and T02 measured their text/co-expression Spearman at +0.0055. There
+is nothing wrong with the code: with no text signal in, there is no transfer out. **The claim is
+unevidenced until this table exists.**
+
+**It cannot be built in this container, and that is a network-policy fact, not a code problem.**
+Measured: the agent proxy records `connect_rejected — gateway answered 403 to CONNECT` for
+`mygene.info:443`, and the same 403 applies to `rest.ensembl.org`, `eutils.ncbi.nlm.nih.gov`,
+`www.ncbi.nlm.nih.gov`, `api.genenames.org` and `rest.uniprot.org`. No gene-annotation host is
+reachable, so no amount of work here produces a real table. Reported rather than worked around; the
+one thing that must **not** happen is committing an *offline* (symbol-only) table to
+`Config.gene_meta_path`, because `load_gene_meta` would then succeed and C14 would look closed while
+every descriptor is still a bare symbol.
+
+**What T06 did do, so that whoever has network access has nothing left to decide:**
+
+* committed **`resources/starmap_panel_symbols.txt`** — the 28 real symbols of the STARmap Wang2018
+  3-D panel in `data/starmap/`, which is the real panel this repository has locally and the protocol
+  the competing method publishes against;
+* fixed a defect in `scripts/build_gene_meta.py` that the file exposed: `read_symbols` did not skip
+  blank lines or `#` comments, so a symbol list with a provenance header had its header looked up as
+  gene symbols (measured: 38 "symbols" from a 28-gene file);
+* verified the offline path degrades loudly — two `GeneMetaUnavailableWarning`s and a printed
+  `0/28 symbols carry metadata`.
+
+**The command, to be run on a machine whose policy allows mygene.info:**
+
+```
+pip install -e ".[extra]"          # mygene lives in the `extra` group and is not installed by default
+python scripts/build_gene_meta.py --symbols-from resources/starmap_panel_symbols.txt
+git add resources/gene_meta.parquet && git commit
+```
+
+Then T10's capability experiment **E1** can run on real text, in both arms
+(`forward_zero_shot(use_distill=False)` and `True`), and B18's threshold is what it reports against.
+A wider panel is better than this one — 28 genes is a thin test of open vocabulary — so if a larger
+real panel is available, pass its symbols too.
 T02 says `GeneMeta` "comes from a local table shipped in `resources/gene_meta.parquet`", and also
 forbids network access at train or test time. The repository has no such table and cannot generate a
 real one without going online once. *Resolution so far (T02):* `build_gene_meta(symbols, cfg)`

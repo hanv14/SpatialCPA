@@ -139,17 +139,6 @@ head overfits the likelihood, which is B10's shape on another head, and nothing 
 constrains distributional agreement (those terms are T08's). Recorded as open risk R4; trajectories
 in PROGRESS.md."""
 
-COVARIANCE_MAGNITUDE_RATIO_MAX = 0.5
-"""The amended criterion (SPEC_QUESTIONS B16): the model must lose **less than half** as much of the
-real section's gene-gene correlation *magnitude* as the independent-donor baseline does — the
-"better by >= 2x" of the definition of done, on the statistic "covariance survives" names."""
-
-COVARIANCE_PATTERN_FLOOR = 0.9
-"""...and it must recover the correlation *pattern* at least this well relative to the baseline.
-
-Both halves are needed. Magnitude alone would be satisfied by a model emitting correlations of the
-right size between the wrong gene pairs, and pattern alone is what a verbatim copy wins outright."""
-
 COVARIANCE_FROBENIUS_RATIO_MAX = 0.5
 """The spec's **original** criterion, kept by name and held as a strict xfail at its measured value.
 Below the achievable ceiling and therefore unpassable by any model — see B16."""
@@ -997,50 +986,6 @@ def test_per_gene_independence_destroys_covariance(volume: Volume, cfg: Config, 
 
 
 @pytest.mark.slow
-def test_shared_latent_preserves_covariance(trained: Trained):
-    """**The key test, amended (SPEC_QUESTIONS B16).** More covariance survives than the baseline's.
-
-    Two halves, both required, because either alone is passable by the wrong thing:
-
-    * the model must lose **less than half** as much of the real section's gene-gene correlation
-      *magnitude* as the independent-donor baseline does — that is the "better than the baseline by
-      >= 2x" of the definition of done, on the statistic "covariance survives" actually names;
-    * and it must recover the correlation *pattern* at least ``COVARIANCE_PATTERN_FLOOR`` as well as
-      the baseline, so the magnitude cannot be bought with correlations between the wrong genes.
-
-    The spec's original statistic — the ratio of Frobenius errors — is reported here and asserted by
-    ``test_shared_latent_frobenius_beats_donor_baseline``, which is a **strict xfail**: it is below
-    the achievable ceiling and no model can pass it.
-    """
-    counts, xyz = generate_counts(trained, seed=SEED + 5)
-    real = np.asarray(trained.held_out.counts.todense(), dtype=np.float64)
-    baseline = donor_baseline(trained, xyz, seed=SEED + 6)
-
-    keep = informative_genes(real)
-    assert keep.size > 50, keep.size
-    target = gene_correlation(real, keep)
-    real_magnitude = offdiag_magnitude(target)
-    ours = gene_correlation(counts, keep)
-    theirs = gene_correlation(baseline, keep)
-
-    magnitude_error = abs(offdiag_magnitude(ours) - real_magnitude) / real_magnitude
-    baseline_error = abs(offdiag_magnitude(theirs) - real_magnitude) / real_magnitude
-    pattern = offdiag_pattern(ours, target)
-    baseline_pattern = offdiag_pattern(theirs, target)
-    report = {
-        "magnitude_error": magnitude_error,
-        "baseline_magnitude_error": baseline_error,
-        "magnitude_ratio": magnitude_error / baseline_error,
-        "pattern": pattern,
-        "baseline_pattern": baseline_pattern,
-        "frobenius": frobenius_offdiag(ours, target),
-        "baseline_frobenius": frobenius_offdiag(theirs, target),
-    }
-    assert magnitude_error < COVARIANCE_MAGNITUDE_RATIO_MAX * baseline_error, report
-    assert pattern > COVARIANCE_PATTERN_FLOOR * baseline_pattern, report
-
-
-@pytest.mark.slow
 @pytest.mark.xfail(
     strict=True,
     reason=(
@@ -1053,7 +998,16 @@ def test_shared_latent_preserves_covariance(trained: Trained):
     ),
 )
 def test_shared_latent_frobenius_beats_donor_baseline(trained: Trained):
-    """The spec's original criterion, verbatim: Frobenius error < 50% of the baseline's."""
+    """The spec's original criterion, verbatim: Frobenius error < 50% of the baseline's.
+
+    The **only** model-versus-baseline covariance criterion the suite carries, and it is red. The
+    magnitude/pattern decomposition T06 first proposed is withdrawn (chosen after seeing which
+    component passed; 0.995 at ``consecutive-3``), so what remains is this xfail plus
+    ``test_per_gene_independence_destroys_covariance``, which establishes the mechanism without a
+    model. Measured on the default holdout: model **9.316**, baseline **7.783**, ceiling **5.601** —
+    the model loses. ``specs/06`` and ``specs/10`` §2 forbid quoting it as a win until it reverses,
+    and ``specs/08`` carries the criterion that would.
+    """
     counts, xyz = generate_counts(trained, seed=SEED + 5)
     real = np.asarray(trained.held_out.counts.todense(), dtype=np.float64)
     baseline = donor_baseline(trained, xyz, seed=SEED + 6)
