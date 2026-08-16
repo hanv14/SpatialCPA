@@ -151,6 +151,22 @@ prefix histogram — because "the model decodes unseen genes at r = X" means not
 that the descriptors were real. **One table per organism**, at different `Config.gene_meta_path`s: the
 mouse and human datasets do not share one.
 
+**And the coverage must be quoted split by `summary_source`, never as one number.** Mouse NCBI
+summaries cover 148/1138 (13%) of the real panel, so `Config.gene_summary_fallback="ortholog"` (the
+default) backfills the rest from the 1:1 human orthologue's summary, labelled in the descriptor text.
+`gene_meta_summary` reports `summary_sources` as `native / ortholog / none`; a bare "N/1138 carry a
+summary" hides whether the text the encoder read was mouse biology or human. E1 therefore reports
+**two summary arms as well**, and both are filters on the `summary_source` column of one table rather
+than two builds:
+
+| arm | descriptors |
+|---|---|
+| native-only | rows with `summary_source == "native"` keep their summary; the rest are `"{symbol}. {full_name}."` |
+| with fallback | as built |
+
+If zero-shot transfer holds only on the fallback arm, the claim is that *human* gene descriptions
+transfer to a mouse model — true and interesting, and not the same sentence as the design's.
+
 ### ⛔ The gene–gene covariance comparison is a LOSS as of T06. Framing rule for the paper.
 
 `run_independent_donor` exists to isolate chimerism, and T06 measured both halves of that comparison.

@@ -1653,3 +1653,73 @@ it *is* the evidence for B19a and B20. `Config.gene_meta_path` stays absent so `
 fixes the ids.
 
 Five new tests (33 in `tests/test_text.py`), `make check` green.
+
+### 2026-08-16 — B20 fallback implemented: a summary-less mouse gene borrows its human orthologue's, labelled
+
+Approved and built, default **on**. `Config.gene_summary_fallback="ortholog"` (with
+`gene_summary_ortholog_species="human"`): where a mouse gene has no NCBI summary of its own, its
+**1:1 HomoloGene orthologue's** summary is used, and it is labelled as borrowed in two places — the
+descriptor text the frozen encoder reads (`"Slc17a7. Slc17a7 full name. Human orthologue SLC17A7:
+Mediates glutamate uptake into synaptic vesicles."`) and three new table columns.
+
+**The columns, and the one deviation from what B20 proposed.** B20 proposed a single `summary_taxid`;
+built as **three** — `summary_source` (`native` / `ortholog` / null), `summary_source_taxid`,
+`summary_source_symbol` — because the label needs the orthologue's *symbol* and a taxid cannot supply
+it, and because a diagnostic filtering on `== "native"` reads better than one on `== "10090"`. B20
+also proposed defaulting to `"none"` until T10 measured both arms; built as `"ortholog"`, because
+E1's native-only arm is a **filter on `summary_source`**, not a second build, so one table serves
+both arms and the default costs nothing.
+
+**Mechanics, each of which is a way this could have gone wrong.** `homologene` is requested on the
+primary query, so the fallback costs no extra round trip per gene. The **1:1 requirement is enforced
+before** the orthologue query, so a 1:many gene is never fetched, let alone resolved by `_score` —
+paralogous families are exactly where a borrowed summary is most plausible and most wrong. The
+orthologue query (`scopes="entrezgene"`, `species="human"`) has its `taxid` **verified** like the
+primary one, or a third species' summary would be labelled "Human orthologue" in the text. A native
+summary is never overwritten. `_read_gene_meta_table` back-fills the three columns as `native` for
+tables written before them — the one migration that *is* derivable, unlike the species columns, since
+before this fallback there was nowhere else a summary could have come from.
+
+**`resources/gene_meta.parquet` (`6f3cdfa`) audited: the species fix holds.** 1138 rows,
+`species_requested` `mouse` / `species_resolved` `10090` uniform, `{'ENSMUSG': 1137, 'None': 1}` by
+prefix, `full_name` 1138/1138, and `load_gene_meta(..., species="mouse")` **accepts** it. First
+committed table that does. C14 downgraded from blocking: E1 can run on real gene text.
+
+**The split, reported as asked — and what it is not.** The table on disk:
+
+| source | count |
+|---|---|
+| native | **148** |
+| ortholog | **0** |
+| none | **990** |
+
+`ortholog 0` is **not a measurement of the fallback**: that table was built before the fallback
+existed, so its 990 bare rows have never been offered an orthologue. **The fallback's own
+native/ortholog/none numbers cannot be produced in this container** — mygene.info answers 403 to
+CONNECT through the agent proxy, re-verified this session (`recentRelayFailures` names
+`mygene.info:443`), as do every other gene-annotation host. It is one run on a networked machine:
+
+```
+pip install -e ".[extra]"
+python scripts/build_gene_meta.py --species mouse --symbols-from resources/mouse_panels_symbols.txt
+#   with summary        N/1138
+#     native            148   ortholog M   none K
+```
+
+`scripts/build_gene_meta.py` now prints that split on every build instead of a bare coverage number,
+and `--native-summaries-only` runs the fallback off for comparison. **I have not put an expected
+number in the docs.** The reported ~93% human rate makes a high value plausible, but the binding
+quantity is 1:1 HomoloGene coverage over these 1138 symbols, and nothing offline predicts it; a
+guessed figure in a methods section is worse than an absent one.
+
+**`resources/README.md` corrected on a point it was wrong about.** It describes
+`gene_meta.human_orthologs.parquet` as the 28-row all-human table; commit `1c515f3` overwrote those
+bytes (17 kB → 110 kB) with the **1138-symbol mixed-species** build — `ENSMUSG 389, ENSMSIG 324,
+ENSNVIG 234, ENSMPUG 111, ENSFALG 73, FBgn 2`, 144/1138 summaries. The README was labelling the wrong
+exhibit. The 28-row table is recoverable only from `git show b68712d:resources/gene_meta.parquet`.
+
+Six new tests (38 in `tests/test_text.py`) covering the four cases in one build (native kept, 1:1
+borrowed and labelled, 1:many skipped, no-orthologue left bare), the fallback switched off making no
+second query at all, a third species' orthologue hit being dropped, `_homologene_gene_ids`, and the
+pre-`summary_source` table reading as native. Fast suite 198 passed / 1 xfailed in 86 s; `make check`
+green.

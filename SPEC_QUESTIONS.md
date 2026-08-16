@@ -751,7 +751,7 @@ the mouse hit, so the ids can only have come from a **non-mouse element of the m
 mouse id is present further down each list** — which needs the raw response, hence
 `scripts/build_gene_meta.py --dump-raw`.
 
-### B20. Mouse summary coverage is 148/1138 — **CONFIRMED genuinely sparse**; fallback PROPOSED not implemented
+### B20. Mouse summary coverage is 148/1138 — **CONFIRMED genuinely sparse**; orthologue fallback **IMPLEMENTED, default ON**
 Coverage fell from **1054/1138 (93%)** under the old human-leaning query to **148/1138 (13%)** once the
 query resolved mouse. 93% is the *human* rate; the question is whether 13% is the true mouse rate.
 
@@ -811,8 +811,39 @@ Matching the inclination stated in the report, with four constraints that are no
    descriptions into a mouse model's text channel changes what the open-vocabulary claim is a claim
    *about*. Same discipline as E1's existing two arms for `r_g = 0` vs `psi(t_g)`.
 
-Gated by `Config.gene_summary_fallback ∈ {"none", "ortholog"}`, default **`"none"`** until T10 has
-measured both arms. Never overwrites a native summary. **Not implemented, pending your decision.**
+Gated by `Config.gene_summary_fallback ∈ {"none", "ortholog"}`. Never overwrites a native summary.
+
+**IMPLEMENTED at T06, default `"ortholog"`** (approved: 87% bare names is too thin for the
+open-vocabulary claim). All four constraints hold, with one deviation from the proposal above:
+
+| proposed | built | why |
+|---|---|---|
+| one column, `summary_taxid` | **three**: `summary_source` (`native`/`ortholog`/null), `summary_source_taxid`, `summary_source_symbol` | the descriptor label needs the orthologue's *symbol* — `"Human orthologue SLC17A7: …"` — and a taxid cannot supply it. `summary_source` is also what a diagnostic filters on, and `== "native"` reads better than `== "10090"` |
+| default `"none"` until T10 measures both arms | default `"ortholog"` | E1's native-only arm is a **filter on `summary_source`**, not a second build, so both arms are measurable from one table and the default costs nothing |
+
+Mechanics: `homologene` is requested on the primary query, so no extra round trip per gene; the 1:1
+requirement is enforced **before** the orthologue query (1:many genes are never fetched, let alone
+scored); the orthologue query is `scopes="entrezgene", species=human` and its `taxid` is verified the
+same way the primary query's is, because an unverified third species would be labelled as human in
+the descriptor text. `_read_gene_meta_table` back-fills the three columns as `native` for tables
+written before them — the one migration that *is* derivable, unlike the species columns.
+
+**The split cannot be measured in this container** (mygene.info 403, C14). What is measured:
+
+| | |
+|---|---|
+| `resources/gene_meta.parquet` as committed (pre-fallback) | native **148**, ortholog **0**, none **990** |
+| the four-case fallback path, on a fake client | native kept, 1:1 borrowed and labelled, 1:many skipped, no-orthologue left bare (`tests/test_text.py`, 4 tests) |
+| expected after the rerun | unknown; bounded below by 148 and above by 1138. The user-reported human rate on this panel is ~93%, so the *plausible* range is high, but the binding quantity is 1:1 HomoloGene coverage for these 1138 symbols, which nothing offline predicts. **Do not quote a number until the run prints one.** |
+
+One run, and it prints the split directly:
+
+```
+pip install -e ".[extra]"
+python scripts/build_gene_meta.py --species mouse --symbols-from resources/mouse_panels_symbols.txt
+#   with summary        N/1138
+#     native            148   ortholog M   none K
+```
 
 *The consequence to decide with your eyes open.* Human coverage on this panel was **~93%** against
 mouse's 13.4%, so with the fallback on roughly **85% of descriptors would carry human text**. The
@@ -822,7 +853,15 @@ and it is what a human reader would do), but it is a different claim from the on
 and it is why constraint 4 (E1 reports both arms) is not optional. It also means coverage must always
 be quoted split by `summary_taxid`; a single "N/1138 have summaries" would hide the whole issue.
 
-### C14. `resources/gene_meta.parquet` is described as "shipped" but nothing can build it offline — **OPEN, and now BLOCKING the paper's headline novelty** (raised in T02, escalated at T06)
+### C14. `resources/gene_meta.parquet` is described as "shipped" but nothing can build it offline — **the table now EXISTS; E1 unblocked, the fallback's numbers still owed** (raised in T02, escalated at T06)
+**Resolved as far as this container can take it.** The table was built on a networked machine and
+committed at `6f3cdfa`: 1138 mouse symbols, `species_resolved` 10090 uniform, `{'ENSMUSG': 1137,
+'None': 1}` by prefix, accepted by `load_gene_meta(..., species="mouse")`. E1 can run on real gene
+text. Two things remain, both needing the same one networked run: the table predates
+`Config.gene_summary_fallback`, so 990 of its descriptors are still bare names (B20), and the
+`native/ortholog/none` split is therefore still unmeasured. The rest of this entry is the record of
+why it could not be done here.
+
 **Escalated at T06, with the measurement that makes it blocking.** Zero-shot decoding of
 never-trained genes measures **r = −0.368** on the synthetic fixture (B18) — the open-vocabulary claim
 is the paper's headline novelty and it currently has *no* positive evidence, because the fixture's

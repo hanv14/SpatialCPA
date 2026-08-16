@@ -1,6 +1,45 @@
 # resources/
 
+## `gene_meta.parquet` — the live table. Mouse, 1138 symbols, species-correct.
+
+Built on a networked machine at `6f3cdfa` from `mouse_panels_symbols.txt`, and the first committed
+table that `load_gene_meta(..., species="mouse")` accepts:
+
+| | |
+|---|---|
+| rows | 1138 |
+| `species_requested` / `species_resolved` | `mouse` / `10090`, uniform |
+| Ensembl-id prefixes | `{'ENSMUSG': 1137, 'None': 1}` — the id defect of B19a is gone |
+| `full_name` | 1138/1138 |
+| summaries, **split by source** | **native 148, ortholog 0, none 990** |
+
+The split is the number to quote, not `with_summary` (SPEC_QUESTIONS **B20**). `ortholog 0` is not a
+measurement of the fallback: this table was built **before** `Config.gene_summary_fallback` existed,
+so its 990 bare rows have never been offered an orthologue. `_read_gene_meta_table` back-fills the
+three `summary_source*` columns for tables of this vintage as `native` — the only thing they can be —
+which is why it still loads.
+
+**One run gets the fallback's numbers**, and it needs mygene.info (403 from this container, C14):
+
+```
+pip install -e ".[extra]"
+python scripts/build_gene_meta.py --species mouse --symbols-from resources/mouse_panels_symbols.txt
+```
+
+The report prints `native / ortholog / none` directly. 148 native is confirmed genuine mouse RefSeq
+sparsity, not a query defect (B20).
+
 ## `gene_meta.human_orthologs.parquet` — **not** the STARmap panel's table. Do not point `Config.gene_meta_path` at it.
+
+**The bytes under this name changed after the name was chosen, and the name is now wrong about
+them.** `1c515f3` overwrote the 28-row human table this section was written about (17 kB → 110 kB)
+with the **1138-symbol mixed-species** build — `{'ENSMUSG': 389, 'ENSMSIG': 324, 'ENSNVIG': 234,
+'ENSMPUG': 111, 'ENSFALG': 73, 'FBgn': 2, None: 5}`, 144/1138 summaries: the file the B19 report
+described, four other mammals and a fly. It has no species columns, so `load_gene_meta` refuses it
+with "predates the species columns", which is the right answer for both contents.
+
+The 28-row all-human table described below is recoverable, and only, from git:
+`git show b68712d:resources/gene_meta.parquet` (28 rows, `{'ENSG': 28}`, 28/28 summaries).
 
 Committed as `resources/gene_meta.parquet` in `b68712d` ("C14: gene metadata for the STARmap panel"),
 moved here at the T02 repair (SPEC_QUESTIONS **B19**) because an audit of its contents says it is
@@ -31,18 +70,15 @@ python scripts/build_gene_meta.py --species human \
     --out resources/gene_meta.human.parquet
 ```
 
-**`Config.gene_meta_path` (`resources/gene_meta.parquet`) is deliberately absent**, so
-`load_gene_meta` raises `FileNotFoundError` telling you to build it, rather than loading a table of
-the wrong organism. **C14 is still open**: the mouse table has not been built. On a machine with
-outbound access to mygene.info:
+**`Config.gene_meta_path` now exists** (see the top of this file) and is species-correct, so the
+"deliberately absent" state this section used to describe is over. What is still outstanding is the
+STARmap panel's own 28-symbol table, which is a different panel from the 1138-symbol one:
 
 ```
 python scripts/build_gene_meta.py --species mouse \
-    --symbols-from resources/starmap_panel_symbols.txt
+    --symbols-from resources/starmap_panel_symbols.txt \
+    --out resources/gene_meta.starmap.parquet
 ```
-
-and report the `with summary N/rows` line it prints — that is the mouse-only summary coverage nobody
-has measured yet.
 
 ## `gene_meta.mouse_prefix_bug.parquet` — the mouse build, correct except for `ensembl_id`
 

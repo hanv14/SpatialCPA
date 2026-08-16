@@ -16,6 +16,12 @@ requested species and the resolved taxid in every row, the writer **replaces** b
 printed counts are properties of the file on disk.
 
 Symbols that mygene.info does not resolve degrade to symbol-only rows and are reported.
+
+**Summaries may be an orthologue's.** Mouse NCBI summaries cover only ~13% of a real panel, so
+`Config.gene_summary_fallback="ortholog"` (the default) backfills a summary-less gene from its 1:1
+human orthologue, labelled in the descriptor text. The printed report gives the
+native/ortholog/none split, never a bare coverage number; `--native-summaries-only` turns the
+fallback off.
 """
 
 from __future__ import annotations
@@ -67,6 +73,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "print mygene.info's RAW response for one symbol and exit, without writing anything. "
             "Use it to see the actual shape of the `ensembl` field rather than reasoning about it: "
             "`--species mouse --dump-raw 1700057H15Rik`. Needs network access"
+        ),
+    )
+    parser.add_argument(
+        "--native-summaries-only",
+        action="store_true",
+        help=(
+            "do not backfill a summary-less gene from its human orthologue "
+            "(Config.gene_summary_fallback='none'). The native-only arm of T10's E1 is a filter on "
+            "the summary_source column, so this is for measuring the fallback, not for using it"
         ),
     )
     parser.add_argument(
@@ -147,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = Config().replace(
         text_allow_network=not args.offline,
         mygene_species=args.species,
+        gene_summary_fallback="none" if args.native_summaries_only else "ortholog",
         **({} if args.out is None else {"gene_meta_path": str(args.out)}),
     )
     build_gene_meta(symbols, cfg, merge=args.merge)
@@ -160,7 +176,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  species requested   {summary['species_requested']}")
     print(f"  species resolved    {summary['species_resolved']} (taxid)")
     print(f"  with full_name      {summary['with_full_name']}/{summary['rows']}")
+    sources = summary["summary_sources"]
     print(f"  with summary        {summary['with_summary']}/{summary['rows']}")
+    print(
+        f"    native            {sources['native']}   "
+        f"ortholog {sources['ortholog']}   none {sources['none']}"
+    )
     print(f"  with ensembl_id     {summary['with_ensembl_id']}/{summary['rows']}")
     print(f"  ensembl prefixes    {summary['ensembl_prefixes']}")
     print(f"  expected prefix     {summary['expected_ensembl_prefix']}")

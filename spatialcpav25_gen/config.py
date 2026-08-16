@@ -31,6 +31,7 @@ __all__ = [
     "POTTS_UPDATES",
     "PRIOR_MODES",
     "ROTATION_BIASES",
+    "SUMMARY_FALLBACKS",
     "TEXT_EMB_MODES",
     "TEXT_POOLINGS",
     "Config",
@@ -43,6 +44,7 @@ __all__ = [
 # --------------------------------------------------------------------------------------
 
 LAYOUT_MODES: Final[frozenset[str]] = frozenset({"field", "hybrid", "resample"})
+SUMMARY_FALLBACKS: Final[frozenset[str]] = frozenset({"none", "ortholog"})
 MU_LINKS: Final[frozenset[str]] = frozenset({"exp", "softplus"})
 ROTATION_BIASES: Final[frozenset[str]] = frozenset({"uniform", "axial"})
 PRIOR_MODES: Final[frozenset[str]] = frozenset({"correlated", "iid"})
@@ -190,6 +192,35 @@ class Config:
     table of the wrong organism.
 
     A name from ``spatialcpav25_gen.data.text.SPECIES_TAXID`` or a bare NCBI taxid as digits."""
+
+    gene_summary_fallback: str = "ortholog"
+    """One of ``SUMMARY_FALLBACKS``: what to do when a gene has no summary in its own species.
+
+    ``"none"`` leaves it absent. ``"ortholog"`` fetches the orthologue's summary from
+    ``gene_summary_ortholog_species`` and stores it **with its provenance recorded** —
+    ``summary_source``, ``summary_source_taxid`` and ``summary_source_symbol`` — so a descriptor can
+    say whose summary it is and every count can be split by source.
+
+    On by default because the alternative measured worse than useless: mouse NCBI summaries cover
+    **148/1138 (13%)** of a real mouse panel (SPEC_QUESTIONS B20, confirmed genuinely sparse — 5
+    symbols lose one to hit selection), which leaves 87% of descriptors as bare names and gives the
+    open-vocabulary claim almost nothing to work with.
+
+    **What it costs, and why the provenance columns are not optional.** Human coverage on the same
+    panel is ~93%, so with this on most descriptors carry *human* text and the open-vocabulary claim
+    becomes substantially a claim about human summaries transferred to a mouse model. That is
+    defensible — orthologous function is largely conserved, and it is what a human reader would do —
+    but it is a different claim from the one ``design/v23_design.md`` states. T10's E1 must report
+    **both arms**, and with ``summary_source`` recorded it can: the native-only arm is a filter
+    on the column, not a second build."""
+
+    gene_summary_ortholog_species: str = "human"
+    """Species whose summary stands in under ``gene_summary_fallback="ortholog"``.
+
+    Human because it is the best-annotated genome and the orthologue relation to mouse is the
+    best-curated one. The orthologue is resolved through mygene's ``homologene`` field and must be
+    **1:1**; it is never resolved by upper-casing the symbol, which is precisely the mistake that
+    silently produced an all-human table for a mouse panel (SPEC_QUESTIONS B19)."""
 
     distill_hidden: int = 256
     """Hidden width of the text -> free-residual distillation head ``psi``
@@ -1007,6 +1038,7 @@ class Config:
             ("rotation_bias", self.rotation_bias, ROTATION_BIASES),
             ("potts_update", self.potts_update, POTTS_UPDATES),
             ("decoder_mu_link", self.decoder_mu_link, MU_LINKS),
+            ("gene_summary_fallback", self.gene_summary_fallback, SUMMARY_FALLBACKS),
         ]
         for name, value, allowed in choices:
             if value not in allowed:

@@ -24,8 +24,14 @@ Gene descriptor format (keep it stable — embeddings are cached against a hash 
 "{symbol}. {full_name}. {summary}. Aliases: {a1}, {a2}."
 ```
 
-`GeneMeta` comes from a local table shipped in `resources/gene_meta.parquet` (columns:
-`symbol, full_name, summary, aliases, ensembl_id`). Provide
+`GeneMeta` comes from a local table shipped in `resources/gene_meta.parquet`. The spec's five columns
+`symbol, full_name, summary, aliases, ensembl_id` have grown to **ten** (`GENE_META_COLUMNS`), and both
+additions are recorded defects rather than embellishments: `species_requested, species_resolved` after
+a mouse panel's table came back holding four other mammals' genes with no way to tell (B19), and
+`summary_source, summary_source_taxid, summary_source_symbol` after mouse summary coverage measured
+148/1138, so a summary-less gene borrows its 1:1 human orthologue's and the descriptor says so —
+`"Slc17a7. Slc17a7 full name. Human orthologue SLC17A7: <summary>."` (B20,
+`Config.gene_summary_fallback`). Coverage is therefore always reported split by source. Provide
 `build_gene_meta(symbols) -> pd.DataFrame` that assembles it from **mygene.info** if network is
 available, and **degrades gracefully to `symbol` alone** when a gene is unknown. Cache the table;
 do not hit the network at training time.

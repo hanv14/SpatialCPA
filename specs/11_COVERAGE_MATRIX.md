@@ -41,7 +41,7 @@ is an omission — flag it rather than skipping it.**
 | Baselines incl. SpatialZ at published defaults | T10 | deep-copy guard; **v14/v18 dropped explicitly** with the reason in the methods (D-table) |
 | **Dataset requirement**: >= 1 non-brain, >= 1 non-transcriptomic panel | T10 §3 | design §7; the harness refuses a headline table without both (D-table) |
 | Ablations A1–A6 | T10 | gates in `Config` |
-| Capability experiments E1–E4 | T10 | zero-shot, cross-panel, oblique, throughput; **E1 reports both arms** (`r_g = 0` and `r_g = psi(t_g)`) (D-table) |
+| Capability experiments E1–E4 | T10 | zero-shot, cross-panel, oblique, throughput; **E1 reports both arms** (`r_g = 0` and `r_g = psi(t_g)`) (D-table), **and both summary arms** (`summary_source == "native"` vs the orthologue fallback — T06, SPEC_QUESTIONS B20) |
 
 ## From `v23_sectioning_equivariance.md` (SEFL)
 

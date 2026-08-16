@@ -74,6 +74,9 @@ GENE_META_COLUMNS: Final[tuple[str, ...]] = (
     "ensembl_id",
     "species_requested",
     "species_resolved",
+    "summary_source",
+    "summary_source_taxid",
+    "summary_source_symbol",
 )
 """Column order of ``resources/gene_meta.parquet``.
 
@@ -82,7 +85,18 @@ ENSMUSG ids and 744 from ground squirrel, mink, ferret and falcon, two from frui
 tell from the table that anything was wrong. A table that cannot say which organism it describes
 cannot be checked. ``species_resolved`` is the **taxid** as a string, because that is what the API
 returns and what an assertion can be written against; ``species_requested`` is the name the caller
-used."""
+used.
+
+The three ``summary_source*`` columns record where each row's **summary** came from, which is a
+different question from where the gene came from: ``"native"`` (the gene's own species),
+``"ortholog"`` (``Config.gene_summary_fallback``), or null when there is none. Mouse summaries cover
+only 13% of a real panel, so most descriptors' text is an orthologue's, and a coverage number that
+does not say so would mean two different things on two different runs (SPEC_QUESTIONS B20)."""
+
+_SUMMARY_SOURCE_COLUMNS: Final[frozenset[str]] = frozenset(
+    {"summary_source", "summary_source_taxid", "summary_source_symbol"}
+)
+"""The columns :func:`_read_gene_meta_table` back-fills for a table written before they existed."""
 
 SPECIES_ENSEMBL_PREFIX: Final[dict[str, str]] = {
     "human": "ENSG",
@@ -137,8 +151,7 @@ class GeneMetaError(ValueError):
 
 
 class GeneMetaUnavailableWarning(UserWarning):
-    """Metadata for one or more symbols could not be obtained, so their descriptors are
-    the bare symbol.
+    """Metadata for some symbols could not be obtained, so their descriptors are bare symbols.
 
     Expected and supported - a gene absent from mygene.info still has to be embeddable -
     but never silent: a run whose text channel is mostly bare symbols carries much less
@@ -171,6 +184,12 @@ class GeneMeta:
     summary: str | None = None
     aliases: tuple[str, ...] = ()
     ensembl_id: str | None = None
+    summary_source: str | None = None
+    """``"native"``, ``"ortholog"``, or ``None`` when there is no summary."""
+    summary_source_taxid: str | None = None
+    """Taxid the summary came from, as a string."""
+    summary_source_symbol: str | None = None
+    """The orthologue's symbol, e.g. ``"SLC17A7"``. ``None`` for a native summary."""
 
     @classmethod
     def from_row(cls, row: dict[str, Any]) -> GeneMeta:
@@ -181,6 +200,9 @@ class GeneMeta:
             summary=_clean(row.get("summary")),
             aliases=_coerce_aliases(row.get("aliases")),
             ensembl_id=_clean(row.get("ensembl_id")),
+            summary_source=_clean(row.get("summary_source")),
+            summary_source_taxid=_clean(row.get("summary_source_taxid")),
+            summary_source_symbol=_clean(row.get("summary_source_symbol")),
         )
 
 
@@ -230,6 +252,11 @@ def gene_descriptor(symbol: str, meta: GeneMeta | None) -> str:
     sorted and de-duplicated, and an alias equal to the symbol is dropped, so the string
     does not depend on the order a table happened to list them in.
 
+    When the summary is an orthologue's (``meta.summary_source == "ortholog"``) it is labelled
+    in the text — ``"Human orthologue SLC17A7: <summary>"`` — never presented as this gene's
+    own. That is load-bearing twice over: the frozen encoder sees the provenance as part of what
+    it embeds, and a human reading a mouse panel's descriptors is told which biology they read.
+
     The passed ``symbol`` is authoritative - it is the panel's spelling, which is what the
     rest of the pipeline indexes by - even when ``meta.symbol`` differs.
     """
@@ -243,11 +270,32 @@ def gene_descriptor(symbol: str, meta: GeneMeta | None) -> str:
             parts.append(full_name)
         summary = _clean(meta.summary)
         if summary is not None:
-            parts.append(summary)
+            # An orthologue's summary is labelled **in the text**, so that neither the frozen
+            # encoder nor a human reading the descriptors can take it for this gene's own. The
+            # label names the species and the orthologue's symbol: "Human orthologue X: <text>".
+            if _clean(meta.summary_source) == "ortholog":
+                species = _species_name_for_taxid(meta.summary_source_taxid)
+                partner = _clean(meta.summary_source_symbol)
+                label = f"{species.capitalize()} orthologue"
+                if partner is not None:
+                    label = f"{label} {partner}"
+                parts.append(f"{label}: {summary}")
+            else:
+                parts.append(summary)
         aliases = sorted({a for a in _coerce_aliases(meta.aliases) if a != name})
         if aliases:
             parts.append("Aliases: " + ", ".join(aliases))
     return ". ".join(parts) + "."
+
+
+def _species_name_for_taxid(taxid: str | None) -> str:
+    """Name a taxid for the descriptor text, falling back to ``"taxid N"``."""
+    if taxid is None:
+        return "other-species"
+    for name, value in SPECIES_TAXID.items():
+        if str(value) == str(taxid):
+            return name
+    return f"taxid {taxid}"
 
 
 def celltype_descriptor(name: str, ontology: dict[str, Any] | None) -> str:
@@ -321,8 +369,8 @@ def build_gene_meta(
     symbols
         Gene symbols, in panel order. Duplicates collapse; order is preserved.
     cfg
-        Supplies ``gene_meta_path``, ``text_allow_network`` and ``mygene_species``.
-        Defaults to ``Config()``. (Additive keyword: the spec writes
+        Supplies ``gene_meta_path``, ``text_allow_network``, ``mygene_species`` and
+        ``gene_summary_fallback``. Defaults to ``Config()``. (Additive keyword: the spec writes
         ``build_gene_meta(symbols)``, which has nowhere to read those from.)
     merge
         Keep rows already in the table that this call did not ask for, and reuse cached rows for
@@ -435,6 +483,10 @@ def gene_meta_summary(path: str | Path) -> dict[str, Any]:
         "with_full_name": sum(1 for r in records if _clean(r["full_name"])),
         "with_summary": sum(1 for r in records if _clean(r["summary"])),
         "with_ensembl_id": sum(1 for r in records if _clean(r["ensembl_id"])),
+        # Never report `with_summary` without this: after Config.gene_summary_fallback most of a
+        # mouse panel's summaries are a human orthologue's, so the same coverage number means two
+        # very different things depending on the split (SPEC_QUESTIONS B20).
+        "summary_sources": _summary_source_counts(records),
         "species_requested": sorted(
             {str(r["species_requested"]) for r in records if r["species_requested"]}
         ),
@@ -450,6 +502,20 @@ def gene_meta_summary(path: str | Path) -> dict[str, Any]:
             }
         ),
     }
+
+
+def _summary_source_counts(records: Sequence[dict[str, Any]]) -> dict[str, int]:
+    """Count where the summaries came from: ``native`` / ``ortholog`` / ``none``.
+
+    A row whose ``summary`` is absent counts as ``"none"`` whatever the column says, so the three
+    counts always sum to the row count and ``native + ortholog == with_summary``.
+    """
+    counts = {"native": 0, "ortholog": 0, "none": 0}
+    for record in records:
+        source = _clean(record.get("summary_source"))
+        key = "none" if _clean(record.get("summary")) is None or source is None else source
+        counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 def _ensembl_prefix_counts(records: Sequence[dict[str, Any]]) -> dict[str, int]:
@@ -604,6 +670,9 @@ def _symbol_only_row(symbol: str, requested_name: str | None) -> dict[str, Any]:
         "ensembl_id": None,
         "species_requested": requested_name,
         "species_resolved": None,
+        "summary_source": None,
+        "summary_source_taxid": None,
+        "summary_source_symbol": None,
     }
 
 
@@ -611,7 +680,20 @@ def _read_gene_meta_table(path: Path) -> pd.DataFrame:
     """Read the parquet table, checking that it has the columns the descriptors need."""
     table = pd.read_parquet(path)
     missing = [column for column in GENE_META_COLUMNS if column not in table.columns]
-    if missing == ["species_requested", "species_resolved"]:
+    if missing and set(missing) <= _SUMMARY_SOURCE_COLUMNS:
+        # Derivable, and only derivable in this direction: every table written before the
+        # orthologue fallback existed holds the gene's *own* summary or none at all, because there
+        # was no other place a summary could have come from. So the columns are filled rather than
+        # refused - unlike the species columns below, where the missing value is exactly the thing
+        # that is unknown.
+        summary = table["summary"].map(_clean)
+        table = table.assign(
+            summary_source=summary.map(lambda s: "native" if s is not None else None),
+            summary_source_taxid=table["species_resolved"].where(summary.notna()),
+            summary_source_symbol=None,
+        )
+        missing = [column for column in GENE_META_COLUMNS if column not in table.columns]
+    if set(missing) >= {"species_requested", "species_resolved"}:
         # The expected upgrade path, and worth its own message: every table built before these
         # columns existed is one whose organism cannot be checked, and the first two real ones
         # turned out to be the wrong organism (a 1138-symbol mouse panel that came back as four
@@ -705,11 +787,7 @@ def _is_exact(hit: dict[str, Any], query: str) -> bool:
 
 def _hit_rank(hit: dict[str, Any], query: str) -> tuple[int, float]:
     """Sort key for choosing among several hits for one symbol: exact match first, then score."""
-    try:
-        score = float(hit.get("_score", 0.0))
-    except (TypeError, ValueError):
-        score = 0.0
-    return (1 if _is_exact(hit, query) else 0, score)
+    return (1 if _is_exact(hit, query) else 0, _hit_score(hit))
 
 
 def _query_mygene(symbols: Sequence[str], cfg: Config) -> dict[str, dict[str, Any]]:
@@ -748,8 +826,10 @@ def _query_mygene(symbols: Sequence[str], cfg: Config) -> dict[str, dict[str, An
     hits = client.querymany(
         list(symbols),
         scopes="symbol,alias",
-        # taxid is not optional: it is what the species check below reads.
-        fields="symbol,name,summary,alias,ensembl.gene,taxid",
+        # taxid is not optional: it is what the species check below reads. homologene is what
+        # _apply_ortholog_summaries reads; requesting it here costs one field on a query that has
+        # to be made anyway, rather than a second round trip per summary-less gene.
+        fields="symbol,name,summary,alias,ensembl.gene,taxid,homologene",
         species=name,
         verbose=False,
     )
@@ -786,31 +866,40 @@ def _query_mygene(symbols: Sequence[str], cfg: Config) -> dict[str, dict[str, An
         )
 
     out: dict[str, dict[str, Any]] = {}
+    chosen: dict[str, dict[str, Any]] = {}
     ambiguous: list[str] = []
     foreign_ids = 0
     summary_lost_to_selection: list[str] = []
     for query, candidates in by_symbol.items():
         ranked = sorted(candidates, key=lambda hit: _hit_rank(hit, query), reverse=True)
         best = ranked[0]
+        chosen[query] = best
         if len(ranked) > 1 and _is_exact(best, query) and _is_exact(ranked[1], query):
             ambiguous.append(query)
         chosen_id = _ensembl_id(best.get("ensembl"), prefix)
         if chosen_id is None and _ensembl_gene_ids(best.get("ensembl")):
             # The hit carried ids, none of them this species': the case that used to be written.
             foreign_ids += 1
-        if not _clean(best.get("summary")) and any(_clean(h.get("summary")) for h in ranked[1:]):
+        summary = _clean(best.get("summary"))
+        if summary is None and any(_clean(h.get("summary")) for h in ranked[1:]):
             summary_lost_to_selection.append(query)
+        resolved = str(int(best.get("taxid", taxid)))
         out[query] = {
             "symbol": query,
             "full_name": _clean(best.get("name")),
-            "summary": _clean(best.get("summary")),
+            "summary": summary,
             "aliases": list(_coerce_aliases(best.get("alias"))),
             "ensembl_id": chosen_id,
             "species_requested": name,
             # Read from the hit, not from the request. Writing `str(taxid)` here made the column an
-            # echo of the argument: it could never disagree with it, so "species_resolved is uniformly
-            # 10090" was true by construction and looked like evidence when it was not.
-            "species_resolved": str(int(best.get("taxid", taxid))),
+            # echo of the argument: it could never disagree with it, so "species_resolved is
+            # uniformly 10090" was true by construction and looked like evidence when it was not.
+            "species_resolved": resolved,
+            # Provenance of the *summary*, which after the fallback below is a different question
+            # from the provenance of the gene.
+            "summary_source": None if summary is None else "native",
+            "summary_source_taxid": None if summary is None else resolved,
+            "summary_source_symbol": None,
         }
     if foreign_ids:
         warnings.warn(
@@ -823,8 +912,8 @@ def _query_mygene(symbols: Sequence[str], cfg: Config) -> dict[str, dict[str, An
         )
     if summary_lost_to_selection:
         warnings.warn(
-            f"_query_mygene: for {len(summary_lost_to_selection)} symbol(s) the selected hit has no "
-            f"summary while another {name} hit for the same symbol does (first: "
+            f"_query_mygene: for {len(summary_lost_to_selection)} symbol(s) the selected hit has "
+            f"no summary while another {name} hit for the same symbol does (first: "
             f"{summary_lost_to_selection[0]!r}). Hit selection, not the species filter, is costing "
             "these summaries — report this count before concluding that this organism's summaries "
             "are sparse.",
@@ -849,7 +938,159 @@ def _query_mygene(symbols: Sequence[str], cfg: Config) -> dict[str, dict[str, An
             GeneMetaUnavailableWarning,
             stacklevel=2,
         )
+    if cfg.gene_summary_fallback == "ortholog":
+        _apply_ortholog_summaries(out, chosen, client, cfg)
     return out
+
+
+def _hit_score(hit: dict[str, Any]) -> float:
+    """Read mygene's ``_score`` off one hit, defaulting to 0.0."""
+    try:
+        return float(hit.get("_score", 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _homologene_gene_ids(value: Any, taxid: int) -> list[str]:
+    """Return the Entrez ids ``value`` lists as orthologues of ``taxid``. Usually zero or one.
+
+    mygene's ``homologene`` field is ``{"id": <group>, "genes": [[taxid, entrezgene], ...]}`` — one
+    pair per species in the HomoloGene group, the queried gene's own pair included. This returns the
+    pairs matching ``taxid``; the caller requires exactly one, because two entries mean a 1:many
+    orthologue relation and there is no principled way to choose between them (see
+    :func:`_apply_ortholog_summaries`).
+    """
+    if not isinstance(value, dict):
+        return []
+    genes = value.get("genes")
+    if not isinstance(genes, list):
+        return []
+    found: list[str] = []
+    for pair in genes:
+        if not isinstance(pair, list | tuple) or len(pair) < 2:
+            continue
+        try:
+            pair_taxid = int(pair[0])
+        except (TypeError, ValueError):
+            continue
+        if pair_taxid != taxid:
+            continue
+        one = _clean(pair[1])
+        if one is not None:
+            found.append(one)
+    return found
+
+
+def _apply_ortholog_summaries(
+    rows: dict[str, dict[str, Any]],
+    chosen: dict[str, dict[str, Any]],
+    client: MyGeneClient,
+    cfg: Config,
+) -> None:
+    """Fill summary-less rows from the orthologue's summary, in place, marking every one borrowed.
+
+    Why this exists, with the number that forced it: a correct mouse build of a 1138-symbol panel
+    carries **148** native summaries. The other 990 descriptors are ``"{symbol}. {full_name}."`` —
+    two names and no biology — which is thin text to rest an open-vocabulary claim on. That sparsity
+    is real and is NCBI's, not a bug: it is flat across the panel and the hit-selection warning
+    accounts for only 5 of the missing summaries (SPEC_QUESTIONS B20). The same panel queried as
+    human returned 1054 summaries, because RefSeq curates human genes far more densely.
+
+    So a mouse gene with no summary of its own borrows its ortholog's, resolved through
+    **HomoloGene** — never by upper-casing the symbol, which is a spelling convention rather than an
+    orthology claim and would silently pair unrelated genes.
+
+    Three properties this holds to, each of which is the difference between a fallback and a fudge:
+
+    native wins
+        A gene with its own summary is never overwritten, whatever the orthologue says.
+
+    1:1 only
+        A gene whose HomoloGene group lists two orthologues in the target species is **skipped**,
+        not resolved by score. Choosing between two paralogs by a text-search score would attach one
+        paralog's biology to the query gene, which is worse than a bare name because it is wrong
+        rather than merely absent.
+
+    labelled, in the text and in a column
+        ``summary_source`` records ``"native"`` / ``"ortholog"``, and :func:`gene_descriptor`
+        writes the provenance into the descriptor itself (``"Human orthologue SLC17A7: ..."``), so
+        the frozen encoder embeds the borrowing as part of what it reads and no diagnostic can
+        report a coverage number without also reporting the split.
+
+    Off via ``Config.gene_summary_fallback = "none"``, which leaves the 990 rows bare.
+    """
+    name, taxid = resolve_species(cfg.gene_summary_ortholog_species)
+    wanted = [query for query, row in rows.items() if row["summary"] is None]
+    if not wanted:
+        return
+
+    entrez: dict[str, str] = {}
+    one_to_many: list[str] = []
+    for query in wanted:
+        ids = _homologene_gene_ids(chosen[query].get("homologene"), taxid)
+        if len(ids) == 1:
+            entrez[query] = ids[0]
+        elif ids:
+            one_to_many.append(query)
+    if not entrez:
+        warnings.warn(
+            f"_apply_ortholog_summaries: none of {len(wanted)} summary-less symbol(s) has a 1:1 "
+            f"{name} orthologue in mygene's homologene field, so none borrowed a summary. Check "
+            "that 'homologene' is in the queried fields; their descriptors stay bare names.",
+            GeneMetaUnavailableWarning,
+            stacklevel=2,
+        )
+        return
+
+    hits = client.querymany(
+        sorted(set(entrez.values())),
+        scopes="entrezgene",
+        fields="symbol,summary,taxid",
+        species=name,
+        verbose=False,
+    )
+    best: dict[str, dict[str, Any]] = {}
+    wrong_species = 0
+    for hit in hits:
+        if not isinstance(hit, dict) or hit.get("notfound"):
+            continue
+        query = str(hit.get("query", ""))
+        if not query:
+            continue
+        hit_taxid = hit.get("taxid")
+        if hit_taxid is None or int(hit_taxid) != taxid:
+            # The same check as the primary query's, for the same reason: an orthologue summary from
+            # a third species would be labelled with the wrong species in the descriptor text.
+            wrong_species += 1
+            continue
+        if _clean(hit.get("summary")) is None:
+            continue
+        previous = best.get(query)
+        if previous is None or _hit_score(hit) > _hit_score(previous):
+            best[query] = hit
+
+    filled = 0
+    for query, gene_id in entrez.items():
+        partner = best.get(gene_id)
+        if partner is None:
+            continue
+        row = rows[query]
+        row["summary"] = _clean(partner.get("summary"))
+        row["summary_source"] = "ortholog"
+        row["summary_source_taxid"] = str(taxid)
+        row["summary_source_symbol"] = _clean(partner.get("symbol"))
+        filled += 1
+
+    warnings.warn(
+        f"_apply_ortholog_summaries: {filled} of {len(wanted)} summary-less symbol(s) borrowed a "
+        f"{name} orthologue's summary ({len(entrez)} had a 1:1 orthologue, {len(one_to_many)} were "
+        f"1:many and were skipped, {wrong_species} orthologue hit(s) came back from another "
+        f"species and were dropped). Those rows' summaries are another organism's biology, "
+        "labelled as such in the descriptor text and in the summary_source column - report the "
+        "native/ortholog/none split, never a bare coverage number.",
+        GeneMetaUnavailableWarning,
+        stacklevel=2,
+    )
 
 
 def _ensembl_gene_ids(value: Any) -> list[str]:
@@ -869,17 +1110,17 @@ def _ensembl_gene_ids(value: Any) -> list[str]:
 def _ensembl_id(value: Any, prefix: str | None) -> str | None:
     """Pick the Ensembl gene id belonging to ``prefix``'s species. ``None`` if there is none.
 
-    **The bug this exists for.** The first version took ``value[0]`` of a dict-or-list field. A build
-    whose ``taxid`` filter demonstrably worked — ``species_resolved`` uniformly 10090 — still wrote
-    ENSMUSG 390, ENSMSIG 321, ENSNVIG 241, ENSMPUG 111, ENSFALG 73, FBgn 1. Since every other field of
-    those rows came from the mouse hit, the ids can only have come from a **non-mouse element of the
-    mouse hit's own ``ensembl`` list**, and taking element zero of it is a coin toss over whatever
-    orthologue mappings mygene chose to include.
+    **The bug this exists for.** The first version took ``value[0]`` of a dict-or-list field. A
+    build whose ``taxid`` filter demonstrably worked — ``species_resolved`` uniformly 10090 — still
+    wrote ENSMUSG 390, ENSMSIG 321, ENSNVIG 241, ENSMPUG 111, ENSFALG 73, FBgn 1. Since every other
+    field of those rows came from the mouse hit, the ids can only have come from a **non-mouse
+    element of the mouse hit's own ``ensembl`` list**, and taking element zero of it is a coin toss
+    over whatever orthologue mappings mygene chose to include.
 
-    So the id is selected by what it *is*, not by the position it occupies: the first id whose prefix
-    is the requested species'. If the field holds no id for that species the answer is ``None`` — an
-    absent id, which the descriptor never reads anyway, rather than another organism's id, which every
-    downstream join does.
+    So the id is selected by what it *is*, not by the position it occupies: the first id whose
+    prefix is the requested species'. If the field holds no id for that species the answer is
+    ``None`` — an absent id, which the descriptor never reads anyway, rather than another
+    organism's id, which every downstream join does.
 
     ``prefix`` is ``None`` only when the species was given as a bare taxid this module has no prefix
     for; then the first id is taken and :func:`_query_mygene` warns that it cannot be validated.

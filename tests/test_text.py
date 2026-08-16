@@ -6,6 +6,7 @@ Every numeric threshold here comes from `specs/02_TASK_text_embeddings.md`.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 import pytest
@@ -700,6 +701,12 @@ def test_committed_gene_meta_tables_are_species_checkable():
             f"{default} has no species columns, so its organism cannot be checked (B19)"
         )
         load_gene_meta(default, species=Config().mygene_species)
+        # And its summary coverage must be reportable by source, whatever its vintage: a table
+        # written before the summary_source columns reads as all-native (B20).
+        report = gene_meta_summary(default)
+        sources = report["summary_sources"]
+        assert sum(sources.values()) == report["rows"]
+        assert sources["native"] + sources["ortholog"] == report["with_summary"]
 
     parked = Path("resources/gene_meta.human_orthologs.parquet")
     if parked.exists():
@@ -863,8 +870,191 @@ def test_summary_lost_to_selection_is_reported(monkeypatch, cache_cfg):
             return hits
 
     monkeypatch.setattr(text_mod, "load_mygene_client", lambda _cfg: TwoMouseHits())
-    online = cache_cfg.replace(text_allow_network=True, mygene_species="mouse")
+    online = cache_cfg.replace(
+        text_allow_network=True, mygene_species="mouse", gene_summary_fallback="none"
+    )
     with pytest.warns(GeneMetaUnavailableWarning, match="selected hit has no summary"):
         table = build_gene_meta(["Gad1"], online)
     # Reported, not silently patched: choosing the sibling's summary would be merging two records.
     assert table["summary"].isna().all()
+
+
+# --------------------------------------------------------------------------------------
+# the orthologue summary fallback
+# --------------------------------------------------------------------------------------
+#
+# Mouse NCBI summaries cover 148/1138 of a real panel and that sparsity is genuine (B20), so 87% of
+# descriptors would be "{symbol}. {full_name}." — two names and no biology. The fallback borrows the
+# human orthologue's summary, resolved through HomoloGene and labelled in the text.
+
+TAXID_HUMAN = 9606
+
+
+class FakeMyGeneOrthologSummaries:
+    """Both calls :func:`_query_mygene` makes: mouse symbols, then human Entrez ids.
+
+    Only ``Gad1`` has a summary of its own. ``Slc17a7`` has a 1:1 human orthologue that does;
+    ``Rik2`` has two human orthologues (1:many, must be skipped rather than picked by score);
+    ``Orphan3`` has no orthologue at all.
+    """
+
+    HOMOLOGENE: ClassVar[dict[str, dict]] = {
+        "Gad1": {"id": 20, "genes": [[TAXID_MOUSE, 14415], [TAXID_HUMAN, 2571]]},
+        "Slc17a7": {"id": 21, "genes": [[TAXID_MOUSE, 72961], [TAXID_HUMAN, 57030]]},
+        "Rik2": {"id": 22, "genes": [[TAXID_MOUSE, 99], [TAXID_HUMAN, 401], [TAXID_HUMAN, 402]]},
+    }
+    HUMAN: ClassVar[dict[str, tuple[str, str]]] = {
+        "57030": ("SLC17A7", "Mediates glutamate uptake into synaptic vesicles"),
+        "2571": ("GAD1", "THIS MUST NOT BE USED: Gad1 has a summary of its own"),
+        "401": ("ORTH1", "one of two paralogues"),
+        "402": ("ORTH2", "the other of two paralogues"),
+    }
+
+    def __init__(self, *, human_taxid: int = TAXID_HUMAN) -> None:
+        self.human_taxid = human_taxid
+        self.calls: list[dict[str, object]] = []
+
+    def querymany(self, qterms, **kwargs):
+        self.calls.append({"qterms": list(qterms), **kwargs})
+        if kwargs.get("scopes") == "entrezgene":
+            return [
+                {
+                    "query": str(q),
+                    "symbol": self.HUMAN[str(q)][0],
+                    "summary": f"{self.HUMAN[str(q)][1]}.",
+                    "taxid": self.human_taxid,
+                    "_score": 50.0,
+                }
+                for q in qterms
+                if str(q) in self.HUMAN
+            ]
+        return [
+            {
+                "query": s,
+                "symbol": s,
+                "name": f"{s} full name",
+                "summary": "Catalyses the formation of GABA." if s == "Gad1" else None,
+                "taxid": TAXID_MOUSE,
+                "ensembl": {"gene": "ENSMUSG00000000001"},
+                "homologene": self.HOMOLOGENE.get(s),
+                "_score": 70.0,
+            }
+            for s in qterms
+        ]
+
+
+def test_ortholog_summary_is_borrowed_and_labelled(monkeypatch, cache_cfg):
+    """A summary-less mouse gene takes its 1:1 human orthologue's summary, marked as borrowed.
+
+    The four cases in one build: native kept, orthologue borrowed, 1:many skipped, no orthologue
+    left bare. The label is in the descriptor text as well as the column, because the frozen
+    encoder only ever sees the text.
+    """
+    panel = ["Gad1", "Slc17a7", "Rik2", "Orphan3"]
+    client = install_fake_mygene(monkeypatch, FakeMyGeneOrthologSummaries())
+    online = cache_cfg.replace(text_allow_network=True, mygene_species="mouse")
+    with pytest.warns(GeneMetaUnavailableWarning, match="borrowed a human orthologue's summary"):
+        build_gene_meta(panel, online)
+    meta = load_gene_meta(online.gene_meta_path, species="mouse")
+
+    assert meta["Gad1"].summary_source == "native", "a native summary is never overwritten"
+    assert meta["Gad1"].summary == "Catalyses the formation of GABA"
+    assert meta["Gad1"].summary_source_taxid == str(TAXID_MOUSE)
+    assert meta["Gad1"].summary_source_symbol is None
+
+    assert meta["Slc17a7"].summary_source == "ortholog"
+    assert meta["Slc17a7"].summary == "Mediates glutamate uptake into synaptic vesicles"
+    assert meta["Slc17a7"].summary_source_taxid == str(TAXID_HUMAN)
+    assert meta["Slc17a7"].summary_source_symbol == "SLC17A7"
+
+    for bare in ("Rik2", "Orphan3"):
+        assert meta[bare].summary is None, f"{bare} must not borrow a summary"
+        assert meta[bare].summary_source is None
+
+    # The label, in the text the encoder embeds. The mouse symbol stays the panel's spelling.
+    assert gene_descriptor("Slc17a7", meta["Slc17a7"]) == (
+        "Slc17a7. Slc17a7 full name. Human orthologue SLC17A7: Mediates glutamate uptake into "
+        "synaptic vesicles."
+    )
+    assert "orthologue" not in gene_descriptor("Gad1", meta["Gad1"])
+
+    # Only the summary-less genes' orthologues are looked up, and only in the target species.
+    second = client.calls[1]
+    assert second["scopes"] == "entrezgene"
+    assert second["species"] == "human"
+    # Not Gad1's 2571 (it has its own summary), and not Rik2's 401/402 (1:many, skipped before
+    # the query rather than fetched and then discarded).
+    assert sorted(second["qterms"]) == ["57030"]
+
+    summary = gene_meta_summary(online.gene_meta_path)
+    assert summary["summary_sources"] == {"native": 1, "ortholog": 1, "none": 2}
+    assert summary["with_summary"] == 2, "native + ortholog, which is why the split is reported"
+
+
+def test_ortholog_fallback_off_leaves_the_summary_absent(monkeypatch, cache_cfg):
+    """``gene_summary_fallback="none"`` makes no second query and borrows nothing."""
+    client = install_fake_mygene(monkeypatch, FakeMyGeneOrthologSummaries())
+    online = cache_cfg.replace(
+        text_allow_network=True, mygene_species="mouse", gene_summary_fallback="none"
+    )
+    build_gene_meta(["Gad1", "Slc17a7"], online)
+    meta = load_gene_meta(online.gene_meta_path, species="mouse")
+    assert meta["Slc17a7"].summary is None
+    assert meta["Slc17a7"].summary_source is None
+    assert len(client.calls) == 1, "the orthologue lookup must not be issued at all"
+    assert gene_meta_summary(online.gene_meta_path)["summary_sources"] == {
+        "native": 1,
+        "ortholog": 0,
+        "none": 1,
+    }
+
+
+def test_ortholog_summary_from_another_species_is_dropped(monkeypatch, cache_cfg):
+    """The orthologue query's taxid is verified too, or the label would name the wrong species."""
+    install_fake_mygene(monkeypatch, FakeMyGeneOrthologSummaries(human_taxid=TAXID_FALCON))
+    online = cache_cfg.replace(text_allow_network=True, mygene_species="mouse")
+    with pytest.warns(GeneMetaUnavailableWarning, match="came back from another species"):
+        build_gene_meta(["Slc17a7"], online)
+    meta = load_gene_meta(online.gene_meta_path, species="mouse")
+    assert meta["Slc17a7"].summary is None
+    assert meta["Slc17a7"].summary_source is None
+
+
+def test_homologene_requires_a_one_to_one_orthologue():
+    """The 1:many case returns both ids, so the caller can skip it rather than guess."""
+    from spatialcpav25_gen.data.text import _homologene_gene_ids
+
+    group = FakeMyGeneOrthologSummaries.HOMOLOGENE
+    assert _homologene_gene_ids(group["Slc17a7"], TAXID_HUMAN) == ["57030"]
+    assert _homologene_gene_ids(group["Rik2"], TAXID_HUMAN) == ["401", "402"]
+    assert _homologene_gene_ids(group["Slc17a7"], TAXID_MOUSE) == ["72961"]
+    for absent in (None, {}, {"id": 3}, {"genes": "nonsense"}, {"genes": [[1], "x"]}):
+        assert _homologene_gene_ids(absent, TAXID_HUMAN) == []
+
+
+def test_table_written_before_the_summary_source_columns_reads_as_native(cache_cfg, monkeypatch):
+    """An older table's summaries are back-filled as ``native`` — the only thing they can be.
+
+    Unlike the species columns, where the missing value is exactly what is unknown and the table is
+    refused, there was no other place a summary could have come from before this fallback existed.
+    """
+    import pandas as pd
+
+    install_fake_mygene(monkeypatch, FakeMyGene(mouse_only=True))
+    online = cache_cfg.replace(text_allow_network=True, mygene_species="mouse")
+    build_gene_meta(["Gad1", "Nothing2"], online)
+
+    table = pd.read_parquet(online.gene_meta_path)
+    table.loc[table["symbol"] == "Nothing2", "summary"] = None
+    table = table.drop(columns=["summary_source", "summary_source_taxid", "summary_source_symbol"])
+    table.to_parquet(online.gene_meta_path, index=False)
+
+    meta = load_gene_meta(online.gene_meta_path, species="mouse")
+    assert meta["Gad1"].summary_source == "native"
+    assert meta["Gad1"].summary_source_taxid == str(TAXID_MOUSE)
+    assert meta["Nothing2"].summary_source is None
+    assert gene_meta_summary(online.gene_meta_path)["summary_sources"] == {
+        "native": 1,
+        "ortholog": 0,
+        "none": 1,
+    }
