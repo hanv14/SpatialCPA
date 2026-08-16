@@ -256,6 +256,30 @@ def test_empty_candidate_pool_warns_rather_than_crashing(cfg: Config, volume: Vo
     assert (weights == 0.0).all()
 
 
+def test_excluding_every_section_warns_rather_than_raising(cfg: Config, volume: Volume) -> None:
+    """The degenerate exclusion: no candidate *columns* at all, not merely no valid ones.
+
+    Distinct from the test above, where one section is gathered and then masked away. Here
+    ``exclude_z`` names every section, so ``_gather_candidates`` returns a zero-width block
+    and the row-wise reductions have nothing to fold over. It used to surface as a bare
+    numpy ``ValueError`` from inside ``_masked_softmax`` — reachable only since the z window
+    stopped being able to empty a pool, and the wrong answer either way: the documented
+    contract for a query with no evidence is a warning and a fully masked neighbour set.
+    """
+    index = RetrievalIndex(volume, cfg)
+    xyz = volume.bbox.mean(axis=0).astype(np.float64)[None, :]
+    everything = {float(s.z) for s in volume.sections}
+    with pytest.warns(EmptyCandidatePoolWarning, match="no admissible donor"):
+        idx, weights = index.query(xyz, everything, seed=0)
+    assert idx.shape == weights.shape == (1, cfg.retrieval_k)
+    assert (idx == PAD_INDEX).all()
+    assert (weights == 0.0).all()
+
+    tokens, mask = index.neighbour_tokens(xyz, idx)
+    assert not bool(mask.any())
+    assert float(tokens.abs().max()) == 0.0
+
+
 def test_a_narrow_absolute_window_no_longer_empties_the_pool(cfg: Config, volume: Volume) -> None:
     """The negative of the test above, kept separate because it is the actual fix.
 

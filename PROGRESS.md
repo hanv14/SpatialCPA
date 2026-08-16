@@ -1787,10 +1787,14 @@ partial padding from a five-cell donor section instead of a fully empty pool), a
 `test_inert_score_warns_when_the_union_is_no_larger_than_k` (pins `gap_factor = 1.0` so the window
 still admits one section either side). Five new tests.
 
-**Latent bug found, not fixed, out of scope:** `query(xyz, {every section z})` crashes in
-`_masked_softmax` with a bare numpy `ValueError` (zero-size reduction on the empty candidate block)
-instead of the documented `EmptyCandidatePoolWarning`. Pre-existing; only reachable now because the
-window can no longer be what empties a pool.
+**Latent bug found and fixed (accepted as a follow-up).** `query(xyz, {every section z})` crashed in
+`_masked_softmax` with a bare numpy `ValueError` — a zero-size reduction, because `exclude_z` naming
+every section leaves a zero-*width* candidate block rather than a masked one. Pre-existing, and only
+reachable once the window stopped being able to empty a pool. `_masked_softmax` now returns zeros for
+a zero-width block, which is the same answer it already gave an all-masked row, so the documented
+contract holds: `EmptyCandidatePoolWarning` plus a fully masked neighbour set. Distinct enough from
+the masked-away case to get its own test (`test_excluding_every_section_warns_rather_than_raising`).
+The guard cannot fire on any non-degenerate query, and the gates were re-run to confirm it.
 
 `make check` green (204 passed / 1 xfailed fast, ruff clean, `mypy --strict` clean). Both gates
 re-run: 11 gate tests pass in 8 m 05 s, and every headline number reproduces the recorded report

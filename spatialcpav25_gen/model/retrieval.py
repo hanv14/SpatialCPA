@@ -932,7 +932,17 @@ def _one_hot(codes: IntArray, n: int) -> FloatArray:
 def _masked_softmax(
     score: FloatArray, keep: npt.NDArray[np.bool_], temperature: float
 ) -> FloatArray:
-    """Row-wise softmax over the kept entries; all-masked rows return zeros, not NaN."""
+    """Row-wise softmax over the kept entries; all-masked rows return zeros, not NaN.
+
+    A **zero-width** block — no candidate columns at all, which is what ``exclude_z`` naming
+    every section leaves behind — is the same answer as an all-masked row and is returned
+    the same way. Handled here rather than left to the reduction below, because
+    ``max`` over an empty axis raises ``ValueError`` and the caller's contract for a query
+    with no evidence is :class:`EmptyCandidatePoolWarning`, not a numpy error from three
+    frames down.
+    """
+    if score.shape[1] == 0:
+        return np.zeros(score.shape, dtype=np.float64)
     scaled = np.where(keep, score / max(temperature, 1e-9), -np.inf)
     shift = np.where(keep.any(axis=1, keepdims=True), scaled.max(axis=1, keepdims=True), 0.0)
     exponent = np.where(keep, np.exp(scaled - shift), 0.0)
