@@ -3,7 +3,8 @@
 #
 # Committed so that closing SPEC_QUESTIONS C14 needs no guessing about which symbols to look up:
 #
-#     python scripts/build_gene_meta.py --symbols-from resources/starmap_panel_symbols.txt
+#     python scripts/build_gene_meta.py --species mouse \
+#         --symbols-from resources/starmap_panel_symbols.txt
 #
 # That command needs outbound access to mygene.info. It is NOT available in the container this file
 # was written in (see PROGRESS.md, T06 follow-ups): the agent proxy records

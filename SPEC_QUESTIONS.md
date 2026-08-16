@@ -660,6 +660,53 @@ Two of its three numbers are stochastic: the Leiden partition of the co-expressi
 gene-pair subsample when `G` is large. Convention 3 requires an explicit seed. *Resolution (T02):*
 the signature gains a required keyword-only `seed: int`; nothing else changes.
 
+### B19. `build_gene_meta` returned four species' genes for a one-species request (reported, four defects, all fixed)
+Reported after a build of a **1138-symbol mouse panel** with `--species mouse`: the written table held
+ENSMUSG 389, ENSMSIG 324 (ground squirrel), ENSNVIG 234 (mink), ENSMPUG 111 (ferret), ENSFALG 73
+(falcon), FBgn 2 (fruit fly) and 5 with no id; summaries 144/1138. Two earlier symptoms in the same
+session: `Config.mygene_species = "human,mouse"` did not restrict to two species either, and a
+`--species mouse` re-run printed "wrote 1122/1122" while the file kept 1138 rows of the old mixed data.
+
+**`species` was reaching the API.** Read from the installed client's source: `querymany` forwards
+`species` verbatim into the POST body, so the parameter was sent. The mixing came from four defects
+*around* the query, three of them certain from the code alone:
+
+1. **The cache short-circuited every re-run.** `missing = [s for s in symbols if s not in cached]`,
+   so after one bad build every symbol was cached and a corrected `--species` run **issued no query
+   at all** — the species argument could not filter because nothing was requested. This is the main
+   reason it "was not filtering".
+2. **The writer merged and never replaced.** `pd.concat([cached, new_rows])` with no removal, so a
+   1122-symbol request left 16 stale rows of unknown provenance in a 1138-row file.
+3. **The printed count was not a property of the file.** "1122/1122" counted *requested symbols
+   carrying a full name*, not rows on disk — a number that cannot detect a wrong file.
+4. **Among several hits per symbol, the first won.** `if query in out: continue`, with no species
+   check, no exact-match preference and no `_score`; under `scopes="symbol,alias"` another gene's
+   *alias* in another species routinely arrives first. `taxid` was not even in `fields`, so what came
+   back was never inspected, and there was no species column, so the result could not be audited.
+
+**And the network path had no test at all**, which is how it survived T02. That is fixed too: a
+`MyGeneClient` protocol plus `load_mygene_client` seam (the same shape as T02's transformer seam) lets
+a fake client reproduce the reported response offline.
+
+*Fixed, with the reported response replayed as the check* — 1138 symbols in, 1138 rows on disk,
+`{'ENSMUSG': 1133, 'None': 5}`, one resolved taxid, 749 wrong-species hits dropped loudly:
+
+| # | fix |
+|---|---|
+| 1 | `taxid` requested and **verified** per hit against the resolved taxid; wrong-species hits dropped, and if *nothing* resolves to the request the query **raises** rather than writing (a systematic filter failure is not a per-gene absence) |
+| 2 | `resolve_species` refuses anything but **one** species; `Config.mygene_species` default `"human,mouse"` → `"mouse"`, since a symbol-keyed table describes one organism |
+| 3 | `species_requested` and `species_resolved` columns on every row; `gene_meta_summary` reports both plus the Ensembl-prefix histogram that made the bug visible |
+| 4 | **replace by default**, `merge=True` for the accumulate case (and a merge across organisms raises); the script prints the row count **of the file on disk** and exits non-zero if it disagrees with the request |
+| 5 | `load_gene_meta(path, species=...)` **raises** on a mismatch, and on a pre-species-column table whose rows carry metadata but no species — while still allowing legitimately unresolvable symbols, or the gate would be unusable on any real panel |
+| 6 | best hit chosen, not first: right species, then exact symbol match over an alias match, then `_score`; residual same-species ambiguity is counted and warned |
+
+*Not measurable here:* the **mouse-only summary coverage**, because mygene.info is 403'd in this
+container (see C14). The old 144/1138 is explained — summaries were lost on exactly the 744 rows that
+resolved to non-reference species, whose gene records carry no NCBI summary — and the corrected query
+keeps the mouse hit, so coverage should rise to whatever fraction of these 1138 mouse genes have an
+NCBI summary. `scripts/build_gene_meta.py` now prints that number (`with summary N/rows`) as a
+property of the file; it has to be read off a run with network access.
+
 ### C14. `resources/gene_meta.parquet` is described as "shipped" but nothing can build it offline — **OPEN, and now BLOCKING the paper's headline novelty** (raised in T02, escalated at T06)
 **Escalated at T06, with the measurement that makes it blocking.** Zero-shot decoding of
 never-trained genes measures **r = −0.368** on the synthetic fixture (B18) — the open-vocabulary claim

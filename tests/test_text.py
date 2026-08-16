@@ -5,6 +5,8 @@ Every numeric threshold here comes from `specs/02_TASK_text_embeddings.md`.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
@@ -12,14 +14,17 @@ from spatialcpav25_gen.config import Config
 from spatialcpav25_gen.data.text import (
     GENE_META_COLUMNS,
     GeneMeta,
+    GeneMetaError,
     GeneMetaUnavailableWarning,
     TextEncoder,
     build_gene_meta,
     celltype_descriptor,
     descriptor_key,
     gene_descriptor,
+    gene_meta_summary,
     load_gene_meta,
     region_descriptor,
+    resolve_species,
 )
 from spatialcpav25_gen.model.embeddings import (
     EntityEmbeddings,
@@ -220,9 +225,13 @@ def test_offline_survives_a_failed_lookup(monkeypatch, cache_cfg):
 
 
 def test_gene_meta_table_is_reused(cache_cfg):
-    """A cached row is reused rather than re-derived, and the table keeps other symbols."""
+    """``merge=True`` reuses a cached row and keeps other symbols — the accumulate path.
+
+    It is no longer the default. See ``test_build_replaces_by_default``: reusing cached rows is what
+    made a corrected ``--species`` re-run issue no queries at all.
+    """
     with pytest.warns(GeneMetaUnavailableWarning):
-        build_gene_meta(["Gad1"], cache_cfg)
+        build_gene_meta(["Gad1"], cache_cfg, merge=True)
 
     import pandas as pd
 
@@ -231,7 +240,7 @@ def test_gene_meta_table_is_reused(cache_cfg):
     table.to_parquet(cache_cfg.gene_meta_path, index=False)
 
     with pytest.warns(GeneMetaUnavailableWarning):
-        out = build_gene_meta(["Slc17a7"], cache_cfg)
+        out = build_gene_meta(["Slc17a7"], cache_cfg, merge=True)
     assert list(out["symbol"]) == ["Slc17a7"]
 
     meta = load_gene_meta(cache_cfg.gene_meta_path)
@@ -430,3 +439,241 @@ def test_diagnostics_rejects_mismatched_expression(cfg):
     emb = _embedding(cfg, n=5)
     with pytest.raises(ValueError, match="n_entities"):
         text_embedding_diagnostics(emb, np.zeros((10, 4)), seed=0)
+
+
+# --------------------------------------------------------------------------------------
+# the mygene query — regression tests for a measured multi-species build
+# --------------------------------------------------------------------------------------
+#
+# A 1138-symbol MOUSE panel came back with 389 ENSMUSG ids and 744 from ground squirrel (ENSMSIG),
+# mink (ENSNVIG), ferret (ENSMPUG) and falcon (ENSFALG), 2 from fruit fly, and 5 with no id at all;
+# summaries fell to 144/1138. Nothing raised. The network path had no test at all, which is how it
+# survived; it has one now — a fake client reproducing exactly that response shape.
+
+TAXID_MOUSE = 10090
+TAXID_GROUND_SQUIRREL = 43179
+TAXID_FALCON = 8954
+
+
+class FakeMyGene:
+    """A mygene client that ignores the ``species`` parameter, as the real one appeared to.
+
+    Returns, per symbol: an alias hit from another species *first* (so "the first wins" picks the
+    wrong one), then the exact mouse hit. That is the response the old code turned into falcon rows.
+    """
+
+    def __init__(self, *, honour_species: bool = False, mouse_only: bool = False) -> None:
+        self.honour_species = honour_species
+        self.mouse_only = mouse_only
+        self.calls: list[dict[str, object]] = []
+
+    def querymany(self, qterms, **kwargs):
+        self.calls.append({"n": len(qterms), **kwargs})
+        hits = []
+        for symbol in qterms:
+            if not (self.honour_species or self.mouse_only):
+                hits.append(
+                    {
+                        "query": symbol,
+                        "symbol": f"{symbol}-like",  # an ALIAS match, not the symbol
+                        "name": f"{symbol} ortholog (falcon)",
+                        "taxid": TAXID_FALCON,
+                        "ensembl": {"gene": "ENSFALG00000012345"},
+                        "_score": 90.0,
+                    }
+                )
+                hits.append(
+                    {
+                        "query": symbol,
+                        "symbol": symbol,
+                        "name": f"{symbol} ortholog (ground squirrel)",
+                        "taxid": TAXID_GROUND_SQUIRREL,
+                        "ensembl": {"gene": "ENSMSIG00000054321"},
+                        "_score": 80.0,
+                    }
+                )
+            hits.append(
+                {
+                    "query": symbol,
+                    "symbol": symbol,
+                    "name": f"{symbol} full name",
+                    "summary": f"{symbol} does something in mouse.",
+                    "alias": [f"{symbol}a"],
+                    "taxid": TAXID_MOUSE,
+                    "ensembl": {"gene": "ENSMUSG00000000001"},
+                    "_score": 70.0,
+                }
+            )
+        return hits
+
+
+class FakeMyGeneWrongSpeciesOnly:
+    """Every hit is from another species: a systematic filter failure, not a per-gene absence."""
+
+    def querymany(self, qterms, **kwargs):
+        return [
+            {
+                "query": s,
+                "symbol": s,
+                "name": "falcon thing",
+                "taxid": TAXID_FALCON,
+                "ensembl": {"gene": "ENSFALG00000000001"},
+            }
+            for s in qterms
+        ]
+
+
+def install_fake_mygene(monkeypatch, client):
+    """Point ``load_mygene_client`` at ``client`` and return it."""
+    from spatialcpav25_gen.data import text as text_mod
+
+    monkeypatch.setattr(text_mod, "load_mygene_client", lambda _cfg: client)
+    return client
+
+
+def test_resolve_species_requires_exactly_one():
+    """A gene table describes one organism; ``"human,mouse"`` is refused, taxids are accepted."""
+    assert resolve_species("mouse") == ("mouse", 10090)
+    assert resolve_species(" human ") == ("human", 9606)
+    assert resolve_species("10090") == ("10090", 10090)
+    for bad in ("human,mouse", "", "wombat", "mouse,"):
+        if bad == "mouse,":
+            assert resolve_species(bad) == ("mouse", 10090)  # a trailing comma is not two species
+            continue
+        with pytest.raises(GeneMetaError):
+            resolve_species(bad)
+
+
+def test_query_keeps_only_the_requested_species(monkeypatch, cache_cfg):
+    """The species filter is enforced **after** the query, not trusted.
+
+    The fake client ignores ``species`` and returns a falcon alias hit first, a ground-squirrel hit
+    second and the mouse hit last — the response that produced 744 wrong rows. Every emitted row
+    must be mouse, and must be the *exact* mouse hit rather than the first thing that arrived.
+    """
+    client = install_fake_mygene(monkeypatch, FakeMyGene())
+    online = cache_cfg.replace(text_allow_network=True, mygene_species="mouse")
+    with pytest.warns(GeneMetaUnavailableWarning, match="other species"):
+        table = build_gene_meta(["Gad1", "Slc17a7"], online)
+
+    assert list(table["symbol"]) == ["Gad1", "Slc17a7"]
+    assert list(table["species_requested"]) == ["mouse", "mouse"]
+    assert list(table["species_resolved"]) == ["10090", "10090"]
+    assert all(str(v).startswith("ENSMUSG") for v in table["ensembl_id"])
+    assert list(table["full_name"]) == ["Gad1 full name", "Slc17a7 full name"]
+    # `_clean` strips the trailing period (T02's descriptor grammar), so match without it.
+    assert all(str(v).endswith("in mouse") for v in table["summary"])
+    # and the request did carry the species, whatever the endpoint then did with it
+    assert client.calls[0]["species"] == "mouse"
+    assert "taxid" in str(client.calls[0]["fields"])
+
+
+def test_query_raises_when_nothing_is_the_requested_species(monkeypatch, cache_cfg):
+    """A systematically wrong species is an error, not a degradation.
+
+    Degrading here is what wrote the table the bug report is about: every row present, every row
+    wrong, every downstream stage succeeding.
+    """
+    install_fake_mygene(monkeypatch, FakeMyGeneWrongSpeciesOnly())
+    online = cache_cfg.replace(text_allow_network=True, mygene_species="mouse")
+    with pytest.raises(GeneMetaError, match="not one of"):
+        build_gene_meta(["Gad1", "Slc17a7"], online)
+    # nothing was written
+    assert not Path(online.gene_meta_path).exists()
+
+
+def test_build_replaces_by_default(monkeypatch, cache_cfg):
+    """The table on disk is exactly the requested symbols, and every one is re-queried.
+
+    The two halves of the reported "the species argument is not filtering": stale rows survived a
+    smaller request, and a symbol already cached was never looked up again — so a corrected
+    ``--species`` run issued zero queries and reported success.
+    """
+    client = install_fake_mygene(monkeypatch, FakeMyGene(mouse_only=True))
+    online = cache_cfg.replace(text_allow_network=True, mygene_species="mouse")
+    build_gene_meta(["Gad1", "Slc17a7", "Pvalb"], online)
+    assert gene_meta_summary(online.gene_meta_path)["rows"] == 3
+
+    # A smaller request replaces: no stale rows, and it queried all two again.
+    before = len(client.calls)
+    build_gene_meta(["Gad1", "Slc17a7"], online)
+    summary = gene_meta_summary(online.gene_meta_path)
+    assert summary["rows"] == 2
+    assert set(load_gene_meta(online.gene_meta_path)) == {"Gad1", "Slc17a7"}
+    assert client.calls[before]["n"] == 2, "a re-run must re-query, not short-circuit on the cache"
+
+    # merge=True keeps the extras, which is the only behaviour that should ever accumulate.
+    build_gene_meta(["Pvalb"], online, merge=True)
+    assert gene_meta_summary(online.gene_meta_path)["rows"] == 3
+
+
+def test_gene_meta_summary_describes_the_file(monkeypatch, cache_cfg):
+    """The reported counts are properties of the file, including the Ensembl-prefix histogram."""
+    install_fake_mygene(monkeypatch, FakeMyGene(mouse_only=True))
+    online = cache_cfg.replace(text_allow_network=True, mygene_species="mouse")
+    build_gene_meta(["Gad1", "Slc17a7"], online)
+    summary = gene_meta_summary(online.gene_meta_path)
+    assert summary["rows"] == 2
+    assert summary["with_summary"] == 2
+    assert summary["species_resolved"] == ["10090"]
+    assert summary["ensembl_prefixes"] == {"ENSMUSG": 2}
+
+
+def test_load_gene_meta_refuses_a_species_mismatch(monkeypatch, cache_cfg):
+    """``load_gene_meta`` **raises** on the wrong organism, and on a table with no species."""
+    install_fake_mygene(monkeypatch, FakeMyGene(mouse_only=True))
+    online = cache_cfg.replace(text_allow_network=True, mygene_species="mouse")
+    build_gene_meta(["Gad1"], online)
+
+    assert set(load_gene_meta(online.gene_meta_path, species="mouse")) == {"Gad1"}
+    with pytest.raises(GeneMetaError, match="One organism per table"):
+        load_gene_meta(online.gene_meta_path, species="human")
+
+    # A table written before the species columns existed reads as unlabelled, and is refused: its
+    # rows carry metadata but cannot be checked. A *degraded* row (no metadata, no species) is a
+    # different thing and must still load — every real panel has symbols mygene.info knows nothing
+    # about, and refusing those would make the gate unusable.
+    import pandas as pd
+
+    table = pd.read_parquet(online.gene_meta_path)
+    table["species_resolved"] = None
+    table.to_parquet(online.gene_meta_path, index=False)
+    with pytest.raises(GeneMetaError, match="no species recorded"):
+        load_gene_meta(online.gene_meta_path, species="mouse")
+
+
+def test_species_gate_allows_unresolvable_symbols(monkeypatch, cache_cfg):
+    """A panel with symbols mygene.info has nothing for still loads under the species gate."""
+    from spatialcpav25_gen.data import text as text_mod
+
+    class PartiallyKnown:
+        def querymany(self, qterms, **kwargs):
+            return [
+                {
+                    "query": s,
+                    "symbol": s,
+                    "name": f"{s} name",
+                    "taxid": TAXID_MOUSE,
+                    "ensembl": {"gene": "ENSMUSG00000000001"},
+                }
+                for s in qterms
+                if s != "Nothingness1"
+            ]
+
+    monkeypatch.setattr(text_mod, "load_mygene_client", lambda _cfg: PartiallyKnown())
+    online = cache_cfg.replace(text_allow_network=True, mygene_species="mouse")
+    with pytest.warns(GeneMetaUnavailableWarning, match="no metadata"):
+        build_gene_meta(["Gad1", "Nothingness1"], online)
+
+    meta = load_gene_meta(online.gene_meta_path, species="mouse")
+    assert set(meta) == {"Gad1", "Nothingness1"}
+    assert meta["Nothingness1"].full_name is None
+
+
+def test_merge_refuses_to_mix_organisms(monkeypatch, cache_cfg):
+    """Extending a mouse table with a human request raises rather than mixing them."""
+    install_fake_mygene(monkeypatch, FakeMyGene(mouse_only=True))
+    online = cache_cfg.replace(text_allow_network=True, mygene_species="mouse")
+    build_gene_meta(["Gad1"], online)
+    with pytest.raises(GeneMetaError, match="One organism per table"):
+        build_gene_meta(["GAD1"], online.replace(mygene_species="human"), merge=True)

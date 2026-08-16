@@ -5,9 +5,15 @@ The only sanctioned way this project touches the network. Run it by hand, on a m
 with outbound access, before training; training and tests read the cached table and never
 go online (T02 "Do NOT").
 
-    python scripts/build_gene_meta.py --symbols-from panel.h5ad
-    python scripts/build_gene_meta.py Gad1 Slc17a7 Pvalb
+    python scripts/build_gene_meta.py --species mouse --symbols-from panel.h5ad
+    python scripts/build_gene_meta.py --species human Gad1 Slc17a7 Pvalb
     python scripts/build_gene_meta.py --offline Gad1        # symbol-only rows, no network
+    python scripts/build_gene_meta.py --species mouse --merge extra_panel.txt   # extend a table
+
+**One organism per table.** `--species` takes exactly one species; a table is keyed by symbol, so a
+two-species request lets the same symbol resolve to two different genes. The table records both the
+requested species and the resolved taxid in every row, the writer **replaces** by default, and the
+printed counts are properties of the file on disk.
 
 Symbols that mygene.info does not resolve degrade to symbol-only rows and are reported.
 """
@@ -19,7 +25,12 @@ import sys
 from pathlib import Path
 
 from spatialcpav25_gen.config import Config
-from spatialcpav25_gen.data.text import build_gene_meta, gene_descriptor, load_gene_meta
+from spatialcpav25_gen.data.text import (
+    build_gene_meta,
+    gene_descriptor,
+    gene_meta_summary,
+    load_gene_meta,
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -46,6 +57,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--offline",
         action="store_true",
         help="do not query mygene.info; write symbol-only rows",
+    )
+    parser.add_argument(
+        "--merge",
+        action="store_true",
+        help=(
+            "keep rows already in the table and reuse cached rows for the requested symbols. "
+            "OFF by default: merging is what made a corrected --species re-run a no-op, because "
+            "every symbol was already cached and no query was issued"
+        ),
     )
     return parser.parse_args(argv)
 
@@ -82,11 +102,29 @@ def main(argv: list[str] | None = None) -> int:
         mygene_species=args.species,
         **({} if args.out is None else {"gene_meta_path": str(args.out)}),
     )
-    build_gene_meta(symbols, cfg)
+    build_gene_meta(symbols, cfg, merge=args.merge)
 
-    meta = load_gene_meta(cfg.gene_meta_path)
-    resolved = [s for s in symbols if s in meta and meta[s].full_name is not None]
-    print(f"wrote {cfg.gene_meta_path}: {len(resolved)}/{len(symbols)} symbols carry metadata")
+    # Report the file that now exists, not the request. The previous version printed how many
+    # *requested* symbols carried a full name ("1122/1122") while the file held 1138 rows of
+    # mixed-species data, so the number could not detect the thing that was wrong.
+    summary = gene_meta_summary(cfg.gene_meta_path)
+    print(f"wrote {summary['path']}")
+    print(f"  rows on disk        {summary['rows']}   (requested {len(symbols)})")
+    print(f"  species requested   {summary['species_requested']}")
+    print(f"  species resolved    {summary['species_resolved']} (taxid)")
+    print(f"  with full_name      {summary['with_full_name']}/{summary['rows']}")
+    print(f"  with summary        {summary['with_summary']}/{summary['rows']}")
+    print(f"  with ensembl_id     {summary['with_ensembl_id']}/{summary['rows']}")
+    print(f"  ensembl prefixes    {summary['ensembl_prefixes']}")
+    if summary["rows"] != len(symbols) and not args.merge:
+        print(
+            f"  !! {summary['rows']} rows for {len(symbols)} requested symbols without --merge; "
+            "that should not happen",
+            file=sys.stderr,
+        )
+        return 1
+
+    meta = load_gene_meta(cfg.gene_meta_path, species=None if args.offline else args.species)
     for symbol in symbols[:3]:
         print(f"  {gene_descriptor(symbol, meta.get(symbol))[:160]}")
     return 0

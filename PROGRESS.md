@@ -35,7 +35,7 @@ table covers everything that has been done to the repository.
 |---|---|---|---|---|
 | R1 | **`ell_z` cannot be resolved by a 9-section stack.** The fit returns **561 µm** against a **200 µm** ground truth on the gate fixture (353 µm at the 1000 µm field of view). | T03 | T07 | **before T07** |
 | R2 | ~~GATE 2's attention is near-uniform (0.987 × log K)~~ — **CLOSED at T06.** With the flow-matching head trained the entropy falls to **0.8563 × log K** (a fall of 0.132, required 0.05) and stays above the 0.5 collapse line. The query is what changed: T04's probe queried with the field feature alone, T06's with `[F(p), fourier(p), type_emb, region_emb, z_embed]`, and a query that knows its own cell type can prefer a donor that shares it. | T04 | T06 | **closed 2026-08-16** |
-| R5 | **C14 blocks the paper's headline novelty.** Open-vocabulary decoding has no positive evidence: zero-shot is r = −0.368 on the fixture (B18) because arbitrary gene names carry no text signal, and `resources/gene_meta.parquet` cannot be built here — every gene-annotation host is 403'd by the network policy. Needs one command on a networked machine (see C14). | T02, T06 | T10 (E1) | **before the first real run** |
+| R5 | **C14 blocks the paper's headline novelty.** *(Sharpened: the table also has to be *built correctly* — see B19, four defects in `build_gene_meta` that produced four species' genes for a one-species request, all fixed and replayed, but the live mouse-only summary coverage is still unmeasured here.)* Open-vocabulary decoding has no positive evidence: zero-shot is r = −0.368 on the fixture (B18) because arbitrary gene names carry no text signal, and `resources/gene_meta.parquet` cannot be built here — every gene-annotation host is 403'd by the network policy. Needs one command on a networked machine (see C14). | T02, T06 | T10 (E1) | **before the first real run** |
 | R4 | **Likelihood/fidelity divergence — one pathology, two heads.** Fitting by likelihood alone makes the likelihood better and the *generated section* worse. On the **layout intensity** head (SPEC_QUESTIONS B10, T05): recovered intensity correlation 0.97 → 0.28 over 300 → 1200 steps while the Poisson NLL keeps falling. On the **expression** head (T06): 1200 → 2400 steps lowers the ZINB NLL 1.589 → 1.578 nats/pair while Frobenius covariance error goes 17.7 → 21.3 and detection MAD 0.056 → 0.069. Neither head has a term that could stop it. **`TRAIN_STEPS = 1200` is early stopping fitted to this fixture and will not transfer to real data.** | T05 (B10), T06 | T08, T09 | **at T08** (criterion: `test_metric_losses_close_the_covariance_loss`) |
 | R3 | **The stack's ends reconstruct far worse than its interior.** Per-section R² was **0.2912** at the first section and **0.3642** at the last, against an interior mean of **0.4474** — a 20–35 % deficit. One-sided evidence at the volume boundary. | T04 | T09, T10 | **at T09** |
 
@@ -1491,3 +1491,61 @@ python scripts/build_gene_meta.py --symbols-from resources/starmap_panel_symbols
 
 A wider panel would be better than this one — 28 genes is a thin test of open vocabulary — so pass a
 larger real panel's symbols too if one is available.
+
+### T02 (repaired at T06) — `build_gene_meta` returned four species' genes for `--species mouse` (2026-08-16)
+
+Reported from a networked run: a **1138-symbol mouse panel** written with ENSMUSG 389, ENSMSIG 324
+(ground squirrel), ENSNVIG 234 (mink), ENSMPUG 111 (ferret), ENSFALG 73 (falcon), FBgn 2 (fruit fly),
+5 with no id, and summaries down to 144/1138. Nothing raised.
+
+**The species parameter was being sent.** I installed the pinned `mygene` client and read its source:
+`querymany` puts `species` straight into the POST body, so `species="mouse"` did reach the endpoint.
+The mixing came from four defects *around* the query — three of them certain from our own code, and
+the fourth is why a wrong hit could win even when the right one was present. Full write-up in
+SPEC_QUESTIONS **B19**; in short:
+
+1. **the cache short-circuited every re-run** (`missing = [s for s in symbols if s not in cached]`), so
+   a corrected `--species` run issued **no query at all** — the argument could not filter because
+   nothing was asked. This is most of "the species argument is not filtering";
+2. **the writer merged and never replaced**, leaving 16 stale rows in a 1138-row file for a
+   1122-symbol request;
+3. **the printed count was not a property of the file** — "1122/1122" counted requested symbols with a
+   full name, so it could not detect a wrong file;
+4. **among several hits per symbol the first won**, with no species check, no exact-match preference
+   and no `_score`; `taxid` was not even in `fields`, and there was no species column, so the result
+   could not be audited afterwards.
+
+**And the network path had no test at all**, which is how this survived T02. It has one now: a
+`MyGeneClient` protocol and a `load_mygene_client` seam (the shape T02 already used for the
+transformer), so a fake client reproduces the reported response offline.
+
+**All six fixes, replayed against the reported response** (a fake client returning exactly that
+mix, non-mouse hits first):
+
+| | before | after |
+|---|---|---|
+| rows on disk for 1138 requested | 1138, mixed | **1138** |
+| Ensembl prefixes | ENSMUSG 389 + 744 others + 5 none | **`{'ENSMUSG': 1133, 'None': 5}`** |
+| resolved species in the table | not recorded | **`['10090']`** |
+| wrong-species hits | written | **749 dropped, warned** |
+| re-run with 1122 symbols | 1138 rows, 0 queries | **1122 rows, query issued** |
+| `load_gene_meta(..., species="human")` | loaded happily | **raises** |
+
+Also: `Config.mygene_species` default `"human,mouse"` → **`"mouse"`**, because a symbol-keyed table
+describes one organism and a two-species request lets whichever hit arrived first win;
+`resolve_species` refuses anything else. `specs/10` now requires E1 to pass the species to
+`load_gene_meta` and to quote the table's own coverage. One new fast test file section, 7 tests,
+`make check` green.
+
+**The number I was asked for and cannot produce: the mouse-only summary coverage.** mygene.info is
+403'd in this container (C14), so the only summaries I can count are my fake's. What the old 144/1138
+*was* is now explained — summaries were lost on precisely the 744 rows that resolved to non-reference
+species, whose gene records carry no NCBI summary — and the corrected query keeps the mouse hit, so
+coverage should rise to whatever share of these 1138 mouse genes have an NCBI summary.
+`scripts/build_gene_meta.py` prints it as `with summary N/rows`, computed from the file on disk; it
+needs one run on a networked machine:
+
+```
+pip install -e ".[extra]"
+python scripts/build_gene_meta.py --species mouse --symbols-from <panel>.txt
+```

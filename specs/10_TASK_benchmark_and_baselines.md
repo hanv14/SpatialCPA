@@ -141,6 +141,16 @@ or subsequent baselines silently receive corrupted data. This has bitten people 
 For the alternating/consecutive regimes, generate at the same `alpha` positions the held-out sections
 occupy, so the comparison is like-for-like.
 
+### E1 must load the gene table with its species, and report the table's own coverage
+
+`load_gene_meta(path, species=...)` **raises** on a table of the wrong organism (added after a mouse
+panel's table came back holding four other mammals' genes and nothing noticed). E1 must pass
+`Config.mygene_species`, and the headline text must quote the table's own coverage —
+`gene_meta_summary` reports rows, resolved taxid, how many rows carry a summary, and the Ensembl-id
+prefix histogram — because "the model decodes unseen genes at r = X" means nothing without knowing
+that the descriptors were real. **One table per organism**, at different `Config.gene_meta_path`s: the
+mouse and human datasets do not share one.
+
 ### ⛔ The gene–gene covariance comparison is a LOSS as of T06. Framing rule for the paper.
 
 `run_independent_donor` exists to isolate chimerism, and T06 measured both halves of that comparison.

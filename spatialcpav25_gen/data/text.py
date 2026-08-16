@@ -35,7 +35,7 @@ import warnings
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, Protocol
+from typing import Any, Final, Protocol, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -46,16 +46,21 @@ from spatialcpav25_gen.config import Config
 
 __all__ = [
     "GENE_META_COLUMNS",
+    "SPECIES_TAXID",
     "EncoderBackend",
     "GeneMeta",
+    "GeneMetaError",
     "GeneMetaUnavailableWarning",
+    "MyGeneClient",
     "TextEncoder",
     "TransformerBackend",
     "build_gene_meta",
     "celltype_descriptor",
     "descriptor_key",
     "gene_descriptor",
+    "gene_meta_summary",
     "load_gene_meta",
+    "load_mygene_client",
     "load_transformer_backend",
     "region_descriptor",
 ]
@@ -66,8 +71,48 @@ GENE_META_COLUMNS: Final[tuple[str, ...]] = (
     "summary",
     "aliases",
     "ensembl_id",
+    "species_requested",
+    "species_resolved",
 )
-"""Column order of ``resources/gene_meta.parquet``."""
+"""Column order of ``resources/gene_meta.parquet``.
+
+The two species columns were added after a build of a 1138-symbol **mouse** panel came back with 389
+ENSMUSG ids and 744 from ground squirrel, mink, ferret and falcon, two from fruit fly, and no way to
+tell from the table that anything was wrong. A table that cannot say which organism it describes
+cannot be checked. ``species_resolved`` is the **taxid** as a string, because that is what the API
+returns and what an assertion can be written against; ``species_requested`` is the name the caller
+used."""
+
+SPECIES_TAXID: Final[dict[str, int]] = {
+    "human": 9606,
+    "mouse": 10090,
+    "rat": 10116,
+    "fruitfly": 7227,
+    "nematode": 6239,
+    "zebrafish": 7955,
+    "frog": 8364,
+    "pig": 9823,
+    "chicken": 9031,
+    "macaque": 9544,
+}
+"""NCBI taxonomy ids of the species mygene.info names, for the ones this project might use.
+
+Not a ``Config`` field and not a magic number: these are facts about the NCBI taxonomy, in the same
+category as ``LAYOUT_MODES`` — a fixed set naming what a string-valued argument may be, not a
+tunable. A caller wanting a species outside this table passes the bare taxid instead (``"10090"``),
+which is checked to be digits and used directly."""
+
+
+class GeneMetaError(ValueError):
+    """The gene-metadata table, or the query that built it, is not what was asked for.
+
+    Raised rather than warned when the *identity* of the data is wrong — a table of the wrong
+    organism, a query that came back with a species nobody asked for. A missing summary degrades
+    (that is :class:`GeneMetaUnavailableWarning`); a mouse panel annotated from falcon genes does
+    not
+    degrade, it silently corrupts the text channel the whole open-vocabulary claim rests on, and
+    every stage downstream of it succeeds.
+    """
 
 
 class GeneMetaUnavailableWarning(UserWarning):
@@ -241,13 +286,14 @@ def descriptor_key(model_name: str, descriptor: str) -> str:
 # --------------------------------------------------------------------------------------
 
 
-def build_gene_meta(symbols: Sequence[str], cfg: Config | None = None) -> pd.DataFrame:
+def build_gene_meta(
+    symbols: Sequence[str], cfg: Config | None = None, *, merge: bool = False
+) -> pd.DataFrame:
     """Assemble the gene-metadata table for ``symbols``, caching it at ``cfg.gene_meta_path``.
 
-    Rows already present in the cached table are reused. Symbols still missing are looked
-    up on mygene.info **only** when ``cfg.text_allow_network`` is set; otherwise - and
-    whenever the lookup fails or returns nothing - they degrade to symbol-only rows and a
-    :class:`GeneMetaUnavailableWarning` says how many did.
+    Symbols are looked up on mygene.info **only** when ``cfg.text_allow_network`` is set;
+    otherwise - and whenever the lookup fails or returns nothing for a symbol - they degrade to
+    symbol-only rows and a :class:`GeneMetaUnavailableWarning` says how many did.
 
     Parameters
     ----------
@@ -257,12 +303,34 @@ def build_gene_meta(symbols: Sequence[str], cfg: Config | None = None) -> pd.Dat
         Supplies ``gene_meta_path``, ``text_allow_network`` and ``mygene_species``.
         Defaults to ``Config()``. (Additive keyword: the spec writes
         ``build_gene_meta(symbols)``, which has nowhere to read those from.)
+    merge
+        Keep rows already in the table that this call did not ask for, and reuse cached rows for
+        symbols it did. **Off by default, and that is a bug fix rather than a preference.**
 
     Returns
     -------
     pandas.DataFrame
         One row per requested symbol, columns :data:`GENE_META_COLUMNS`, in the order the
-        symbols were given.
+        symbols were given. The table written to disk holds exactly these rows unless ``merge``.
+
+    Replace, do not merge
+    ---------------------
+    The first version did the opposite, and it made ``Config.mygene_species`` unusable. It computed
+    ``missing = [s for s in symbols if s not in cached]`` and concatenated only the new rows, so:
+
+    * a **corrected re-run issued no queries at all.** After one bad build every symbol was cached,
+      so re-running with the right species against a table full of ground squirrel genes changed
+      nothing and reported success. The species parameter was never sent, because no request was
+      made. This is most of why the species argument looked like it was not filtering.
+    * **stale rows were never removed.** A 1122-symbol request against a table built from 1138
+      symbols left the 16 extras in place, of unknown provenance and unknown organism.
+
+    So by default this **replaces** the table with exactly the requested symbols, every one looked
+    up
+    afresh. ``merge=True`` restores accumulate-and-reuse for the case it was meant for — extending a
+    table with another panel of the same organism — and then the existing rows' species is checked
+    against the request, because merging two organisms into one symbol-keyed table is the other half
+    of the same bug.
     """
     cfg = Config() if cfg is None else cfg
     wanted = list(dict.fromkeys(str(s) for s in symbols))
@@ -270,15 +338,25 @@ def build_gene_meta(symbols: Sequence[str], cfg: Config | None = None) -> pd.Dat
         raise ValueError("build_gene_meta: symbols is empty")
 
     path = Path(cfg.gene_meta_path)
-    cached = _read_gene_meta_table(path) if path.exists() else _empty_gene_meta_table()
-    known = {str(row["symbol"]): row for row in _records(cached)}
+    requested_name = resolve_species(cfg.mygene_species)[0] if cfg.text_allow_network else None
+    cached: pd.DataFrame = _empty_gene_meta_table()
+    known: dict[str, dict[str, Any]] = {}
+    if merge and path.exists():
+        cached = _read_gene_meta_table(path)
+        known = {str(row["symbol"]): row for row in _records(cached)}
+        if requested_name is not None:
+            _check_table_species(known.values(), requested_name, path)
 
     missing = [s for s in wanted if s not in known]
     fetched: dict[str, dict[str, Any]] = {}
     if missing and cfg.text_allow_network:
         try:
             fetched = _query_mygene(missing, cfg)
-        except Exception as exc:  # noqa: BLE001 - any transport failure degrades, loudly
+        except GeneMetaError:
+            # The identity of the data is wrong, not merely absent. Do not degrade: a table of the
+            # wrong organism is worse than no table, because everything downstream succeeds.
+            raise
+        except Exception as exc:  # any transport failure degrades, loudly
             warnings.warn(
                 f"build_gene_meta: mygene.info lookup for {len(missing)} symbol(s) failed "
                 f"({type(exc).__name__}: {exc}); falling back to symbol-only rows.",
@@ -291,7 +369,7 @@ def build_gene_meta(symbols: Sequence[str], cfg: Config | None = None) -> pd.Dat
     for symbol in wanted:
         record = known.get(symbol) or fetched.get(symbol)
         if record is None:
-            record = _symbol_only_row(symbol)
+            record = _symbol_only_row(symbol, requested_name)
             degraded.append(symbol)
         rows.append(record)
 
@@ -309,19 +387,108 @@ def build_gene_meta(symbols: Sequence[str], cfg: Config | None = None) -> pd.Dat
             stacklevel=2,
         )
 
-    new_rows = [row for symbol, row in zip(wanted, rows, strict=True) if symbol not in known]
-    if new_rows:
-        merged = pd.concat(
-            [cached, pd.DataFrame(new_rows, columns=list(GENE_META_COLUMNS))],
-            ignore_index=True,
+    table = pd.DataFrame(rows, columns=list(GENE_META_COLUMNS)).reset_index(drop=True)
+    written = table
+    if merge and not cached.empty:
+        extra = cached[~cached["symbol"].astype(str).isin(set(wanted))]
+        written = pd.concat([table, extra], ignore_index=True)
+    _write_gene_meta_table(written, path)
+    return table
+
+
+def gene_meta_summary(path: str | Path) -> dict[str, Any]:
+    """Describe the table **on disk**: rows, species, coverage, and the Ensembl-prefix histogram.
+
+    What a build should report, and what the script got wrong: it printed the number of *requested
+    symbols carrying a full name* out of the number requested ("1122/1122") while the file held 1138
+    rows of mixed-species data. A count that is not a property of the file cannot detect a file that
+    is wrong. The prefix histogram is included because it is how the falcon genes were spotted in
+    the
+    first place — that should not have needed someone to think of it.
+    """
+    table = _read_gene_meta_table(Path(path))
+    records = _records(table)
+    return {
+        "path": str(path),
+        "rows": len(records),
+        "with_full_name": sum(1 for r in records if _clean(r["full_name"])),
+        "with_summary": sum(1 for r in records if _clean(r["summary"])),
+        "with_ensembl_id": sum(1 for r in records if _clean(r["ensembl_id"])),
+        "species_requested": sorted(
+            {str(r["species_requested"]) for r in records if r["species_requested"]}
+        ),
+        "species_resolved": sorted(
+            {str(r["species_resolved"]) for r in records if r["species_resolved"]}
+        ),
+        "ensembl_prefixes": _ensembl_prefix_counts(records),
+    }
+
+
+def _ensembl_prefix_counts(records: Sequence[dict[str, Any]]) -> dict[str, int]:
+    """Count Ensembl id prefixes (``ENSMUSG``, ``ENSFALG``, ...): the species-mixing tell."""
+    counts: dict[str, int] = {}
+    for record in records:
+        value = _clean(record.get("ensembl_id"))
+        if value is None:
+            key = "None"
+        else:
+            digits = next((i for i, ch in enumerate(value) if ch.isdigit()), len(value))
+            key = value[:digits] or value
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def _check_table_species(
+    records: Iterable[dict[str, Any]], requested_name: str, path: Path
+) -> None:
+    """Raise unless every *resolved* row of an existing table is the requested species.
+
+    The distinction that makes this usable on a real panel: a row with **no** species resolved is
+    either a symbol mygene.info had nothing for — legitimate, and every real panel has some — or a
+    row from a table written before the species columns existed. The two are told apart by whether
+    the row carries metadata. A row with a full name or an Ensembl id but no species is from the old
+    schema and is exactly the kind of row that turned out to be another organism's, so it is
+    refused;
+    a row with neither is simply absent, and is allowed.
+    """
+    taxid = str(resolve_species(requested_name)[1])
+    wrong: set[str] = set()
+    unlabelled = 0
+    for row in records:
+        resolved = row.get("species_resolved")
+        value = str(resolved) if resolved else ""
+        if value:
+            if value != taxid:
+                wrong.add(value)
+        elif _clean(row.get("full_name")) or _clean(row.get("ensembl_id")):
+            unlabelled += 1
+    if wrong:
+        raise GeneMetaError(
+            f"{path} holds rows resolved to species {sorted(wrong)} but {requested_name!r} "
+            f"(taxid {taxid}) was requested. One organism per table: build the second organism at "
+            "a different Config.gene_meta_path, or delete this file and rebuild it."
         )
-        _write_gene_meta_table(merged, path)
+    if unlabelled:
+        raise GeneMetaError(
+            f"{path} has {unlabelled} row(s) carrying metadata with no species recorded, so it "
+            f"cannot be checked against the requested {requested_name!r}. That is what a table "
+            "written before the species columns existed looks like, and such a table is exactly "
+            "the one that turned out to hold four organisms' genes. Rebuild it with "
+            "build_gene_meta "
+            "(Config.text_allow_network=True)."
+        )
 
-    return pd.DataFrame(rows, columns=list(GENE_META_COLUMNS)).reset_index(drop=True)
 
-
-def load_gene_meta(path: str | Path) -> dict[str, GeneMeta]:
+def load_gene_meta(path: str | Path, *, species: str | None = None) -> dict[str, GeneMeta]:
     """Load a gene-metadata table into ``symbol -> GeneMeta``.
+
+    Parameters
+    ----------
+    path
+        The table, normally ``Config.gene_meta_path``.
+    species
+        The organism the caller's data is from — in the pipeline ``Config.mygene_species``. When
+        given, the table's own ``species_resolved`` must match it, and a mismatch **raises**.
 
     Raises
     ------
@@ -330,6 +497,12 @@ def load_gene_meta(path: str | Path) -> dict[str, GeneMeta]:
         (:func:`build_gene_meta`); silently returning an empty mapping here would turn a
         missing table into a whole panel of bare-symbol descriptors that nobody notices
         (Convention 6).
+    GeneMetaError
+        If ``species`` is given and the table is not that organism's, or cannot say. A **refusal,
+        not a warning**: descriptors built from another organism's gene summaries are not degraded,
+        they are wrong, and everything downstream of them succeeds — the encoder produces vectors,
+        the model trains, the numbers look plausible, and the text channel is describing falcon
+        genes. There is no version of that which should be recoverable by ignoring a warning.
     """
     table_path = Path(path)
     if not table_path.exists():
@@ -339,7 +512,10 @@ def load_gene_meta(path: str | Path) -> dict[str, GeneMeta]:
             "with Config.text_allow_network=True if the summaries are wanted."
         )
     table = _read_gene_meta_table(table_path)
-    return {str(row["symbol"]): GeneMeta.from_row(row) for row in _records(table)}
+    records = _records(table)
+    if species is not None:
+        _check_table_species(records, resolve_species(species)[0], table_path)
+    return {str(row["symbol"]): GeneMeta.from_row(row) for row in records}
 
 
 def _records(table: pd.DataFrame) -> list[dict[str, Any]]:
@@ -352,14 +528,23 @@ def _empty_gene_meta_table() -> pd.DataFrame:
     return pd.DataFrame({column: pd.Series(dtype=object) for column in GENE_META_COLUMNS})
 
 
-def _symbol_only_row(symbol: str) -> dict[str, Any]:
-    """Return the degraded row for a symbol with no metadata."""
+def _symbol_only_row(symbol: str, requested_name: str | None) -> dict[str, Any]:
+    """Return the degraded row for a symbol with no metadata.
+
+    ``species_resolved`` is ``None`` — nothing resolved. ``species_requested`` still records what
+    was
+    asked for, so a table of degraded rows says which organism it was *meant* to describe, and
+    :func:`_check_table_species` can tell "mygene knew nothing about this symbol" (fine) from "this
+    row has metadata but no species" (a pre-species-column table, refused).
+    """
     return {
         "symbol": symbol,
         "full_name": None,
         "summary": None,
         "aliases": [],
         "ensembl_id": None,
+        "species_requested": requested_name,
+        "species_resolved": None,
     }
 
 
@@ -383,35 +568,175 @@ def _write_gene_meta_table(table: pd.DataFrame, path: Path) -> None:
     os.replace(tmp, path)
 
 
-def _query_mygene(symbols: Sequence[str], cfg: Config) -> dict[str, dict[str, Any]]:
-    """Query mygene.info for ``symbols``. Network path: never reached by training or tests.
+class MyGeneClient(Protocol):
+    """The one method :func:`_query_mygene` needs from ``mygene.MyGeneInfo``.
 
-    Any failure propagates to :func:`build_gene_meta`, which degrades and warns.
+    A seam, for the same reason T02 put one in front of the transformer
+    (:func:`load_transformer_backend`): this path had **no test at all**, which is how a query that
+    returned falcon genes for a mouse panel survived. A fake client makes the whole of
+    :func:`_query_mygene` — species filtering, hit selection, the assertions — testable offline.
+    """
+
+    def querymany(self, qterms: list[str], **kwargs: Any) -> list[dict[str, Any]]:
+        """Return one dict per (query term, hit) pair; see mygene.info's POST /query."""
+        ...  # pragma: no cover - protocol
+
+
+def load_mygene_client(cfg: Config) -> MyGeneClient:
+    """Construct the mygene.info client. The only place this package imports ``mygene``.
+
+    ``mygene`` is in the ``extra`` dependency group and is not installed by default, because nothing
+    in training or testing may reach the network (T02 "Do NOT"). Tests replace this function.
     """
     import mygene
 
-    client = mygene.MyGeneInfo()
+    del cfg
+    return cast(MyGeneClient, mygene.MyGeneInfo())
+
+
+def resolve_species(requested: str) -> tuple[str, int]:
+    """Resolve a species request to ``(name, taxid)``. Exactly one species, or raise.
+
+    ``Config.mygene_species`` used to default to ``"human,mouse"``, which a symbol-keyed table
+    cannot
+    honour: the same symbol exists in both organisms, so a two-species request lets whichever hit
+    the
+    API returned first win. That is not a filter, it is a coin toss, and it is one half of why a
+    mouse
+    panel came back mixed. One organism per table; a second organism is a second
+    ``Config.gene_meta_path``.
+    """
+    names = [part.strip() for part in str(requested).split(",") if part.strip()]
+    if len(names) != 1:
+        raise GeneMetaError(
+            f"Config.mygene_species={requested!r} names {len(names)} species. A gene-metadata "
+            "table is keyed by symbol and therefore describes exactly one organism: a "
+            "multi-species request lets the same symbol resolve to two different genes, with "
+            "whichever the API returned first winning. Build one table per organism, each at its "
+            "own Config.gene_meta_path."
+        )
+    name = names[0]
+    if name in SPECIES_TAXID:
+        return name, SPECIES_TAXID[name]
+    if name.isdigit():
+        return name, int(name)
+    raise GeneMetaError(
+        f"Config.mygene_species={name!r} is not one of {sorted(SPECIES_TAXID)} and is not a bare "
+        "NCBI taxid. Pass a name from that list, or the taxid as digits (mouse is '10090')."
+    )
+
+
+def _is_exact(hit: dict[str, Any], query: str) -> bool:
+    """Return ``True`` when the hit's own symbol equals the query, case-insensitively."""
+    return str(hit.get("symbol", "")).casefold() == query.casefold()
+
+
+def _hit_rank(hit: dict[str, Any], query: str) -> tuple[int, float]:
+    """Sort key for choosing among several hits for one symbol: exact match first, then score."""
+    try:
+        score = float(hit.get("_score", 0.0))
+    except (TypeError, ValueError):
+        score = 0.0
+    return (1 if _is_exact(hit, query) else 0, score)
+
+
+def _query_mygene(symbols: Sequence[str], cfg: Config) -> dict[str, dict[str, Any]]:
+    """Query mygene.info for ``symbols``. Network path: never reached by training.
+
+    Returns ``symbol -> row``, containing **only** hits whose ``taxid`` is the requested species'.
+
+    Three things this does that the first version did not, each the direct cause of a measured
+    defect
+    in a 1138-symbol mouse panel (389 mouse rows, 744 from four other mammals and a fly):
+
+    ``taxid`` is requested and **verified**
+        ``species`` is passed to the API *and* every hit's ``taxid`` is checked against the request.
+        The first version asked for ``species="mouse"``, never looked at what came back, and wrote
+        whatever it got. Whether the endpoint honours the parameter is now irrelevant: a hit from
+        the
+        wrong species is dropped here, and if *nothing* of the right species came back the query
+        raises rather than degrading: a systematic species failure is not a per-gene absence.
+
+    the best hit is chosen, not the first
+        ``querymany`` returns one entry per (query, hit) pair and a symbol routinely matches several
+        genes — the more so under ``scopes="symbol,alias"``, where another gene's *alias* can arrive
+        ahead of the exact symbol match. The first version kept whichever came first. Hits are now
+        ranked: right species, then an exact (case-insensitive) symbol match ahead of an alias
+        match,
+        then mygene's own ``_score``.
+
+    ambiguity is counted and reported
+        A symbol still matching two same-species genes exactly is a real paralog ambiguity, not a
+        bug; it is resolved by ``_score``, counted, and warned about, so a panel full of them is
+        visible rather than silent.
+    """
+    name, taxid = resolve_species(cfg.mygene_species)
+    client = load_mygene_client(cfg)
     hits = client.querymany(
         list(symbols),
         scopes="symbol,alias",
-        fields="symbol,name,summary,alias,ensembl.gene",
-        species=cfg.mygene_species,
+        # taxid is not optional: it is what the species check below reads.
+        fields="symbol,name,summary,alias,ensembl.gene,taxid",
+        species=name,
         verbose=False,
     )
-    out: dict[str, dict[str, Any]] = {}
+
+    by_symbol: dict[str, list[dict[str, Any]]] = {}
+    wrong_species: dict[str, int] = {}
     for hit in hits:
         if not isinstance(hit, dict) or hit.get("notfound"):
             continue
         query = str(hit.get("query", ""))
-        if not query or query in out:  # querymany can return several hits; the first wins
+        if not query:
             continue
+        hit_taxid = hit.get("taxid")
+        if hit_taxid is None or int(hit_taxid) != taxid:
+            key = "missing" if hit_taxid is None else str(int(hit_taxid))
+            wrong_species[key] = wrong_species.get(key, 0) + 1
+            continue
+        by_symbol.setdefault(query, []).append(hit)
+
+    if not by_symbol and wrong_species:
+        raise GeneMetaError(
+            f"_query_mygene: not one of {len(symbols)} symbol(s) resolved to species {name!r} "
+            f"(taxid {taxid}); what came back was {dict(sorted(wrong_species.items()))} by taxid. "
+            "The species filter is not being applied by the endpoint - do not write this table."
+        )
+    if wrong_species:
+        warnings.warn(
+            f"_query_mygene: dropped {sum(wrong_species.values())} hit(s) from other species while "
+            f"resolving {name!r} (taxid {taxid}); by taxid: {dict(sorted(wrong_species.items()))}. "
+            "Dropped, not written - but a large count means the endpoint is ignoring the species "
+            "parameter and this request is doing the filtering by itself.",
+            GeneMetaUnavailableWarning,
+            stacklevel=2,
+        )
+
+    out: dict[str, dict[str, Any]] = {}
+    ambiguous: list[str] = []
+    for query, candidates in by_symbol.items():
+        ranked = sorted(candidates, key=lambda hit: _hit_rank(hit, query), reverse=True)
+        best = ranked[0]
+        if len(ranked) > 1 and _is_exact(best, query) and _is_exact(ranked[1], query):
+            ambiguous.append(query)
         out[query] = {
             "symbol": query,
-            "full_name": _clean(hit.get("name")),
-            "summary": _clean(hit.get("summary")),
-            "aliases": list(_coerce_aliases(hit.get("alias"))),
-            "ensembl_id": _ensembl_id(hit.get("ensembl")),
+            "full_name": _clean(best.get("name")),
+            "summary": _clean(best.get("summary")),
+            "aliases": list(_coerce_aliases(best.get("alias"))),
+            "ensembl_id": _ensembl_id(best.get("ensembl")),
+            "species_requested": name,
+            "species_resolved": str(taxid),
         }
+    if ambiguous:
+        warnings.warn(
+            f"_query_mygene: {len(ambiguous)} symbol(s) matched more than one {name} gene exactly "
+            f"(first: {ambiguous[0]!r}); kept the highest-scoring hit. Paralogous symbols do this "
+            "legitimately, but a large count means the panel's symbols are not unique in this "
+            "organism and the join should be on ensembl_id instead.",
+            GeneMetaUnavailableWarning,
+            stacklevel=2,
+        )
     return out
 
 

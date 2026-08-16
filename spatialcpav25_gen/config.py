@@ -178,9 +178,18 @@ class Config:
     training or test path may reach the network (T02 "Do NOT"), so going online is an
     explicit, one-off opt-in when the table is built."""
 
-    mygene_species: str = "human,mouse"
-    """Species queried when ``build_gene_meta`` goes online; the datasets in T10 are
-    mouse and human."""
+    mygene_species: str = "mouse"
+    """The **one** species ``build_gene_meta`` queries, and the one a gene-metadata table describes.
+
+    Was ``"human,mouse"``, which is not a filter a symbol-keyed table can honour: the same symbol
+    exists in both organisms, so a two-species request lets whichever hit the API returned first
+    win. Measured on a 1138-symbol mouse panel, that build produced 389 mouse rows and 744 from
+    ground squirrel, mink, ferret and falcon. ``resolve_species`` now refuses anything but a single
+    species, and T10's mouse and human datasets get **one table each** at different
+    ``gene_meta_path``s — which is also what lets ``load_gene_meta(path, species=...)`` refuse a
+    table of the wrong organism.
+
+    A name from ``spatialcpav25_gen.data.text.SPECIES_TAXID`` or a bare NCBI taxid as digits."""
 
     distill_hidden: int = 256
     """Hidden width of the text -> free-residual distillation head ``psi``
