@@ -974,11 +974,35 @@ copy), on **all three** held-out sections rather than the one this task reported
   losing localization — and a 0.90-of-self criterion asks the layout head to beat the process that
   produced the data.
 
-Which reading the spec should state is **proposed, not decided**: `specs/05` and SPEC_QUESTIONS B15
-carry the recommendation (gate on the flanking baseline, report the self-score ratio per section as
-headroom). `test_localization_within_10_percent_of_heldout_self_score` is a **strict xfail** holding
-the failing numbers, so it cannot be reworded away, and a later task that fixes it breaks the suite
-until the record is updated.
+**Decided 2026-08-16: the criterion is `generated ≥ 0.90 × ideal`**, stated on the mean over
+held-out sections — measured **0.994**. `specs/05` is amended, and the superseded reading stays in
+the suite as a **strict xfail** holding its failing 0.776, so the shortfall against the real
+section is not reworded away and a later task that closes it breaks the suite until the record is
+updated. On real data there is no ideal draw, so the referent is the flanking baseline, reported by
+T10 (SPEC_QUESTIONS B15).
+
+**The 0.613 outlier is `synthetic_s04` — the exact centre of the nine-section stack** (index 4 of 9,
+four sections from either end). **This is not open risk R3**, which predicts a deficit at the *ends*;
+`alternating` never holds out an end section, so the boundary regime does not appear in this table
+at all. The cause is the metric, and the `ideal` arm carries it too, so it is not the sampler:
+`celltype_localization` scores a type as `1 − d_obs / d_null`, and `d_null` — the divergence to an
+equally sized random draw from the whole section — collapses to **0.072–0.087** for type 0, which is
+34 % of the cells and therefore already nearly tissue-wide, against **0.079–0.573** for the localised
+minority types. The same realisation noise costs the abundant type four to eight times as many score
+points: type 0 scores **0.332** at s04 (`d_obs` 0.058) against **0.841** at s06 (`d_obs` 0.011), and
+weighted by 0.34 that is essentially the whole 0.18 spread. `evaluate_paper` guards this only at
+`d_null < 1e-4`, three orders of magnitude below where it bites. Two consequences, both written into
+the specs: the T05 criterion is a **LOSO mean** rather than per-section, and **T10 reports per-type
+ceilings** (SPEC_QUESTIONS B15a).
+
+**Generalised into `specs/10` §1 — the achievable ceiling, for every metric.** A metric's stated
+range is not its achievable range: every target metric compares a *generated* section with a *real*
+one, so a perfect model still scores below the top of the scale because a different realisation of
+the same law is not the same point cloud. T10 must now measure a ceiling for all six target metrics
+and the control metrics by drawing from the fixture's `GroundTruthField` directly, report every
+method / ablation / baseline number **both raw and as a fraction of that ceiling**, report the
+ceiling's own spread over `Config.ceiling_n_draws` draws, treat a method *above* the ceiling as a
+finding to investigate, and report per-part ceilings where a metric averages over parts.
 
 **The fitted parameters, for the methods section.** On the synthetic fixture's six training
 sections: `r0` = **7.897 µm** at the **1st percentile** of pooled nearest-neighbour distances

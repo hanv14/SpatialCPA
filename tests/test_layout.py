@@ -858,18 +858,33 @@ def localization(training: TrainingVolume, held_out, gt_field, cfg: Config, repu
     return _localization_arms(training, held_out, gt_field, cfg, repulsion, beta)
 
 
+def test_localization_within_10_percent_of_ideal(localization):
+    """**T05's definition of done**, as amended: within 10% of an ideal draw's localization.
+
+    The ``ideal`` arm samples positions and marks from the fixture's **own** generative
+    composition, so it is an independent draw from the process that produced the held-out
+    section — the best any intensity head could do. The layout head, running on a *smoothed*
+    stand-in intensity, reaches **99.4%** of it (0.7128 against 0.7178, averaged over the
+    three held-out sections).
+
+    Stated on the mean over held-out sections, not per section: the metric normalises each
+    type by its divergence to a within-tissue null, and that null collapses for an abundant
+    tissue-wide type, so a single section's score carries large variance (per section here:
+    1.110 / 0.910 / 0.954). See ``specs/05``, "Why the criterion is a LOSO mean".
+    """
+    generated = float(np.mean(localization["generated"]))
+    ideal = float(np.mean(localization["ideal"]))
+    assert generated >= 0.9 * ideal, (generated, ideal)
+
+
 def test_localization_beats_the_real_data_baseline(localization):
-    """field mode localizes cell types better than the real flanking section does.
+    """The real-data referent: `field` mode beats what a real flanking section achieves.
 
-    T05's definition of done is "within 10% of the real section's value", and the phrase has
-    two readings. This is the **no-regression** one: the real value available on real data is
-    what a real neighbouring section achieves, which is exactly what ``layout_mode="resample"``
-    (the previous version) produces. Measured per held-out section, generated / flanking =
-    1.654 / 1.154 / 1.246, i.e. the layout head beats it everywhere rather than coming within
-    10% of it.
-
-    The other reading — the held-out section's *own* score — is
-    ``test_localization_within_10_percent_of_heldout_self_score`` below, and it fails.
+    There is no ideal draw on real data — no known generative law — so T10 reports against
+    the flanking baseline instead, which is exactly what ``layout_mode="resample"`` (the
+    previous version) produces. Measured per held-out section, generated / flanking =
+    1.654 / 1.154 / 1.246: better than the real-data alternative everywhere, rather than
+    within 10% of it.
     """
     for generated, flanking in zip(
         localization["generated"], localization["flanking"], strict=True
@@ -877,34 +892,21 @@ def test_localization_beats_the_real_data_baseline(localization):
         assert generated >= 0.9 * flanking, (generated, flanking)
 
 
-def test_localization_matches_an_ideal_intensity(localization):
-    """The layout head scores what an independent draw from the true law scores.
-
-    The ``ideal`` arm samples positions and marks from the fixture's **own** generative
-    composition, so it is a draw from the process that produced the held-out section — the
-    best any intensity head could do. The layout head running on a *smoothed* stand-in
-    intensity reaches **99.4%** of it (0.7128 against 0.7178, averaged over the three
-    held-out sections). That is what says the remaining gap to the ceiling is the metric
-    penalising realisation noise, not the sampler losing localization.
-    """
-    generated = float(np.mean(localization["generated"]))
-    ideal = float(np.mean(localization["ideal"]))
-    assert generated >= 0.9 * ideal, (generated, ideal)
-
-
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "T05's definition of done read as 'within 10% of the held-out section's own score' "
-        "FAILS: 0.776 of it on average (0.909 / 0.613 / 0.806 per section), and an "
-        "independent draw from the fixture's true generative law reaches only 0.779 — so the "
-        "criterion asks the layout head to beat the process that produced the data. An "
-        "amendment is proposed in specs/05; the spec's owner decides. xfail is strict, so if "
-        "this ever starts passing the suite fails and the record has to be updated."
+        "T05's ORIGINAL definition of done, read as 'within 10% of the held-out section's "
+        "own score', FAILS: 0.776 of it on average (0.909 / 0.613 / 0.806 per section). An "
+        "independent draw from the fixture's true generative law reaches only 0.779, i.e. "
+        "the criterion asks the layout head to beat the process that produced the data, so "
+        "specs/05 was amended to state it against that ideal draw instead (accepted "
+        "2026-08-16, SPEC_QUESTIONS B15). Kept as a strict xfail because the shortfall "
+        "against the real section is a real number about the layout head and belongs in the "
+        "record: if a later task ever closes it, this fails and the record gets updated."
     ),
 )
 def test_localization_within_10_percent_of_heldout_self_score(localization):
-    """The strict reading of the definition of done, pinned as a known failure."""
+    """The superseded reading of the definition of done, pinned as a known failure."""
     ratios = [
         generated / own
         for generated, own in zip(localization["generated"], localization["self"], strict=True)

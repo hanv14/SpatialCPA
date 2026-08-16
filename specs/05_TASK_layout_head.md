@@ -140,14 +140,35 @@ All three must be implemented and selectable; T09's LOSO selector chooses per da
 
 ## Definition of done
 
-On the fixture, `field` mode achieves cell-type localization within 10% of the real section's value
-and pair-correlation match per above. `PROGRESS.md` records the three fitted repulsion parameters
-and `beta` — they should be reported in the paper's methods.
+On the fixture, `field` mode achieves **cell-type localization ≥ 0.90 × the *ideal* draw's** (see the
+amendment below) and pair-correlation match per above. `PROGRESS.md` records the three fitted
+repulsion parameters and `beta` — they should be reported in the paper's methods.
 
-### "the real section's value" — measured at T05, and a proposed criterion **awaiting a decision**
+### The localization criterion — **amended 2026-08-16**
 
-The phrase has two readings and they disagree. Measured on all three held-out sections of the
-synthetic fixture (`paper_celltype_localization`, transcribed from `bench3/evaluate_paper.py`):
+**The criterion is `generated ≥ 0.90 × ideal`**, where *ideal* is an independent draw from the
+**known generative law** of the synthetic fixture, evaluated on the same held-out section with the
+same metric. It is stated on the **mean over the held-out sections**, not per section, for the
+reason measured below (the metric's per-type null normalisation makes a single section's score
+noisy). Measured: **0.994** (0.7128 against 0.7178).
+
+It was previously "within 10% of the real section's value", which read against the held-out
+section's own score asks the layout head to **beat the process that produced the data**: the ideal
+draw itself reaches only 0.779 of that self-score. That reading is kept in the test suite as a
+**strict xfail** carrying its failing number — 0.776, on 0.909 / 0.613 / 0.806 per section — so the
+shortfall stays in the record rather than being reworded away, and so that a later task which closes
+it breaks the suite until this section is updated.
+
+**On real data there is no ideal draw**, because there is no known generative law. The referent
+there is the **flanking baseline** — the nearest real section's score on the same held-out section,
+which is exactly what `layout_mode="resample"` produces — and it is **T10** that reports it, beside
+the achievable-ceiling protocol in `specs/10` §1. Measured here for reference: **1.35×**
+(1.654 / 1.154 / 1.246), i.e. better than the real-data alternative on every section.
+
+### The measurement behind the amendment
+
+Measured on all three held-out sections of the synthetic fixture
+(`paper_celltype_localization`, transcribed from `bench3/evaluate_paper.py`):
 
 | held-out section | **self** (the section scored against itself) | **generated** (`field`) | **ideal** (an independent draw from the fixture's *true* generative law) | **flanking** (nearest real section = `resample`) |
 |---|---|---|---|---|
@@ -172,24 +193,42 @@ by a Sinkhorn divergence normalised against a within-tissue null, and a *differe
 same law is already about 22% of the way from the section to that null. A criterion of 0.90 against
 the self-score asks the layout head to beat the generative process that produced the data.
 
-**Proposed (T05; the spec's owner decides):** state the criterion as
-
-> `field` mode must reach **≥ 0.90 × the localization of the nearest real flanking section** on the
-> same held-out section — the no-regression form, since that flanking section is literally what
-> `layout_mode="resample"` produces — **and** the report must state the held-out section's own
-> self-score and the ratio to it as the headroom number, per section, never pooled.
-
-Rationale: the flanking reference is (a) available on real data, where no true `lambda` exists,
-(b) the alternative actually on the table, and (c) the same no-regression logic the project already
-commits to elsewhere. The self-score stays in the report because it is the honest ceiling and the
-right thing to drive down over T06–T09 — it is just not a *component-level* gate, since an ideal
-sampler misses it by the same margin.
-
-Both readings are implemented as tests. `test_localization_beats_the_real_data_baseline` and
-`test_localization_matches_an_ideal_intensity` pass;
+All three readings are implemented as tests:
+`test_localization_within_10_percent_of_ideal` (**the criterion**, 0.994) and
+`test_localization_beats_the_real_data_baseline` (the real-data proxy, 1.35×) pass, and
 `test_localization_within_10_percent_of_heldout_self_score` is a **strict xfail** carrying the
-numbers, so the failure is recorded rather than reworded, and if a later task ever passes it the
-suite fails until this section is updated. See SPEC_QUESTIONS B15.
+failing numbers. See SPEC_QUESTIONS B15.
+
+### Why the criterion is a LOSO mean, and what the per-section spread is
+
+The per-section scores are 0.909 / **0.613** / 0.806 against the self-score, and the low one is
+**`synthetic_s04`, the exact centre of the nine-section stack** — index 4 of 9, four sections from
+either end, the furthest possible from a boundary. **This is not open risk R3.** R3 predicts a
+deficit at the *ends*, and `alternating` never holds out an end section at all, so the boundary
+regime is not represented in this table.
+
+What it is instead is the metric's own instability, and the `ideal` arm shows it (per-type breakdown
+of that arm, `d_null` = the within-tissue null divergence the score is normalised by):
+
+| | type 0 (weight 0.34) | localised minority types |
+|---|---|---|
+| `d_null` | **0.072 – 0.087** | 0.079 – 0.573 |
+| score at s04 | **0.332** | 0.595 – 0.908 |
+| score at s06 | **0.841** | 0.630 – 0.906 |
+
+`celltype_localization` scores a type as `1 - d_obs / d_null`, and `d_null` is the divergence
+between the type's cloud and an equally sized random draw from the whole section — so for a type
+occupying a third of the tissue, which *is* nearly tissue-wide, the denominator collapses to ~0.08
+while a localised type's is 0.16–0.57. The same absolute realisation noise in `d_obs` therefore
+costs the abundant type four to eight times as many score points, and it carries a third of the
+weight. Type 0's `d_obs` of 0.058 at s04 against 0.011 at s06 is essentially the whole 0.18 spread
+between those sections. `evaluate_paper` guards this only at `d_null < 1e-4` ("already spread
+tissue-wide: nothing to test"), which is three orders of magnitude below where the instability
+actually bites.
+
+Two consequences, both carried into `specs/10` §1: the criterion here is stated on the **mean over
+held-out sections**, and T10 reports **per-type** ceilings rather than only the weighted average,
+because an abundant tissue-wide type is where the headroom is smallest and the variance largest.
 
 ## Do NOT
 

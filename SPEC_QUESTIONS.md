@@ -362,7 +362,7 @@ written failed there and passed here for reasons that have nothing to do with th
 than an asserted wall clock, and the assertable part is the dimensionless **G1.4c**: 8× the points
 must cost < 12× the time.
 
-### B15. "Within 10% of the real section's value" has two readings, and they disagree (T05) — **OPEN: a decision for the spec's owner**
+### B15. "Within 10% of the real section's value" has two readings, and they disagree (T05) — **RESOLVED (decided 2026-08-16): the referent is an ideal draw**
 T05's definition of done is `field` mode "within 10% of the real section's value" for
 `paper_celltype_localization`. Measured on all three held-out sections of the fixture:
 
@@ -386,14 +386,42 @@ within-tissue null, so a *different realisation* of the same law is already ~22%
 section to that null. A 0.90-of-self criterion therefore asks the layout head to beat the generative
 process that produced the data.
 
-*Proposal (T05):* state the criterion against the **flanking real section** (>= 0.90x, the
-no-regression form — that section is literally what `layout_mode="resample"` produces and is the only
-reference available on real data), and **require the self-score and the ratio to it to be reported
-per held-out section** as the headroom number. Both readings are implemented:
-`test_localization_beats_the_real_data_baseline` and `test_localization_matches_an_ideal_intensity`
-pass, and `test_localization_within_10_percent_of_heldout_self_score` is a **strict xfail** carrying
-the numbers, so the failure is recorded rather than reworded and a later task that fixes it breaks
-the suite until this entry is updated. Written into `specs/05` as PROPOSED, not applied.
+*Decision (2026-08-16): the criterion is `generated >= 0.90 x ideal`* — the independent draw from
+the known generative law — **not** 0.90x the held-out section's self-score, since the ideal draw
+itself reaches only 0.779 of that and the original therefore asks the layout head to beat the process
+that made the data. Measured: **0.994**. Stated on the **mean over held-out sections**, because the
+metric's per-type null normalisation makes a single section's score noisy (see B15a below). On real
+data there is no ideal draw and the referent is the **flanking baseline**, reported by T10.
+
+The superseded reading stays in the suite as a **strict xfail** carrying its failing number (0.776),
+so the shortfall against the real section remains in the record and a later task that closes it
+breaks the suite until this entry is updated. `specs/05` amended; the generalisation to every metric
+is `specs/10` §1's achievable-ceiling protocol.
+
+### B15a. `celltype_localization` is unstable for abundant, tissue-wide cell types (T05 measurement, owed to T10)
+The per-section spread behind B15 — 0.909 / **0.613** / 0.806 — is **not** open risk R3. The low
+section is `synthetic_s04`, **the exact centre of the nine-section stack** (index 4 of 9, four
+sections from either end), and `alternating` never holds out an end section, so the boundary regime
+is not in that table at all.
+
+The cause is the metric. It scores a type as `1 - d_obs / d_null`, where `d_null` is the divergence
+between that type's cloud and an equally sized random draw from the whole section. For a type
+occupying a third of the tissue — which *is* nearly tissue-wide — `d_null` collapses to ~0.08, while
+a localised minority type's is 0.16-0.57. Measured on the **ideal** arm, so this is the metric and
+not the sampler:
+
+| | type 0 (weight 0.34) | localised minority types |
+|---|---|---|
+| `d_null` | 0.072-0.087 | 0.079-0.573 |
+| score at s04 | **0.332** (`d_obs` 0.058) | 0.595-0.908 |
+| score at s06 | **0.841** (`d_obs` 0.011) | 0.630-0.906 |
+
+The same absolute realisation noise costs the abundant type four to eight times as many score
+points, and it carries a third of the weight: type 0 alone is essentially the whole 0.18 spread
+between those two sections. `evaluate_paper` guards this only at `d_null < 1e-4`, three orders of
+magnitude below where it bites. *Owed to T10:* report **per-type** ceilings, not only the weighted
+average (`specs/10` §1, point 5), and read any `celltype_localization` difference against the
+ceiling's own spread.
 
 ---
 

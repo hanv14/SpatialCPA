@@ -76,6 +76,45 @@ Every metric: fixed random seeds, documented normalisation, and a docstring stat
 is better and its range. Build `METRIC_REGISTRY: dict[str, MetricSpec]` so the harness is
 data-driven.
 
+### The achievable ceiling — required for every metric (added at T05)
+
+**A metric's stated range is not its achievable range.** Every one of these metrics compares a
+*generated* section with a *real* one, so a perfect model — one that samples from exactly the right
+distribution — still scores below the top of the scale, because a different **realisation** of the
+same law is not the same point cloud. Measured at T05 for `celltype_localization` on the synthetic
+fixture: the held-out section scored against itself reaches 0.9221, while an independent draw from
+the fixture's own generative law reaches **0.7178**. A method scoring 0.71 there is not mediocre; it
+is at **99%** of what is achievable, and reporting the raw number alone says the opposite.
+
+So, on the synthetic fixture (the only dataset with a known generative law):
+
+1. **Measure a ceiling for all six target metrics and all control metrics.** Generate the *ideal*
+   arm by drawing from `tests.fixtures.synthetic`'s `GroundTruthField` directly — positions from the
+   true intensity, marks from the true composition, expression from `expression_mu` + `sample_counts`
+   — never from the trained model. Same held-out sections, same seeds, same metric code path.
+2. **Report every method number twice**: raw, and as a fraction of that ceiling. This applies to the
+   headline table, the **ablation** table and the **baseline** table alike — an ablation that costs
+   0.02 raw on a metric whose ceiling is 0.72 has cost 3% of the achievable range, and that is the
+   number a reader needs.
+3. **Report the ceiling's own spread** across held-out sections and across seeds. It is a Monte-Carlo
+   quantity: at least `Config.ceiling_n_draws` independent draws, mean and standard
+   deviation, so a method-vs-ceiling gap can be read against the ceiling's own noise.
+4. **A method above the ceiling is a finding, and usually a bug.** It means either the ideal arm is
+   not drawing from the true law, or the method is copying real cells (check `duplicate_profile_rate`
+   and `layout_mode`). T05 measured one such case legitimately — `field` mode scored 1.110× the
+   ideal on one section, inside the ceiling's own per-section spread — which is exactly why 3 exists.
+5. **Where a metric averages over parts, report per-part ceilings**, not only the aggregate. For
+   `celltype_localization` that means **per cell type**: T05 measured the ceiling for the most
+   abundant type (34% of cells) at a score of 0.33–0.84 across sections while localised minority
+   types sat at 0.60–0.91, because the metric normalises by the divergence to a within-tissue null
+   and that null collapses (`d_null` ≈ 0.08) for a type which is already spread tissue-wide. The
+   abundant types are where the headroom is smallest and the variance largest, and a weighted
+   average hides both. See `specs/05`'s "Why the criterion is a LOSO mean".
+
+On the real datasets there is no generative law and therefore no ceiling. The referent there is the
+**flanking-section baseline** — `run_nearest_copy`, which is what a real neighbouring section
+achieves on the same held-out section — reported beside every metric for the same reason.
+
 ## 2. Baselines — `spatialcpav25_gen/eval/baselines.py`
 
 ```python

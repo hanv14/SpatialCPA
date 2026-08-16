@@ -33,7 +33,7 @@ is an omission — flag it rather than skipping it.**
 | **v20 Bernoulli cross-mix** (`expr_mode="cross-mix"`) | T06 §4b | design §5/§6; behaviour pinned by `test_cross_mix_matches_v20` (A6) |
 | Automatic per-dataset config selection | T09 | coordinate descent, ~10 fits |
 | No-regression guarantee | T09, T01 | `test_selector_can_recover_v20_config` |
-| Six target metrics, **vendored verbatim from `bench3/evaluate_paper.py`** | T10 | content hash pinned, bitwise agreement asserted; v20's two bugs are a footnote about v20's own tuning signal, not a fix to the benchmark (A3) |
+| Six target metrics, **vendored verbatim from `bench3/evaluate_paper.py`** | T10 | content hash pinned, bitwise agreement asserted; v20's two bugs are a footnote about v20's own tuning signal, not a fix to the benchmark (A3). **Each metric additionally needs its achievable ceiling measured** on the synthetic fixture from an independent draw of the known generative law, with method / ablation / baseline numbers reported relative to it — added at T05, which measured `celltype_localization`'s ceiling at 0.72 against a self-score of 0.92, and per-type because the metric is unstable for abundant tissue-wide types (B15, B15a) |
 | Unoptimised control metrics | T10 | paper-integrity requirement |
 | Baselines incl. SpatialZ at published defaults | T10 | deep-copy guard; **v14/v18 dropped explicitly** with the reason in the methods (D-table) |
 | **Dataset requirement**: >= 1 non-brain, >= 1 non-transcriptomic panel | T10 §3 | design §7; the harness refuses a headline table without both (D-table) |

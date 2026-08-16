@@ -601,6 +601,18 @@ class Config:
     repulsion: bool = True
     """``False`` gives a pure Poisson layout: ablation A4."""
 
+    ceiling_n_draws: int = 8
+    """Independent draws from the synthetic fixture's *known* generative law used to measure
+    each metric's **achievable ceiling** (T10 §1, added after T05 measured one).
+
+    Every target metric compares a generated section with a real one, so a perfect model
+    still scores below the top of the scale: a different *realisation* of the same law is
+    not the same point cloud. Measured for ``celltype_localization``, the held-out section
+    scored against itself reaches 0.92 while an independent draw from the true law reaches
+    0.72 — so a raw 0.71 is 99% of what is achievable, not a mediocre result. The ceiling is
+    a Monte-Carlo quantity and needs enough draws to carry a standard deviation; 8 is the
+    same budget as ``n_uncertainty_samples`` and is a floor, not a target."""
+
     # ----------------------------------------------------------------------------------
     # SEFL (T07)
     # ----------------------------------------------------------------------------------
@@ -922,6 +934,7 @@ class Config:
             "profile_sigma_frac": self.profile_sigma_frac,
             "loso_every_k_steps": self.loso_every_k_steps,
             "loso_max_cells": self.loso_max_cells,
+            "ceiling_n_draws": self.ceiling_n_draws,
             "n_uncertainty_samples": self.n_uncertainty_samples,
             "bisection_max_iter": self.bisection_max_iter,
             "bisection_grid_size": self.bisection_grid_size,
