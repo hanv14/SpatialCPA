@@ -939,20 +939,46 @@ it the 0.021 residual across oblique angles was uninterpretable, and a 0.0029 sh
 
 | Test | Criterion | Measured |
 |---|---|---|
-| `test_poisson_nll_recovers_intensity` | Pearson r > 0.9 on a grid | **0.989** total, **0.950 / 0.921** per type |
+| `test_poisson_nll_recovers_intensity` | Pearson r > 0.9 on a grid | **0.989** total, **0.950 / 0.921** per type — **measured with a reduced spatial basis** (`fourier_bands_xy = 2`, the scale this intensity varies on), *not* the default 8. At the default the Poisson MLE overfits the point pattern: r decays **0.97 → 0.28** as steps grow while the NLL keeps falling. T05 specifies no regulariser and this task does not invent one — **open item owed to T06** (SPEC_QUESTIONS B10) |
 | `test_expected_count_matches` | mean N over 50 seeds within 5 % of `N_expected` | **0.50 %** (543.50 vs 540.79) |
 | `test_hardcore_respected` | no pair closer than `r0` | min pair **7.900 µm** ≥ `r0` = **7.897 µm** |
-| `test_pcf_matches_real` | max abs g(r) difference < 0.15 | **0.093** (see the range finding below) |
+| `test_pcf_matches_real` | max abs g(r) difference < 0.15 over **`[0, 3R]`** (range amended at T05 — see below) | **0.093** |
 | `test_potts_improves_purity` | closer to real than before, not above it | **0.490 → 0.649**, tissue **0.688** |
 | `test_rare_types_survive` | 2 % type keeps ≥ 50 % of its expected count | **59.1 %** |
 | `test_layout_deterministic` | same seed → identical layout | bitwise, coords and marks |
 | `test_all_three_modes_run` | valid `Layout`, plausible N | field / hybrid within 5σ of `N_expected`, resample = the reused section's count |
 
-**Definition of done.** `paper_celltype_localization` (transcribed from
-`bench3/evaluate_paper.py`; T10 vendors the pinned copy) on the held-out section: generated
-**0.7933** against **0.4797** for the nearest *real* flanking section — ratio **1.654**, where the
-criterion is ≥ 0.90. The generated layout scores higher than a real neighbouring section because it
-is sampled at the held-out plane itself while the flanking section is 50 µm away.
+**Definition of done — cell-type localization, both comparisons, and a failure.**
+`paper_celltype_localization` (transcribed from `bench3/evaluate_paper.py`; T10 vendors the pinned
+copy), on **all three** held-out sections rather than the one this task reported first time:
+
+| held-out | **self** (section vs itself) | **generated** (`field`) | **ideal** (independent draw from the fixture's *true* law) | **flanking** (nearest real section = `resample`) |
+|---|---|---|---|---|
+| s02, z = 100 | 0.8730 | 0.7933 | 0.7144 | 0.4797 |
+| s04, z = 200 | 0.9353 | 0.5732 | 0.6298 | 0.4966 |
+| s06, z = 300 | 0.9581 | 0.7719 | 0.8091 | 0.6193 |
+| **mean** | **0.9221** | **0.7128** | **0.7178** | **0.5319** |
+
+* **Generated vs the held-out section's own value: 0.776 — this FAILS the 10 % criterion**, passing
+  on one section of three (0.909 / 0.613 / 0.806). Plainly: the generated layout is materially below
+  the held-out section's own localization. The first report of this task quoted 1.654 from s02
+  alone, which was the best of the three.
+* **Generated vs the flanking real section: 1.35×** (1.654 / 1.154 / 1.246) — better than the
+  real-data alternative on every section.
+* **Generated vs an ideal intensity: 0.994.** The `ideal` arm draws positions and marks from the
+  fixture's *own* generative composition — an independent draw from the process that produced the
+  held-out section — and reaches only **0.779** of the self-score, statistically the same as the
+  layout head's 0.776. The metric normalises a Sinkhorn divergence against a within-tissue null, so
+  a different *realisation* of the same law is already ~22 % of the way from the section to that
+  null. The gap to the ceiling is the metric penalising realisation noise rather than the sampler
+  losing localization — and a 0.90-of-self criterion asks the layout head to beat the process that
+  produced the data.
+
+Which reading the spec should state is **proposed, not decided**: `specs/05` and SPEC_QUESTIONS B15
+carry the recommendation (gate on the flanking baseline, report the self-score ratio per section as
+headroom). `test_localization_within_10_percent_of_heldout_self_score` is a **strict xfail** holding
+the failing numbers, so it cannot be reworded away, and a later task that fixes it breaks the suite
+until the record is updated.
 
 **The fitted parameters, for the methods section.** On the synthetic fixture's six training
 sections: `r0` = **7.897 µm** at the **1st percentile** of pooled nearest-neighbour distances
@@ -968,13 +994,17 @@ injected — the rare-type constraint binding is the difference (below).
 **Negative controls, as assertions.**
 
 * *Pure Poisson (ablation A4) vs the pair-correlation criterion.* Running the control is what
-  exposed a defect in the criterion itself. Over the spec's range `[r0, 3R]`, field mode scores
-  0.093 and **pure Poisson scores 0.070 — it passes**. It has to: a hard-core process differs from
-  a Poisson one only *inside* the correlation hole, and the hole ends at about `r0`, because `r0`
-  **is** a low percentile of the nearest-neighbour distances. The stated range begins exactly where
-  the signal stops. Over `[0, 3R]` — the same statistic, a superset of the range, therefore a
+  exposed a defect in the criterion itself. Over the spec's original range `[r0, 3R]`, field mode
+  scores 0.093 and **pure Poisson scores 0.070 — it passes**. It has to: a hard-core process differs
+  from a Poisson one only *inside* the correlation hole, and the hole ends at about `r0`, because
+  `r0` **is** a low percentile of the nearest-neighbour distances. The stated range began exactly
+  where the signal stops. Over `[0, 3R]` — the same statistic, a superset of the range, therefore a
   strictly harder test — field mode still scores **0.093** and Poisson scores **0.994**. The test
-  asserts all four numbers, so the blindness is pinned rather than described (SPEC_QUESTIONS B12).
+  asserts all four numbers, so the blindness is pinned rather than described.
+  **Accepted and amended (2026-08-16):** `specs/05` now states the range as `[0, 3R]` with the
+  measurement as its justification, `specs/10` §4 carries the matching warning for **ablation A4**
+  (reported over `[r0, 3R]` the ablation table would claim the repulsion buys nothing — a false
+  null), and `specs/11_COVERAGE_MATRIX.md` notes both (SPEC_QUESTIONS B12).
 * *Hard core.* With the interaction switched off the same intensity produces a closest pair at
   **0.205 µm** against `r0` = 7.897 µm, so `test_hardcore_respected` is not vacuous.
 * *Over-smoothing.* At `beta = potts_beta_max` with 8 rounds the 2 % type retains **0.000** of its

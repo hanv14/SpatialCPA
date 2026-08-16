@@ -108,8 +108,29 @@ All three must be implemented and selectable; T09's LOSO selector chooses per da
 - `test_expected_count_matches` — sampled `N` over 50 seeds has mean within 5% of `N_expected`.
 - `test_hardcore_respected` — no pair of sampled points closer than `r0`.
 - `test_pcf_matches_real` — simulated `g(r)` vs. real `g(r)` on the fixture: max abs difference
-  < 0.15 over `r ∈ [r0, 3R]`. **Also assert that a pure-Poisson sampler fails this test** — it
+  < 0.15 over **`r ∈ [0, 3R]`**. **Also assert that a pure-Poisson sampler fails this test** — it
   documents that repulsion is load-bearing (ablation A4).
+
+  **The range is `[0, 3R]`, not `[r0, 3R]`; amended at T05 because `[r0, 3R]` cannot fail.** A
+  hard-core process differs from a Poisson one only *inside* the correlation hole, and the hole
+  ends at about `r0` — because `r0` **is** a low percentile of the nearest-neighbour distances,
+  i.e. it is defined to sit at the top of the hole. The original range therefore began exactly
+  where the discriminating signal stopped. Measured on the synthetic fixture (real `g` pooled over
+  the six training sections, simulated over three seeds):
+
+  | | over `[r0, 3R]` (as originally written) | over `[0, 3R]` |
+  |---|---|---|
+  | `field` mode | 0.093 | **0.093** |
+  | pure Poisson, ablation A4 | 0.070 — ***passes*** | **0.994** — fails |
+
+  `[0, 3R]` is strictly harder (it is a superset of the old range), the field sampler passes it
+  unchanged, and the control fails it by an order of magnitude. `tests/test_layout.py` measures
+  **both** ranges and asserts the old range's blindness as a fact, so this cannot silently
+  regress. See SPEC_QUESTIONS B12, which also records that the bin straddling `r0` is
+  resolution-sensitive: at 48 bins rather than `Config.pcf_n_bins = 24` the generated pattern reads
+  0.315 there against the tissue's 0.646, because a strict hard core at the 1st percentile is still
+  stricter than the tissue's own minimum (7.90 µm against 7.75 µm). That is B6 surviving at the 1st
+  percentile, and it is a property of the method rather than of the estimator.
 - `test_potts_improves_purity` — neighbourhood type-purity after smoothing is closer to the real
   section's than before, and does not exceed it (over-smoothing check).
 - `test_rare_types_survive` — a type at 2% prevalence retains ≥ 50% of its expected count after
@@ -122,6 +143,53 @@ All three must be implemented and selectable; T09's LOSO selector chooses per da
 On the fixture, `field` mode achieves cell-type localization within 10% of the real section's value
 and pair-correlation match per above. `PROGRESS.md` records the three fitted repulsion parameters
 and `beta` — they should be reported in the paper's methods.
+
+### "the real section's value" — measured at T05, and a proposed criterion **awaiting a decision**
+
+The phrase has two readings and they disagree. Measured on all three held-out sections of the
+synthetic fixture (`paper_celltype_localization`, transcribed from `bench3/evaluate_paper.py`):
+
+| held-out section | **self** (the section scored against itself) | **generated** (`field`) | **ideal** (an independent draw from the fixture's *true* generative law) | **flanking** (nearest real section = `resample`) |
+|---|---|---|---|---|
+| s02, z = 100 | 0.8730 | 0.7933 | 0.7144 | 0.4797 |
+| s04, z = 200 | 0.9353 | 0.5732 | 0.6298 | 0.4966 |
+| s06, z = 300 | 0.9581 | 0.7719 | 0.8091 | 0.6193 |
+| **mean** | **0.9221** | **0.7128** | **0.7178** | **0.5319** |
+
+Read against the **held-out section's own value**, `field` mode reaches **0.776** of it (0.909 /
+0.613 / 0.806 per section) and **fails** the 10% criterion, passing on one section of three. Said
+plainly: the generated layout is materially below the held-out section's own localization.
+
+Read against the **flanking real section**, `field` mode is at **1.35×** (1.654 / 1.154 / 1.246),
+i.e. it beats the real-data alternative on every section rather than coming within 10% of it.
+
+The third column is what settles the question. The `ideal` arm samples positions and marks from the
+fixture's **own** generative composition — an independent draw from the process that produced the
+held-out section, which is the best any intensity head can do — and it reaches only **0.779** of the
+self-score, statistically the same as the layout head's 0.776. The gap to the self-score is
+therefore the metric penalising **realisation noise**: `celltype_localization` compares point clouds
+by a Sinkhorn divergence normalised against a within-tissue null, and a *different draw* from the
+same law is already about 22% of the way from the section to that null. A criterion of 0.90 against
+the self-score asks the layout head to beat the generative process that produced the data.
+
+**Proposed (T05; the spec's owner decides):** state the criterion as
+
+> `field` mode must reach **≥ 0.90 × the localization of the nearest real flanking section** on the
+> same held-out section — the no-regression form, since that flanking section is literally what
+> `layout_mode="resample"` produces — **and** the report must state the held-out section's own
+> self-score and the ratio to it as the headroom number, per section, never pooled.
+
+Rationale: the flanking reference is (a) available on real data, where no true `lambda` exists,
+(b) the alternative actually on the table, and (c) the same no-regression logic the project already
+commits to elsewhere. The self-score stays in the report because it is the honest ceiling and the
+right thing to drive down over T06–T09 — it is just not a *component-level* gate, since an ideal
+sampler misses it by the same margin.
+
+Both readings are implemented as tests. `test_localization_beats_the_real_data_baseline` and
+`test_localization_matches_an_ideal_intensity` pass;
+`test_localization_within_10_percent_of_heldout_self_score` is a **strict xfail** carrying the
+numbers, so the failure is recorded rather than reworded, and if a later task ever passes it the
+suite fails until this section is updated. See SPEC_QUESTIONS B15.
 
 ## Do NOT
 

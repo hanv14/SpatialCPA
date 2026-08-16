@@ -797,43 +797,119 @@ def test_budget_exhaustion_warns(training: TrainingVolume, gt_field, cfg: Config
 # --------------------------------------------------------------------------------------
 
 
-def test_localization_within_10_percent_of_real(
+def _localization_arms(
     training: TrainingVolume, held_out, gt_field, cfg: Config, repulsion, beta: float
-):
-    """field mode localizes cell types within 10% of what a real flanking section achieves."""
-    held = held_out[0]
-    plane = section_frame(held)
-    density = mean_cell_density(training.sections)
-    layout = sample_layout(
-        fixture_intensity(gt_field, density),
-        plane,
-        cfg.replace(potts_beta=beta),
-        seed=SEED,
-        repulsion=repulsion,
-    )
+) -> dict[str, list[float]]:
+    """Cell-type localization on **every** held-out section, four arms each.
 
-    gt_xy = np.asarray(held.coords, dtype=np.float64)
-    gt_types = np.asarray(held.cell_type)
-    generated = celltype_localization(
-        # coords_xyz, not coords_uv + origin: the plane's (u, v) frame is a rotation of the
-        # data frame, and the held-out section's coordinates are in the data frame.
-        np.asarray(layout.coords_xyz[:, :2], dtype=np.float64),
-        np.asarray(layout.cell_type),
-        gt_xy,
-        gt_types,
-        seed=SEED,
-    )
-    # The reference a real neighbouring section achieves on the same held-out section: the
-    # "real section's value" the definition of done is stated against.
-    neighbour = min(training.sections, key=lambda s: abs(s.z - held.z))
-    real_reference = celltype_localization(
-        np.asarray(neighbour.coords, dtype=np.float64),
-        np.asarray(neighbour.cell_type),
-        gt_xy,
-        gt_types,
-        seed=SEED,
-    )
-    assert generated >= 0.9 * real_reference, (generated, real_reference)
+    ``self``
+        The held-out section scored against itself: the metric's ceiling *under its own
+        subsampling*, which is not 1 and which varies by section, so it is measured rather
+        than assumed.
+    ``generated``
+        ``field`` mode, from the smoothed stand-in intensity — the layout head as the
+        pipeline will run it.
+    ``ideal``
+        ``field`` mode from the fixture's **own generative composition** (temperature
+        ``FIXTURE_TYPE_TEMPERATURE``, at which the fitted coupling is 0): an independent draw
+        from the law that produced the data. What a *perfect* intensity head would score.
+    ``flanking``
+        The nearest real training section, i.e. what ``layout_mode="resample"`` — the
+        previous version's behaviour — achieves on the same held-out section.
+    """
+    density = mean_cell_density(training.sections)
+    smoothed = fixture_intensity(gt_field, density)
+    truth = fixture_intensity(gt_field, density, FIXTURE_TYPE_TEMPERATURE)
+    arms: dict[str, list[float]] = {"self": [], "generated": [], "ideal": [], "flanking": []}
+    for held in held_out:
+        plane = section_frame(held)
+        gt_xy = np.asarray(held.coords, dtype=np.float64)
+        gt_types = np.asarray(held.cell_type)
+
+        def score(xy: np.ndarray, types: np.ndarray, gt_xy=gt_xy, gt_types=gt_types) -> float:
+            return celltype_localization(xy, types, gt_xy, gt_types, seed=SEED)
+
+        # coords_xyz, not coords_uv: the plane's (u, v) frame is a rotation of the data
+        # frame, and the held-out section's coordinates are in the data frame.
+        for name, intensity, coupling in (
+            ("generated", smoothed, beta),
+            ("ideal", truth, 0.0),
+        ):
+            layout = sample_layout(
+                intensity, plane, cfg.replace(potts_beta=coupling), seed=SEED, repulsion=repulsion
+            )
+            arms[name].append(
+                score(
+                    np.asarray(layout.coords_xyz[:, :2], dtype=np.float64),
+                    np.asarray(layout.cell_type),
+                )
+            )
+        neighbour = min(training.sections, key=lambda s: abs(s.z - held.z))
+        arms["flanking"].append(
+            score(np.asarray(neighbour.coords, dtype=np.float64), np.asarray(neighbour.cell_type))
+        )
+        arms["self"].append(score(gt_xy, gt_types))
+    return arms
+
+
+@pytest.fixture(scope="module")
+def localization(training: TrainingVolume, held_out, gt_field, cfg: Config, repulsion, beta: float):
+    """The four localization arms, measured once."""
+    return _localization_arms(training, held_out, gt_field, cfg, repulsion, beta)
+
+
+def test_localization_beats_the_real_data_baseline(localization):
+    """field mode localizes cell types better than the real flanking section does.
+
+    T05's definition of done is "within 10% of the real section's value", and the phrase has
+    two readings. This is the **no-regression** one: the real value available on real data is
+    what a real neighbouring section achieves, which is exactly what ``layout_mode="resample"``
+    (the previous version) produces. Measured per held-out section, generated / flanking =
+    1.654 / 1.154 / 1.246, i.e. the layout head beats it everywhere rather than coming within
+    10% of it.
+
+    The other reading — the held-out section's *own* score — is
+    ``test_localization_within_10_percent_of_heldout_self_score`` below, and it fails.
+    """
+    for generated, flanking in zip(
+        localization["generated"], localization["flanking"], strict=True
+    ):
+        assert generated >= 0.9 * flanking, (generated, flanking)
+
+
+def test_localization_matches_an_ideal_intensity(localization):
+    """The layout head scores what an independent draw from the true law scores.
+
+    The ``ideal`` arm samples positions and marks from the fixture's **own** generative
+    composition, so it is a draw from the process that produced the held-out section — the
+    best any intensity head could do. The layout head running on a *smoothed* stand-in
+    intensity reaches **99.4%** of it (0.7128 against 0.7178, averaged over the three
+    held-out sections). That is what says the remaining gap to the ceiling is the metric
+    penalising realisation noise, not the sampler losing localization.
+    """
+    generated = float(np.mean(localization["generated"]))
+    ideal = float(np.mean(localization["ideal"]))
+    assert generated >= 0.9 * ideal, (generated, ideal)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "T05's definition of done read as 'within 10% of the held-out section's own score' "
+        "FAILS: 0.776 of it on average (0.909 / 0.613 / 0.806 per section), and an "
+        "independent draw from the fixture's true generative law reaches only 0.779 — so the "
+        "criterion asks the layout head to beat the process that produced the data. An "
+        "amendment is proposed in specs/05; the spec's owner decides. xfail is strict, so if "
+        "this ever starts passing the suite fails and the record has to be updated."
+    ),
+)
+def test_localization_within_10_percent_of_heldout_self_score(localization):
+    """The strict reading of the definition of done, pinned as a known failure."""
+    ratios = [
+        generated / own
+        for generated, own in zip(localization["generated"], localization["self"], strict=True)
+    ]
+    assert float(np.mean(ratios)) >= 0.9, ratios
 
 
 def test_pair_correlation_is_one_for_poisson():

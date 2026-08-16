@@ -291,7 +291,7 @@ methods section. `fit_potts_beta` additionally takes the **intensity** (T05 writ
 knowing `lambda_c` — and enforces the rare-type floor as a **constraint**, not a hope: measured, the
 purity criterion alone would pick 0.278 and the floor takes it to 0.144.
 
-### B12. `test_pcf_matches_real`'s stated range cannot fail (T05) — **OPEN: a criterion, not an implementation**
+### B12. `test_pcf_matches_real`'s stated range cannot fail (T05) — **RESOLVED: `specs/05` and `specs/10` amended to `[0, 3R]`**
 The criterion is `max |g_sim(r) - g_real(r)| < 0.15` over `r in [r0, 3R]`. A hard-core process differs
 from a Poisson one only *inside* the correlation hole — and the hole ends at about `r0`, because `r0`
 **is** a low percentile of the nearest-neighbour distances. The stated range therefore begins exactly
@@ -304,10 +304,13 @@ Measured on the fixture (real `g` pooled over the six training sections, simulat
 | field mode | **0.093** | **0.093** |
 | pure Poisson (ablation A4) | **0.070** — *passes* | **0.994** — fails |
 
-*Done at T05:* `test_pcf_matches_real` asserts the spec's criterion, asserts the same statistic over
-`[0, 3R]` (strictly harder, a superset of the range), runs the pure-Poisson control against **that**,
-and **pins the blindness itself** as an assertion so it cannot change unnoticed.
-*Proposal for the spec:* state the range as `[0, 3R]`. A caveat: the comparison is also
+*Done at T05:* `test_pcf_matches_real` asserts the criterion over both ranges, runs the pure-Poisson
+control against `[0, 3R]`, and **pins the old range's blindness itself** as an assertion so it cannot
+change unnoticed.
+*Amended (accepted 2026-08-16):* `specs/05` now states the range as **`[0, 3R]`** with this table as
+its justification, and `specs/10` §4 carries the matching warning for **ablation A4** — reported over
+`[r0, 3R]` the ablation table would claim the repulsion buys nothing, which is a false null, so every
+A4 number states its range. A caveat: the comparison is also
 bin-resolution-sensitive at the bin straddling `r0` — at 48 bins rather than 24 the generated pattern
 reads 0.315 there against the tissue's 0.646, because a strict hard core at the 1st percentile is
 still stricter than the tissue's own minimum (7.90 µm against 7.75 µm). That is B6 again, surviving
@@ -358,6 +361,39 @@ written failed there and passed here for reasons that have nothing to do with th
 **throughput recorded against reference hardware** (2.9 × 10⁵ points/s on the reference Xeon) rather
 than an asserted wall clock, and the assertable part is the dimensionless **G1.4c**: 8× the points
 must cost < 12× the time.
+
+### B15. "Within 10% of the real section's value" has two readings, and they disagree (T05) — **OPEN: a decision for the spec's owner**
+T05's definition of done is `field` mode "within 10% of the real section's value" for
+`paper_celltype_localization`. Measured on all three held-out sections of the fixture:
+
+| held-out | **self** (section vs itself) | **generated** | **ideal** (independent draw from the *true* law) | **flanking** (= `resample`) |
+|---|---|---|---|---|
+| s02 | 0.8730 | 0.7933 | 0.7144 | 0.4797 |
+| s04 | 0.9353 | 0.5732 | 0.6298 | 0.4966 |
+| s06 | 0.9581 | 0.7719 | 0.8091 | 0.6193 |
+| **mean** | **0.9221** | **0.7128** | **0.7178** | **0.5319** |
+
+Against the held-out section's **own** score the layout head reaches **0.776** and **fails** the
+criterion (passing on one section of three). Against the **flanking** real section it is at
+**1.35x** and beats it everywhere. Stated plainly: the generated layout *is* materially below the
+held-out section's own localization, and that is a fact about the layout head, not a wording choice.
+
+What settles which reading is a criterion: the **ideal** arm — positions and marks drawn from the
+fixture's own generative composition, i.e. an independent draw from the process that produced the
+held-out section — reaches only **0.779** of the self-score, statistically the same as the layout
+head's 0.776. The metric compares point clouds by a Sinkhorn divergence normalised against a
+within-tissue null, so a *different realisation* of the same law is already ~22% of the way from the
+section to that null. A 0.90-of-self criterion therefore asks the layout head to beat the generative
+process that produced the data.
+
+*Proposal (T05):* state the criterion against the **flanking real section** (>= 0.90x, the
+no-regression form — that section is literally what `layout_mode="resample"` produces and is the only
+reference available on real data), and **require the self-score and the ratio to it to be reported
+per held-out section** as the headroom number. Both readings are implemented:
+`test_localization_beats_the_real_data_baseline` and `test_localization_matches_an_ideal_intensity`
+pass, and `test_localization_within_10_percent_of_heldout_self_score` is a **strict xfail** carrying
+the numbers, so the failure is recorded rather than reworded and a later task that fixes it breaks
+the suite until this entry is updated. Written into `specs/05` as PROPOSED, not applied.
 
 ---
 

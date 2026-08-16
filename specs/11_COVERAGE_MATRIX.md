@@ -16,10 +16,10 @@ is an omission — flag it rather than skipping it.**
 | Retrieval cross-attention, density-adaptive niche | T04 | |
 | **z-proximity term in retrieval** (the competing method's omission) | T04 | `retrieval_w_z`, ablation A5 |
 | Gap-aware section dropout curriculum | T04 | `section_dropout_p` |
-| Layout: per-type intensity field, Poisson NLL | T05 | |
+| Layout: per-type intensity field, Poisson NLL | T05 | the fitted intensity's acceptance number is measured with a **reduced spatial basis**; at the default `fourier_bands_xy = 8` the Poisson MLE overfits the point pattern and T05 specifies no regulariser — open item owed to **T06** (B10) |
 | Hard-core radius `r0` at the **1st** percentile (5th selectable, recorded) | T05 | B6; `Config.repulsion_r0_percentile` |
-| Strauss/hard-core repulsion fitted to `g(r)` | T05 | ablation A4 |
-| Potts mark smoothing, `beta` fitted not set | T05 | |
+| Strauss/hard-core repulsion fitted to `g(r)` | T05 | ablation A4; the `g(r)` comparison runs over **`[0, 3R]`**, amended at T05 — over the spec's original `[r0, 3R]` a pure-Poisson layout is indistinguishable from the full model (0.070 against 0.093) because the correlation hole ends at `r0` by construction, so A4 would report a false null (B12; `specs/10` §4 amended too) |
+| Potts mark smoothing, `beta` fitted not set | T05 | update rule is **Gibbs**, not the spec's ICM, which erases a 2% cell type at any coupling; ICM kept as the asserted negative control (B11). Cell-type localization is reported against **two** references (held-out self-score and flanking section) and the criterion is proposed but **undecided** (B15) |
 | `layout_mode` gate (field/hybrid/resample) | T05, T01 | `resample` = previous version |
 | Conditional flow matching in cell latent | T06 | straight-line path, Heun |
 | Gene-conditioned ZINB decoder (open-vocabulary) | T06 | bilinear `h ⊙ A e_g` |

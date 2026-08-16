@@ -142,11 +142,33 @@ Wire as config overrides so each is a one-line entry:
 | A1 | `prior_mode=iid` | correlated prior preserves autocorrelation |
 | A2 | `w_autocorr=w_profile=w_distribution=0` | contribution of metric-aware training |
 | A3 | `text_emb=lookup-only` | text channel's value on seen genes |
-| A4 | repulsion off (Poisson layout) | point-process realism |
+| A4 | repulsion off (Poisson layout) | point-process realism — **the `g(r)` comparison must run over `[0, 3R]`, see below** |
 | A5 | `w_z=0` in retrieval | the specific competing-method flaw — **must be run in the wide-gap regime, see below** |
 | A6 | Gaussian mean decoder | sparsity/dispersion preservation |
 | A7 | `w_cross=w_thick=w_prog=0` | SEFL's contribution |
 | A8 | `loss_prog_WRONG` enabled | **negative control** — wrongly constraining equivariant quantities should be *worse* |
+
+### A4's pair-correlation comparison must run over `[0, 3R]` (measured at T05)
+
+**Do not report A4 against `g(r)` restricted to `[r0, 3R]`.** T05 originally stated the
+pair-correlation criterion over that range and it **cannot fail**: a hard-core process differs from a
+Poisson one only *inside* the correlation hole, and the hole ends at about `r0`, because `r0` **is**
+a low percentile of the nearest-neighbour distances. Measured on the synthetic fixture, with the real
+`g` pooled over the training sections and the simulated one over three seeds:
+
+| Range | `field` mode | pure Poisson (A4) |
+|---|---|---|
+| `[r0, 3R]` | 0.093 | **0.070 — indistinguishable from the full model** |
+| `[0, 3R]` | 0.093 | **0.994** |
+
+Reported over `[r0, 3R]`, A4 is a **false null**: the ablation table would say the repulsion buys
+nothing while `g(r)` below `r0` says it is the difference between tissue and confetti. `specs/05` is
+amended to `[0, 3R]` and `tests/test_layout.py` asserts both ranges, the second of them precisely so
+that the blindness stays visible. Any A4 number in `reports/benchmark.md` states its range.
+
+The same caution applies to every A4 companion metric: choose statistics that can see inside the
+hole (nearest-neighbour distance distribution, `g(r)` from 0) rather than ones evaluated only where
+the two processes agree by construction.
 
 ### A5 must be run in the wide-gap regime (measured at T04's GATE 2)
 
