@@ -233,13 +233,107 @@ repulsion, the **5th percentile kept as a `Config`-selectable alternative**, and
 recorded** in `reports/benchmark.md` and `PROGRESS.md` (it changes a published point-process number).
 `Config.repulsion_r0_percentile` already defaults to 1.0 from T01; written into `specs/05`.
 
-### B7. The layout sampler is a conditional Strauss, not a Strauss process (T05) — **PROPOSED**
+### B7. The layout sampler is a conditional Strauss, not a Strauss process (T05) — **RESOLVED in T05**
 Step 1 draws `N ~ Poisson(N_expected)` and step 3 thins; conditioning on `N` and then thinning is
 not the same object as a Strauss process (which produces fewer points than its Poisson envelope).
 The `20*N`-proposals escape hatch then silently breaks `test_expected_count_matches`.
 *Proposal:* implement and document it as a **conditional-on-N** Strauss sampler (which is what makes
 the count-from-intensity claim work), make the proposal cap a `Config` field, and raise rather than
 warn under test.
+
+*Resolution (T05):* done as proposed. `sample_layout` is documented as conditional-on-`N` in the
+module docstring and in its own; the cap is `Config.layout_max_proposal_factor`; exhausting it warns
+`ProposalBudgetWarning` **and** sets `Layout.budget_exhausted`, and `pyproject.toml` promotes that
+warning to an error under pytest — so a production run degrades loudly while no acceptance test can
+measure a truncated pattern. Measured on the fixture: 1529 points placed from 2048 proposals, and the
+mean count over 50 seeds is within **0.50 %** of `N_expected` (limit 5 %).
+
+### B10. Fitting the Poisson intensity by MLE is ill-posed as specified (T05) — **RESOLVED in T05, two fixes, one open risk**
+`test_poisson_nll_recovers_intensity` asks a neural intensity to be fitted by the process
+log-likelihood. Measured, that fit does **not** recover the truth; it exploits two degeneracies.
+
+1. *Every cell of a section is recorded at that section's nominal `z`*, while the integral runs over
+   a continuous slab, so an intensity that puts its mass in thin sheets at the nominal depths scores
+   arbitrarily well. Measured: the NLL fell **three nats below its value at the true intensity**
+   while the correlation with that truth stayed at 0.00.
+2. Against a **fixed** Monte-Carlo integration set the intensity grows spikes between the
+   integration points.
+
+*Resolution:* `fit_intensity_head` jitters each cell's depth uniformly within its slab and redraws
+the MC points every step. Both are statements the data already makes (a cell is *somewhere* in its
+slab; the integral is an expectation), not regularisers.
+
+*Open risk, recorded not fixed:* the Poisson MLE of a flexible intensity still overfits the point
+pattern. With the default `fourier_bands_xy = 8` the recovered correlation decays from **0.97 at 300
+steps to 0.28 at 1200** while the NLL keeps falling. T05 specifies no regulariser and T05 does not
+invent one: the acceptance test lowers the head's spatial basis to the scale the intensity varies on
+(`fourier_bands_xy = 2`) and says so. **T06's trainer needs an explicit answer** — early stopping on
+a held-in section, a smoothness penalty, or a basis tied to the fitted length-scale.
+
+### B11. T05's Potts smoothing (ICM) erases rare types before `beta` does anything (T05) — **RESOLVED in T05; `Config.potts_update` added**
+T05 §3 says "`potts_iters` rounds of **ICM**", and separately forbids smoothing so hard that rare
+types vanish, and separately requires `beta` to be *fitted* by matching neighbourhood purity. The
+three cannot hold together: ICM takes the `argmax`, i.e. it seeks the **mode** of the Potts
+posterior, and its first sweep is essentially `argmax_c lambda_c` whatever `beta` is.
+
+Measured on the fixture, with a 2 % cell type injected, at the **smallest coupling the fit can
+choose** (0.02): ICM takes the rare type to **0.000** of its expected count and purity to **0.785**
+against a tissue value of **0.688** — overshooting the fit's own target before the coupling does
+anything. There is no `beta` left to fit.
+
+*Resolution:* `Config.potts_update` (`"gibbs"` default, `"icm"` selectable). Gibbs **samples** the
+same conditional instead of maximising it: the marks stay a draw from the marked point process the
+section is supposed to be, purity becomes monotone and fittable in `beta`, and at the same coupling
+the rare type retains **1.00**. ICM is kept and asserted as the negative control
+(`test_icm_erases_rare_types`), because "T05 said ICM" has to stay visible in the code and in the
+methods section. `fit_potts_beta` additionally takes the **intensity** (T05 writes `fit_potts_beta(vol)`)
+— `beta` closes the gap between a draw from `lambda_c` and the tissue, so it cannot be fitted without
+knowing `lambda_c` — and enforces the rare-type floor as a **constraint**, not a hope: measured, the
+purity criterion alone would pick 0.278 and the floor takes it to 0.144.
+
+### B12. `test_pcf_matches_real`'s stated range cannot fail (T05) — **OPEN: a criterion, not an implementation**
+The criterion is `max |g_sim(r) - g_real(r)| < 0.15` over `r in [r0, 3R]`. A hard-core process differs
+from a Poisson one only *inside* the correlation hole — and the hole ends at about `r0`, because `r0`
+**is** a low percentile of the nearest-neighbour distances. The stated range therefore begins exactly
+where the discriminating signal stops.
+
+Measured on the fixture (real `g` pooled over the six training sections, simulated over three seeds):
+
+| | over `[r0, 3R]` (the spec's range) | over `[0, 3R]` |
+|---|---|---|
+| field mode | **0.093** | **0.093** |
+| pure Poisson (ablation A4) | **0.070** — *passes* | **0.994** — fails |
+
+*Done at T05:* `test_pcf_matches_real` asserts the spec's criterion, asserts the same statistic over
+`[0, 3R]` (strictly harder, a superset of the range), runs the pure-Poisson control against **that**,
+and **pins the blindness itself** as an assertion so it cannot change unnoticed.
+*Proposal for the spec:* state the range as `[0, 3R]`. A caveat: the comparison is also
+bin-resolution-sensitive at the bin straddling `r0` — at 48 bins rather than 24 the generated pattern
+reads 0.315 there against the tissue's 0.646, because a strict hard core at the 1st percentile is
+still stricter than the tissue's own minimum (7.90 µm against 7.75 µm). That is B6 again, surviving
+at the 1st percentile, and it is a **property of the method**, not of the estimator.
+
+### B13. T05 needs a `Plane` and T07/T09 own the plane geometry — **RESOLVED in T05 (minimal module)**
+`sample_layout(intensity_fn, plane: Plane, cfg, seed)` needs a plane type, but `specs/00` puts plane
+geometry in `infer/planes.py` at T07/T09, and T03 deliberately built only a test-tree stand-in
+(`tests/fixtures/planes.py`) rather than skipping ahead. T05 is package code, so a stand-in in the
+test tree will not do.
+*Resolution:* `spatialcpav25_gen/infer/planes.py` exists now, holding **only** what T05 uses — `Plane`
+(origin, canonical in-plane basis, window half-extents, slab thickness), `plane_from_normal`,
+`section_plane`, `uniform_plane_points`, `uniform_slab_points` — with the same canonical basis
+construction as T03's stand-in. `intersect`, `random_plane_pair`, `Surface` and the curved surfaces
+are still T07/T09's and are to be **added beside** these, not on top of them.
+
+### B14. The fixture's "~2 %" rare cell type is 6.3 % (T01 fixture, needed by T05) — **RESOLVED in T05 (test-side)**
+`tests/fixtures/synthetic.py` documents "one rare (~2%) type, which T05's `test_rare_types_survive`
+needs", but `type_bias = linspace(0.6, -2.4, 6)` through the Gumbel argmax realises **6.3 %** for the
+rarest of the six. A 6 % type is a perfectly good rare type, but T05's criterion is stated at 2 % and
+`Config.potts_rare_prevalence` (5 %, the benchmark's own `RARE_CELLTYPE_FRAC`) would not even
+classify it as rare.
+*Resolution:* the fixture is left alone — every earlier task's numbers were measured on it — and
+`test_rare_types_survive` injects a genuine 2 % type on top of the fixture's own field (a stripe,
+0.2 %–3.8 %, i.e. interspersed rather than a compact niche, which is the hard case). The 6.3 % is
+pinned by `test_fixture_rarest_type_is_six_percent` so the injection cannot be quietly dropped.
 
 ### B8. The Matérn RFF parametrisation will not match `scipy`'s `Matern(length_scale=ell)` — **RESOLVED in T03: the worry was unfounded**
 `omega = (z/√g)/ell` with `g ~ Gamma(ν, 1/ν)` yields a Matérn *shape* but with an effective

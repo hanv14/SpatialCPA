@@ -209,6 +209,11 @@ markers = [
 ]
 filterwarnings = [
   "error::RuntimeWarning",
+  # SPEC_QUESTIONS B7: the Strauss sampler warns when its proposal budget runs out, so a
+  # production run degrades loudly rather than dying. Under test it must be an error — a
+  # truncated point pattern would otherwise be measured by T05's count and pair-correlation
+  # criteria and reported as a pass.
+  "error::spatialcpav25_gen.model.layout.ProposalBudgetWarning",
   "ignore::DeprecationWarning",
 ]
 xfail_strict = true

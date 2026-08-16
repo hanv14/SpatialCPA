@@ -12,7 +12,7 @@ Status values: `TODO` | `IN PROGRESS` | `BLOCKED` | `DONE`.
 | T02 | Text-grounded embeddings | `specs/02_TASK_text_embeddings.md` | `data/text.py`, `model/embeddings.py`, MedCPT cache, distillation head | — | DONE |
 | T03 | 3D GRF noise field | `specs/03_TASK_noise_field_GATE1.md` | `model/noise.py`, `scripts/gate1_report.py`, `reports/gate1.md` | **GATE 1** | DONE — **GATE 1 passes** on the 3000 µm gate fixture |
 | T04 | Anatomical field + retrieval | `specs/04_TASK_field_and_retrieval_GATE2.md` | `model/field.py`, `model/retrieval.py`, `scripts/gate2_report.py`, `reports/gate2.md` | **GATE 2** | DONE — **GATE 2 passes**, depth-matched oblique parity **0.955** (edge-excluded check **0.979**) |
-| T05 | Layout head | `specs/05_TASK_layout_head.md` | `model/layout.py`, intensity + Strauss sampler + Potts marks | — | TODO |
+| T05 | Layout head | `specs/05_TASK_layout_head.md` | `model/layout.py`, `losses/reconstruction.py` (layout NLL), `infer/planes.py` (minimal `Plane`), intensity + Strauss sampler + Potts marks | — | DONE — all eight acceptance tests pass, both negative controls fail as they must |
 | T06 | Expression head + ZINB decoder | `specs/06_TASK_expression_head.md` | `model/expression.py`, `model/spatialcpav25_gen.py`, `losses/reconstruction.py` | — | TODO |
 | T07 | SEFL consistency losses | `specs/07_TASK_sefl_losses.md` | `losses/sefl.py`, `infer/planes.py`, EMA teacher, collapse alarm | — | TODO |
 | T08 | Metric-aware LOSO losses | `specs/08_TASK_metric_aware_losses.md` | `losses/metric_aware.py`, `train/loso.py` | — | TODO |
@@ -928,3 +928,121 @@ it the 0.021 residual across oblique angles was uninterpretable, and a 0.0029 sh
 0.0168 draw σ would have been read as a deficit. `specs/04`'s "Do NOT" now forbids both mistakes.
 
 `make check` green (ruff, `mypy --strict` on 11 files, **131 fast tests in 37 s**).
+
+### T05 — layout head: intensity field, Strauss sampler, Potts marks (2026-08-16)
+
+`model/layout.py`, `losses/reconstruction.py` (the layout NLL), `infer/planes.py` (the minimal
+`Plane` T05 needs; T07/T09 add the rest beside it), `tests/test_layout.py` (20 tests), 16 new
+`Config` fields. `make check` green; the fast suite is **151 tests in 56 s**.
+
+**All eight of the spec's acceptance tests, with numbers.**
+
+| Test | Criterion | Measured |
+|---|---|---|
+| `test_poisson_nll_recovers_intensity` | Pearson r > 0.9 on a grid | **0.989** total, **0.950 / 0.921** per type |
+| `test_expected_count_matches` | mean N over 50 seeds within 5 % of `N_expected` | **0.50 %** (543.50 vs 540.79) |
+| `test_hardcore_respected` | no pair closer than `r0` | min pair **7.900 µm** ≥ `r0` = **7.897 µm** |
+| `test_pcf_matches_real` | max abs g(r) difference < 0.15 | **0.093** (see the range finding below) |
+| `test_potts_improves_purity` | closer to real than before, not above it | **0.490 → 0.649**, tissue **0.688** |
+| `test_rare_types_survive` | 2 % type keeps ≥ 50 % of its expected count | **59.1 %** |
+| `test_layout_deterministic` | same seed → identical layout | bitwise, coords and marks |
+| `test_all_three_modes_run` | valid `Layout`, plausible N | field / hybrid within 5σ of `N_expected`, resample = the reused section's count |
+
+**Definition of done.** `paper_celltype_localization` (transcribed from
+`bench3/evaluate_paper.py`; T10 vendors the pinned copy) on the held-out section: generated
+**0.7933** against **0.4797** for the nearest *real* flanking section — ratio **1.654**, where the
+criterion is ≥ 0.90. The generated layout scores higher than a real neighbouring section because it
+is sampled at the held-out plane itself while the flanking section is 50 µm away.
+
+**The fitted parameters, for the methods section.** On the synthetic fixture's six training
+sections: `r0` = **7.897 µm** at the **1st percentile** of pooled nearest-neighbour distances
+(`Config.repulsion_r0_percentile = 1.0`; the 5th-percentile alternative gives **8.386 µm**, and
+**which one was used has to be reported** — SPEC_QUESTIONS B6), `R` = **19.176 µm**, `gamma` =
+**1.000**, in-plane density **1.502e-3 cells/µm²**, median nearest-neighbour distance **13.946 µm**.
+`gamma = 1` is not a failure to fit: the fixture's own point process is a *pure* hard core with no
+soft repulsion, so "no soft repulsion" is the right answer and the fit finds it. On real tissue it
+will not be 1, and the 1-D search is what will say so.
+Potts coupling `beta` = **0.278** on the fixture as it stands, and **0.144** when a 2 % cell type is
+injected — the rare-type constraint binding is the difference (below).
+
+**Negative controls, as assertions.**
+
+* *Pure Poisson (ablation A4) vs the pair-correlation criterion.* Running the control is what
+  exposed a defect in the criterion itself. Over the spec's range `[r0, 3R]`, field mode scores
+  0.093 and **pure Poisson scores 0.070 — it passes**. It has to: a hard-core process differs from
+  a Poisson one only *inside* the correlation hole, and the hole ends at about `r0`, because `r0`
+  **is** a low percentile of the nearest-neighbour distances. The stated range begins exactly where
+  the signal stops. Over `[0, 3R]` — the same statistic, a superset of the range, therefore a
+  strictly harder test — field mode still scores **0.093** and Poisson scores **0.994**. The test
+  asserts all four numbers, so the blindness is pinned rather than described (SPEC_QUESTIONS B12).
+* *Hard core.* With the interaction switched off the same intensity produces a closest pair at
+  **0.205 µm** against `r0` = 7.897 µm, so `test_hardcore_respected` is not vacuous.
+* *Over-smoothing.* At `beta = potts_beta_max` with 8 rounds the 2 % type retains **0.000** of its
+  expected count, against **0.591** at the fitted coupling.
+* *ICM (the update rule T05 names).* See below; retention **0.000**.
+
+**Deviations from the spec, and why.**
+
+1. **`potts_update = "gibbs"` is the default; ICM is kept as the negative control.** T05 §3 says
+   ICM, and ICM takes the `argmax` — it seeks the *mode*, so its first sweep is essentially
+   `argmax_c lambda_c` whatever `beta` is. Measured with a 2 % type injected, at the **smallest
+   coupling the fit can choose** (0.02): ICM takes the rare type to **0.000** and purity to
+   **0.785** against the tissue's **0.688**, i.e. it violates T05's own "Do NOT" and overshoots the
+   fit's target before the coupling does anything, leaving no `beta` to fit. Gibbs samples the same
+   conditional instead: at that coupling the rare type retains **1.004**, and purity becomes
+   monotone and fittable in `beta`. `test_icm_erases_rare_types` asserts the ICM numbers, so the
+   spec's variant stays visible and measured. (SPEC_QUESTIONS B11.)
+2. **`fit_potts_beta` takes the intensity** (T05 writes `fit_potts_beta(vol)`), and enforces the
+   rare-type floor **as a constraint on the fit**. `beta` closes the gap between a draw from
+   `lambda_c` and the tissue, so it is not a property of the tissue alone; fitting it from a
+   structureless i.i.d. draw asks the coupling to do all the organising work and over-estimates it.
+   The floor (`potts_rare_retention = 0.5` in *every* section, for types below
+   `potts_rare_prevalence = 0.05`, which is the benchmark's own `RARE_CELLTYPE_FRAC`) turns T05's
+   "Do NOT" into something the code guarantees: purity matching alone would choose **0.278** on the
+   fixture-with-rare-type, and the floor takes it to **0.144**.
+3. **The `beta` grid is geometric, not linear.** `beta` enters an exponent; on a linear grid of the
+   same size the first non-zero candidate (0.25) already sits past the rare-type floor, so the fit
+   has to choose between "no smoothing at all" and "over-smoothed". Grid: 0, 0.020, 0.039, 0.075,
+   0.144, 0.278, 0.537, 1.036, 2.0.
+4. **Positions on the mid-plane, count from the slab volume.** T05 fixes the count's domain (the
+   slab volume, explicitly not the area — verified: doubling the thickness doubles `N_expected`) and
+   leaves the positions' domain open. They are sampled on the mid-plane, because the section reports
+   in-plane coordinates, every benchmark metric is an in-plane kNN statistic, and `r0`/`R`/`gamma`
+   are fitted to an in-plane `g(r)`.
+5. **`fit_intensity_head` jitters cell depths and redraws the MC points every step.** Without the
+   jitter the fit is degenerate: every cell is recorded at its section's nominal `z` while the
+   integral runs over a continuous slab, so intensity concentrated in thin sheets at those depths
+   scores arbitrarily well — measured, the NLL fell **three nats below its value at the true
+   intensity** while the correlation with that truth stayed at **0.00**. Both changes are statements
+   the data already makes, not regularisers. (SPEC_QUESTIONS B10.)
+6. **`infer/planes.py` exists early**, holding only `Plane`, `plane_from_normal`, `section_plane`,
+   `uniform_plane_points`, `uniform_slab_points`. T05 is package code and needs a plane type; T07/T09
+   still own `intersect`, `random_plane_pair` and the curved surfaces, to be added beside these.
+   (SPEC_QUESTIONS B13.)
+7. **`sample_layout` takes keyword-only `repulsion` and `flanking`.** The spec's positional
+   signature is unchanged. `Config.repulsion=True` with no fitted `RepulsionParams` **raises** —
+   there is no default hard core, because a hand-set one is what T05 forbids — and `hybrid` /
+   `resample` raise without the flanking sections.
+
+**Two findings that are not deviations.**
+
+* *The fixture's "~2 %" rare type is 6.3 %.* `tests/fixtures/synthetic.py` claims one, T05 needs one,
+  and `type_bias = linspace(0.6, -2.4, 6)` does not produce one. The fixture is left alone (every
+  earlier task's numbers were measured on it) and `test_rare_types_survive` injects a genuine 2 %
+  type — a stripe varying 0.2 %–3.8 %, i.e. interspersed rather than a compact niche, which is the
+  hard case. The 6.3 % is pinned by a test. (SPEC_QUESTIONS B14.)
+* *The Poisson MLE of a flexible intensity overfits, and T05 specifies no regulariser.* With the
+  default `fourier_bands_xy = 8` the recovered correlation decays from **0.97 at 300 steps to 0.28
+  at 1200** while the NLL keeps falling. The acceptance test lowers the head's spatial basis to the
+  scale the intensity varies on and says so; **T06's trainer owes an explicit answer** (early
+  stopping, a smoothness penalty, or a basis tied to the fitted length-scale). Recorded as an open
+  item in SPEC_QUESTIONS B10.
+
+**Coverage matrix.** All six T05 rows are implemented: per-type intensity + Poisson NLL; `r0` at the
+1st percentile with the 5th selectable and recorded; Strauss repulsion fitted to `g(r)` with A4 as
+the ablation; Potts smoothing with `beta` fitted, not set; the `layout_mode` gate (field / hybrid /
+resample, all three exercised); and the slab-volume integral. Nothing in the design docs is missing
+from the matrix for this task.
+
+**Both gates re-run after the change** (`pytest tests/ -m gate`): unchanged — GATE 1 and GATE 2 pass
+exactly as at T03/T04. T05 adds `Config` fields and three modules but touches no existing code path.

@@ -27,6 +27,7 @@ __all__ = [
     "EXPR_MODES",
     "HOLDOUT_MODES",
     "LAYOUT_MODES",
+    "POTTS_UPDATES",
     "PRIOR_MODES",
     "ROTATION_BIASES",
     "TEXT_EMB_MODES",
@@ -43,6 +44,7 @@ __all__ = [
 LAYOUT_MODES: Final[frozenset[str]] = frozenset({"field", "hybrid", "resample"})
 ROTATION_BIASES: Final[frozenset[str]] = frozenset({"uniform", "axial"})
 PRIOR_MODES: Final[frozenset[str]] = frozenset({"correlated", "iid"})
+POTTS_UPDATES: Final[frozenset[str]] = frozenset({"gibbs", "icm"})
 EXPR_MODES: Final[frozenset[str]] = frozenset({"zinb-flow", "cross-mix", "auto-blend"})
 TEXT_EMB_MODES: Final[frozenset[str]] = frozenset({"medcpt", "lookup"})
 DECODERS: Final[frozenset[str]] = frozenset({"zinb", "zigamma", "gaussian"})
@@ -470,6 +472,116 @@ class Config:
     fights the pair-correlation acceptance test (SPEC_QUESTIONS B6); 1.0 is the default
     and 5.0 remains selectable."""
 
+    layout_mlp_hidden: int = 128
+    """Hidden width of the intensity MLP. Half ``field_mlp_hidden``: the head reads a
+    ``field_dim`` feature that already carries the anatomy and only has to turn it into
+    ``n_types`` scalars, so it is the smaller network of the two."""
+
+    layout_mlp_layers: int = 3
+    """Linear layers in the intensity MLP (T05's ``MLP_c``). Must be >= 2, for the same
+    reason as ``field_mlp_layers``: one layer makes the log-intensity a linear read-out of
+    the field feature and the Fourier encoding."""
+
+    layout_fit_steps: int = 300
+    """Full-batch Adam steps taken by ``fit_intensity_head``. The Poisson NLL is a convex
+    function of the log-intensity and the head is small, so this is a fit rather than a
+    training run; the model's real intensity head is trained jointly by T06's trainer."""
+
+    layout_fit_lr: float = 0.01
+    """Adam learning rate for ``fit_intensity_head``. Larger than ``Config.lr`` because
+    this fits a few thousand parameters on a fixed batch rather than a whole model."""
+
+    layout_intensity_eps: float = 1e-12
+    """Floor on lambda, in cells per micrometre^3, before taking a logarithm. A cell type
+    whose intensity has been driven to exactly zero somewhere would otherwise make the
+    Poisson NLL infinite at any observed cell of that type."""
+
+    layout_proposal_batch: int = 256
+    """Proposals drawn per vectorised batch of the Strauss sampler. The intensity call is
+    vectorised over the batch; the repulsion test is then sequential over the survivors,
+    because acceptance depends on the points accepted before it."""
+
+    pcf_n_bins: int = 24
+    """Distance bins of the empirical pair-correlation function ``g(r)``."""
+
+    pcf_max_r_factor: float = 6.0
+    """Largest lag of ``g(r)``, in multiples of the median nearest-neighbour distance. It
+    has to cover ``3R`` — the range T05's ``test_pcf_matches_real`` is stated over — with
+    ``R`` (the lag at which the empirical ``g`` first reaches 1) typically one to two
+    nearest-neighbour distances."""
+
+    repulsion_gamma_grid_size: int = 9
+    """Candidate values in the 1-D search for the Strauss interaction parameter gamma. The
+    grid is the whole optimiser: each candidate costs one simulated realisation, and gamma
+    enters ``g(r)`` smoothly, so a grid is more robust than a gradient-free minimiser on a
+    Monte-Carlo objective."""
+
+    repulsion_gamma_min: float = 0.05
+    """Smallest candidate gamma; the grid is ``linspace(repulsion_gamma_min, 1.0)``. Zero
+    is excluded because ``phi = -log(gamma)`` is infinite there, which is the hard core
+    ``r0`` already provides."""
+
+    repulsion_fit_cells: int = 600
+    """Points per simulated realisation inside the gamma fit. Enough for a stable ``g(r)``
+    over the fitted range while keeping the fit to a second or two: the sampler is
+    sequential in the accepted points, so its cost grows faster than linearly."""
+
+    potts_update: str = "gibbs"
+    """One of ``POTTS_UPDATES``. How the Potts mark smoothing updates a label.
+
+    T05 writes "``potts_iters`` rounds of **ICM**". ICM takes the ``argmax``, i.e. it seeks
+    the *mode* of the Potts posterior — and measured on the synthetic fixture its very first
+    sweep, at ``beta = 0``, already raises neighbourhood purity from 0.49 to 0.77 against a
+    tissue value of 0.69 and takes a 2%-prevalence cell type to **exactly zero cells**. That
+    is T05's own "Do NOT" (do not smooth types so hard that rare types vanish) happening
+    before the coupling is even switched on, and it leaves ``beta`` nothing to fit. ``gibbs``
+    *samples* the same conditional instead of maximising it, which keeps the marks a draw
+    from the marked point process the section is supposed to be, makes purity a smooth,
+    monotone and therefore fittable function of ``beta``, and preserves rare types.
+    ``icm`` is kept, selectable, and exercised by a test as the negative control that
+    documents this (SPEC_QUESTIONS B11)."""
+
+    potts_beta_grid_size: int = 9
+    """Candidate values in the 1-D search for the Potts coupling beta, ``0`` included."""
+
+    potts_beta_min: float = 0.02
+    """Smallest non-zero candidate beta. The grid is ``0`` followed by
+    ``potts_beta_grid_size - 1`` values spaced **geometrically** from here to
+    ``potts_beta_max``: beta enters an exponent, so purity responds to it on a log scale,
+    and a linear grid puts all its resolution where the answer has already saturated. The
+    rare-type constraint bites between 0.05 and 0.3 on the fixture, which a linear grid of
+    the same size steps straight over."""
+
+    potts_beta_max: float = 2.0
+    """Largest candidate beta. At the default ``potts_knn_k=8`` a coupling of 2 makes eight
+    agreeing neighbours worth 16 nats against the unary log-intensity, which is already far
+    into the over-smoothed regime the fit exists to stay out of."""
+
+    potts_rare_prevalence: float = 0.05
+    """A cell type below this expected prevalence is *rare*, and the Potts fit is not
+    allowed to erase it. 5% is ``RARE_CELLTYPE_FRAC`` in
+    ``benchmark-pbya-v3/src/bench3/config.py``, i.e. the benchmark's own definition, so the
+    types this protects are exactly the ones ``rare_celltype_localization`` scores."""
+
+    potts_rare_retention: float = 0.5
+    """Smallest share of a rare type's *expected* count that must survive the smoothing, in
+    **every** training section. T05 states the 0.5 as an acceptance criterion
+    (``test_rare_types_survive``); making it a constraint on the fit is what turns "do not
+    smooth so hard that rare types vanish" into something the code guarantees rather than
+    something a reviewer hopes for. Per-section rather than pooled because a pooled
+    constraint is satisfied on average while a single section is wiped out, and because a
+    fit that sits exactly on a pooled threshold has a coin-flip's chance of missing it on
+    the next draw."""
+
+    swd_n_projections: int = 32
+    """Random 1-D projections averaged per sliced-Wasserstein polish step
+    (``layout_mode="hybrid"``)."""
+
+    swd_polish_step: float = 0.5
+    """Fraction of the sliced-Wasserstein displacement applied per polish step. Below 1 so
+    the polish is a flow toward the flanking marginals rather than a single snap onto them,
+    which would discard the repulsion the field sampler just imposed."""
+
     # ----------------------------------------------------------------------------------
     # selection gates (T09 select_config; the ablation switches for T10)
     # ----------------------------------------------------------------------------------
@@ -718,6 +830,7 @@ class Config:
             ("decoder", self.decoder, DECODERS),
             ("text_pooling", self.text_pooling, TEXT_POOLINGS),
             ("rotation_bias", self.rotation_bias, ROTATION_BIASES),
+            ("potts_update", self.potts_update, POTTS_UPDATES),
         ]
         for name, value, allowed in choices:
             if value not in allowed:
@@ -781,6 +894,20 @@ class Config:
             "layout_n_mc": self.layout_n_mc,
             "layout_max_proposal_factor": self.layout_max_proposal_factor,
             "swd_polish_steps": self.swd_polish_steps,
+            "layout_mlp_hidden": self.layout_mlp_hidden,
+            "layout_mlp_layers": self.layout_mlp_layers,
+            "layout_fit_steps": self.layout_fit_steps,
+            "layout_fit_lr": self.layout_fit_lr,
+            "layout_intensity_eps": self.layout_intensity_eps,
+            "layout_proposal_batch": self.layout_proposal_batch,
+            "pcf_n_bins": self.pcf_n_bins,
+            "pcf_max_r_factor": self.pcf_max_r_factor,
+            "repulsion_gamma_grid_size": self.repulsion_gamma_grid_size,
+            "repulsion_fit_cells": self.repulsion_fit_cells,
+            "potts_beta_grid_size": self.potts_beta_grid_size,
+            "potts_beta_min": self.potts_beta_min,
+            "potts_beta_max": self.potts_beta_max,
+            "swd_n_projections": self.swd_n_projections,
             "sefl_every_n_steps": self.sefl_every_n_steps,
             "sefl_patch_cells": self.sefl_patch_cells,
             "sefl_n_line_points": self.sefl_n_line_points,
@@ -799,6 +926,8 @@ class Config:
             "bisection_max_iter": self.bisection_max_iter,
             "bisection_grid_size": self.bisection_grid_size,
             "calibration_ell_max_extent_frac": self.calibration_ell_max_extent_frac,
+            "potts_rare_prevalence": self.potts_rare_prevalence,
+            "potts_rare_retention": self.potts_rare_retention,
             "calibration_ell_max_fitted_multiple": self.calibration_ell_max_fitted_multiple,
             "epochs": self.epochs,
             "batch_cells": self.batch_cells,
@@ -839,6 +968,8 @@ class Config:
             "variogram_min_structured_frac": self.variogram_min_structured_frac,
             "variogram_min_saturation": self.variogram_min_saturation,
             "calibration_ell_max_extent_frac": self.calibration_ell_max_extent_frac,
+            "potts_rare_prevalence": self.potts_rare_prevalence,
+            "potts_rare_retention": self.potts_rare_retention,
         }
         for name, value in unit_interval.items():
             if not 0.0 <= value <= 1.0:
@@ -854,6 +985,14 @@ class Config:
                 f"Config.repulsion_r0_percentile={self.repulsion_r0_percentile!r} "
                 "must lie in (0, 100)"
             )
+        if not 0.0 < self.repulsion_gamma_min <= 1.0:
+            raise ConfigError(
+                f"Config.repulsion_gamma_min={self.repulsion_gamma_min!r} must lie in (0, 1]; "
+                "phi = -log(gamma) is infinite at gamma = 0, which is what the hard core r0 "
+                "already provides"
+            )
+        if not 0.0 < self.swd_polish_step <= 1.0:
+            raise ConfigError(f"Config.swd_polish_step={self.swd_polish_step!r} must lie in (0, 1]")
         if self.layout_envelope_slack < 1.0:
             raise ConfigError(
                 f"Config.layout_envelope_slack={self.layout_envelope_slack!r} must be >= 1.0; "
@@ -895,6 +1034,31 @@ class Config:
             raise ConfigError(
                 f"Config.field_mlp_layers={self.field_mlp_layers} must be >= 2; a single "
                 "layer makes the field a linear read-out of the triplane features"
+            )
+        if self.layout_mlp_layers < 2:
+            raise ConfigError(
+                f"Config.layout_mlp_layers={self.layout_mlp_layers} must be >= 2; a single "
+                "layer makes the log-intensity a linear read-out of the field feature"
+            )
+        if self.pcf_n_bins < 3:
+            raise ConfigError(
+                f"Config.pcf_n_bins={self.pcf_n_bins} must be >= 3: g(r) is fitted against "
+                "over the range [r0, R], which cannot be resolved by fewer bins"
+            )
+        if self.repulsion_gamma_grid_size < 2:
+            raise ConfigError(
+                f"Config.repulsion_gamma_grid_size={self.repulsion_gamma_grid_size} must be "
+                ">= 2: a one-point grid is a hand-set gamma, which T05 forbids"
+            )
+        if not 0.0 < self.potts_beta_min < self.potts_beta_max:
+            raise ConfigError(
+                f"Config requires 0 < potts_beta_min < potts_beta_max, got "
+                f"({self.potts_beta_min}, {self.potts_beta_max})"
+            )
+        if self.potts_beta_grid_size < 2:
+            raise ConfigError(
+                f"Config.potts_beta_grid_size={self.potts_beta_grid_size} must be >= 2: a "
+                "one-point grid is a hand-set beta, which T05 forbids"
             )
         if self.niche_scale_factor <= 1.0:
             raise ConfigError(
