@@ -552,6 +552,19 @@ def _read_gene_meta_table(path: Path) -> pd.DataFrame:
     """Read the parquet table, checking that it has the columns the descriptors need."""
     table = pd.read_parquet(path)
     missing = [column for column in GENE_META_COLUMNS if column not in table.columns]
+    if missing == ["species_requested", "species_resolved"]:
+        # The expected upgrade path, and worth its own message: every table built before these
+        # columns existed is one whose organism cannot be checked, and the first two real ones
+        # turned out to be the wrong organism (a 1138-symbol mouse panel that came back as four
+        # other mammals, and a 28-symbol mouse panel that came back entirely human). "Add two
+        # columns" is not the fix; rebuilding is.
+        raise GeneMetaError(
+            f"{path} (Config.gene_meta_path) predates the species columns "
+            f"{missing}, so there is no way to tell which organism its rows describe. Rebuild it "
+            "with build_gene_meta(symbols, cfg) at the right Config.mygene_species — do not add "
+            "the columns by hand, because the value that would go in them is the thing that is "
+            "unknown. Check the Ensembl-id prefixes first: a mouse table's are ENSMUSG."
+        )
     if missing:
         raise ValueError(
             f"{path} (Config.gene_meta_path) is missing column(s) {missing}; the table must "

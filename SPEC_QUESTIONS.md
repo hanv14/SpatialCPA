@@ -700,6 +700,19 @@ a fake client reproduce the reported response offline.
 | 5 | `load_gene_meta(path, species=...)` **raises** on a mismatch, and on a pre-species-column table whose rows carry metadata but no species — while still allowing legitimately unresolvable symbols, or the gate would be unusable on any real panel |
 | 6 | best hit chosen, not first: right species, then exact symbol match over an alias match, then `_score`; residual same-species ambiguity is counted and warned |
 
+**The one real table that has been committed is the same bug again, in its most deceptive form.**
+`b68712d` added `resources/gene_meta.parquet` for "the STARmap panel". Audited with the tooling this
+repair added: 28 rows, the right mouse-cased symbols (`Slc17a7`, `Gad1`, …), **Ensembl prefixes
+`{'ENSG': 28}` — every row human**, and 28/28 full names, summaries and ids. `Config.mygene_species`
+was `"human,mouse"` when it was built, mygene matched the mouse-cased symbols case-insensitively, and
+the human hit outranks the mouse one. **Its coverage looks perfect precisely because it is wrong**:
+human records are the best-annotated in NCBI, so an accidental human resolution *maximises* summary
+coverage — which is why correctness is checked on `species_resolved` and the prefix histogram and never
+on coverage. Moved to `resources/gene_meta.human_orthologs.parquet` (kept, not deleted: it is the right
+table for a *human* dataset, and T10 needs one), `Config.gene_meta_path` is deliberately absent so
+`load_gene_meta` raises "build it", and `resources/README.md` records the audit.
+`test_committed_gene_meta_tables_are_species_checkable` pins the state.
+
 *Not measurable here:* the **mouse-only summary coverage**, because mygene.info is 403'd in this
 container (see C14). The old 144/1138 is explained — summaries were lost on exactly the 744 rows that
 resolved to non-reference species, whose gene records carry no NCBI summary — and the corrected query

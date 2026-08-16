@@ -1537,7 +1537,26 @@ describes one organism and a two-species request lets whichever hit arrived firs
 `load_gene_meta` and to quote the table's own coverage. One new fast test file section, 7 tests,
 `make check` green.
 
-**The number I was asked for and cannot produce: the mouse-only summary coverage.** mygene.info is
+**The table that arrived mid-repair is the same bug again.** `b68712d` ("C14: gene metadata for the
+STARmap panel") landed on the branch while I was working. Audited with the tooling this repair added:
+28 rows, the right mouse-cased symbols, **Ensembl prefixes `{'ENSG': 28}` — every row human**, and
+28/28 full names, summaries and Ensembl ids. It is the two-species coin toss: `mygene_species` was
+`"human,mouse"`, the symbols matched case-insensitively, and the human hit outranks the mouse one. Note
+what makes it dangerous — **its coverage is perfect *because* it is wrong.** Human gene records are
+the best-annotated in NCBI, so resolving to human by accident maximises summary coverage; a reviewer
+checking "28/28 have summaries" would have signed it off. Correctness is now checked on
+`species_resolved` and the Ensembl-prefix histogram, never on coverage.
+
+Handled without deleting anyone's work: moved to `resources/gene_meta.human_orthologs.parquet` (real
+human orthologs are the right table for the *human* dataset T10 needs), `Config.gene_meta_path` left
+absent so `load_gene_meta` raises "build it" rather than loading the wrong organism, the audit written
+into `resources/README.md`, and `test_committed_gene_meta_tables_are_species_checkable` pinning it. The
+schema check also got its own message for this exact case: a table predating the species columns says
+"rebuild it, do not add the columns by hand, because the value that would go in them is the thing that
+is unknown — check the Ensembl prefixes first".
+
+**C14 is therefore still open, and the number I was asked for still cannot be produced here: the
+mouse-only summary coverage.** mygene.info is
 403'd in this container (C14), so the only summaries I can count are my fake's. What the old 144/1138
 *was* is now explained — summaries were lost on precisely the 744 rows that resolved to non-reference
 species, whose gene records carry no NCBI summary — and the corrected query keeps the mouse hit, so

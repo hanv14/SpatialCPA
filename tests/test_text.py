@@ -677,3 +677,31 @@ def test_merge_refuses_to_mix_organisms(monkeypatch, cache_cfg):
     build_gene_meta(["Gad1"], online)
     with pytest.raises(GeneMetaError, match="One organism per table"):
         build_gene_meta(["GAD1"], online.replace(mygene_species="human"), merge=True)
+
+
+def test_committed_gene_meta_tables_are_species_checkable():
+    """No table at ``Config.gene_meta_path`` may be usable without a recorded species.
+
+    Guards the state B19 left the repository in: the one real table committed so far is human (28/28
+    ``ENSG``) for a mouse panel, it is parked under a species-explicit name, and nothing points at
+    it. If a future commit drops a table at the default path it has to carry the species columns or
+    this fails — the point being that both real tables built so far were the wrong organism and both
+    looked fine.
+    """
+    from spatialcpav25_gen.config import Config
+
+    default = Path(Config().gene_meta_path)
+    if default.exists():
+        # Present is fine; unlabelled is not.
+        import pandas as pd
+
+        columns = set(pd.read_parquet(default).columns)
+        assert {"species_requested", "species_resolved"} <= columns, (
+            f"{default} has no species columns, so its organism cannot be checked (B19)"
+        )
+        load_gene_meta(default, species=Config().mygene_species)
+
+    parked = Path("resources/gene_meta.human_orthologs.parquet")
+    if parked.exists():
+        with pytest.raises(GeneMetaError, match="predates the species columns"):
+            load_gene_meta(parked, species="mouse")
