@@ -11,7 +11,7 @@ Status values: `TODO` | `IN PROGRESS` | `BLOCKED` | `DONE`.
 | T01 | Config and data contracts | `specs/01_TASK_config_and_data.md` | `config.py`, `data/schema.py`, `data/loaders.py`, synthetic fixture | — | DONE |
 | T02 | Text-grounded embeddings | `specs/02_TASK_text_embeddings.md` | `data/text.py`, `model/embeddings.py`, MedCPT cache, distillation head | — | DONE |
 | T03 | 3D GRF noise field | `specs/03_TASK_noise_field_GATE1.md` | `model/noise.py`, `scripts/gate1_report.py`, `reports/gate1.md` | **GATE 1** | DONE — **GATE 1 passes** on the 3000 µm gate fixture |
-| T04 | Anatomical field + retrieval | `specs/04_TASK_field_and_retrieval_GATE2.md` | `model/field.py`, `model/retrieval.py`, `scripts/gate2_report.py`, `reports/gate2.md` | **GATE 2** | DONE — **GATE 2 passes**, depth-matched oblique parity **0.955** (edge-excluded check **0.979**) |
+| T04 | Anatomical field + retrieval | `specs/04_TASK_field_and_retrieval_GATE2.md` | `model/field.py`, `model/retrieval.py`, `scripts/gate2_report.py`, `reports/gate2.md` | **GATE 2** | DONE — **GATE 2 passes**, depth-matched oblique parity **0.955** (edge-excluded check **0.979**); amended 2026-08-16 with the per-query z window (SPEC_QUESTIONS C1c), gate numbers unchanged |
 | T05 | Layout head | `specs/05_TASK_layout_head.md` | `model/layout.py`, `losses/reconstruction.py` (layout NLL), `infer/planes.py` (minimal `Plane`), intensity + Strauss sampler + Potts marks | — | DONE — all eight acceptance tests pass, both negative controls fail as they must |
 | T06 | Expression head + ZINB decoder | `specs/06_TASK_expression_head.md` | `model/expression.py`, `model/spatialcpav25_gen.py` (`CTFFlow` + trainer), `losses/reconstruction.py`, `eval/baselines.py` | — | DONE — with three recorded failures: the covariance criterion is **unsatisfiable as stated** (below the ceiling, B16) and the model half of the amendment does **not** hold out of sample; zero-shot decoding is **r = −0.368** (B18); T05's intensity overfit is answered at trainer level but not abolished (R4) |
 | T07 | SEFL consistency losses | `specs/07_TASK_sefl_losses.md` | `losses/sefl.py`, `infer/planes.py`, EMA teacher, collapse alarm | — | TODO |
@@ -1723,3 +1723,76 @@ borrowed and labelled, 1:many skipped, no-orthologue left bare), the fallback sw
 second query at all, a third species' orthologue hit being dropped, `_homologene_gene_ids`, and the
 pre-`summary_source` table reading as native. Fast suite 198 passed / 1 xfailed in 86 s; `make check`
 green.
+
+### T04 amendment — the retrieval z window is per-query, not per-stack (2026-08-16)
+
+Follow-up to a GATE 2 question: `test_gate2_1h` reports 3032 of 4096 query points with no admissible
+donor, yet the gate passes. Chasing it turned up two separate things, one a non-issue and one a real
+defect in the model.
+
+**The 3032/4096 is the mutated arm, and is expected.** G2.1h-c is a mutation test: it queries
+retrieval twice, once correctly (`context.to_data(model_frame)`) and once deliberately wrong
+(`model_frame`, left in the model frame), and diffs the neighbour sets. Measured per arm on the gate
+fixture: the correct arm has **0 of 4096** empty pools and 32.0/32 donors; the broken arm has
+**3032 of 4096**, because rotating a 3000 × 3000 × **400** µm slab about its centre throws model-frame
+z to −1688 … 2106 µm, a median 469 µm from the nearest section against a 150 µm window. The empty
+pools *are* the mutation registering. No change made.
+
+**The window itself was genuinely too narrow, elsewhere.** `retrieval_z_window × median_spacing`
+sizes the pool off a statistic of the whole stack. Under a `consecutive`-3 holdout the training stack
+is z = 0, 200, 250, 300, 350, 400 µm: four of five gaps are 50 µm so the median — and the 150 µm
+window — never move, while the section at z = 0 sits 200 µm from its nearest neighbour. **13 500 of
+81 000 training cells (16.7%) retrieved nothing** and trained against a fully masked attention row.
+
+| consecutive-3, held-out R²_fixed | z = 50 | z = 100 | z = 150 |
+|---|---|---|---|
+| retrieval, window 3 (13 500 cells masked) | −0.018 | +0.304 | **−0.166** |
+| retrieval, window 4 (0 masked) | −0.158 | +0.066 | **+0.359** |
+| retrieval, window 5 (0 masked) | +0.105 | +0.250 | +0.365 |
+| retrieval branch ablated entirely | +0.086 | +0.075 | +0.187 |
+
+So retrieval was *worse than no retrieval* at two of three held-out depths, and clearing the masked
+rows is what fixes z = 150. It is not the whole story — z = 50 needs window 5, where masking is
+already zero — and the second mechanism is one-sided evidence, not yet chased. Held-in G2.1a is
+0.937 / 0.926 / 0.924 across the three windows: **the gate cannot see any of this.**
+
+**Implemented (SPEC_QUESTIONS C1c).** A two-term, per-query bound in `RetrievalIndex._query_chunk`:
+`|Δz| ≤ max(retrieval_z_window × median_spacing, retrieval_z_window_gap_factor × gap_to_nearest(p))`,
+new `Config.retrieval_z_window_gap_factor = 2.0` with `validate` enforcing `≥ 1` and finite. The gap
+is measured **after** `exclude_z`, the own-section exclusion and the gap-aware dropout — before them a
+cell's own section sits at gap 0 and the relative term collapses, silently and only in the
+leave-own-section-out configuration GATE 2 depends on.
+
+**What moved and what did not.** The evaluation path is bitwise identical on a regular stack (the gap
+is at most one spacing, `2 × 1 ≤ 3`, absolute term wins), asserted by
+`test_gap_relative_window_is_identity_on_a_regular_stack`. The **dropout path deliberately changes**:
+with the nearest section dropped the gap widens and the window follows it, which is the curriculum
+becoming self-consistent — serving a probe donors from beyond its training window drove held-out R²
+from −0.02 to −0.35, so simulating a wide gap under a narrow window trains in exactly that mismatch.
+Pinned by `test_gap_relative_window_follows_the_dropout_gap`.
+
+**`G23_Z_WINDOW = 5.0` kept.** It is the same class of defect patched locally at T04 (the 0.2/0.8
+fractional depths put one flank four spacings out), but the gap-relative term sizes off the *nearest*
+section and G2.3's problem is the *second* one. Verified: at the default config the donor sections
+present are `[near]` only at fractions 0.2 and 0.8, `[near, far]` at 5.0. Reason recorded at its
+definition; whether the window also needs a "reach the k-th nearest section" term is left open.
+
+**`gap_factor = 2.0` is a placeholder, not a swept value.** The sweep is owed at T09's config
+selection, on internal LOSO over training sections — choosing it against held-out sections is a leak.
+
+Three existing tests changed because they had been getting their behaviour from the starvation the
+rule abolishes: `test_empty_candidate_pool_warns_rather_than_crashing` (now empties the pool through
+the exclusions, the only way the pipeline can), `test_tokens_are_zero_on_padded_slots` (now gets
+partial padding from a five-cell donor section instead of a fully empty pool), and
+`test_inert_score_warns_when_the_union_is_no_larger_than_k` (pins `gap_factor = 1.0` so the window
+still admits one section either side). Five new tests.
+
+**Latent bug found, not fixed, out of scope:** `query(xyz, {every section z})` crashes in
+`_masked_softmax` with a bare numpy `ValueError` (zero-size reduction on the empty candidate block)
+instead of the documented `EmptyCandidatePoolWarning`. Pre-existing; only reachable now because the
+window can no longer be what empties a pool.
+
+`make check` green (204 passed / 1 xfailed fast, ruff clean, `mypy --strict` clean). Both gates
+re-run: 11 gate tests pass in 8 m 05 s, and every headline number reproduces the recorded report
+exactly — G2.1a **0.954742**, G2.1b **0.979466**, G2.1c **+0.0783596**, G2.3a **0.0302834**, G2.3b
+**0.00335065**, G2.4a **3.4222**, G2.4b **0.98744**. GATE 1 unaffected and passing.

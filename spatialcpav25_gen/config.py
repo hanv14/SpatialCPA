@@ -15,6 +15,7 @@ expression (T06), losses, metric-aware losses (T08), inference (T09), training.
 from __future__ import annotations
 
 import dataclasses
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -393,7 +394,39 @@ class Config:
     """Neighbouring real cells K retrieved per query point."""
 
     retrieval_z_window: float = 3.0
-    """Candidate pool half-width along z, in units of median section spacing."""
+    """Candidate pool half-width along z, in units of median section spacing.
+
+    The *absolute* term of the two-term bound; see ``retrieval_z_window_gap_factor`` for
+    why one term alone is not enough."""
+
+    retrieval_z_window_gap_factor: float = 2.0
+    """Candidate pool half-width along z, in units of **this query's own gap** to its
+    nearest admissible section. The *relative* term; the effective bound is
+
+        |z_j - z_p| <= max(retrieval_z_window x median_spacing,
+                           retrieval_z_window_gap_factor x gap_to_nearest(p))
+
+    ``median_spacing`` is a statistic of the whole stack, so the absolute term alone sizes
+    the window off tissue that may not be there. After a holdout, a dropped section or a
+    damaged one, the local gap at some depths far exceeds the median: on the GATE 2 fixture
+    under a ``consecutive``-3 holdout the training stack is z = 0, 200, 250, 300, 350, 400
+    um, four of five gaps are 50 um so the median stays 50 and the window stays 150 — while
+    the section at z = 0 is 200 um from its nearest neighbour. All 13500 of its cells then
+    retrieve **nothing**, train against a fully masked attention row, and held-out
+    reconstruction at z = 150 um inverts to R^2 = -0.17 (against -0.19 for no retrieval
+    at all). Widening the *training* window to cover the real gap takes the same depth to
+    +0.36.
+
+    The relative term makes the bound per-query and guarantees a non-empty pool by
+    construction: the nearest admissible section is at ``gap_to_nearest`` and the factor is
+    ``>= 1``, so it is always admitted. On a regular stack ``gap_to_nearest`` is at most one
+    spacing, ``2 x 1 <= 3``, the absolute term wins and behaviour is unchanged — which is
+    what ``test_gap_relative_window_is_identity_on_a_regular_stack`` asserts bitwise.
+
+    2.0 is a placeholder chosen so a query one gap from its evidence also reaches roughly
+    the next section along, not the whole stack. It has **not** been swept: the sweep
+    belongs in T09's config selection, on internal LOSO over training sections, because a
+    window chosen against held-out sections would be a leak. See SPEC_QUESTIONS C1c."""
 
     section_dropout_p: float = 0.3
     """Probability of dropping the nearest section from the candidate pool during
@@ -1086,6 +1119,7 @@ class Config:
             "rotation_bias_max_tilt_deg": self.rotation_bias_max_tilt_deg,
             "retrieval_k": self.retrieval_k,
             "retrieval_z_window": self.retrieval_z_window,
+            "retrieval_z_window_gap_factor": self.retrieval_z_window_gap_factor,
             "retrieval_ctx_dim": self.retrieval_ctx_dim,
             "retrieval_n_heads": self.retrieval_n_heads,
             "retrieval_score_temperature": self.retrieval_score_temperature,
@@ -1303,6 +1337,19 @@ class Config:
             raise ConfigError(
                 f"Config.rotation_bias_max_tilt_deg={self.rotation_bias_max_tilt_deg!r} "
                 "must lie in (0, 180]"
+            )
+        if not math.isfinite(self.retrieval_z_window_gap_factor):
+            raise ConfigError(
+                f"Config.retrieval_z_window_gap_factor="
+                f"{self.retrieval_z_window_gap_factor!r} must be finite"
+            )
+        if self.retrieval_z_window_gap_factor < 1.0:
+            raise ConfigError(
+                f"Config.retrieval_z_window_gap_factor="
+                f"{self.retrieval_z_window_gap_factor!r} must be >= 1. Below 1 the query's "
+                "own nearest admissible section falls outside its own window, the candidate "
+                "pool can be empty however much evidence the stack holds, and the guarantee "
+                "the relative term exists to provide is gone"
             )
         if self.retrieval_candidates_per_section < self.retrieval_k:
             raise ConfigError(

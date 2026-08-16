@@ -577,6 +577,61 @@ angle.
 
 `reports/gate2.md` must state the whole contract. Written into `specs/04`.
 
+### C1c. The retrieval z window is sized off a statistic of the stack, not off the query's evidence — **RESOLVED (implemented 2026-08-16; `gap_factor` default still owed a T09 sweep)** (raised in T04, found chasing a T04 measurement)
+`specs/04` states the candidate window as `retrieval_z_window × median_spacing` and says nothing
+about irregular stacks. `median_spacing` is a property of the whole volume, so after any holdout,
+dropped section or damaged section it sizes the window off tissue that is not there.
+
+**Measured.** On the GATE 2 fixture under a `consecutive`-3 holdout the training stack is
+z = 0, 200, 250, 300, 350, 400 µm. Four of five gaps are 50 µm, so the median stays 50 and the window
+stays 150 µm — while the section at z = 0 is 200 µm from its nearest neighbour. All **13 500 of
+81 000 training cells** (16.7%) retrieved nothing and trained against a fully masked attention row.
+Held-out reconstruction inverted: R² at z = 150 µm was **−0.166 with retrieval against +0.187 with
+the retrieval branch ablated entirely**. Widening the *training* window to cover the real gap takes
+the same depth to **+0.359**. None of this is visible on the gate: held-in G2.1a is 0.937 / 0.926 /
+0.924 at window 3 / 4 / 5 and passes throughout.
+
+**Decision.** Two-term, per-query bound:
+
+```
+|z_j − z_p| ≤ max(retrieval_z_window × median_spacing,
+                  retrieval_z_window_gap_factor × gap_to_nearest(p))
+```
+
+with `retrieval_z_window_gap_factor ≥ 1` enforced by `validate`, so the nearest surviving section is
+admissible at any gap and the pool is non-empty by construction. Three consequences, all now tested:
+
+(a) **Order is part of the rule.** `gap_to_nearest` is measured *after* `exclude_z`, the own-section
+exclusion and the gap-aware dropout. Sized before them, a cell's own section sits at gap 0, the
+relative term collapses, and the guarantee is void — silently, and only in the leave-own-section-out
+configuration C1(a) makes GATE 2 depend on.
+
+(b) **Bitwise identity on the evaluation path.** On a regular stack the gap is at most one spacing,
+`2 × 1 ≤ 3`, the absolute term wins, and nothing moves. Every published number is measured on that
+path, and `test_gap_relative_window_is_identity_on_a_regular_stack` asserts it.
+
+(c) **The curriculum path changes, deliberately.** With `apply_dropout=True` the nearest section is
+dropped, so the gap — and the window with it — widens. That is the curriculum becoming
+self-consistent rather than a side effect: measured on the gate fixture, serving a probe donors from
+beyond its training window drove held-out R² from −0.02 to −0.35, so simulating a wide gap under a
+narrow window is training in precisely that mismatch. Pinned by
+`test_gap_relative_window_follows_the_dropout_gap`.
+
+**Still owed.** `retrieval_z_window_gap_factor = 2.0` is a placeholder, not a swept value — chosen so
+a query one gap from its evidence also reaches roughly the next section along. The sweep belongs in
+T09's config selection on internal LOSO over *training* sections; choosing it against held-out
+sections would be a leak (`CLAUDE.md`, leakage discipline).
+
+**Same bug, patched locally at T04, and *not* fixed by this.** `tests/gate2_criteria.py`'s
+`G23_Z_WINDOW = 5.0` overrides the window for G2.3 alone because the 0.2/0.8 fractional depths put
+one flank four spacings out, beyond the default window of 3 — the same defect (a window sized off a
+statistic rather than off the evidence the query needs), noticed at T04 and worked around in the test
+rather than fixed in the model. The gap-relative term does **not** subsume it: it sizes the window off
+the *nearest* section, and G2.3's far flank is the *second*. Verified directly — at the default config
+the donor sections present are `[near]` only at fractions 0.2 and 0.8, `[near, far]` at 5.0. The
+override stays, with that reason recorded at its definition. Whether the window should also carry a
+"reach the k-th nearest section" term is a **separate open question**, deferred rather than answered.
+
 ### C2. `KL(ZINB₁ ‖ ZINB₂)` has no closed form (T07) — **RESOLVED (decided 2026-08-15)**
 Neither NB–NB nor ZINB–ZINB KL is closed-form (both need an infinite sum over counts). *Decision: skip the surrogate entirely.* Match the decoder parameters directly —
 `L2` on `log μ`, `log θ` and the `π` logit, with branch 2 detached. A Gaussian approximation in

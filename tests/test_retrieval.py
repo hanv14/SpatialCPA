@@ -37,6 +37,19 @@ QUERY_CELLS = 400
 QUERY_SEED = 5
 
 
+def _volume_with_a_thin_section(volume: Volume, *, keep: int) -> Volume:
+    """The fixture with its first section cut down to ``keep`` cells."""
+    first = volume.sections[0]
+    thin = copy_section(
+        first,
+        coords=first.coords[:keep].copy(),
+        cell_type=first.cell_type[:keep].copy(),
+        region=None if first.region is None else first.region[:keep].copy(),
+        counts=first.counts[:keep].copy(),
+    )
+    return rebuild_volume(volume, [thin, *volume.sections[1:]])
+
+
 @pytest.fixture(scope="module")
 def index(cfg: Config, volume: Volume) -> RetrievalIndex:
     """A retrieval index over the whole synthetic volume."""
@@ -222,12 +235,38 @@ def test_section_dropout_is_off_by_default(
 
 
 def test_empty_candidate_pool_warns_rather_than_crashing(cfg: Config, volume: Volume) -> None:
-    narrow = RetrievalIndex(volume, cfg.replace(retrieval_z_window=0.01))
-    xyz = volume.bbox.mean(axis=0).astype(np.float64)[None, :] + np.array([[0.0, 0.0, 20.0]])
+    """An empty pool must be survivable — but it can no longer be *caused* by the window.
+
+    This test used to starve the pool with ``retrieval_z_window=0.01``. Under the two-term
+    bound that is impossible by construction: ``retrieval_z_window_gap_factor >= 1`` admits
+    the query's nearest surviving section at any gap, and
+    ``test_gap_relative_window_never_starves_an_irregular_stack`` is the test that says so.
+    What is left is the exclusions, so this empties the pool the way the pipeline actually
+    can: ``exclude_z`` leaves one section standing and the query's own-section exclusion
+    removes that one too.
+    """
+    index = RetrievalIndex(volume, cfg)
+    rows = np.nonzero(index.section_index == 0)[0][:16]
+    others = {float(s.z) for s in volume.sections[1:]}
     with pytest.warns(EmptyCandidatePoolWarning, match="no admissible donor"):
-        idx, weights = narrow.query(xyz, set(), seed=0)
+        idx, weights = index.query(
+            index.coords[rows], others, seed=0, source_section=index.section_index[rows]
+        )
     assert (idx == PAD_INDEX).all()
     assert (weights == 0.0).all()
+
+
+def test_a_narrow_absolute_window_no_longer_empties_the_pool(cfg: Config, volume: Volume) -> None:
+    """The negative of the test above, kept separate because it is the actual fix.
+
+    ``retrieval_z_window=0.01`` is 0.5 um on this fixture — far narrower than any section
+    gap. Before the relative term this returned nothing; now it returns the nearest
+    section, because a query's own gap is the floor on its own window.
+    """
+    narrow = RetrievalIndex(volume, cfg.replace(retrieval_z_window=0.01))
+    xyz = volume.bbox.mean(axis=0).astype(np.float64)[None, :] + np.array([[0.0, 0.0, 20.0]])
+    idx, _ = narrow.query(xyz, set(), seed=0)
+    assert (idx != PAD_INDEX).any(), "the nearest section must be admissible at any gap"
 
 
 # --------------------------------------------------------------------------------------
@@ -328,13 +367,29 @@ def test_relative_position_only(cfg: Config, volume: Volume) -> None:
 
 
 def test_tokens_are_zero_on_padded_slots(cfg: Config, volume: Volume) -> None:
-    narrow = RetrievalIndex(volume, cfg.replace(retrieval_z_window=0.6))
+    """Padding is produced by a *small* donor section, not by a starved window.
+
+    This test used to get its padded slots from ``retrieval_z_window=0.6``, which on this
+    fixture admitted nothing at all — so every slot was padded and the assertion held
+    trivially. The two-term window makes that unreachable, and the honest source of partial
+    padding is a section with fewer than ``retrieval_k`` cells in it: the union is then
+    genuinely smaller than K with real donors in it, which is the case the zeroing is for.
+    """
+    thin = _volume_with_a_thin_section(volume, keep=5)
+    index = RetrievalIndex(thin, cfg)
+    # Everything but the thin section is excluded, so it is the only evidence there is.
+    exclude = {float(s.z) for s in thin.sections[1:]}
     gen = np.random.default_rng(6)
-    pick = gen.choice(narrow.n_cells, size=128, replace=False)
-    idx, _ = narrow.query(
-        narrow.coords[pick], set(), seed=0, source_section=narrow.section_index[pick]
-    )
-    tokens, mask = narrow.neighbour_tokens(narrow.coords[pick], idx)
+    rows = np.nonzero(index.section_index == 1)[0]
+    pick = gen.choice(rows, size=128, replace=False)
+    # A five-cell union is smaller than K by construction, so the inert warning is the
+    # correct report here rather than noise to be silenced.
+    with pytest.warns(InertScoreWarning):
+        idx, _ = index.query(
+            index.coords[pick], exclude, seed=0, source_section=index.section_index[pick]
+        )
+    tokens, mask = index.neighbour_tokens(index.coords[pick], idx)
+    assert bool(mask.any()), "the thin section must still supply real donors"
     assert bool((~mask).any()), "this test needs some padded slots to mean anything"
     assert float(tokens[~mask].abs().max()) == 0.0
 
@@ -467,10 +522,14 @@ def test_inert_score_warns_when_the_union_is_no_larger_than_k(
     """
     xyz, owner = query_cells
     # One admissible section either side, at exactly retrieval_k / 2 candidates each.
+    # ``retrieval_z_window_gap_factor=1.0`` pins the relative term to the query's own gap
+    # so it admits the nearest section and nothing beyond it; at the default 2.0 the window
+    # would reach the second section either way and the union would be 4 x 32, not 2 x 32.
     narrow = RetrievalIndex(
         volume,
         cfg.replace(
             retrieval_z_window=1.2,
+            retrieval_z_window_gap_factor=1.0,
             retrieval_k=32,
             retrieval_candidates_per_section=32,
         ),
@@ -495,3 +554,148 @@ def test_config_rejects_a_candidate_cap_below_k() -> None:
 
     with pytest.raises(ConfigError, match="retrieval_candidates_per_section"):
         Config().replace(retrieval_candidates_per_section=16, retrieval_k=32)
+
+
+# --------------------------------------------------------------------------------------
+# the two-term z window
+# --------------------------------------------------------------------------------------
+
+
+def _irregular_volume(volume: Volume) -> Volume:
+    """The fixture with a hole: sections 1-3 removed, leaving a 4x gap at the bottom.
+
+    The shape of the failure this window exists for, and the same shape a ``consecutive``-3
+    holdout produces on the gate fixture. Four of the five surviving gaps are one spacing,
+    so ``median_spacing`` — and with it the absolute term — is completely unchanged, while
+    the first section's real gap is four times it.
+    """
+    return rebuild_volume(volume, [s for i, s in enumerate(volume.sections) if i not in (1, 2, 3)])
+
+
+def test_gap_relative_window_is_identity_on_a_regular_stack(
+    cfg: Config, volume: Volume, query_cells: tuple[np.ndarray, np.ndarray]
+) -> None:
+    """Bitwise identity on the evaluation path, so nothing downstream moves.
+
+    On a regular stack a query's gap to its nearest admissible section is at most one
+    spacing, so ``gap_factor x gap <= 2 < 3 = retrieval_z_window``: the absolute term wins
+    for every query and the relative term is inert. Every published number — both gates,
+    the benchmark, T05's and T06's — is measured on a stack of this shape and on this path,
+    so anything short of bitwise equality here is a re-baselining event.
+
+    Scoped to ``apply_dropout=False`` deliberately. The curriculum *does* move, by design:
+    ``test_gap_relative_window_follows_the_dropout_gap`` is where that is pinned, with the
+    argument for it.
+
+    Compared against ``gap_factor = 1.0``, the smallest legal value, rather than against a
+    recorded array: that arm is the one the relative term cannot widen, so the comparison
+    isolates the new term instead of merely restating today's output.
+    """
+    xyz, owner = query_cells
+    default = RetrievalIndex(volume, cfg)
+    inert = RetrievalIndex(volume, cfg.replace(retrieval_z_window_gap_factor=1.0))
+    for exclude in (set(), {float(volume.sections[0].z)}, {float(volume.sections[4].z)}):
+        a_idx, a_w = default.query(xyz, exclude, seed=11, source_section=owner)
+        b_idx, b_w = inert.query(xyz, exclude, seed=11, source_section=owner)
+        assert np.array_equal(a_idx, b_idx), (
+            f"the relative term changed the donors on a regular stack (exclude={exclude}); "
+            "it must be inert wherever the absolute term already wins"
+        )
+        assert np.array_equal(a_w, b_w)
+
+
+def test_gap_relative_window_follows_the_dropout_gap(
+    cfg: Config, volume: Volume, query_cells: tuple[np.ndarray, np.ndarray]
+) -> None:
+    """The one path the relative term is *not* inert on, asserted rather than discovered.
+
+    The curriculum exists to simulate a wide gap: it drops the query's nearest section so
+    the model cannot learn a shortcut it will not have at inference. Measuring the window
+    after the drop means the simulated gap carries its own window with it — which is the
+    point. Measured before it, the curriculum would hand the model a wide gap with a window
+    sized for a narrow one, i.e. it would train in exactly the train/inference mismatch
+    that costs the most: widening the window at evaluation time only, without retraining,
+    drove held-out R^2 on the GATE 2 fixture from -0.02 to -0.35.
+
+    So on a regular stack, with dropout on, the pool must be *strictly larger* than it is
+    with the relative term pinned inert. This is a deliberate change to the training path
+    and the reason the identity test above is scoped to the evaluation path.
+    """
+    xyz, owner = query_cells
+    default = RetrievalIndex(volume, cfg)
+    inert = RetrievalIndex(volume, cfg.replace(retrieval_z_window_gap_factor=1.0))
+    wide, _ = default.query(xyz, set(), seed=11, source_section=owner, apply_dropout=True)
+    pinned, _ = inert.query(xyz, set(), seed=11, source_section=owner, apply_dropout=True)
+
+    def furthest(idx: np.ndarray, source: RetrievalIndex) -> np.ndarray:
+        mask = idx != PAD_INDEX
+        z = source.section_z[source.section_index[np.where(mask, idx, 0)]]
+        return np.where(mask, np.abs(z - xyz[:, 2:3]), 0.0).max(axis=1)
+
+    assert not np.array_equal(wide, pinned)
+    assert furthest(wide, default).mean() > furthest(pinned, inert).mean(), (
+        "with the nearest section dropped, the window must follow the widened gap; if it "
+        "does not, the curriculum is training the model on a mismatch it will meet at "
+        "inference"
+    )
+
+
+def test_gap_relative_window_never_starves_an_irregular_stack(cfg: Config, volume: Volume) -> None:
+    """The bug this rule exists for: a section whose real gap exceeds the median spacing.
+
+    Sized off ``median_spacing`` alone the isolated section retrieves nothing at all and
+    every one of its cells trains against a fully masked attention row. The first assertion
+    is what makes the rest meaningful: it states that the absolute term alone *would* miss,
+    so the pool being full afterwards is the relative term's doing and not the fixture's.
+    """
+    irregular = _irregular_volume(volume)
+    gaps = np.diff([float(s.z) for s in irregular.sections])
+    assert gaps[0] > cfg.retrieval_z_window * irregular.median_spacing, (
+        f"fixture no longer poses the problem: first gap {gaps[0]:g} um against an absolute "
+        f"window of {cfg.retrieval_z_window * irregular.median_spacing:g} um"
+    )
+
+    starved = RetrievalIndex(irregular, cfg.replace(retrieval_z_window_gap_factor=1.0))
+    # gap_factor = 1 admits the nearest section and nothing else, so to reproduce the old
+    # behaviour the query must also have its own section excluded — which is the pipeline's
+    # default and the configuration GATE 2 runs in.
+    rows = np.nonzero(starved.section_index == 0)[0]
+    owner = starved.section_index[rows]
+    idx, _ = starved.query(starved.coords[rows], set(), seed=0, source_section=owner)
+    reached = (idx != PAD_INDEX).any(axis=1)
+    assert reached.all(), "gap_factor >= 1 must reach the nearest section even at a 3x gap"
+
+    default = RetrievalIndex(irregular, cfg)
+    idx_default, _ = default.query(default.coords[rows], set(), seed=0, source_section=owner)
+    assert (idx_default != PAD_INDEX).all(), (
+        "at the default gap factor the isolated section must fill its pool, not merely "
+        "reach one donor"
+    )
+
+
+def test_z_window_is_measured_after_the_own_section_exclusion(cfg: Config, volume: Volume) -> None:
+    """The ordering constraint, asserted rather than left to the call site's comment.
+
+    A cell's *own* section is at gap zero. If the window were sized before the own-section
+    exclusion ran, the relative term would be ``gap_factor x 0 = 0``, the absolute term
+    would be all that is left, and on an irregular stack the isolated section would starve
+    again — silently, and only in the leave-own-section-out configuration GATE 2 depends on.
+    """
+    irregular = _irregular_volume(volume)
+    index = RetrievalIndex(irregular, cfg.replace(retrieval_z_window_gap_factor=1.0))
+    rows = np.nonzero(index.section_index == 0)[0]
+    idx, _ = index.query(
+        index.coords[rows], set(), seed=0, source_section=index.section_index[rows]
+    )
+    donors = index.section_index[np.where(idx != PAD_INDEX, idx, 0)]
+    assert (idx != PAD_INDEX).any(axis=1).all()
+    assert not (donors[idx != PAD_INDEX] == 0).any(), "own section leaked into the pool"
+
+
+def test_config_rejects_a_gap_factor_below_one() -> None:
+    from spatialcpav25_gen.config import ConfigError
+
+    with pytest.raises(ConfigError, match="retrieval_z_window_gap_factor"):
+        Config().replace(retrieval_z_window_gap_factor=0.5)
+    with pytest.raises(ConfigError, match="retrieval_z_window_gap_factor"):
+        Config().replace(retrieval_z_window_gap_factor=float("inf"))

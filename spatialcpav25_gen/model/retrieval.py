@@ -21,6 +21,35 @@ ablation A5: ``Config.retrieval_w_z = 0`` reproduces the omission exactly, and G
 G2.3 measures what it costs at fractional depths 0.2 and 0.8 (where the two sections are
 *not* equidistant) against 0.5 (where they are, so the term has nothing to say).
 
+The z window is per-query, not per-stack
+----------------------------------------
+Ranking decides *which* donors come back; the window decides which are eligible at all.
+A candidate is eligible when::
+
+    |z_p - z_j| <= max(retrieval_z_window x median_spacing,
+                       retrieval_z_window_gap_factor x gap_to_nearest(p))
+
+The second term is what makes the bound a statement about **this query's evidence** rather
+than about the stack's average. ``median_spacing`` is global, so on any irregular stack —
+a holdout, a dropped section, a damaged one — it sizes the window off tissue that is not
+there, and a section whose real gap exceeds the median retrieves nothing at all. With the
+factor at ``>= 1`` the nearest surviving section is admitted at any gap, so the pool is
+non-empty by construction and ``EmptyCandidatePoolWarning`` becomes a signal about the
+*exclusions* instead of routine noise. ``Config.retrieval_z_window_gap_factor`` carries the
+measurements that put it there.
+
+Two consequences worth stating, because both are easy to get wrong later:
+
+* **Order.** The gap is measured after ``exclude_z``, the own-section exclusion and the
+  gap-aware dropout have run — a window sized off a section the query may not use is not a
+  bound on anything. ``_query_chunk`` applies the filter last for that reason.
+* **The window is part of the learned input distribution.** A model trained with donors no
+  further than ``W`` and served donors from beyond it is being fed out-of-distribution
+  evidence: on the GATE 2 fixture, widening the window at evaluation time only, without
+  retraining, drove held-out ``R^2`` at one depth from ``-0.02`` to ``-0.35``. Training,
+  calibration and inference must therefore share one rule, which is why it lives here and
+  is driven by ``Config`` rather than being a per-call argument.
+
 The niche is density-adaptive on purpose
 ----------------------------------------
 ``niche(.)`` is a local cell-type composition vector at ``cfg.niche_n_scales`` spatial
@@ -105,10 +134,16 @@ class EmptyCandidatePoolWarning(UserWarning):
     """Some query point had no admissible donor cell at all.
 
     Every exclusion is legitimate on its own — a held-out section, the query's own section,
-    the gap-aware dropout, the z window — but together they can empty the pool, and the
-    attention then reads a fully masked neighbour set and returns its bias. Warned rather
-    than raised because a handful of such points at the ends of a stack is expected;
-    a large fraction means the exclusions and ``retrieval_z_window`` are inconsistent.
+    the gap-aware dropout — but together they can leave no section standing, and the
+    attention then reads a fully masked neighbour set and returns its bias.
+
+    The z window is **not** one of the causes, and that is a deliberate property rather
+    than an accident: ``retrieval_z_window_gap_factor >= 1`` makes the bound relative to
+    each query's own gap, so the nearest surviving section is admitted however far away it
+    is. Before that the window was a fixed multiple of the stack's *median* spacing and
+    could starve a whole section of an irregular stack — 13500 of 81000 training cells on
+    the GATE 2 fixture under a ``consecutive``-3 holdout. So this warning now means "the
+    exclusions left this query nothing", which is a real signal, and it should be rare.
     """
 
 
@@ -118,7 +153,8 @@ class RetrievalIndex:
     Args:
         vol: the volume whose cells are the donor pool. In the pipeline a
              ``TrainingVolume`` — held-out sections are not evidence.
-        cfg: supplies ``retrieval_k`` (K), ``retrieval_z_window``, ``retrieval_w_z``,
+        cfg: supplies ``retrieval_k`` (K), ``retrieval_z_window``,
+             ``retrieval_z_window_gap_factor``, ``retrieval_w_z``,
              ``retrieval_w_niche``, ``retrieval_score_temperature``,
              ``retrieval_candidates_per_section``, ``retrieval_query_chunk``,
              ``retrieval_exclude_source_section``, ``section_dropout_p``,
@@ -364,8 +400,10 @@ class RetrievalIndex:
                 f"retrieval_candidates_per_section={self.cfg.retrieval_candidates_per_section} "
                 f"x the number of admissible sections — not the per-section cap, and the "
                 f"number of admissible sections shrinks with exclude_z ({len(exclude_z)} "
-                f"excluded), the z window ({self.cfg.retrieval_z_window} x "
-                f"{self.median_spacing:g} um), the own-section exclusion "
+                f"excluded), the z window (per query, the larger of "
+                f"{self.cfg.retrieval_z_window} x {self.median_spacing:g} um and "
+                f"{self.cfg.retrieval_z_window_gap_factor} x its gap to the nearest "
+                "admissible section), the own-section exclusion "
                 f"({self.cfg.retrieval_exclude_source_section}) and the gap-aware dropout "
                 f"(applied: {apply_dropout}). Raise retrieval_candidates_per_section or widen "
                 "retrieval_z_window: the z-proximity term is inert for these queries.",
@@ -377,9 +415,12 @@ class RetrievalIndex:
             warnings.warn(
                 f"RetrievalIndex.query: {empty} of {n} query point(s) had no admissible donor "
                 f"cell (specimen {self.specimen_id!r}). Excluded depths {sorted(exclude_z)}, "
-                f"z window {self.cfg.retrieval_z_window} x {self.median_spacing:g} um, "
                 f"own-section exclusion {self.cfg.retrieval_exclude_source_section}. Their "
-                "neighbour sets are fully masked and the attention returns its bias.",
+                "neighbour sets are fully masked and the attention returns its bias. Note "
+                "the z window cannot be the cause: it admits the nearest surviving section "
+                f"at any gap (retrieval_z_window_gap_factor="
+                f"{self.cfg.retrieval_z_window_gap_factor} >= 1), so these queries have no "
+                "candidate section left at all — look at the exclusions, not the window.",
                 EmptyCandidatePoolWarning,
                 stacklevel=2,
             )
@@ -414,11 +455,17 @@ class RetrievalIndex:
         section_of = self.section_index[np.where(valid, candidate_idx, 0)]
         delta_z = np.abs(self.section_z[section_of] - points[:, 2:3])
 
-        valid &= delta_z <= self.cfg.retrieval_z_window * self.median_spacing
+        # Order is load-bearing: the z window is sized off the gap to the nearest
+        # *usable* section, so every other exclusion has to have run first. Sizing it off
+        # a section the query may not retrieve from — its own, one named in exclude_z, one
+        # the curriculum just dropped — hands back a bound derived from evidence that is
+        # not there, and the non-empty guarantee is void. GATE 2 runs with the own-section
+        # exclusion on, so this is the configuration the gate rests on, not a corner case.
         if self.cfg.retrieval_exclude_source_section:
             valid &= section_of != owner[:, None]
         if apply_dropout and self.cfg.section_dropout_p > 0.0:
             valid &= self._dropout_mask(section_of, delta_z, valid, seed=seed, offset=offset, n=n)
+        valid &= delta_z <= self._z_window(delta_z, valid)
 
         niche_q = self._query_niche(points, candidate_idx, valid)
         niche_j = self.niche[np.where(valid, candidate_idx, 0)]
@@ -448,6 +495,31 @@ class RetrievalIndex:
             int((~keep.any(axis=1)).sum()),
             int(((pool > 0) & (pool <= k)).sum()),
         )
+
+    def _z_window(
+        self, delta_z: FloatArray, valid: npt.NDArray[np.bool_]
+    ) -> npt.NDArray[np.float64]:
+        """Per-query admissible ``|z_j - z_p|``, micrometres. ``(n, C)``, ``(n, C)`` -> ``(n, 1)``.
+
+        Two terms, the larger winning (``Config.retrieval_z_window_gap_factor`` documents
+        the failure that put the second one here)::
+
+            max(retrieval_z_window x median_spacing,
+                retrieval_z_window_gap_factor x gap to the nearest admissible candidate)
+
+        ``valid`` must already carry **every** other exclusion — see the call site. A query
+        with no surviving candidate at all gets an infinite bound, which changes nothing
+        (there is nothing left to admit) and keeps the arithmetic free of ``nan``.
+        """
+        # ``initial`` rather than a special case: with every section excluded the candidate
+        # block is (n, 0) and the reduction has nothing to fold over.
+        nearest = np.min(np.where(valid, delta_z, np.inf), axis=1, keepdims=True, initial=np.inf)
+        absolute = float(self.cfg.retrieval_z_window) * self.median_spacing
+        relative = float(self.cfg.retrieval_z_window_gap_factor) * nearest
+        window: npt.NDArray[np.float64] = np.maximum(absolute, relative)
+        if self.cfg.debug_shapes:
+            assert window.shape == (delta_z.shape[0], 1), window.shape
+        return window
 
     def _gather_candidates(
         self,

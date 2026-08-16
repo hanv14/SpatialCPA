@@ -133,7 +133,17 @@ G23_Z_WINDOW = 5.0
 The 0.2 and 0.8 configurations put one flank four spacings away, outside the default window
 of 3. Left at 3 the far flank would be filtered out before the score ever saw it, and the
 ablation would be measuring ``retrieval_z_window`` rather than ``retrieval_w_z``. Applied
-identically to both arms."""
+identically to both arms.
+
+**Not subsumed by ``retrieval_z_window_gap_factor``**, and the reason is worth stating so
+nobody deletes this twice. The gap-relative term sizes each query's window off its
+*nearest* admissible section; G2.3's problem is the *second* one. At fraction 0.2 the near
+flank is one spacing away, so the relative bound is 2 x 50 = 100 um against an absolute
+bound of 150 um — the absolute term still wins, and the far flank at 200 um is still
+filtered out. Measured directly: at the default config the donor sections present are
+``[near]`` only at fractions 0.2 and 0.8, and ``[near, far]`` at 5.0. Both are the same
+class of defect (a window sized off a statistic rather than off the evidence this query
+needs), which is why SPEC_QUESTIONS C1c records them together; only the first is fixed."""
 
 G23_TIE_TOLERANCE = 0.01
 """How much R^2 at the symmetric depth 0.5 may move before "barely affecting 0.5" is false.
