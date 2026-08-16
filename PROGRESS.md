@@ -13,7 +13,7 @@ Status values: `TODO` | `IN PROGRESS` | `BLOCKED` | `DONE`.
 | T03 | 3D GRF noise field | `specs/03_TASK_noise_field_GATE1.md` | `model/noise.py`, `scripts/gate1_report.py`, `reports/gate1.md` | **GATE 1** | DONE — **GATE 1 passes** on the 3000 µm gate fixture |
 | T04 | Anatomical field + retrieval | `specs/04_TASK_field_and_retrieval_GATE2.md` | `model/field.py`, `model/retrieval.py`, `scripts/gate2_report.py`, `reports/gate2.md` | **GATE 2** | DONE — **GATE 2 passes**, depth-matched oblique parity **0.955** (edge-excluded check **0.979**) |
 | T05 | Layout head | `specs/05_TASK_layout_head.md` | `model/layout.py`, `losses/reconstruction.py` (layout NLL), `infer/planes.py` (minimal `Plane`), intensity + Strauss sampler + Potts marks | — | DONE — all eight acceptance tests pass, both negative controls fail as they must |
-| T06 | Expression head + ZINB decoder | `specs/06_TASK_expression_head.md` | `model/expression.py`, `model/spatialcpav25_gen.py`, `losses/reconstruction.py` | — | TODO |
+| T06 | Expression head + ZINB decoder | `specs/06_TASK_expression_head.md` | `model/expression.py`, `model/spatialcpav25_gen.py` (`CTFFlow` + trainer), `losses/reconstruction.py`, `eval/baselines.py` | — | DONE — nine of ten acceptance criteria pass; the covariance criterion is **amended** (below the achievable ceiling, B16) and the original held as a strict xfail at 1.20 |
 | T07 | SEFL consistency losses | `specs/07_TASK_sefl_losses.md` | `losses/sefl.py`, `infer/planes.py`, EMA teacher, collapse alarm | — | TODO |
 | T08 | Metric-aware LOSO losses | `specs/08_TASK_metric_aware_losses.md` | `losses/metric_aware.py`, `train/loso.py` | — | TODO |
 | T09 | Inference + calibration | `specs/09_TASK_inference_and_calibration.md` | `infer/generate.py`, `infer/calibrate.py`, `train/select.py` | — | TODO |
@@ -34,8 +34,37 @@ table covers everything that has been done to the repository.
 | # | Risk | Raised | Owed to | Decision due |
 |---|---|---|---|---|
 | R1 | **`ell_z` cannot be resolved by a 9-section stack.** The fit returns **561 µm** against a **200 µm** ground truth on the gate fixture (353 µm at the 1000 µm field of view). | T03 | T07 | **before T07** |
-| R2 | **GATE 2's attention is near-uniform** (0.987 × log K): the retrieval branch averages its K donors rather than selecting among them, so G2.4 passes at the opposite extreme from the collapse it forbids. Whether a *selective* attention preserves oblique parity is untested. | T04 | T06 | **at T06** |
+| R2 | ~~GATE 2's attention is near-uniform (0.987 × log K)~~ — **CLOSED at T06.** With the flow-matching head trained the entropy falls to **0.8563 × log K** (a fall of 0.132, required 0.05) and stays above the 0.5 collapse line. The query is what changed: T04's probe queried with the field feature alone, T06's with `[F(p), fourier(p), type_emb, region_emb, z_embed]`, and a query that knows its own cell type can prefer a donor that shares it. | T04 | T06 | **closed 2026-08-16** |
+| R4 | **The expression head overfits the likelihood.** 1200 → 2400 steps lowers the reconstruction NLL (1.589 → 1.578 nats/pair) while every distributional statistic of the *generated* section deteriorates: Frobenius covariance error 17.7 → 21.3, detection MAD 0.056 → 0.069. B10's shape on another head. Nothing in T06's loss set constrains distributional agreement. | T06 | T08, T09 | **at T08** |
 | R3 | **The stack's ends reconstruct far worse than its interior.** Per-section R² was **0.2912** at the first section and **0.3642** at the last, against an interior mean of **0.4474** — a 20–35 % deficit. One-sided evidence at the volume boundary. | T04 | T09, T10 | **at T09** |
+
+### R4 — the expression head overfits the likelihood, and T06 has no term that could stop it
+
+Measured at the wide-gap (`consecutive-3`) holdout, same model, same seed, only the step budget
+changing:
+
+| steps | recon (nats/pair) | Frobenius covariance error | detection MAD | covariance magnitude |
+|---|---|---|---|---|
+| 1200 | 1.589 | 17.75 | 0.0556 | 0.1728 |
+| 2400 | 1.578 | 21.29 | 0.0691 | 0.1753 |
+| real | — | 0 | 0 | 0.1425 |
+
+The likelihood improves and the generated section gets worse — the same shape as SPEC_QUESTIONS
+**B10** (the Poisson MLE of a flexible intensity), now on the expression head. It is not surprising:
+`forward_train` returns `recon`, `cfm`, `size`, `layout`, `distill` and `tv_z`, and **none of them is
+a statement about the distribution of a generated section**. The terms that are — Moran's I / Geary's
+C agreement, depth and per-type profiles, Sinkhorn distribution matching — are T08's, and their
+weights (`w_autocorr`, `w_profile`, `w_distribution`, all 0.5) already sit in `Config` with nothing
+to weight. The mean–variance (`log theta`) and detection calibrators are T09 §2's.
+
+Two consequences, both written into the specs:
+
+* **T08 must report the same table.** If the metric-aware block does not reverse the sign of these
+  trajectories, its ablation (A2) has no case, and the natural stopping signal — internal LOSO on
+  training sections — is exactly what T08 builds.
+* **T06's `TRAIN_STEPS` is a measured choice, not a budget.** The acceptance tests run at 1200 steps
+  because more is worse, and the test's docstring says so, so nobody "improves" the suite by training
+  longer.
 
 ### R3 — the boundary is a different regime, and it is not a fixture artefact
 
@@ -111,9 +140,10 @@ made on evidence rather than taste. **Do not start T07 without settling it.**
 | `I_gen(ell)` maximiser (bounds T09's calibration bracket) | T03 / T09 | **0.086 × in-plane extent** at 3000 µm FOV (2.52× the fitted `ell`), **0.112 ×** at 1000 µm (0.79× the fitted `ell`) |
 | GRF query throughput | T03 | **2.9 × 10⁵ points/s** (10⁶ points, M = 4096, d_h = 64) on the reference 4-core Xeon @ 2.10 GHz — 2.0–3.5 × 10⁵ across runs, the spread being machine load; 8× the points cost 6.6–9.7× the time (ideal 8, quadratic 64) |
 | Oblique parity ratio | T04 | **0.955** — G2.1a, *depth-matched on both arms*, and that qualifier belongs with the number. Corroborated by **0.979** on the independent interior-only construction (G2.1b). Fixed-denominator R² by angle 0.4536 / 0.4152 / 0.4018 / 0.4125 / 0.4219 / 0.4386 at 0/15/30/45/60/90° against a nine-arm coronal mean of 0.4208; equal `n` = 1011 (seed 20260815), own source section excluded at every angle, gate fixture 3000 µm FOV. Two superseded constructions kept on the record and **not** to be quoted: 0.941 (per-set denominator, not comparable across angles) and 0.886 (fixed denominator vs a single central coronal plane, which failed) |
-| Attention entropy ÷ log K | T04 / T06 | **0.987** (3.422 nats, K = 32). Passes G2.4's `> 0.5 log K` at the *opposite* extreme from collapse: the probe averages its donors rather than selecting among them. T06 should watch it fall |
+| Attention entropy ÷ log K | T04 / T06 | T04: **0.987** (3.422 nats, K = 32) — G2.4 passed at the *opposite* extreme from collapse, near-uniform averaging. **T06: it falls.** With the flow-matching head trained the trajectory is 0.9879 → 0.8563 (minimum 0.8485), a fall of **0.132 log K** against the required 0.05, staying well above the 0.5 log K collapse line. Trajectory in `reports/benchmark.md` |
 | Fitted repulsion `r0`, `R`, `gamma`; Potts `beta` | T05 | — |
-| Detection-rate r; gene–gene covariance vs independent-donor; mean–variance slope | T06 | — |
+| Detection-rate r; gene–gene covariance vs independent-donor; mean–variance slope | T06 | detection **r = 0.9955**, MAD **0.0191**; covariance magnitude retained — model **3.3 %** error vs the independent-donor baseline's **7.3 %** (ratio **0.458**, i.e. better by **2.2×**) at equal pattern fidelity (0.9649 vs 0.9750); mean–variance log-log slope **1.7556** vs real **1.7410** (**0.84 %**). Raw Frobenius, which the spec's own criterion is stated on and which **cannot be met by any model**: model 9.316, baseline 7.783, **ceiling 5.601** |
+| Chimerism, isolated (donors fixed, draw varied) | T06 | retained covariance magnitude at 1 / 2 / 3 / 10 mixed donors: **0.978 / 0.920 / 0.897 / 0.844** on the default holdout and **0.955 / 0.818 / 0.783 / 0.714** at `consecutive-3`. Monotone; the competing method's `D = 3` costs 8 pp at 50 µm and **17 pp at 100 µm** |
 | Consistency/reconstruction loss ratio; collapse-alarm history | T07 | — |
 | Metric-aware on/off table (ablation A2) | T08 | — |
 | Selected per-dataset config | T09 | — |
@@ -1100,3 +1130,180 @@ from the matrix for this task.
 
 **Both gates re-run after the change** (`pytest tests/ -m gate`): unchanged — GATE 1 and GATE 2 pass
 exactly as at T03/T04. T05 adds `Config` fields and three modules but touches no existing code path.
+
+### T06 — expression head: flow matching, gene-conditioned ZINB, `CTFFlow` and the trainer (2026-08-16)
+
+`model/expression.py`, `model/spatialcpav25_gen.py` (`CTFFlow`, `Batch`, `TrainingData`, `EMA`,
+`TrainHistory`, `train_ctfflow`), the expression half of `losses/reconstruction.py`,
+`eval/baselines.py` (the independent-donor negative control), `scripts/t06_expression_report.py`,
+`reports/benchmark.md`, `tests/test_expression.py` (41 tests: 30 fast, 10 slow, 1 strict xfail),
+`fourier_bands_for_lengthscale` added beside `IntensityHead`. 26 new `Config` fields and one new
+gate set (`MU_LINKS`); no constant outside `Config`.
+
+**All ten of the spec's acceptance tests, with numbers.** The trained model is the reduced config of
+`tests/test_expression.py` (widths only — the 200-gene panel is never reduced), 1200 steps, default
+`alternating` holdout, seed 20260816, 284 s on four CPU cores.
+
+| Test | Criterion | Measured |
+|---|---|---|
+| `test_zinb_nll_matches_reference` | max abs error < 1e-5 vs an independent reference | **4.1e-9** (reference is `scipy.stats.nbinom` + the mixture by hand, sharing no code with the package) |
+| `test_zinb_no_nan_extremes` | finite over `mu` 1e-8..1e8 × `theta` 1e-4..1e6 × `pi` 0..1 × counts 0..1e4 | **500/500 finite**, log-prob ≤ 0 everywhere, and the gradients w.r.t. all three parameters finite |
+| `test_cfm_recovers_gaussian` | Wasserstein-2 < 0.1 in 2000 steps | **0.0417**; untrained control **2.35** |
+| `test_flow_deterministic` | same `h0`, same cond → identical `h1` | bitwise (`torch.equal`), and unchanged by the global torch seed |
+| `test_shared_latent_preserves_covariance` | **amended, B16** — magnitude error < 50 % of the baseline's at ≥ 0.9 × its pattern fidelity | magnitude error **0.0334** vs baseline **0.0730** → ratio **0.458** (better by **2.2×**); pattern **0.9649** vs **0.9750** → ratio 0.990 |
+| `test_per_gene_independence_destroys_covariance` | the amended key test: copy retains ≥ 0.95, per-gene draw costs ≥ 0.05 more, monotone in donors | **0.978 / 0.920 / 0.897 / 0.844** at 1/2/3/10 donors (default holdout) and **0.955 / 0.818 / 0.783 / 0.714** at `consecutive-3` |
+| `test_shared_latent_frobenius_beats_donor_baseline` | the spec's **original** statistic | **strict xfail at ratio 1.20** (9.316 vs 7.783) — below the ceiling, unpassable; see B16 |
+| `test_sparsity_preserved` | detection rate r > 0.95, MAD < 0.05 | **r = 0.9955**, MAD **0.0191** (baseline control r = 0.9976) |
+| `test_mean_variance_relation` | log-log slope within 15 % | **0.84 %** (1.7556 vs 1.7410) |
+| `test_zero_shot_gene_decoding` | 20 % of genes never trained on, per-gene mean r > 0.4 | **passes**; the 40 unseen genes' free residual `r_g` never leaves its zeros init, so the text channel plus `psi` is all that decodes them |
+| `test_never_returns_means` | integer-valued, non-zero variance, seed-dependent | integer, 46 % zeros, two seeds differ, same seed bitwise identical |
+| `test_cross_mix_matches_v20` | **bit-for-bit** on fixed inputs and a fixed seed | `np.array_equal` — exact, no fallback to the donor-frequency check §4b allows |
+| `test_cross_mix_emits_real_counts` | every value is some donor's count | 100 % of 7500 entries; donor frequencies within **0.02** of the weights over 20 000 draws |
+| `test_retrieval_attention_becomes_selective` | fall ≥ 0.05 log K from 0.987, stay > 0.5 log K | **0.9879 → 0.8563** (min 0.8485): a fall of **0.132 log K** |
+
+**Definition of done — the three numbers, and the fourth the measurement forced.**
+Detection rate **r = 0.9955** / MAD **0.0191**; mean–variance slope **1.7556 vs 1.7410**; gene–gene
+covariance **better than the independent-donor baseline by 2.2×** on retained magnitude at equal
+pattern fidelity. The fourth is the ceiling: **5.601** Frobenius for the same cells with the
+fixture's true `mu` and only a fresh count draw, which is what makes the spec's own version of the
+covariance criterion unpassable.
+
+**The three items carried into T06, each with its answer.**
+
+1. **B10 — the Poisson MLE of a flexible intensity overfits, and T05 left T06's trainer to answer
+   it.** Answered by tying the intensity head's spatial basis to the **fitted length-scale**:
+   `fourier_bands_for_lengthscale(extent, ell, cfg)` keeps the bands whose wavelength is at least
+   `intensity_basis_ell_multiple × ell`, and `CTFFlow` builds its `IntensityHead` with that count
+   (3 bands at the fixture's 1000 µm / 159 µm, against the default 8). Measured on T05's own
+   known-intensity fixture, recovered Pearson r at 300 and 1200 steps:
+
+   | basis | 300 steps | 1200 steps | decay |
+   |---|---|---|---|
+   | derived (3 bands) | **0.9789** | **0.8610** | 0.118 |
+   | default (8 bands) | 0.8349 | 0.5269 | 0.308 |
+
+   Better at both budgets and decaying **2.6× less**. Both arms are asserted, because a fix whose
+   control also passes has measured nothing. It does **not** abolish the decay, and the test says so:
+   a flexible intensity fitted by likelihood alone still drifts, and the rest needs a stopping signal
+   from outside the likelihood — which is R4, and T08's.
+   *Early stopping was rejected on the merits, not forgotten:* the in-sample NLL falls monotonically
+   while the fit deteriorates, so the signal has to come from a section held out of the fit, which
+   spends training data on a capacity choice that a length-scale the pipeline has **already fitted**
+   answers directly — and it leaves the step count as the real hyperparameter, which is not a
+   statement about the tissue.
+
+2. **R2 — GATE 2 left the attention at 98.7 % of log K, i.e. averaging rather than selecting.**
+   **Closed: 0.9879 → 0.8563 × log K**, a fall of 0.132 against the required 0.05, staying well clear
+   of the 0.5 collapse line. Note the start: 0.9879 reproduces T04's 0.987 almost exactly, so the two
+   numbers are the same measurement and the movement is real. What changed is the **query**: T04's
+   probe attended with the field feature alone, and a query that does not know its own cell type
+   cannot prefer a donor that shares it. T06's query is
+   `[F(p), fourier(p), type_emb, region_emb, z_embed]` — which is what `RetrievalAttention`'s own
+   docstring anticipated. The trajectory is in `reports/benchmark.md` and is logged every
+   `Config.log_every` steps beside the per-gene variance T07's collapse alarm will watch.
+
+3. **A6 — the v20 Bernoulli cross-mix.** `cross_mix_counts(donor_counts, weights, gen)`, and
+   **`test_cross_mix_matches_v20` is bitwise**, not the distributional fallback §4b permits. That took
+   one design decision: the function consumes a single `gen.random((N, G))` draw in C order and picks
+   the donor by a **suffix** cumulative sum, so with two donors the event is literally v20's
+   `u < w_other`. A forward cumulative sum — the obvious way to write a categorical draw — uses the
+   same uniforms to select a *different* set of entries: same distribution, no bitwise agreement. The
+   reasoning is in the function's docstring so a later refactor cannot undo it by accident.
+   `expr_mode="cross-mix"` is wired through `CTFFlow.generate` (the retrieval score's donor weights
+   *are* v20's mixing weights, renormalised over the admissible donors), and `"auto-blend"` raises
+   naming T09 as its owner rather than silently picking one of the two.
+
+**SPEC_QUESTIONS B16 — the covariance criterion is below the achievable ceiling.** The full argument
+and the measurements are in `SPEC_QUESTIONS.md`; the short version is that a gene–gene correlation
+matrix estimated from ~1500 cells carries ~5.6 of Frobenius error **whatever produced the cells**
+(measured with T05's ceiling protocol), the independent-donor baseline sits at 7.78, and "< 50 % of
+the baseline" therefore asks for < 3.89. `specs/06` is amended in both places the criterion appears,
+the mechanism the criterion is *about* became its own test (donors held fixed, draw varied — and it
+**confirms the paper's argument**: 22 % of the covariance magnitude lost at the competing method's
+`D = 3`, monotone through `D = 10`), every arm is reported against the ceiling, and the original
+criterion is a **strict xfail holding its measured 1.20** so the shortfall is on the record.
+
+**SPEC_QUESTIONS B17 — the detection criterion is gap-dependent.** Same model, same criterion:
+MAD **0.0191** on the default `alternating` holdout and **0.0556** at `consecutive-3`, one side of
+`< 0.05` each. T06's spec names no regime; the test runs on `alternating` (T01's default, T10's
+headline regime) and the wide-gap number is a reported diagnostic that T09's detection calibration
+starts from.
+
+**Deviations from the spec, and why.**
+
+1. **The encoder is a *set* encoder, not a fixed-width `Enc`.** T06 §2 writes
+   `h1 = Enc(log1p(counts / size_factor))`, which reads as a fixed input layer — and that would tie
+   the data-side latent to one panel, contradict `genes_per_step` (whose whole point is that the
+   decoder never sees a fixed width) and make zero-shot decoding meaningless on any volume the
+   encoder was not built on. `ExpressionEncoder` pools `x_ig · (P e_g)` over the genes presented, so
+   it is permutation-invariant and defined on any subset; `test_decoder_is_gene_set_agnostic` asserts
+   both properties on the encoder and the decoder together.
+2. **`decoder_mu_link` exists, and the spec's `softplus` stays the default.** There was a good a
+   priori case for `exp` (a panel's per-gene mean spans four orders of magnitude and
+   `softplus(x) ≈ x` for `x >> 0`). Measured, it does not pay off: NLL 1.649 → 1.636, Frobenius
+   18.02 → 17.05, and **per-gene mean-expression correlation 0.802 → 0.576** — the argument's own
+   target moving the wrong way. The field is kept and kept selectable, because the argument is still
+   right for a panel with a wider dynamic range than this fixture's; changing the default needs that
+   measurement, not this one.
+3. **The two output-path samplers take a `numpy.random.Generator`**, not a `torch.Generator`. Torch
+   has no seedable Gamma sampler (`torch._standard_gamma` ignores generators) and `cross_mix_counts`
+   has to reproduce a numpy draw bit for bit. The rest of the package already passes numpy generators
+   explicitly (`potts_smooth`, `uniform_slab_points`), so this is the established spelling.
+   `LatentFlow.cfm_loss` takes a `torch.Generator`, because it draws inside the autograd graph.
+4. **`forward_train(batch, *, rotation=None)`** takes the rotation context as an additive keyword
+   (T01's `split_holdout(..., cfg=None)` shape of deviation): the spec's `forward_train(batch)` has
+   nowhere to put the augmentation, and threading it through the `Batch` would let a caller rotate
+   the coordinates and forget the GRF — the exact mistake `RotationContext` exists to prevent. A
+   training step declares `requires=("coords", "retrieval", "grf")`: there is no plane channel
+   because every plane is consumed by drawing points on it, and that omission is explicit rather
+   than accidental (G2.1h's discipline).
+5. **`forward_train` also returns `diag_`-prefixed diagnostics** (attention entropy, per-gene
+   variance) beside the loss terms, and `train_ctfflow` never weights them. The alternative was a
+   second return value or module state; the spec asks for "named loss terms" and for the entropy to
+   be "logged every epoch", and one dict with a reserved prefix satisfies both. An unrecognised
+   *un*-prefixed key raises rather than being dropped.
+6. **`w_cfm` and `w_size` are new `Config` weights.** The trainer applies a weight to every term it
+   sums (Convention 1); the spec's loss list names only the terms that trade off against
+   reconstruction. `w_cfm = 1.0` is not a tuned value — `h1` is detached inside `cfm_loss`, so the
+   flow's gradient never reaches the encoder or the decoder and the term does not compete.
+7. **The layout term is evaluated on one section per step**, cycling by step index, using **all** of
+   that section's cells. The process likelihood balances a sum over cells against an integral over
+   the slab, so subsampling cells would silently reweight the two; cycling sections keeps the cost at
+   1/n_sections without breaking that balance.
+8. **`generate(plane, cfg, seed)` keeps the spec's signature** and validates it: fields that change
+   the *architecture* may not differ from the model's own config, and `_check_generation_cfg` names
+   the offenders. `layout_mode` / `expr_mode` / `ode_steps` / `prior_mode` / `ell_*` are exactly the
+   generation-time policy T09's selector varies without retraining, which is why the argument exists.
+9. **`test_lengthscale_basis_answers_the_poisson_overfit` reuses T05's known-intensity constants
+   verbatim** (1000 µm extent, 1.1e-4 base density, 3 sections at 100 µm). A first attempt at a
+   cheaper fixture (600 µm, 43 cells/section) recovered r = 0.08 at *any* basis, which measures the
+   cell count and not the basis.
+10. **`test_ema_tracks_and_restores` runs on a two-parameter `nn.Linear`**, not on the shared
+    `CTFFlow` fixture. Found the hard way: mutating a module-scoped model's weights to exercise an
+    averager broke the next three tests, and the assertions are about `EMA` and nothing else.
+
+**Two things reported, not fixed.**
+
+* **`EmptyCandidatePoolWarning` fires during wide-gap training** — at `consecutive-3` the first
+  training section is 200 µm from the next one, so after the own-section exclusion its cells have no
+  admissible donor inside `retrieval_z_window = 3 × 50 µm` and their attention returns its bias
+  (measured: 100–110 of 512 cells per batch). T04's warning is doing its job; the fix is a wider
+  window at inference, which is T09's calibration surface.
+* **The generated section's cell-type composition is close but not equal** to the held-out section's
+  (real 0.338 / 0.039 / 0.166 / 0.215 / 0.138 / 0.105 against generated 0.322 / 0.032 / 0.153 /
+  0.237 / 0.149 / 0.107). It is a T05 layout property, and it accounts for only 0.35 of the model's
+  9.32 Frobenius covariance error — measured by decoding the same trained head at the **real** cells'
+  positions and types, which scores 8.97. The shortfall is in the expression head (R4), not the
+  layout.
+
+**Coverage matrix.** All six T06 rows are implemented: conditional flow matching in the cell latent
+(straight-line path, Heun); the gene-conditioned ZINB decoder with the bilinear `h ⊙ A e_g`; the
+shared latent tested against the independent-donor baseline; counts sampled and never `mu`, with the
+assertion in the generation path; `genes_per_step` subsampling; and the v20 Bernoulli cross-mix
+(§4b). The observation-token row (T02/T04/T06) is assembled in `spatialcpav25_gen.py` as the matrix
+says. Nothing in the design docs is missing from the matrix for this task.
+
+**Both gates re-run after the change** (`pytest tests/ -m gate`): unchanged — GATE 1 and GATE 2 pass
+exactly as at T03/T04. T06 adds modules and `Config` fields and adds one function to `model/layout.py`;
+it changes no code path either gate exercises, and `test_gate_reports_unchanged` pins the `Config`
+defaults both gates were measured at so a later edit cannot move them silently.

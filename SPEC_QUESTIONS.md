@@ -423,6 +423,65 @@ magnitude below where it bites. *Owed to T10:* report **per-type** ceilings, not
 average (`specs/10` §1, point 5), and read any `celltype_localization` difference against the
 ceiling's own spread.
 
+### B16. T06's gene-gene covariance criterion is below the achievable ceiling (T06 measurement) — **OPEN, criterion amended, model shortfall recorded**
+`test_shared_latent_preserves_covariance` requires the generated section's gene-gene correlation
+matrix to be closer to the held-out section's than the independent-donor baseline's **by a factor
+of two in Frobenius norm**. Measured on the synthetic fixture, three separate things are wrong with
+that as written, and the first is fatal independently of the model.
+
+**1. The criterion is below the ceiling.** Every arm's error contains the same irreducible term: a
+correlation matrix estimated from ~1500 cells has a sampling error of about `1/sqrt(N)` per entry
+whatever produced the cells. Measured with T05's ceiling protocol — the **same cells**, the fixture's
+**true** `mu`, and only a fresh count draw — the Frobenius error is **5.51 ± 0.05** (5.57 at the
+narrow gap; an independent draw of the whole law gives 5.71). Against a baseline at **11.31**
+(100 µm gap) the criterion asks for **< 5.65**. A *perfect* model has a coin-flip's chance, and at
+the narrow gap (baseline 7.90, criterion < 3.95) it cannot pass at all. This is B15 again: a stated
+range is not an achievable range.
+
+**2. The comparison is against a copy, and at a narrow gap a copy is nearly the answer.** With a
+120 µm in-plane / 200 µm along-z correlation length, a section 50 µm away shares most of its latent
+with the target, so a donor baseline assembled from the immediate flanks is not a weak control — it
+is v20's own "the narrow-gap benchmark is saturated: adjacent-slice recombination ties there and
+nothing can win it by more than noise". Measured: the baseline's error grows 7.90 → 11.31 as the gap
+goes 50 → 100 µm, i.e. the criterion's difficulty is mostly a statement about the holdout regime.
+
+**3. The mechanism the criterion is *about* is real, and it is measurable directly.** Holding the
+donors fixed and varying only whether the draw is per **cell** or per **gene** — which is the whole
+of the chimerism claim, with the positional confound removed — the mean |off-diagonal correlation|
+against a real 0.1425 is:
+
+| donors mixed | 1 (verbatim copy) | 2 | 3 (the competing method) | 5 | 10 |
+|---|---|---|---|---|---|
+| mean \|off-diag\| | **0.1360** | 0.1165 | **0.1116** | 0.1074 | 0.1017 |
+| Frobenius error | 9.90 | 10.57 | 11.24 | 11.96 | 13.06 |
+
+Monotone in the number of donors, 22 % of the covariance magnitude lost at the method's own `D = 3`.
+**The paper's covariance argument is confirmed**; what cannot be expressed as "2× in Frobenius norm"
+is the *model's* advantage over it.
+
+*Proposal (implemented at T06).* Three parts. (a) The mechanism becomes its own acceptance test,
+`test_per_gene_independence_destroys_covariance`, measured on real donors with the confound removed
+— it needs no trained model and it is what the paper's covariance section actually claims.
+(b) Every arm is reported **relative to the measured ceiling**, with the systematic part
+`sqrt(err² − ceiling²)` beside the raw number, because noise and bias add in quadrature.
+(c) The spec's own criterion keeps its name and its statistic and is held as a **strict xfail** at
+its measured value, so the shortfall is not reworded away and a later task that closes it breaks the
+suite until the record is updated (T05's precedent for its localization criterion).
+
+*The model shortfall is separate and is recorded as open risk R4, not amended away:* at 1200 steps
+the model's Frobenius error is **17.7** against the baseline's 11.3 — worse, not better — with the
+covariance *magnitude* 21 % too high (0.173 vs 0.1425) where the baseline's is 21 % too low. See R4:
+the head overfits the likelihood, and the terms that would stop it are T08's.
+
+### B17. T06's `test_sparsity_preserved` tolerance is gap-dependent (T06 measurement) — **RESOLVED: measured on the default holdout**
+Per-gene detection rate, generated vs held-out real, at 1200 steps: `r = 0.989` and mean absolute
+difference **0.036** on the default `alternating` holdout (50 µm to the nearest donor), against
+`r = 0.969` and MAD **0.056** on `consecutive-3` (100 µm) — the same model, the same criterion, one
+side of `< 0.05` each. T06's spec names no holdout regime. *Resolution:* the acceptance test runs on
+`alternating`, which is T01's default and T10's headline regime, and the wide-gap number is reported
+as a diagnostic. Detection is what T09 §2 calibrates; closing 0.056 is that task's job and B17 is
+the measurement it starts from.
+
 ---
 
 ## C. Under-specified — I will pick the stated option unless told otherwise

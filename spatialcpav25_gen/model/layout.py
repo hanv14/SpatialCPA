@@ -89,6 +89,7 @@ __all__ = [
     "fit_potts_beta",
     "fit_repulsion",
     "flanking_from_section",
+    "fourier_bands_for_lengthscale",
     "intensity_fn_from_head",
     "mean_cell_density",
     "pair_correlation",
@@ -1102,6 +1103,59 @@ def _softplus_inverse(y: float) -> float:
     if y <= 0.0:
         raise LayoutError(f"_softplus_inverse: needs y > 0, got {y!r}")
     return float(np.log(np.expm1(y))) if y < 20.0 else y
+
+
+def fourier_bands_for_lengthscale(extent: float, ell: float, cfg: Config) -> int:
+    """How many in-plane Fourier bands the intensity head may have. Returns ``>= 1``.
+
+    The answer T06's trainer owes to SPEC_QUESTIONS **B10**, and the reason it is here rather
+    than in T06's own files: it is a statement about :class:`IntensityHead`'s basis.
+
+    The Poisson MLE of a flexible intensity overfits the point pattern. At the default
+    ``fourier_bands_xy = 8`` the head's finest band is ``2^7 = 128`` cycles across the
+    section — structure of a hundredth of the field of view — and given enough steps it fits
+    the sampling noise: measured on T05's known-intensity fixture the recovered correlation
+    decays from 0.97 at 300 steps to 0.28 at 1200 while the NLL keeps falling. T05 specified
+    no regulariser and deliberately did not invent one; its acceptance test lowered the basis
+    by hand and said so.
+
+    The principled version of that hand-lowering is a basis **tied to the fitted length-scale**
+    (the third of B10's three candidate answers, and the only one that adds no new tunable and
+    no extra fitting loop). The intensity is a smoothed functional of the anatomical field, and
+    the field's own in-plane correlation length is ``ell_xy``: a basis function whose wavelength
+    is well below ``ell`` describes variation the tissue does not have and the point pattern
+    cannot constrain. Band ``b`` has wavelength ``extent / 2^b``, so the bands kept are those
+    with ``extent / 2^b >= intensity_basis_ell_multiple * ell``, i.e.
+    ``B = floor(log2(extent / (m * ell))) + 1``, capped at ``Config.fourier_bands_xy`` and
+    floored at 1.
+
+    Parameters
+    ----------
+    extent
+        The in-plane extent the encoding is normalised against, in micrometres — the width of
+        ``Volume.bbox``, i.e. what one normalised unit is worth.
+    ell
+        The fitted in-plane correlation length in micrometres (``Config.ell_xy`` after
+        ``fit_lengthscale_from_sections``, never a hand-set value for a published run).
+    cfg
+        Supplies ``fourier_bands_xy`` (the cap) and ``intensity_basis_ell_multiple``.
+
+    Notes
+    -----
+    Early stopping — B10's other candidate — was rejected rather than forgotten: the in-sample
+    NLL falls monotonically while the fit deteriorates, so the stopping signal has to come
+    from a section held out of the fit, which spends training data on a capacity choice that a
+    length-scale the pipeline has *already fitted* answers directly. It also leaves the number
+    of steps as the real hyperparameter, which is not a statement about the tissue.
+    """
+    if not extent > 0 or not ell > 0:
+        raise LayoutError(
+            f"fourier_bands_for_lengthscale: extent and ell must be > 0 um, got "
+            f"{extent!r} and {ell!r}"
+        )
+    resolvable = float(extent) / (float(cfg.intensity_basis_ell_multiple) * float(ell))
+    bands = math.floor(math.log2(resolvable)) + 1 if resolvable >= 1.0 else 1
+    return max(1, min(int(cfg.fourier_bands_xy), bands))
 
 
 class IntensityHead(nn.Module):

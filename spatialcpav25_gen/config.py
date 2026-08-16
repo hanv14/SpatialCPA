@@ -27,6 +27,7 @@ __all__ = [
     "EXPR_MODES",
     "HOLDOUT_MODES",
     "LAYOUT_MODES",
+    "MU_LINKS",
     "POTTS_UPDATES",
     "PRIOR_MODES",
     "ROTATION_BIASES",
@@ -42,6 +43,7 @@ __all__ = [
 # --------------------------------------------------------------------------------------
 
 LAYOUT_MODES: Final[frozenset[str]] = frozenset({"field", "hybrid", "resample"})
+MU_LINKS: Final[frozenset[str]] = frozenset({"exp", "softplus"})
 ROTATION_BIASES: Final[frozenset[str]] = frozenset({"uniform", "axial"})
 PRIOR_MODES: Final[frozenset[str]] = frozenset({"correlated", "iid"})
 POTTS_UPDATES: Final[frozenset[str]] = frozenset({"gibbs", "icm"})
@@ -642,7 +644,14 @@ class Config:
     # expression (T06)
     # ----------------------------------------------------------------------------------
     cfm_sigma_min: float = 1e-4
-    """Minimum path noise in conditional flow matching."""
+    """Minimum path noise in conditional flow matching.
+
+    The straight-line path of T06 §2 is ``h_t = (1-t) h0 + t h1`` exactly; this is the width
+    of the isotropic Gaussian the sample is then perturbed by, which is the ``sigma_min`` of
+    the conditional-flow-matching construction (the conditional path is
+    ``N(h_t, sigma_min^2 I)``, not a Dirac). The regression target ``u = h1 - h0`` is
+    unchanged. Small enough to be a regulariser on the velocity field rather than a change to
+    the path."""
 
     ode_steps: int = 24
     """Heun steps in the sampling ODE."""
@@ -652,13 +661,138 @@ class Config:
     width. This is what makes panel width irrelevant."""
 
     zinb_eps: float = 1e-6
-    """Additive epsilon on the ZINB dispersion."""
+    """Additive epsilon on the ZINB dispersion, and the clamp on the zero-inflation
+    probability (``pi`` is confined to ``[zinb_eps, 1 - zinb_eps]`` so that ``log pi`` and
+    ``log1p(-pi)`` are finite at the ends of the range)."""
+
+    zinb_theta_min: float = 1e-4
+    """Lower clamp on the ZINB dispersion, as T06 §3 specifies. Below it the negative
+    binomial's variance ``mu + mu^2/theta`` overflows before the log-likelihood does."""
+
+    zinb_theta_max: float = 1e6
+    """Upper clamp on the ZINB dispersion (T06 §3). Above it the NB is a Poisson to float32
+    precision and ``lgamma(x + theta) - lgamma(theta)`` cancels catastrophically."""
+
+    zinb_mu_min: float = 1e-8
+    """Lower clamp on the ZINB mean (T06 §3)."""
+
+    zinb_mu_max: float = 1e8
+    """Upper clamp on the ZINB mean (T06 §3)."""
+
+    decoder_mu_link: str = "softplus"
+    """One of ``MU_LINKS``: how the decoder turns its ``mu`` head into a positive mean.
+
+    ``"softplus"`` is T06 §3's own ``mu = softplus(MLP_mu(u)) * size_factor`` and it is the
+    default. ``"exp"`` exists because there was a good *a priori* reason to expect it to win —
+    a real panel's per-gene mean spans four orders of magnitude, ``softplus(x) ~ x`` for
+    ``x >> 0``, so a gene with mean 0.004 needs a pre-activation of -5.5 while one with mean 40
+    needs +40, and one shared trunk whose inputs are O(1) is then asked for outputs spanning 45
+    units with a gradient dominated by the handful of dense genes. Under ``"exp"`` the
+    pre-activation *is* log-expression, which is the scale the quantity lives on.
+
+    **Measured, that reasoning does not pay off, so the spec's choice stands.** On the synthetic
+    fixture at 1200 steps (wide-gap holdout, whole panel per step): reconstruction NLL 1.649
+    nats/pair under softplus against 1.636 under exp, gene-gene Frobenius error 18.02 against
+    17.05, and per-gene mean expression correlation **0.802 under softplus against 0.576 under
+    exp** — the argument's own target, moving the wrong way, because an exponential link lets an
+    early large pre-activation produce an enormous ``mu`` and the clamp then hides the gradient.
+    The field is kept, and kept selectable, because the argument is still the right one to make
+    on a panel with a wider dynamic range than this fixture's; changing the default needs that
+    measurement, not this one. Both arms are in ``PROGRESS.md``."""
+
+    latent_encoder_hidden: int = 256
+    """Hidden width of the expression encoder producing the data-side latent ``h1``."""
+
+    latent_encoder_layers: int = 3
+    """Linear layers in the expression encoder. Must be >= 2: one layer would make ``h1`` a
+    linear read-out of the gene-embedding-weighted expression pooling."""
+
+    flow_hidden: int = 256
+    """Hidden width of the velocity network ``v_theta(h_t, t, cond)``."""
+
+    flow_layers: int = 3
+    """Linear layers in the velocity network. Must be >= 2."""
+
+    flow_time_dim: int = 32
+    """Width of the sinusoidal embedding of the flow time ``t``. Even, so that the
+    ``(sin, cos)`` pairs come out whole."""
+
+    decoder_hidden: int = 128
+    """Hidden width of the gene-conditioned decoder's shared trunk.
+
+    Deliberately half ``field_mlp_hidden``: the trunk is evaluated at every *(cell, gene)*
+    pair, so its activation is ``(batch_cells, genes_per_step, decoder_hidden)`` — 134 MB at
+    the defaults — while the interaction term ``h * (A e_g)`` already carries the
+    multiplicative capacity a wider trunk would buy. The three parameter heads (``mu``,
+    ``theta``, ``pi``) share it."""
+
+    decoder_layers: int = 3
+    """Linear layers in the decoder trunk plus head. Must be >= 2."""
+
+    size_factor_hidden: int = 64
+    """Hidden width of the size-factor head decoding the per-cell total from ``h``."""
+
+    size_factor_min: float = 1.0
+    """Floor on the decoded per-cell total, in counts. One count per cell: a cell with a
+    decoded library size below that would make every ``mu`` vanish."""
+
+    z_embed_dim: int = 16
+    """Width of the learned depth embedding ``z_embed`` in the conditioning vector. Separate
+    from the z bands of ``fourier(p)``: those are normalised by the bounding box and so say
+    *where in this volume*, while ``z_embed`` is fed the depth in units of the median section
+    spacing and says *how far from a real section*, which is the quantity generation at an
+    arbitrary plane needs."""
+
+    detection_rate_tol: float = 0.10
+    """Plausible band on the emitted matrix's median per-gene detection rate, as an absolute
+    difference from the training sections' (T06 §4). The generation path asserts it: a silent
+    switch to emitting ``mu`` would put every gene's detection rate at ~1.0 and show up here.
+    0.10 is wide enough not to fire on realisation noise (measured spread between real
+    sections of the synthetic fixture: 0.006) and narrow enough that the 4.2x densification
+    that motivated v20's cross-mix could not pass it."""
+
+    independent_donor_k: int = 3
+    """Donor cells the independent-donor baseline draws each gene from — the competing
+    method's "<= 3 donor cells" (``eval/baselines.py``). A deliberate negative control: it is
+    the reference point for T06's gene-gene covariance claim and T10 reuses it."""
+
+    cross_mix_weight_tol: float = 1e-3
+    """How far the donor weights of :func:`~spatialcpav25_gen.model.expression.cross_mix_counts`
+    may sum away from 1 before it raises. v20's ``alpha_tol``, which snapped a
+    machine-epsilon mixing weight to zero so that narrow designs stayed *exactly* the
+    previous version."""
+
+    intensity_basis_ell_multiple: float = 1.0
+    """Finest wavelength the layout intensity head's Fourier basis may resolve, as a multiple
+    of the fitted in-plane correlation length ``ell_xy``.
+
+    The answer T06's trainer owes to SPEC_QUESTIONS B10. The Poisson MLE of a flexible
+    intensity overfits the point pattern: at ``fourier_bands_xy = 8`` the head resolves
+    structure down to a hundredth of the section and the recovered correlation decays from
+    0.97 at 300 steps to 0.28 at 1200 while the NLL keeps falling. The intensity is a
+    *smoothed* function of the anatomical field, and the field's own correlation length is
+    ``ell_xy``, so structure finer than that is not something the point pattern constrains.
+    :func:`~spatialcpav25_gen.model.layout.fourier_bands_for_lengthscale` turns this into a
+    band count and the trainer builds its intensity head with it; ``1.0`` means "the finest
+    band's wavelength is at least one correlation length"."""
 
     # ----------------------------------------------------------------------------------
     # losses
     # ----------------------------------------------------------------------------------
     w_recon: float = 1.0
     """Reconstruction (ZINB NLL). Must dominate throughout training."""
+
+    w_cfm: float = 1.0
+    """Conditional flow matching (T06 §2). Not in the spec's loss list, which names only the
+    terms that trade off *against* reconstruction; the CFM term does not compete with it —
+    ``h1`` is detached inside ``cfm_loss``, so the flow's gradient never reaches the encoder
+    or the decoder — and 1.0 is therefore the natural weight rather than a tuned one."""
+
+    w_size: float = 0.1
+    """Library-size head (T06 §3), a squared error in log counts. Small: the head has one
+    scalar output and the reconstruction term already sees the library size through
+    ``mu * size_factor``, so this exists to make generation's *decoded* library size right,
+    not to shape the latent."""
 
     w_layout: float = 1.0
     """Poisson-process layout NLL."""
@@ -761,6 +895,26 @@ class Config:
     lr: float = 3e-4
     """AdamW learning rate."""
 
+    weight_decay: float = 0.01
+    """AdamW decoupled weight decay. Torch's own default for ``AdamW``; T06 §5 names the
+    optimiser and not this, and there is no measurement here that would justify moving it."""
+
+    grad_clip: float = 1.0
+    """Global gradient-norm clip. T06 §5 fixes the value at 1.0; it is a ``Config`` field
+    rather than a literal in the trainer because Convention 1 admits no exceptions, and
+    because ablating the clip is the first thing to try when a run diverges."""
+
+    lr_min_frac: float = 0.01
+    """Floor of the cosine schedule, as a fraction of ``lr``. The schedule T06 §5 asks for
+    decays over the whole run; a floor of exactly zero makes the last few hundred steps do no
+    work at all, and 1% of the peak is the usual compromise."""
+
+    log_every: int = 10
+    """Steps between entries in the trainer's history — the per-term losses, the retrieval
+    attention entropy (T06's carried-over GATE 2 item) and the per-gene variance the T07
+    collapse alarm watches. Logging every step doubles the cost of a cheap step for a
+    trajectory nobody reads at that resolution."""
+
     # ----------------------------------------------------------------------------------
     # construction / serialisation
     # ----------------------------------------------------------------------------------
@@ -843,6 +997,7 @@ class Config:
             ("text_pooling", self.text_pooling, TEXT_POOLINGS),
             ("rotation_bias", self.rotation_bias, ROTATION_BIASES),
             ("potts_update", self.potts_update, POTTS_UPDATES),
+            ("decoder_mu_link", self.decoder_mu_link, MU_LINKS),
         ]
         for name, value, allowed in choices:
             if value not in allowed:
@@ -929,6 +1084,26 @@ class Config:
             "ode_steps": self.ode_steps,
             "genes_per_step": self.genes_per_step,
             "zinb_eps": self.zinb_eps,
+            "zinb_theta_min": self.zinb_theta_min,
+            "zinb_theta_max": self.zinb_theta_max,
+            "zinb_mu_min": self.zinb_mu_min,
+            "zinb_mu_max": self.zinb_mu_max,
+            "latent_encoder_hidden": self.latent_encoder_hidden,
+            "latent_encoder_layers": self.latent_encoder_layers,
+            "flow_hidden": self.flow_hidden,
+            "flow_layers": self.flow_layers,
+            "flow_time_dim": self.flow_time_dim,
+            "decoder_hidden": self.decoder_hidden,
+            "decoder_layers": self.decoder_layers,
+            "size_factor_hidden": self.size_factor_hidden,
+            "size_factor_min": self.size_factor_min,
+            "z_embed_dim": self.z_embed_dim,
+            "detection_rate_tol": self.detection_rate_tol,
+            "independent_donor_k": self.independent_donor_k,
+            "cross_mix_weight_tol": self.cross_mix_weight_tol,
+            "intensity_basis_ell_multiple": self.intensity_basis_ell_multiple,
+            "grad_clip": self.grad_clip,
+            "log_every": self.log_every,
             "profile_n_bins": self.profile_n_bins,
             "profile_grid_size": self.profile_grid_size,
             "profile_sigma_frac": self.profile_sigma_frac,
@@ -959,6 +1134,9 @@ class Config:
             "retrieval_w_z": self.retrieval_w_z,
             "retrieval_w_niche": self.retrieval_w_niche,
             "w_recon": self.w_recon,
+            "w_cfm": self.w_cfm,
+            "w_size": self.w_size,
+            "weight_decay": self.weight_decay,
             "w_layout": self.w_layout,
             "w_autocorr": self.w_autocorr,
             "w_profile": self.w_profile,
@@ -975,6 +1153,8 @@ class Config:
     def _check_fractions(self) -> None:
         """Check that every field expressed as a fraction lies in its interval."""
         unit_interval: dict[str, float] = {
+            "detection_rate_tol": self.detection_rate_tol,
+            "lr_min_frac": self.lr_min_frac,
             "residual_gate_warmup_frac": self.residual_gate_warmup_frac,
             "section_dropout_p": self.section_dropout_p,
             "sefl_warmup_frac": self.sefl_warmup_frac,
@@ -1091,6 +1271,41 @@ class Config:
                 "candidate union would then be at most K, the top-K would select all of it, "
                 "and the retrieval score would decide nothing — silently, and exactly in the "
                 "wide-gap regime the z-proximity term exists for"
+            )
+        if self.flow_time_dim % 2 != 0:
+            raise ConfigError(
+                f"Config.flow_time_dim={self.flow_time_dim} must be even: the embedding is "
+                "(sin, cos) pairs over flow_time_dim / 2 frequencies"
+            )
+        if self.latent_encoder_layers < 2:
+            raise ConfigError(
+                f"Config.latent_encoder_layers={self.latent_encoder_layers} must be >= 2; a "
+                "single layer makes h1 a linear read-out of the pooled expression"
+            )
+        if self.flow_layers < 2:
+            raise ConfigError(
+                f"Config.flow_layers={self.flow_layers} must be >= 2; a linear velocity "
+                "field cannot transport a Gaussian onto anything else"
+            )
+        if self.decoder_layers < 2:
+            raise ConfigError(
+                f"Config.decoder_layers={self.decoder_layers} must be >= 2; a single layer "
+                "makes every ZINB parameter a linear read-out of u_ig"
+            )
+        if not self.zinb_theta_min < self.zinb_theta_max:
+            raise ConfigError(
+                f"Config requires zinb_theta_min < zinb_theta_max, got "
+                f"({self.zinb_theta_min}, {self.zinb_theta_max})"
+            )
+        if not self.zinb_mu_min < self.zinb_mu_max:
+            raise ConfigError(
+                f"Config requires zinb_mu_min < zinb_mu_max, got "
+                f"({self.zinb_mu_min}, {self.zinb_mu_max})"
+            )
+        if self.independent_donor_k < 2:
+            raise ConfigError(
+                f"Config.independent_donor_k={self.independent_donor_k} must be >= 2: with "
+                "one donor the baseline is a verbatim copy and has no chimerism to measure"
             )
         if self.retrieval_ctx_dim % self.retrieval_n_heads != 0:
             raise ConfigError(

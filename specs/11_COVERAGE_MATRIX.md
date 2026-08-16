@@ -21,11 +21,14 @@ is an omission — flag it rather than skipping it.**
 | Strauss/hard-core repulsion fitted to `g(r)` | T05 | ablation A4; the `g(r)` comparison runs over **`[0, 3R]`**, amended at T05 — over the spec's original `[r0, 3R]` a pure-Poisson layout is indistinguishable from the full model (0.070 against 0.093) because the correlation hole ends at `r0` by construction, so A4 would report a false null (B12; `specs/10` §4 amended too) |
 | Potts mark smoothing, `beta` fitted not set | T05 | update rule is **Gibbs**, not the spec's ICM, which erases a 2% cell type at any coupling; ICM kept as the asserted negative control (B11). Cell-type localization is reported against **two** references (held-out self-score and flanking section) and the criterion is proposed but **undecided** (B15) |
 | `layout_mode` gate (field/hybrid/resample) | T05, T01 | `resample` = previous version |
-| Conditional flow matching in cell latent | T06 | straight-line path, Heun |
-| Gene-conditioned ZINB decoder (open-vocabulary) | T06 | bilinear `h ⊙ A e_g` |
-| Shared latent → gene–gene covariance preserved | T06 | tested vs. independent-donor baseline |
-| Sample counts, never emit `mu` | T06 | assertion in generation path |
+| Conditional flow matching in cell latent | T06 | straight-line path, Heun; `h1` detached in the CFM loss, `cfm_sigma_min` as the conditional path's width |
+| Gene-conditioned ZINB decoder (open-vocabulary) | T06 | bilinear `h ⊙ A e_g`; the **encoder** is open-vocabulary too (a set encoder over `(expression, e_g)` pairs — T06 §2's fixed-width `Enc` would tie the latent to one panel). `Config.decoder_mu_link` keeps the spec's softplus as the default with `exp` selectable and measured |
+| Shared latent → gene–gene covariance preserved | T06 | tested vs. the independent-donor baseline — **criterion amended at T06 (B16)**: the spec's "Frobenius error < 50 % of the baseline's" is **below the achievable ceiling** (5.60 measured against a baseline at 7.78, so it asks for < 3.89) and is unpassable by any model. Replaced by (a) the chimerism mechanism isolated with the donors held fixed — which **confirms** the argument, 22 % of the covariance magnitude lost at `D = 3`, monotone through `D = 10` — (b) every arm reported against the measured ceiling, (c) the original criterion held as a strict xfail at 1.20. Retained-magnitude ratio **0.458** (better by 2.2×) at equal pattern fidelity |
+| Sample counts, never emit `mu` | T06 | `assert_detection_rate` in the generation path, band `Config.detection_rate_tol`. Detection MAD is **gap-dependent** (0.019 at 50 µm, 0.056 at 100 µm — B17); the acceptance test runs on the default `alternating` holdout |
 | Gene subsampling `genes_per_step` | T06 | what makes panel width irrelevant |
+| **Trainer**: AdamW, cosine schedule, gradient clipping, EMA teacher | T06 §5 | `train_ctfflow`; `Config.grad_clip`, `lr_min_frac`, `weight_decay`, `log_every`. `forward_train` returns unweighted named terms plus `diag_`-prefixed diagnostics the trainer never weights |
+| **Layout intensity basis tied to the fitted length-scale** | T06 (owed by T05, B10) | `fourier_bands_for_lengthscale`; `Config.intensity_basis_ell_multiple`. Recovered r at 300/1200 steps: derived basis 0.979/0.861 against the default 8 bands' 0.835/0.527, i.e. a decay 2.6× smaller. Does **not** abolish the drift — see open risk R4 |
+| **Expression head overfits the likelihood** | T06 measurement, owed to T08/T09 | open risk **R4**: 1200 → 2400 steps lowers the NLL and worsens every distributional statistic of the generated section. The terms that would stop it are T08's (`w_autocorr`, `w_profile`, `w_distribution`) and T09 §2's calibrators |
 | Metric-aware LOSO losses (Moran, Geary, profiles, Sinkhorn) | T08 | leakage enforced by type; **principal axis on `TrainingVolume`**, not `Volume` (C10) |
 | Uncertainty-gated anchoring (replaces alpha/gap flags) | T09 | isotonic `w(v)` |
 | Leakage-free length-scale + detection calibration | T09 | flanking sections only; **unimodal objective** — bracket capped, maximum located, `target_unreachable` status (T03/GATE 1); one **global** `ell`, per-module agreement a diagnostic only (A2) |
@@ -87,7 +90,10 @@ Two things are built *to fail*, and their failure is a result reported in the pa
 
 1. `loss_prog_WRONG` (T07) — constrains in-plane Moran's I across angles, i.e. wrongly treats an
    equivariant quantity as invariant. Trained as ablation A8; expected to be worse.
-2. Independent-donor sampler (T06, T10) — reimplements the competing method's per-gene independent
-   draw. Used as the reference point for the gene–gene covariance claim.
+2. Independent-donor sampler (T06, T10) — `eval/baselines.py`, reimplements the competing method's
+   per-gene independent draw. Used as the reference point for the gene–gene covariance claim. It
+   shares its mechanism with the v20 cross-mix deliberately: "pick a donor per gene and take its real
+   count" is one operation, and the two methods differ in the *weights* (v20 mixes two donors at a
+   weight that is zero at narrow gaps; the competing method mixes ≤ 3 uniformly, always).
 
 Neither is dead code. Do not delete them as unused.
