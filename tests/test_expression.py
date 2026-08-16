@@ -374,7 +374,10 @@ def test_zinb_nll_matches_reference():
     """The ZINB log-likelihood matches an independent reference to 1e-5 on random inputs."""
     cfg = Config()
     gen = np.random.default_rng(SEED)
-    n, g = 64, 32
+    # 32 x 16 rather than 64 x 32: the criterion is a *maximum* absolute error over random inputs,
+    # and scipy's `nbinom.logpmf` is the cost. 512 draws already span mu 1e-3..20, theta 0.1..55
+    # and pi 0.01..0.9, and the measured worst error does not move with the grid size.
+    n, g = 32, 16
     x = gen.poisson(2.0, size=(n, g)).astype(np.float64)
     mu = np.exp(gen.uniform(-3.0, 3.0, size=(n, g)))
     theta = np.exp(gen.uniform(-2.0, 4.0, size=(n, g)))
@@ -1142,13 +1145,31 @@ def test_retrieval_attention_becomes_selective(trained: Trained):
 
 
 @pytest.mark.slow
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "FAILS on the synthetic fixture, and the spec expects that it might: 'if this fails "
+        "badly, note it and continue — it is a capability experiment, not a gate'. Measured "
+        "r = -0.368 for the 40 never-trained genes against 0.946 for the seen ones. The cause is "
+        "the fixture, not the wiring: its gene names are arbitrary strings ('Gene0042'), so the "
+        "frozen text vectors carry no signal about expression — T02 measured exactly that, a "
+        "text/co-expression Spearman of +0.0055 — and a gene whose free residual r_g is still zero "
+        "has nothing else to be decoded from. Held as a strict xfail rather than deleted or "
+        "relaxed: the real test is T10's capability experiment E1 on a real panel with "
+        "resources/gene_meta.parquet (SPEC_QUESTIONS C14), and when that table exists this test's "
+        "threshold is what E1 reports against."
+    ),
+)
 def test_zero_shot_gene_decoding():
     """Hold 20% of genes out of training entirely; decode them at ``r > 0.4``.
 
-    A capability experiment, not a gate (T06's own parenthesis). The held-out genes are never
-    in a batch, so their free residual ``r_g`` stays at its zeros initialisation and the only
-    thing that can decode them is the text channel plus the distillation head — which is the
-    whole open-vocabulary claim, reduced to its smallest testable form.
+    A capability experiment, not a gate (T06's own parenthesis). The held-out genes never enter a
+    batch, so their free residual ``r_g`` stays at its zeros init — asserted below, because that is
+    the property the experiment rests on, and it is the one that was silently broken: the
+    first version of this test trained on the whole panel (``train_ctfflow`` accepted ``gene_pool``
+    and dropped it) and reported an in-sample **0.9235** as a zero-shot result.
+    ``test_trainer_forwards_the_gene_pool`` now pins the plumbing cheaply; this test measures the
+    capability.
     """
     cfg = expression_cfg()
     vol, _ = make_synthetic_volume(seed=0)
@@ -1159,6 +1180,11 @@ def test_zero_shot_gene_decoding():
     seen = np.sort(permutation[n_held:])
 
     trained = train_model(holdout_mode="consecutive", gene_pool=seen, cfg=cfg)
+    residual = trained.model.embeddings.gene.r.weight.detach()
+    # The experiment is only an experiment if the holdout held.
+    assert float(residual[unseen].abs().max()) == 0.0
+    assert float(residual[seen].abs().max()) > 0.0
+
     counts, _ = generate_counts(trained, seed=SEED + 5)
     real = np.asarray(trained.held_out.counts.todense(), dtype=np.float64)
 
@@ -1248,6 +1274,7 @@ def untrained(volume: Volume) -> tuple[CTFFlow, TrainingData, Volume]:
     return small_model(volume)
 
 
+@pytest.mark.slow
 def test_forward_train_is_deterministic_and_named(untrained):
     """Two forward passes on the same batch agree bitwise, and every term is weighted."""
     from spatialcpav25_gen.model.spatialcpav25_gen import loss_weights
@@ -1286,6 +1313,31 @@ def test_batch_gene_pool_is_respected(untrained):
     assert batch.total_counts.shape == (batch.n_cells,)
     # The library size is the total over the *whole* panel, not over the sampled genes.
     assert float(batch.total_counts.min()) > float(batch.counts.sum(dim=1).min())
+
+
+def test_trainer_forwards_the_gene_pool(volume: Volume):
+    """The **trainer** honours ``gene_pool``, not just ``sample_batch``.
+
+    This is not a duplicate of the test above, and the difference cost a wrong number: the first
+    version of ``train_ctfflow`` accepted ``gene_pool``, documented it, and never passed it on, so
+    ``test_zero_shot_gene_decoding`` trained on the whole panel and reported an in-sample r of 0.92
+    as a zero-shot result. Asserted by **mutation on a quantity only training can move**: a gene
+    outside the pool never enters a batch, so its free residual ``r_g`` never receives a gradient
+    and must still be exactly its zeros init, while a gene inside the pool must have moved.
+    """
+    cfg = expression_cfg()
+    training, _ = split_holdout(volume, "alternating", 0, cfg)
+    data = TrainingData.build(training, cfg)
+    model = CTFFlow(cfg, data, build_embeddings(cfg, volume), grf_seed=11)
+    pool = np.arange(0, 40, dtype=np.intp)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", BBoxClampWarning)
+        train_ctfflow(model, cfg, steps=4, seed=SEED, gene_pool=pool)
+    residual = model.embeddings.gene.r.weight.detach()
+    inside = residual[: pool.size]
+    outside = residual[pool.size :]
+    assert float(outside.abs().max()) == 0.0, float(outside.abs().max())
+    assert float(inside.abs().max()) > 0.0, float(inside.abs().max())
 
 
 def test_training_data_refuses_heldout(volume: Volume):
@@ -1423,8 +1475,12 @@ def test_config_rejects_impossible_expression_settings():
             base.replace(**bad)
 
 
+@pytest.mark.slow
 def test_generated_anndata_round_trips(untrained):
     """A generated section is an AnnData that satisfies T01's own data contract.
+
+    ``slow``: it fits the repulsion and runs the whole generation path, which is 6.3 s — the
+    largest single item T06 contributed to the fast suite.
 
     Generated **between** two training sections, at a depth no real section sits at — which is
     what the method is for, and which also keeps the mixed volume's depths strictly increasing
@@ -1492,7 +1548,7 @@ def test_generated_anndata_round_trips(untrained):
     validate_volume(mixed, model.cfg)
 
 
-def test_gate_reports_unchanged():
+def test_gate_reports_unchanged(volume: Volume):
     """Both gates are measured by their own suites; this only pins what T06 could have moved.
 
     T06 adds modules and ``Config`` fields; it must not have changed the numbers GATE 1 and
@@ -1513,4 +1569,4 @@ def test_gate_reports_unchanged():
     assert cfg.rotation_bias == "uniform"
     assert cfg.rotation_aug is True
     assert (cfg.prior_mode, cfg.expr_mode, cfg.decoder) == ("correlated", "zinb-flow", "zinb")
-    assert to_xyz(make_synthetic_volume(seed=0)[0].sections[0]).shape[1] == 3
+    assert to_xyz(volume.sections[0]).shape[1] == 3

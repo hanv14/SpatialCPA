@@ -459,7 +459,19 @@ Monotone in the number of donors, 22 % of the covariance magnitude lost at the m
 **The paper's covariance argument is confirmed**; what cannot be expressed as "2× in Frobenius norm"
 is the *model's* advantage over it.
 
-*Proposal (implemented at T06).* Three parts. (a) The mechanism becomes its own acceptance test,
+**The ceiling number, stated plainly.** T05's ceiling protocol on the default `alternating`
+holdout, three draws: **5.601** (spread ±0.05; the wide-gap section gives 5.513, and an independent
+draw of the *whole* generative law rather than only the counts gives 5.705). The
+independent-donor baseline on the same section is **7.783**. Fifty per cent of 7.783 is **3.892**,
+which is **below** the ceiling of 5.601 — by 1.7, i.e. 30 % of the ceiling and thirty-four times its
+own draw-to-draw spread. **The criterion is unsatisfiable by any generator whatsoever**, including
+the fixture's own generative law, and that conclusion involves no model, no training budget and no
+choice of mine.
+
+*Amendment, implemented at T06.* Three parts, and they do not all stand on the same footing —
+see the pre-registration note below.
+
+(a) The mechanism becomes its own acceptance test,
 `test_per_gene_independence_destroys_covariance`, measured on real donors with the confound removed
 — it needs no trained model and it is what the paper's covariance section actually claims.
 (b) Every arm is reported **relative to the measured ceiling**, with the systematic part
@@ -468,10 +480,60 @@ is the *model's* advantage over it.
 its measured value, so the shortfall is not reworded away and a later task that closes it breaks the
 suite until the record is updated (T05's precedent for its localization criterion).
 
-*The model shortfall is separate and is recorded as open risk R4, not amended away:* at 1200 steps
-the model's Frobenius error is **17.7** against the baseline's 11.3 — worse, not better — with the
-covariance *magnitude* 21 % too high (0.173 vs 0.1425) where the baseline's is 21 % too low. See R4:
-the head overfits the likelihood, and the terms that would stop it are T08's.
+**Pre-registration: was the magnitude/pattern decomposition chosen before or after seeing which
+component passed? After. Explicitly after.** The order of work was: measure the Frobenius ratio
+(2.06, then 1.20 — failed); hypothesise the decoder's `mu` link and measure it (no gain); measure the
+ceiling (which settled that the criterion is unsatisfiable); measure the chimerism isolation (which
+confirmed the mechanism); *then* notice that the retained-covariance **magnitude** was the component
+on which the model beat the baseline, and adopt magnitude-plus-pattern as the replacement statistic.
+The pattern floor at `0.9 ×` the baseline was added as a guard against a model buying magnitude with
+random correlations, and it too was set knowing the measured ratio was 0.990.
+
+So the three parts have three different standings, and they should be quoted with them:
+
+* **(b) the ceiling, and therefore the unsatisfiability of the stated criterion, is model-free and
+  choice-free.** Nothing about it depends on what passed.
+* **(a) the chimerism isolation is a confirmed prediction, not a selected statistic.** The paper's
+  argument predicts a loss that is monotone in the number of donors mixed, before any measurement;
+  the measurement then produced 0.978 / 0.920 / 0.897 / 0.884 / 0.844 at D = 1/2/3/5/10. That is a
+  prediction met, on both holdout gaps.
+* **the model-versus-baseline half is post hoc, and it does not survive an out-of-sample check.** On
+  the wide-gap (`consecutive-3`) holdout the same decomposition gives a magnitude error of 0.213 for
+  the model against 0.214 for the baseline — **ratio 0.995, no advantage at all** — where the default
+  holdout gives 0.458. **The claim "the shared latent preserves more covariance than the competing
+  method's sampler" is therefore NOT established by T06.** What is established is that the mechanism
+  the claim rests on is real (a), and that the criterion as specified could never have shown it (b).
+
+*The model shortfall is recorded as open risk R4, not amended away:* at the wide gap the model's
+Frobenius error is **17.7** against the baseline's 11.3 — worse, not better — with the covariance
+magnitude 21 % too high where the baseline's is 21 % too low. The head overfits the likelihood, and
+the terms that would stop it are T08's.
+
+### B18. `test_zero_shot_gene_decoding` cannot pass on the synthetic fixture (T06 measurement) — **RESOLVED: recorded as a strict xfail; the real test is T10's E1**
+Measured, with the gene holdout actually enforced: per-gene mean expression correlates with truth at
+**r = −0.368** for the 40 never-trained genes, against **+0.946** for the seen ones. It is not close
+and it is not noise — it is negative.
+
+The cause is the fixture and it was predictable from T02's own number. A held-out gene's free
+residual `r_g` never receives a gradient (asserted: `max |r_g| == 0.0` exactly), so everything the
+decoder can know about it comes through `W t_g` — and the fixture's gene names are arbitrary strings
+(`Gene0042`), for which T02 measured a text/co-expression Spearman of **+0.0055**. Zero text signal
+in, no transfer out. The two measurements agree, which is itself evidence the channel is wired
+correctly rather than broken.
+
+*Resolution:* the spec already permits it ("if this fails badly, note it and continue — it is a
+capability experiment, not a gate"), so the test is kept **by name, at its stated `r > 0.4`
+threshold, as a strict xfail** holding the measured −0.368. The real test is T10's capability
+experiment **E1** on a real panel, which needs `resources/gene_meta.parquet` — still open as **C14**
+and still the blocker T02 flagged.
+
+*A bug this found, and it is the reason the number changed.* The first measurement reported
+**r = 0.9235** and passed. It was in-sample: `train_ctfflow` accepted `gene_pool`, documented it, and
+never forwarded it to `sample_batch`, so the "held-out" genes were trained on. Fixed, and pinned by
+`test_trainer_forwards_the_gene_pool`, which asserts by mutation on the one quantity only training
+can move (`r_g` outside the pool must be exactly zero, inside must not). The lesson generalises: the
+existing test exercised `sample_batch` directly and could not see that the trainer dropped the
+argument.
 
 ### B17. T06's `test_sparsity_preserved` tolerance is gap-dependent (T06 measurement) — **RESOLVED: measured on the default holdout**
 Per-gene detection rate, generated vs held-out real, at 1200 steps: `r = 0.989` and mean absolute

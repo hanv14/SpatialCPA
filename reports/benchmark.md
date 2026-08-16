@@ -38,6 +38,14 @@ Achievable ceiling (same cells, the fixture's true `mu`, only a fresh count draw
 | model (zinb-flow) | 9.316 | 7.443 | 0.1515 | 0.0336 | 0.9649 |
 | independent-donor D=3 | 7.783 | 5.403 | 0.1359 | 0.0731 | 0.9750 |
 
+**Fifty per cent of the baseline's 7.783 is 3.892, which is 1.7 BELOW the ceiling of 5.601** — so
+`specs/06`'s original criterion is unsatisfiable by any generator, the fixture's own generative law
+included (SPEC_QUESTIONS B16). The magnitude-error ratio here is 0.0336 / 0.0731 = **0.458**, but that
+decomposition was chosen after seeing which component the model won on, and **it does not hold out of
+sample**: on the wide-gap `consecutive-3` holdout the same model gives a magnitude error of 0.213
+against the baseline's 0.214, i.e. **ratio 0.995 and no advantage**. The model-versus-baseline
+covariance claim is **not established**; the chimerism table below is what is.
+
 ## Chimerism, isolated (donors held fixed, draw varied)
 
 | donors mixed | retained covariance magnitude |
@@ -47,6 +55,14 @@ Achievable ceiling (same cells, the fixture's true `mu`, only a fresh count draw
 | 3 | 0.8972 |
 | 5 | 0.8834 |
 | 10 | 0.8444 |
+
+### Zero-shot decoding (T06's capability experiment; T10's E1 is the real one)
+
+Per-gene mean expression against truth, 40 genes held out of training entirely: **r = -0.368**,
+against **+0.946** for the 160 seen genes. The holdout is real — `max |r_g|` over the unseen genes is
+exactly 0.0. The fixture's gene names are arbitrary, T02 measured their text/co-expression Spearman at
++0.0055, and a gene with a zero residual and no text signal has no channel to be decoded through.
+Kept as a strict xfail at the spec's `r > 0.4` (SPEC_QUESTIONS B18).
 
 ## Sparsity and mean-variance
 

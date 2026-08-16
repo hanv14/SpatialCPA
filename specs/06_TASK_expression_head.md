@@ -134,12 +134,14 @@ Also implement the trainer: AdamW, cosine schedule, gradient clipping at 1.0, EM
   the error from a per-gene-independent-donor baseline (a reimplementation of the competing method's
   sampler, ~20 lines, in `eval/baselines.py`).
 
-  **The criterion as stated is below the achievable ceiling and cannot be met by any model.** T05's
-  ceiling protocol, applied here: the *same cells*, the fixture's *true* `mu`, only a fresh count
-  draw, gives a Frobenius error of **5.51 ± 0.05** — a correlation matrix estimated from ~1500 cells
-  carries that much sampling error whatever produced them. The baseline sits at 11.31 (100 µm gap) /
-  7.90 (50 µm), so "< 50% of the baseline" asks for < 5.65 / < 3.95: a coin-flip against the ceiling
-  at best, impossible at worst.
+  **The criterion as stated is below the achievable ceiling and cannot be met by any generator.**
+  T05's ceiling protocol, applied here: the *same cells*, the fixture's *true* `mu`, only a fresh
+  count draw, gives a Frobenius error of **5.601** on the default holdout (± 0.05 over draws; 5.513
+  at the wide gap; 5.705 if the whole generative law is redrawn rather than only the counts) — a
+  correlation matrix estimated from ~1500 cells carries that much sampling error whatever produced
+  them. The independent-donor baseline on the same section is **7.783**, so "< 50% of the baseline"
+  asks for **< 3.892**, which is **1.7 below the ceiling** — thirty-four times the ceiling's own
+  draw-to-draw spread. Not a hard criterion: an unsatisfiable one.
 
   So T06 replaces it with three things, all of which must be reported:
 
@@ -156,6 +158,16 @@ Also implement the trainer: AdamW, cosine schedule, gradient clipping at 1.0, EM
   3. **The original criterion, kept by name and statistic as a strict `xfail`** at its measured
      value, so the model's shortfall against it is on the record rather than reworded away, and a
      later task that closes it breaks the suite until the record is updated (T05's precedent).
+
+  **What this amendment does and does not establish, and the pre-registration status of each part.**
+  Part 1 is a *prediction* the paper's argument makes before any measurement (a loss monotone in the
+  donors mixed) and it is met on both holdout gaps. Part 2 is model-free and choice-free. But the
+  **model-versus-baseline** comparison — the magnitude-and-pattern decomposition — was chosen
+  **after** seeing which component the model won on, and it does not survive an out-of-sample check:
+  ratio 0.458 on the default holdout against **0.995 at `consecutive-3`**, i.e. no advantage there.
+  **T06 therefore does not establish that the shared latent preserves more covariance than the
+  competing method's sampler.** It establishes that the mechanism is real and that the stated
+  criterion could never have shown it either way. Closing the model half is R4's business (T08/T09).
 - `test_sparsity_preserved` — per-gene detection rate: Pearson r > 0.95 vs. real; mean absolute
   difference < 0.05. Guards against the densification failure of earlier versions. **Measured on the
   default `alternating` holdout** (SPEC_QUESTIONS B17): the same model scores MAD 0.036 there and
@@ -165,6 +177,12 @@ Also implement the trainer: AdamW, cosine schedule, gradient clipping at 1.0, EM
 - `test_zero_shot_gene_decoding` — hold out 20% of genes from training entirely; decoding them via
   `forward_zero_shot` embeddings yields per-gene mean expression correlating with truth at r > 0.4.
   *(If this fails badly, note it and continue — it is a capability experiment, not a gate.)*
+  **It fails badly, and the parenthesis is taken up: r = −0.368** for the 40 never-trained genes
+  against +0.946 for the seen ones (SPEC_QUESTIONS B18). Not noise — negative. The fixture's gene
+  names are arbitrary (`Gene0042`), for which T02 measured a text/co-expression Spearman of +0.0055,
+  and a held-out gene's free residual `r_g` is exactly zero by construction, so there is no channel
+  left to transfer through. Kept by name and threshold as a **strict xfail**; the real test is T10's
+  capability experiment E1 on a real panel, which needs `resources/gene_meta.parquet` (C14).
 - `test_never_returns_means` — generation output is integer-valued and has non-zero variance
   conditional on cond.
 - `test_cross_mix_matches_v20` — the ported Bernoulli cross-mix reproduces

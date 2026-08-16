@@ -1053,7 +1053,7 @@ def train_ctfflow(
     model.train()
     for step in range(steps):
         model.embeddings.set_progress(step / max(steps - 1, 1))
-        batch = data.sample_batch(cfg, seed=seed, step=step)
+        batch = data.sample_batch(cfg, seed=seed, step=step, gene_pool=gene_pool)
         # No `planes` channel: every plane in a training step is consumed by drawing points on
         # it, and those points are rotated through `coords`. Naming the three used channels is
         # what makes the omission reviewable (GATE 2's G2.1h).
