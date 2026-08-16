@@ -706,6 +706,13 @@ def test_committed_gene_meta_tables_are_species_checkable():
         with pytest.raises(GeneMetaError, match="predates the species columns"):
             load_gene_meta(parked, species="mouse")
 
+    # The mouse build that is right about species and wrong about ensembl_id (B19a), kept as the
+    # evidence for that finding. It must stay refused: `ensembl_id` is what downstream joins read.
+    prefix_bug = Path("resources/gene_meta.mouse_prefix_bug.parquet")
+    if prefix_bug.exists():
+        with pytest.raises(GeneMetaError, match="not mouse ids"):
+            load_gene_meta(prefix_bug, species="mouse")
+
 
 # --------------------------------------------------------------------------------------
 # the ensembl_id, which the taxid filter does not protect

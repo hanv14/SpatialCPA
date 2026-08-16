@@ -1607,19 +1607,29 @@ also contains the mouse id further down, those 748 become real ENSMUSG ids; if i
 `None` and the mouse Ensembl ids simply are not in that response. My replay models the pessimistic
 case; the raw dump settles it.
 
-**Summary coverage 148/1138 — I am not asserting either answer.** What I can contribute is evidence
-and a discriminator, both now in place (SPEC_QUESTIONS **B20**):
+**Summary coverage 148/1138 — CONFIRMED genuinely sparse, from your own committed table, no network
+needed** (SPEC_QUESTIONS **B20**). `688820c`'s `gene_meta.parquet` is auditable offline and it answers
+the question three ways:
 
-* *The panel does not explain it.* Of 1138 symbols only **33 (2.9%)** are RIKEN clones or predicted
-  genes; **1105 (97.1%)** are conventional named mouse genes (`A2m`, `Abca8a`, `Abcc9`, …). A 7× drop
-  from the human rate is not the panel's composition, so 13% should not be accepted on plausibility.
-* *A discriminator rather than an argument.* `_query_mygene` now counts symbols where **the selected
-  hit has no summary while another same-species hit for the same symbol does**, and warns with the
-  count. ≈ 0 means mouse summaries genuinely are sparse; a large count means my hit selection is
-  dropping them and the ranking needs a summary-aware tiebreak among otherwise equally good exact
-  same-species matches. One run answers it.
+| finding | number |
+|---|---|
+| summary presence **flat across the wrong-prefix groups** | ENSMUSG **11.5%**, ENSMSIG 10.9%, ENSNVIG 17.0%, ENSMPUG 17.1%, ENSFALG 11.0% |
+| `full_name` present | **1138/1138** — a mouse record was found and read for every symbol |
+| by symbol class | conventional named genes **148/1105 (13.4%)**, clone/predicted **0/33** |
 
-**The fallback is proposed, not implemented**, as asked — human orthologue summary, explicitly
+The first says the `ensembl_id` defect and the summary sparsity are **independent**: had the id defect
+been costing summaries, the ENSMUSG rows would carry them at a higher rate, and they do not. The second
+says the mouse record was reached every time, so the 990 absences belong to *those records*. The third
+says what the sparsity looks like — the genes that do have summaries are the well-studied ones
+(`Abcc9`, `Acta2`, `Adam12`, `Adcyap1`, `Adra1a`, …), which is the shape of NCBI mouse curation, and
+13.4% is consistent with it. The panel is not the explanation either: only **33/1138 (2.9%)** are RIKEN
+clones or predicted genes.
+
+One narrow door remains — a *different mouse hit for the same symbol* carrying a summary the selected
+one lacks — and it is now counted rather than argued about: `_query_mygene` warns with that count on
+every build.
+
+**So the fallback is the live question, and it is proposed, not implemented**, as asked — human orthologue summary, explicitly
 labelled, with four constraints written into B20: a recorded `summary_taxid` provenance column rather
 than a substituted value; the orthologue resolved through `homologene` with a required 1:1 mapping and
 **never** by uppercasing the symbol (that is exactly the mistake that produced the all-human table);
@@ -1627,5 +1637,19 @@ than a substituted value; the orthologue resolved through `homologene` with a re
 encoder nor a reader can mistake it; and T10's E1 reporting **both arms**, because importing human gene
 descriptions into a mouse model's text channel changes what the open-vocabulary claim is about. Gated
 by `Config.gene_summary_fallback`, default `"none"`, never overwriting a native summary.
+
+**One number to weigh before you say yes.** Human coverage on this panel was ~93% against mouse's
+13.4%, so with the fallback on roughly **85% of descriptors would carry human text** — the
+open-vocabulary claim would then be substantially a claim about *human* gene summaries transferred to a
+mouse model. That may be the right scientific call, but it is a different claim from the one the design
+states, which is why "E1 reports both arms" is a constraint and not a nicety, and why coverage must
+always be quoted split by `summary_taxid`.
+
+**Both tables that arrived are now quarantined with the reason.** `688820c`'s
+`gene_meta.parquet` → `resources/gene_meta.mouse_prefix_bug.parquet`: right about everything the taxid
+filter governs, wrong about `ensembl_id`, refused at load by the new prefix assertion, and kept because
+it *is* the evidence for B19a and B20. `Config.gene_meta_path` stays absent so `load_gene_meta` says
+"build it" rather than loading something unusable. Rebuilding with the current code is one command and
+fixes the ids.
 
 Five new tests (33 in `tests/test_text.py`), `make check` green.

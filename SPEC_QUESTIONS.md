@@ -751,7 +751,7 @@ the mouse hit, so the ids can only have come from a **non-mouse element of the m
 mouse id is present further down each list** — which needs the raw response, hence
 `scripts/build_gene_meta.py --dump-raw`.
 
-### B20. Mouse summary coverage is 148/1138 — sparse, or still a selection bug? — **OPEN, diagnostic added, fallback PROPOSED not implemented**
+### B20. Mouse summary coverage is 148/1138 — **CONFIRMED genuinely sparse**; fallback PROPOSED not implemented
 Coverage fell from **1054/1138 (93%)** under the old human-leaning query to **148/1138 (13%)** once the
 query resolved mouse. 93% is the *human* rate; the question is whether 13% is the true mouse rate.
 
@@ -760,14 +760,34 @@ are RIKEN clones (`*Rik`) or predicted genes (`Gm#####`); **1105 (97.1%)** are c
 genes (`A2m`, `Abca8a`, `Abcc9`, …). So the panel's composition does not explain a 7× drop, and 13%
 should not be accepted without evidence.
 
-*What distinguishes the two causes, added rather than argued.* `_query_mygene` now counts symbols where
+**Confirmed from the committed mouse build itself** (`resources/gene_meta.mouse_prefix_bug.parquet`,
+1138 rows), which needs no network to audit. Three findings, and together they answer the question:
+
+| | |
+|---|---|
+| **summary presence is flat across the wrong-prefix groups** | ENSMUSG **11.5%**, ENSMSIG 10.9%, ENSNVIG 17.0%, ENSMPUG 17.1%, ENSFALG 11.0% |
+| **`full_name` present for 1138/1138** | a mouse record *was* found and read for every symbol |
+| **by symbol class** | conventional named genes **148/1105 (13.4%)**; clone/predicted symbols **0/33** |
+
+The first says the prefix defect and the summary sparsity are **independent** — had the id defect been
+costing summaries, the ENSMUSG rows would carry them at a higher rate, and they do not. The second says
+the mouse record was reached in every case, so the 990 absences are a property of *that record*, not of
+picking the wrong organism. The third says what the sparsity looks like: the genes that do have
+summaries are the well-studied ones (`Abcc9`, `Acta2`, `Adam12`, `Adcyap1`, `Adra1a`, …), which is
+exactly the shape of NCBI mouse curation, and 13.4% is consistent with it. **So: genuinely sparse.**
+
+One door remains open, and it is narrow: whether a *different mouse hit for the same symbol* carries a
+summary the selected one lacks. That is the only way selection could still be involved, and it is now
+counted rather than argued about.
+
+*The discriminator, added rather than argued.* `_query_mygene` now counts symbols where
 **the selected hit has no summary while another same-species hit for the same symbol does**, and warns
 with the count. That is the whole difference:
 
-* count ≈ 0 → mouse NCBI summaries genuinely are that sparse, and the fallback below is the question;
-* count large → hit selection is dropping summaries, and the ranking needs a summary-aware tiebreak
-  among otherwise equally good same-species exact matches (a *tiebreak*, never a preference strong
-  enough to pick a different gene).
+* count ≈ 0 → confirms the audit above outright, and the fallback below is the only question left;
+* count large → a residual selection effect, and the ranking needs a summary-aware tiebreak among
+  otherwise equally good same-species exact matches (a *tiebreak*, never a preference strong enough to
+  pick a different gene).
 
 It cannot be measured in this container (mygene.info is 403'd — C14), so it is one run away:
 `python scripts/build_gene_meta.py --species mouse --symbols-from resources/mouse_panels_symbols.txt`
@@ -792,8 +812,15 @@ Matching the inclination stated in the report, with four constraints that are no
    *about*. Same discipline as E1's existing two arms for `r_g = 0` vs `psi(t_g)`.
 
 Gated by `Config.gene_summary_fallback ∈ {"none", "ortholog"}`, default **`"none"`** until T10 has
-measured both arms. Never overwrites a native summary. **Not implemented pending the diagnostic and
-your decision.**
+measured both arms. Never overwrites a native summary. **Not implemented, pending your decision.**
+
+*The consequence to decide with your eyes open.* Human coverage on this panel was **~93%** against
+mouse's 13.4%, so with the fallback on roughly **85% of descriptors would carry human text**. The
+open-vocabulary claim would then be substantially a claim about *human* gene summaries transferred to a
+mouse model — which may well be the right scientific choice (orthologous function is largely conserved,
+and it is what a human reader would do), but it is a different claim from the one the design states,
+and it is why constraint 4 (E1 reports both arms) is not optional. It also means coverage must always
+be quoted split by `summary_taxid`; a single "N/1138 have summaries" would hide the whole issue.
 
 ### C14. `resources/gene_meta.parquet` is described as "shipped" but nothing can build it offline — **OPEN, and now BLOCKING the paper's headline novelty** (raised in T02, escalated at T06)
 **Escalated at T06, with the measurement that makes it blocking.** Zero-shot decoding of
