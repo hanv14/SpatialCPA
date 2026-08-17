@@ -33,6 +33,7 @@ from spatialcpav25_gen.config import Config
 __all__ = [
     "EntityEmbeddings",
     "TextGroundedEmbedding",
+    "coexpression_modules",
     "text_embedding_diagnostics",
 ]
 
@@ -307,7 +308,7 @@ def text_embedding_diagnostics(
 
     spearman = float(spearmanr(cos_pairs, expr_pairs).statistic)
 
-    modules = _coexpression_modules(coexpr, cfg.text_diag_knn_k, cfg, seed=seed)
+    modules = coexpression_modules(coexpr, cfg.text_diag_knn_k, cfg, seed=seed)
     purity = _knn_purity(cosine, modules, cfg.text_diag_knn_k)
 
     with torch.no_grad():
@@ -326,10 +327,14 @@ def text_embedding_diagnostics(
     }
 
 
-def _coexpression_modules(
+def coexpression_modules(
     coexpr: npt.NDArray[np.float64], k: int, cfg: Config, *, seed: int
 ) -> npt.NDArray[np.int64]:
     """Leiden modules of the gene-gene co-expression graph. ``(G, G)`` -> ``(G,)`` labels.
+
+    Public because T07's ``L_prog`` needs the same partition: a "molecular program" has to
+    mean one thing in this codebase, and the text diagnostics' modules and the consistency
+    loss's modules are the same object computed the same way.
 
     The graph is the mutual-or-not kNN graph on correlation, edges weighted by the
     correlation clipped at 0 (a negative correlation is not evidence of membership in the

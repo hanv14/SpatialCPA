@@ -1070,6 +1070,152 @@ against an interior mean of 0.4474. That is real-volume geometry, and it is now 
 `specs/09` §1 (generation queries planes at or beyond the outermost sections) and `specs/10` §4
 (stratify headline metrics by distance to the boundary).
 
+### C17. `specs/07` §2's `lambda` and `CE` terms are written in the wrong coordinates — **RESOLVED in T07 (implemented as stated below)** (raised in T07)
+
+Two of `L_cross`'s four terms are unusable exactly as written, for the reason `specs/07` itself gives
+two paragraphs earlier when it argues for matching decoder parameters directly ("scale-stable,
+differentiable everywhere"). Both are implemented in the log/logit coordinates the rest of the loss
+already lives in; neither changes what the loss asserts.
+
+| Spec | Implemented | Why |
+|---|---|---|
+| `\|\| lambda_1 - lambda_2 \|\|^2` | `\|\| log lambda_1 - log lambda_2 \|\|^2` | An intensity is ~1e-5 cells/µm³. Its squared difference is ~1e-10, so at `w_cross = 0.3` the term contributes nothing at any plausible weight — it is not a weak term, it is an absent one. The same argument the spec makes for `log mu` |
+| `CE(type_logits_1, softmax(type_logits_2))` | `KL(p_2 \|\| p_1)` | Identical gradients — they differ by the teacher's own entropy, and the teacher is detached — but the CE has a floor of `H(p_2)` (~1.5 nats on a 6-type panel), which would sit in `L_cross` for ever and make "`L_cross` falls by 60 %" arithmetically unreachable however well the branches agree |
+
+### C18. `specs/07` leaves four constants and one clip region unspecified — **RESOLVED in T07 (fields added, defaults measured)** (raised in T07)
+
+Each became a documented `Config` field (Convention 1) rather than a literal. Recorded here because
+three of them are choices, not transcriptions:
+
+* **`sefl_ramp_frac = 0.2`.** §5 says "ramp `w_cross`, `w_thick`, `w_prog` linearly to their
+  configured values" without saying over what horizon. One warm-up length, so the terms reach full
+  weight at 40 % of the run.
+* **`sefl_genes_per_step = 64`.** §5 caps the block at "< 60 % wall-clock overhead" and §2/§4 compare
+  decoder parameters and expression "on the shared genes"; on the full panel the block measured
+  **+62 %** — the spec's own two requirements are in tension. Every SEFL term is a mean or a
+  covariance over genes, all are fine from a subsample, and the subsample is redrawn every step. At
+  64 genes the block measures **+34 %**.
+* **`section_granularity = "single-cell"`.** §3 branches on single-cell versus binned/spot data and
+  nothing in `specs/01`–`06` records which a dataset is.
+* **`sefl_ema_teacher = True`.** The anti-collapse switch has to be *switchable* for §"Acceptance
+  tests" to run the disabled arm and assert it fails.
+* **`intersect`'s clip region.** §1 says "clipped to the bbox" but gives the signature
+  `intersect(p1, p2)`, which has no bbox. Implemented as the intersection of the two planes'
+  **windows**, which a `Plane` already carries — and which is the tighter, more meaningful region
+  (a segment outside either section's own extent is not on either section). `random_plane_pair`
+  builds windows that span the volume, so the two readings agree in the pipeline.
+* **`random_plane_pair(..., thickness=)`.** §1's signature predates T05 making thickness part of a
+  plane's identity (B13). Keyword-only and required rather than defaulted: a hand-set section
+  thickness in the middle of `L_thick` is exactly the constant that must not be invented.
+
+### B21. `test_cross_loss_decreases` has no baseline as written — **RESOLVED in T07 (measured on the run's own trajectory)** (raised in T07)
+
+"500 training steps on the fixture reduce `L_cross` by ≥ 60 %" implicitly compares against an
+untrained model. That comparison is empty: `TriplaneField` initialises its feature planes at a
+standard deviation of 1e-2, so at step 0 the field is nearly constant, *both* poses return nearly the
+same features, and `L_cross` measures **3.9e-9**. Training can only make that number go up.
+
+The criterion is measured instead on the trajectory the optimiser actually sees — the first three
+logged values of the `cross` term against the last three of the same run — which is the quantity the
+sentence is about. The untrained value is reported beside it as the fact that makes the substitution
+necessary, not as a baseline.
+
+### C19. `L_cross` has nothing left to constrain in v25, and what it does constrain is T04's capacity — **OPEN, `w_cross` defaulted to 0, decision owed to the spec's owner** (raised in T07)
+
+`specs/07` §2 builds `L_cross` on the premise that a section's **conditioning pathway depends on the
+plane it is cut on**: "this loss only has to correct the conditioning pathway, which is a much easier
+optimisation than making two independent stochastic processes agree". That premise is true of the
+*previous* architectures — v20 and the competing method both build a section out of its flanking
+sections, so two crossing planes genuinely disagree where they cross — and it is **false of v25**,
+by v25's own design.
+
+**Measured, not argued.** `CTFFlow`'s expression pathway conditions at *physical points in the data
+frame*: retrieval, the GRF and the Fourier encoding are all data-frame channels (T04's contract), and
+`generate` passes `(points, points)` — the identity pose — whatever plane it was handed. Two crossing
+planes therefore emit **bitwise identical** expression along their intersection on an *untrained*
+model with no consistency loss applied, asserted by
+`test_generation_is_intersection_consistent_by_construction`. The continuous 3-D field supplies for
+free the property `L_cross` was invented to train.
+
+**What is left, and why constraining it is harmful.** The one plane-dependent channel remaining is
+the augmentation **pose** — and T04 made the triplane pose-dependent *deliberately*, as the capacity
+mechanism GATE 2 rests on (`test_rotation_equivariance` asserts the triplane channel is **not**
+invariant, as a live-augmentation control). A two-branch loss can only compare poses, so minimising
+it drives the field towards pose-invariance, which for a lookup table indexed by fixed axes means
+*constant*. A constant field carries no anatomy, and the generated section goes uniform while the
+reconstruction path — which decodes the **encoder**'s latent and never queries the field — still
+looks healthy.
+
+Four arms, 500 steps, `specs/07`'s own schedule, differing only in which SEFL terms are live:
+
+| arm | reconstruction (nats/pair) | generated per-gene variance ÷ real | `L_cross` self-consistency |
+|---|---|---|---|
+| SEFL off | **1.738** | **0.711** | 0.0224 |
+| `thick` + `prog` only | 2.082 | **1.331** | 0.0243 |
+| + `w_cross = 0.3` | 2.024 | **0.065** | 0.0100 |
+| + `w_cross = 0.3`, teacher off | 1.914 | 0.344 | 0.0131 |
+
+`L_cross` falls **90 %** over the run it damages, so this is not a failure to optimise it. The damage
+is attributable: with `w_cross = 0` the field survives and nothing collapses.
+
+**Interim decision, and it is reversible.** `Config.w_cross` ships at **0** with the table above in
+its docstring; `loss_cross` stays built and tested (T10's A7 and E5 both need it), and
+`test_no_collapse_at_the_spec_w_cross` pins the failure as a strict xfail. Carried as open risk
+**R6**.
+
+**The two candidate fixes, for the spec's owner.**
+
+1. **Redefine the branch difference as the plane's *evidence*, not its pose.** Branch *i* conditions
+   with the retrieval evidence a section cut on plane *i* would actually have — its own flanking
+   sections, its own gap-aware dropout — which is a real, plane-dependent pathway that a correct
+   model can reconcile without giving up any capacity. This is the version of `L_cross` that would
+   still have content in v25, and it is what E5's "intersection agreement vs the competing method"
+   figure is really about. **A design change, not a tuning fix** — the same category as GATE 2's
+   steerable backbone.
+2. **Accept that v25 gets intersection consistency by construction and drop the loss**, reporting
+   the by-construction result as the finding it is (it is a *stronger* claim than "we trained for
+   it"), and keeping `loss_prog` / `loss_thick` as the SEFL terms that still have content.
+
+My inclination is 2 with the by-construction test promoted into T10's E5, because 1 buys a
+constraint the architecture already satisfies; but the choice changes what the paper's SEFL section
+claims, so it is not mine to make silently.
+
+### B22. `test_prog_conditioning` does not reproduce on this fixture, and the measured direction is the wrong one — **OPEN, recorded as a strict xfail** (raised in T07)
+
+`specs/07` §4 asserts that matching *marginals* instead of `(cell type, region)` strata "would force
+the model to hallucinate a homogeneous tissue", and the acceptance test asks for that to be measured:
+"an unconditional variant of `L_prog` measurably homogenises the tissue ...; the conditional version
+does not".
+
+**Measured, the effect is absent.** From one trained model, 60 steps of Adam on nothing but
+`L_prog`, one arm per variant, three seeds, comparing the between-region expression spread each arm
+leaves behind:
+
+| starting model | per-seed ratio (unconditional ÷ conditional) | mean |
+|---|---|---|
+| trained with SEFL at the shipped weights | 1.60 / 0.59 / 0.71 | **0.97** |
+| trained without SEFL | 1.30 / 1.27 / 1.23 | **1.27** |
+
+The claim predicts well under 1 in both rows. On the second the direction is consistently *wrong*;
+on the first it is not consistent at all.
+
+**What it is not.** It is not that the two planes have the same composition — their
+`(type, region)` mixtures differ by a median total-variation distance of **0.51**, so the marginals
+the unconditional variant is matching really are different ones. And it is not one unlucky starting
+point: an untrained (warmed-field) model gives 2.06 / 0.53 / 0.70, the same absence of a direction.
+
+**The likely cause is the experiment, not the claim.** The conditional loss carries one MMD, one
+correlation and one module term *per stratum* — five to a dozen strata on this fixture — so at equal
+learning rate it applies several times the gradient of the single-stratum unconditional variant, and
+"same number of steps" is not "same amount of optimisation". A fair version would match the gradient
+norms, or train both arms to the same value of their own loss, and neither is specified.
+
+**Kept as written, and the conditioning stays in the loss.** The a priori argument for conditioning
+is sound and is not in question — different planes sample different mixtures, and matching marginals
+across them asks the model for something false. What this fixture fails to demonstrate is the *harm*
+of dropping it. Recorded as a strict xfail carrying the numbers, so a corrected experiment fails
+loudly rather than passing quietly.
+
 ## D. In the design docs but missing from `specs/11_COVERAGE_MATRIX.md` — **all five settled 2026-08-15**
 
 The matrix says an unmapped design component is an omission to be flagged. These were the ones I

@@ -98,6 +98,7 @@ __all__ = [
     "TriplaneField",
     "fourier_encode",
     "fourier_encode_dim",
+    "minimal_rotation",
     "orientation_rotations",
     "random_rotation",
 ]
@@ -276,11 +277,18 @@ def _axial_rotation(gen: np.random.Generator, max_tilt: float) -> FloatArray:
         ],
         dtype=np.float64,
     )
-    return cast(FloatArray, _minimal_rotation(np.array([0.0, 0.0, 1.0]), target) @ spin_matrix)
+    return cast(FloatArray, minimal_rotation(np.array([0.0, 0.0, 1.0]), target) @ spin_matrix)
 
 
-def _minimal_rotation(source: FloatArray, target: FloatArray) -> FloatArray:
-    """Return the smallest-angle rotation taking unit vector ``source`` to ``target``."""
+def minimal_rotation(source: FloatArray, target: FloatArray) -> FloatArray:
+    """Return the smallest-angle rotation taking unit vector ``source`` to ``target``.
+
+    ``(3,)``, ``(3,)`` -> ``(3, 3)`` float64 with ``det = +1``. Public because T07 builds a
+    section's **pose** with it: the frame in which a plane is the cutting plane is the frame
+    that takes the plane's normal to ``+z``, and ``infer.planes.plane_pose`` is that one
+    line. Deterministic and involution-free — the antiparallel case picks the half turn about
+    the least-aligned coordinate axis rather than an arbitrary one.
+    """
     axis = np.cross(source, target)
     sin_angle = float(np.linalg.norm(axis))
     cos_angle = float(source @ target)
@@ -330,7 +338,7 @@ def orientation_rotations(n: int) -> FloatArray:
     theta = _GOLDEN_ANGLE * index
     directions = np.stack([radius * np.cos(theta), radius * np.sin(theta), z], axis=1)
     pole = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-    return np.stack([_minimal_rotation(d, pole) for d in directions], axis=0)
+    return np.stack([minimal_rotation(d, pole) for d in directions], axis=0)
 
 
 class RotationContext:

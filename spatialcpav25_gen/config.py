@@ -26,6 +26,7 @@ __all__ = [
     "DECODERS",
     "DEVICES",
     "EXPR_MODES",
+    "GRANULARITIES",
     "HOLDOUT_MODES",
     "LAYOUT_MODES",
     "MU_LINKS",
@@ -56,6 +57,7 @@ DECODERS: Final[frozenset[str]] = frozenset({"zinb", "zigamma", "gaussian"})
 DEVICES: Final[frozenset[str]] = frozenset({"auto", "cpu", "cuda"})
 TEXT_POOLINGS: Final[frozenset[str]] = frozenset({"cls", "mean"})
 HOLDOUT_MODES: Final[frozenset[str]] = frozenset({"alternating", "consecutive"})
+GRANULARITIES: Final[frozenset[str]] = frozenset({"single-cell", "binned"})
 
 
 class ConfigError(ValueError):
@@ -713,6 +715,111 @@ class Config:
     """Skip a (cell type, region) stratum in L_prog with fewer cells than this on either
     side - the statistic is meaningless below it."""
 
+    sefl_genes_per_step: int = 64
+    """G' the consistency losses compare decoder parameters and expression on.
+
+    Separate from ``genes_per_step``, and smaller, purely as cost control - ``specs/07`` 5
+    caps the SEFL block's wall-clock overhead at 60 % per epoch and the gene-conditioned
+    decoder is where a SEFL step spends its time (it is evaluated at every *(point, gene)*
+    pair, on two branches, three times per block). Every term here is a mean or a covariance
+    over genes, all of them are estimated fine from a subsample, and the subsample is redrawn
+    every step, so over a run every gene is constrained. Measured on the reduced fixture: at
+    the whole 200-gene panel the block costs **+62 %** per epoch, at 64 genes **+34 %**."""
+
+    sefl_ema_teacher: bool = True
+    """Evaluate the second branch of every consistency loss through the **EMA teacher**,
+    with a stop-gradient.
+
+    The anti-collapse mechanism, and the one field in this block that is not a cost control.
+    A symmetric consistency loss has the trivial minimiser "constant field" and will find it;
+    the teacher breaks the symmetry, because a constant student no longer satisfies a loss
+    whose target is a lagging average of its own past. ``False`` makes both branches the live
+    student with gradients on **both** sides and is the deliberate negative control of
+    ``specs/07``: ``tests/test_sefl.py::test_no_collapse_negative_control_fails`` asserts that
+    the no-collapse criterion *fails* with it off, which is what documents the asymmetry as
+    load-bearing rather than decorative. Never ship a run with this off."""
+
+    sefl_ramp_frac: float = 0.2
+    """Fraction of training over which the SEFL weights ramp linearly from zero to their
+    configured values, starting at the end of ``sefl_warmup_frac``.
+
+    ``specs/07`` §5 says "ramp ... linearly to their configured values" without saying over
+    what horizon, so this is T07's choice and it is a field rather than a literal for that
+    reason. One warm-up length: the ramp is as long as the reconstruction-only phase, so the
+    consistency terms reach full weight at 40 % of the run and spend the majority of training
+    at their configured strength."""
+
+    sefl_collapse_warn_fraction: float = 0.25
+    """Collapse alarm: warn when the mean per-gene variance of **generated** expression falls
+    below this fraction of the real cells'. ``specs/07`` §2's 25 %, verbatim. The comparison
+    is drawn counts against drawn counts, on the same genes and the same cells - a variance of
+    ``mu`` against a variance of counts would be below it for a healthy model, because
+    ``Var[x] = Var[mu] + E[NB noise]``."""
+
+    sefl_consistency_ratio_warn: float = 0.5
+    """Warn when ``sum(weighted consistency terms) / sum(weighted reconstruction terms)``
+    exceeds this. ``specs/07`` §5: "Reconstruction terms must dominate throughout"."""
+
+    sefl_min_segment_nn_multiple: float = 3.0
+    """Skip an intersection segment shorter than this many median nearest-neighbour
+    distances (``specs/07`` §2, step 2). Below it the sampled points are all inside one
+    cell's neighbourhood and the agreement they assert is trivially satisfied."""
+
+    sefl_rejection_max_rounds: int = 16
+    """Rounds of rejection sampling ``Plane.sample_points`` may use to fill its request
+    before it raises. Each round proposes four times the shortfall, so a slab covering a
+    tenth of the bounding box fills in one or two."""
+
+    sefl_mmd_n_bandwidths: int = 5
+    """Bandwidths in ``L_prog``'s multi-bandwidth RBF kernel. Odd, so the ladder is centred
+    on the median heuristic itself: a single bandwidth measures the distributions at one
+    scale only, and which scale that is changes as training moves the latent."""
+
+    sefl_mmd_bandwidth_step: float = 2.0
+    """Ratio between consecutive bandwidths of that ladder — one octave. The multipliers are
+    ``step^k`` for ``k`` symmetric about zero, applied to the median pairwise distance of the
+    pooled sample."""
+
+    sefl_sinkhorn_iters: int = 32
+    """Sinkhorn iterations in ``L_thick``'s distribution comparison. Enough for the entropic
+    plan to converge at the blur used here; the loss is differentiated through the unrolled
+    iterations, so this is also a depth."""
+
+    sefl_sinkhorn_blur_multiple: float = 1.0
+    """Entropic blur of ``L_thick``'s Sinkhorn divergence, as a multiple of the median
+    nearest-neighbour distance **in PC space** (``specs/07`` §3 names exactly that scale).
+    A blur below the sampling noise would make the divergence measure the draw rather than
+    the distribution."""
+
+    sefl_max_distribution_points: int = 512
+    """Cap on the points entering a Sinkhorn or MMD comparison. Both are quadratic in the
+    point count, and the statistic they estimate saturates long before a 2000-point patch is
+    exhausted; the excess is subsampled with the loss's own generator."""
+
+    sefl_module_min_genes: int = 3
+    """Molecular programs (Leiden modules of the gene-gene correlation graph) with fewer
+    genes than this are dropped from ``L_prog``'s module-score term. A one-gene module is a
+    gene, and its score is already in the MMD term."""
+
+    sefl_thick_grid: int = 8
+    """Side of the in-plane grid ``L_thick`` compares **binned** totals on when
+    ``section_granularity = "binned"``. Not used on single-cell data, where the comparison is
+    distributional (there is no per-cell correspondence to bin against)."""
+
+    sefl_morans_k: int = 8
+    """Neighbours of the in-plane kNN graph the *deliberately wrong* ``loss_prog_WRONG``
+    computes Moran's I on. It exists so the negative control is reproducible, not because
+    anything in the trained model reads it."""
+
+    section_granularity: str = "single-cell"
+    """One of ``GRANULARITIES``: what one row of the expression matrix is.
+
+    ``L_thick`` aggregates differently for the two, and ``specs/07`` §3 is explicit about it:
+    for single cells a thick section is a **union** of cells, so the comparison is between
+    *distributions* of cell state with no per-cell correspondence; for bins or spots the
+    expression **sums** within a bin, so binned totals are compared directly. Nothing else in
+    the package branches on this yet."""
+
     # ----------------------------------------------------------------------------------
     # expression (T06)
     # ----------------------------------------------------------------------------------
@@ -879,8 +986,42 @@ class Config:
     w_distribution: float = 0.5
     """Metric-aware Sinkhorn (or MMD) distribution matching (T08)."""
 
-    w_cross: float = 0.3
-    """SEFL plane-intersection consistency (T07). ``0`` participates in ablation A7."""
+    w_cross: float = 0.0
+    """SEFL plane-intersection consistency (T07). ``specs/07`` sets 0.3; **T07 measured it and
+    set the default to 0 on this architecture.** ``0`` also participates in ablation A7.
+
+    The loss is built, tested and kept — T10's A7 and E5 both need it, and the number below is
+    a result. But it must not be on by default here, because in *this* architecture it has
+    nothing legitimate left to constrain and its remaining minimiser destroys the anatomical
+    field:
+
+    * ``CTFFlow``'s expression pathway conditions at **physical points in the data frame** —
+      retrieval, the GRF and the Fourier encoding are all data-frame channels — so two
+      sections that cross already produce **bitwise identical** expression where they cross,
+      untrained, with no consistency loss applied
+      (``test_generation_is_intersection_consistent_by_construction``). That is the property
+      ``L_cross`` exists to enforce, and the continuous field of v25 supplies it for free.
+    * What is left plane-dependent is the augmentation **pose**, which is what a two-branch
+      loss can actually compare — and T04 made the triplane pose-dependent *on purpose*, as
+      the capacity mechanism GATE 2 rests on. Minimising ``L_cross`` therefore drives the
+      field towards pose-invariance, i.e. towards constant, and a constant field carries no
+      anatomy.
+
+    Measured on the fixture, 500 steps, ``specs/07``'s own schedule, four arms that differ only
+    in which SEFL terms are live (generated per-gene variance as a fraction of the real
+    section's; ``L_cross`` self-consistency in brackets):
+
+    | arm | reconstruction | generated variance |
+    |---|---|---|
+    | SEFL off | **1.738** | **0.711** (0.022) |
+    | ``thick`` + ``prog`` only (this default) | 2.082 | **1.331** (0.024) |
+    | + ``w_cross = 0.3`` | 2.024 | **0.065** (0.010) |
+    | + ``w_cross = 0.3``, teacher off | 1.914 | 0.344 (0.013) |
+
+    ``L_cross`` itself works — it falls **90 %** over the run — and that is exactly the
+    problem. The decision is recorded as open risk **R6** and proposed to the spec's owner in
+    SPEC_QUESTIONS C19; the alternative fix is a design change (make the branches differ by
+    the *evidence* each plane would have, not by the pose), which is not a tuning fix."""
 
     w_thick: float = 0.2
     """SEFL thickness coarse-graining consistency (T07)."""
@@ -896,7 +1037,15 @@ class Config:
 
     ema_decay: float = 0.999
     """EMA decay for the teacher weights. The teacher plus stop-gradient is what stops
-    the symmetric consistency losses collapsing to a constant field."""
+    the symmetric consistency losses collapsing to a constant field.
+
+    The horizon it implies, ``1 / (1 - decay) = 1000`` steps, is longer than a short run — and
+    T07 checked whether that alone can explain the collapse an over-driven SEFL arm shows
+    (the teacher would then be an anchor to *initialisation* rather than a lagging target).
+    **It cannot:** on the 500-step fixture arm the generated per-gene variance ratio is 0.054
+    at ``0.999`` and 0.064 at ``0.99``, i.e. unchanged. The cause is the loss's own minimiser,
+    not the teacher's horizon — see ``PROGRESS.md``, T07. Left at the spec's value; T09's
+    config selector may still want to scale it with the step budget."""
 
     # ----------------------------------------------------------------------------------
     # metric-aware losses (T08)
@@ -1072,6 +1221,7 @@ class Config:
             ("potts_update", self.potts_update, POTTS_UPDATES),
             ("decoder_mu_link", self.decoder_mu_link, MU_LINKS),
             ("gene_summary_fallback", self.gene_summary_fallback, SUMMARY_FALLBACKS),
+            ("section_granularity", self.section_granularity, GRANULARITIES),
         ]
         for name, value, allowed in choices:
             if value not in allowed:
@@ -1154,6 +1304,18 @@ class Config:
             "sefl_patch_cells": self.sefl_patch_cells,
             "sefl_n_line_points": self.sefl_n_line_points,
             "sefl_min_stratum_cells": self.sefl_min_stratum_cells,
+            "sefl_genes_per_step": self.sefl_genes_per_step,
+            "sefl_min_segment_nn_multiple": self.sefl_min_segment_nn_multiple,
+            "sefl_rejection_max_rounds": self.sefl_rejection_max_rounds,
+            "sefl_mmd_n_bandwidths": self.sefl_mmd_n_bandwidths,
+            "sefl_mmd_bandwidth_step": self.sefl_mmd_bandwidth_step,
+            "sefl_sinkhorn_iters": self.sefl_sinkhorn_iters,
+            "sefl_sinkhorn_blur_multiple": self.sefl_sinkhorn_blur_multiple,
+            "sefl_max_distribution_points": self.sefl_max_distribution_points,
+            "sefl_module_min_genes": self.sefl_module_min_genes,
+            "sefl_thick_grid": self.sefl_thick_grid,
+            "sefl_morans_k": self.sefl_morans_k,
+            "sefl_consistency_ratio_warn": self.sefl_consistency_ratio_warn,
             "thickness_ratio": self.thickness_ratio,
             "cfm_sigma_min": self.cfm_sigma_min,
             "ode_steps": self.ode_steps,
@@ -1233,6 +1395,8 @@ class Config:
             "residual_gate_warmup_frac": self.residual_gate_warmup_frac,
             "section_dropout_p": self.section_dropout_p,
             "sefl_warmup_frac": self.sefl_warmup_frac,
+            "sefl_ramp_frac": self.sefl_ramp_frac,
+            "sefl_collapse_warn_fraction": self.sefl_collapse_warn_fraction,
             "variogram_min_structured_frac": self.variogram_min_structured_frac,
             "variogram_min_saturation": self.variogram_min_saturation,
             "calibration_ell_max_extent_frac": self.calibration_ell_max_extent_frac,

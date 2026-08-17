@@ -58,15 +58,15 @@ is an omission — flag it rather than skipping it.**
 | Fourier low-frequency axis follows the data frame | T04 | the silent-bug test |
 | Plane geometry, `intersect`, `random_plane_pair` | T07 | hand-computed test cases |
 | Curved / anatomy-following surfaces | T07, T09 | `generate_curved` |
-| `L_cross` intersection consistency | T07 | decoder parameters matched directly (L2 on `log mu`, `log theta`, `pi` logit) — **no KL surrogate** (C2) |
-| **EMA teacher + stop-gradient (anti-collapse)** | T07 | disabled-teacher test must fail |
+| `L_cross` intersection consistency | T07 | decoder parameters matched directly (L2 on `log mu`, `log theta`, `pi` logit) — **no KL surrogate** (C2). Two of the four terms are computed in log/logit coordinates rather than the spec's raw ones (SPEC_QUESTIONS C17): `lambda` because its squared difference is ~1e-10 at any real intensity, and the type term as `KL(p2 || p1)` — the same gradient as the spec's CE, without the teacher-entropy floor that would make the 60 % fall unreachable. The branches differ by **pose** (`plane_pose`), which is the only channel T04 leaves pose-dependent |
+| **EMA teacher + stop-gradient (anti-collapse)** | T07 | disabled-teacher test must fail. A separate module (`EMATeacher`), not T06's `EMA.swap_in`: swapping copies into the *live* parameters, and a parameter mutated between a forward and its backward trips autograd's version counter |
 | Collapse alarm on per-gene variance | T07 | |
 | `L_thick` coarse-graining; counts add, no per-cell matching | T07 | |
 | `L_prog` conditioned on (cell type, region) | T07 | unconditional variant tested as wrong |
 | Invariant vs. equivariant table as a code constant | T07 | `INVARIANT_QUANTITIES` |
 | `loss_prog_WRONG` negative control | T07 | ablation A8 |
 | SEFL warm-up + ramp; consistency must not dominate | T07 | ratio logged, warned |
-| SEFL cost control (every-N steps, patches) | T07, T01 | `sefl_*` config |
+| SEFL cost control (every-N steps, patches) | T07, T01 | `sefl_*` config. `specs/07`'s own two requirements collide: at the full panel the block costs **+62 %** against its own **< 60 %** cap, so the losses take a separate, smaller gene budget (`sefl_genes_per_step = 64`, **+34 %** measured) — every SEFL term is a mean or a covariance over genes and the subsample is redrawn every step (C18) |
 | `Section.thickness` as a first-class field | T01 | assumed-value warning |
 | Slab-volume intensity integral (not area) | T05 | makes `L_thick` coherent |
 | One GRF realisation per stack → mutual coherence | T09 | `generate_stack/oblique/curved` |

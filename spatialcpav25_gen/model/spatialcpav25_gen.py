@@ -39,7 +39,7 @@ import math
 import warnings
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -98,6 +98,9 @@ from spatialcpav25_gen.model.retrieval import (
     attention_entropy,
 )
 
+if TYPE_CHECKING:  # pragma: no cover - see the deferred import in `train_ctfflow`
+    from spatialcpav25_gen.losses.sefl import EMATeacher
+
 __all__ = [
     "EMA",
     "Batch",
@@ -114,11 +117,22 @@ __all__ = [
 FloatArray = npt.NDArray[np.float64]
 IntArray = npt.NDArray[np.intp]
 
-LOSS_TERMS: tuple[str, ...] = ("recon", "cfm", "size", "layout", "distill", "tv_z")
-"""The named loss terms ``forward_train`` returns, in the order the trainer sums them.
+LOSS_TERMS: tuple[str, ...] = (
+    "recon",
+    "cfm",
+    "size",
+    "layout",
+    "distill",
+    "tv_z",
+    "cross",
+    "thick",
+    "prog",
+)
+"""The named loss terms a training step can carry, in the order the trainer sums them.
 
-T07 adds ``cross``, ``thick`` and ``prog``; T08 adds ``autocorr``, ``profile`` and
-``distribution``. Their weights already exist in ``Config``.
+``forward_train`` returns the first six; T07's ``cross``, ``thick`` and ``prog`` are added by
+the trainer's SEFL block, because they are properties of *two virtual sections* rather than of
+the batch. T08 adds ``autocorr``, ``profile`` and ``distribution``.
 """
 
 DIAG_PREFIX = "diag_"
@@ -647,7 +661,38 @@ class CTFFlow(nn.Module):
         with torch.no_grad():
             terms[f"{DIAG_PREFIX}attention_entropy"] = attention_entropy(weights).mean()
             terms[f"{DIAG_PREFIX}gene_variance"] = mu.var(dim=0).mean()
+            drawn = self._generated_counts(h0, cond, gene_emb, batch)
+            terms[f"{DIAG_PREFIX}gene_variance_gen"] = drawn.var(dim=0).mean()
+            terms[f"{DIAG_PREFIX}gene_variance_real"] = batch.counts.var(dim=0).mean()
         return terms
+
+    def _generated_counts(self, h0: Tensor, cond: Tensor, gene_emb: Tensor, batch: Batch) -> Tensor:
+        """Return a draw down the **generation** path, on the batch's own cells. ``(N, G')``.
+
+        Prior latent -> flow -> decoder -> a count draw: :meth:`generate` minus the layout, at
+        real positions. T07's collapse alarm watches this and not the reconstruction path's
+        ``mu``, and the difference is not cosmetic — it is the whole value of the alarm:
+
+        * the reconstruction path decodes ``h1``, which the **encoder** computes from the
+          cell's real counts, and the encoder never queries the anatomical field;
+        * the generation path decodes ``h`` integrated from the GRF prior under ``cond``, and
+          ``cond`` is where the field enters.
+
+        A consistency loss that flattens the field therefore leaves the reconstruction path's
+        variance looking healthy while the generated section becomes uniform. Measured at T07
+        on a deliberately over-driven arm: reconstruction-path variance ratio **0.36-0.89**
+        (healthy) at the same checkpoint whose *generated* section reads **0.054** (dead). The
+        alarm ``specs/07`` §2 asks for is only an alarm if it watches this path.
+
+        Both sides are drawn counts: ``Var[x] = Var[mu] + E[NB noise]``, so a variance of
+        ``mu`` against a variance of counts would be a different quantity. Seeded from the
+        batch (Convention 3).
+        """
+        h = self.flow.sample(h0, cond, int(self.cfg.ode_steps))
+        mu, theta, pi = self.decoder(h, gene_emb, self.size_head.size_factor(h))
+        gen = np.random.default_rng([int(batch.rows[0]), batch.n_genes])
+        draw = sample_zigamma if self.cfg.decoder == "zigamma" else sample_counts
+        return draw(mu, theta, pi, gen)
 
     def _flow_generator(self, batch: Batch) -> torch.Generator:
         """Return the CFM draw's generator, derived from the batch: the step is reproducible."""
@@ -969,6 +1014,15 @@ class TrainHistory:
     total: list[float] = dataclass_field(default_factory=list)
     attention_entropy: list[float] = dataclass_field(default_factory=list)
     gene_variance: list[float] = dataclass_field(default_factory=list)
+    variance_ratio: list[float] = dataclass_field(default_factory=list)
+    """Per-gene variance of a *draw* from the decoder over the batch's real counts'. What
+    T07's collapse alarm watches; 1.0 is agreement, and the alarm fires below
+    ``Config.sefl_collapse_warn_fraction``."""
+    consistency_ratio: list[float] = dataclass_field(default_factory=list)
+    """``sum(weighted consistency) / sum(weighted reconstruction)`` at each logged step
+    (``specs/07`` §5). Empty on a run with the SEFL weights at zero."""
+    collapse_alarms: list[int] = dataclass_field(default_factory=list)
+    """Steps at which the collapse alarm fired. ``specs/07``'s "collapse-alarm history"."""
     log_k: float = 0.0
 
     def record(self, step: int, terms: dict[str, Tensor], total: float) -> None:
@@ -981,6 +1035,9 @@ class TrainHistory:
             self.terms.setdefault(name, []).append(float(value.detach()))
         self.attention_entropy.append(float(terms[f"{DIAG_PREFIX}attention_entropy"].detach()))
         self.gene_variance.append(float(terms[f"{DIAG_PREFIX}gene_variance"].detach()))
+        real = float(terms[f"{DIAG_PREFIX}gene_variance_real"].detach())
+        generated = float(terms[f"{DIAG_PREFIX}gene_variance_gen"].detach())
+        self.variance_ratio.append(generated / real if real > 0.0 else float("nan"))
 
     @property
     def entropy_fraction(self) -> list[float]:
@@ -999,6 +1056,9 @@ def loss_weights(cfg: Config) -> dict[str, float]:
         "layout": float(cfg.w_layout),
         "distill": float(cfg.w_distill),
         "tv_z": float(cfg.tv_z_weight),
+        "cross": float(cfg.w_cross),
+        "thick": float(cfg.w_thick),
+        "prog": float(cfg.w_prog),
     }
 
 
@@ -1010,6 +1070,7 @@ def train_ctfflow(
     seed: int,
     gene_pool: IntArray | None = None,
     ema: EMA | None = None,
+    teacher: EMATeacher | None = None,
 ) -> TrainHistory:
     """Fit ``model`` for ``steps`` optimiser steps. Returns the recorded :class:`TrainHistory`.
 
@@ -1035,7 +1096,29 @@ def train_ctfflow(
         to know about the holdout.
     ema
         An existing average to continue, or ``None`` to start one.
+    teacher
+        T07's stop-gradient :class:`~spatialcpav25_gen.losses.sefl.EMATeacher`, or ``None`` to
+        build one when any SEFL weight is non-zero. Separate from ``ema``: that one averages
+        the weights a caller may want *afterwards*, this one is a second model evaluated
+        *during* the step, and the two have different lifetimes.
+
+    SEFL
+    ----
+    When any of ``w_cross`` / ``w_thick`` / ``w_prog`` is non-zero the loop adds T07's
+    consistency block on every ``Config.sefl_every_n_steps``-th step, at
+    :func:`~spatialcpav25_gen.losses.sefl.sefl_ramp`'s multiplier — zero through the warm-up,
+    then linear. The block is backpropagated *separately* from the batch terms and the
+    gradients accumulate: the two graphs are built under different field poses, and one
+    ``backward`` per graph keeps the augmentation's in-place rebinding of the field's query
+    frames out of the other's backward pass. The consistency/reconstruction ratio is logged
+    and warned about, and the collapse alarm runs at every logged step.
     """
+    # Deferred, and it has to be: `losses.sefl` evaluates the model it is handed, so importing
+    # it at module scope would close the loop `model -> losses.sefl -> model`. The losses need
+    # no *type* from here (they annotate `CTFFlow` under `TYPE_CHECKING`), and this module needs
+    # them only inside the loop, so one deferred import breaks the cycle in the right place.
+    from spatialcpav25_gen.losses.sefl import EMATeacher, sefl_active, sefl_ramp, sefl_terms
+
     if steps < 1:
         raise ValueError(f"train_ctfflow: steps must be >= 1, got {steps}")
     data = model.data
@@ -1049,6 +1132,9 @@ def train_ctfflow(
     weights = loss_weights(cfg)
     history = TrainHistory(log_k=math.log(int(cfg.retrieval_k)))
     centre = data.vol.bbox.mean(axis=0).astype(np.float64)
+    sefl_on = max(float(cfg.w_cross), float(cfg.w_thick), float(cfg.w_prog)) > 0.0
+    sefl_teacher = (EMATeacher(model, cfg) if teacher is None else teacher) if sefl_on else None
+    sefl_gen = np.random.default_rng([seed, 0x5EF1])
 
     model.train()
     for step in range(steps):
@@ -1082,12 +1168,43 @@ def train_ctfflow(
             ).sum()
             optimiser.zero_grad(set_to_none=True)
             total.backward()  # type: ignore[no-untyped-call]
-            torch.nn.utils.clip_grad_norm_(model.parameters(), float(cfg.grad_clip))
-            optimiser.step()
+
+        running = float(total.detach())
+        if sefl_teacher is not None:
+            ramp = sefl_ramp(step, steps, cfg)
+            if ramp > 0.0 and sefl_active(step, cfg):
+                consistency = sefl_terms(model, sefl_teacher, cfg, sefl_gen, gene_pool=gene_pool)
+                weighted = torch.stack(
+                    [
+                        ramp * weights[name] * value
+                        for name, value in consistency.items()
+                        if not name.startswith(DIAG_PREFIX)
+                    ]
+                ).sum()
+                # A plane pair that misses returns constant zeros, so a step in which every
+                # live SEFL term skipped has nothing to differentiate — and calling
+                # `backward` on it raises rather than being a no-op.
+                if weighted.requires_grad:
+                    weighted.backward()  # type: ignore[no-untyped-call]
+                running += float(weighted.detach())
+                terms.update(consistency)
+
+        torch.nn.utils.clip_grad_norm_(model.parameters(), float(cfg.grad_clip))
+        optimiser.step()
         scheduler.step()
         average.update(model)
+        if sefl_teacher is not None:
+            sefl_teacher.update(model)
         if step % int(cfg.log_every) == 0 or step == steps - 1:
-            history.record(step, terms, float(total.detach()))
+            history.record(step, terms, running)
+            _log_sefl(
+                history,
+                terms,
+                weights,
+                cfg,
+                step=step,
+                alarm=sefl_teacher is not None and sefl_ramp(step, steps, cfg) > 0.0,
+            )
     model.eval()
     if not np.isfinite(history.total[-1]):
         warnings.warn(
@@ -1097,6 +1214,55 @@ def train_ctfflow(
             stacklevel=2,
         )
     return history
+
+
+def _log_sefl(
+    history: TrainHistory,
+    terms: dict[str, Tensor],
+    weights: dict[str, float],
+    cfg: Config,
+    *,
+    step: int,
+    alarm: bool,
+) -> None:
+    """Record T07's two run-time diagnostics: the dominance ratio and the collapse alarm.
+
+    Both are ``specs/07`` §2 and §5 requirements and both are *warnings*, not errors: a
+    consistency term that briefly overtakes reconstruction during the ramp is survivable and
+    the trajectory is the diagnosis, while a run that ends with either of them firing has a
+    result that must be reported rather than quietly used.
+
+    ``alarm`` gates the collapse check on the SEFL block being live. An *untrained* decoder
+    predicts nearly the panel mean for every cell, so a draw from it has a per-gene variance
+    of a few percent of the real cells' — measured 0.036 at step 0 — and the alarm would fire
+    on every run before it had learned anything. The alarm is about a variance that
+    **drops**, so it starts watching when the thing that could push it down does.
+    """
+    from spatialcpav25_gen.losses.sefl import (
+        ConsistencyDominanceWarning,
+        check_collapse,
+        consistency_ratio,
+    )
+
+    if any(name in terms for name in ("cross", "thick", "prog")):
+        ratio = consistency_ratio(terms, weights)
+        history.consistency_ratio.append(ratio)
+        if ratio > float(cfg.sefl_consistency_ratio_warn):
+            warnings.warn(
+                f"train_ctfflow: at step {step} the weighted consistency terms are {ratio:.2f} "
+                f"of the reconstruction terms, above Config."
+                f"sefl_consistency_ratio_warn={cfg.sefl_consistency_ratio_warn}. Consistency "
+                "is a regulariser, not the objective (specs/07 5).",
+                ConsistencyDominanceWarning,
+                stacklevel=2,
+            )
+    if alarm and check_collapse(
+        float(terms[f"{DIAG_PREFIX}gene_variance_gen"].detach()),
+        float(terms[f"{DIAG_PREFIX}gene_variance_real"].detach()),
+        step,
+        cfg,
+    ):
+        history.collapse_alarms.append(int(step))
 
 
 def flanking_sections(vol: Volume, plane: Plane, *, k: int = 2) -> list[Section]:
