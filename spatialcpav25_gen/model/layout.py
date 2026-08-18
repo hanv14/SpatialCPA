@@ -36,7 +36,7 @@ coherent choice: a generated section reports in-plane coordinates, every benchma
 is computed on an in-plane kNN graph, and the repulsion parameters are fitted to an
 in-plane ``g(r)`` — sampling positions through the slab would make the generated in-plane
 ``g(r)`` a projection of a 3-D process and the fitted parameters would no longer describe
-it. Recorded in ``PROGRESS.md`` as a T05 decision.
+it. Recorded in ``progress/t05_layout_head.md`` as a T05 decision.
 
 Conditional on N (SPEC_QUESTIONS B7)
 ------------------------------------

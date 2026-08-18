@@ -1130,7 +1130,7 @@ class Config:
     (the teacher would then be an anchor to *initialisation* rather than a lagging target).
     **It cannot:** on the 500-step fixture arm the generated per-gene variance ratio is 0.054
     at ``0.999`` and 0.064 at ``0.99``, i.e. unchanged. The cause is the loss's own minimiser,
-    not the teacher's horizon — see ``PROGRESS.md``, T07. Left at the spec's value; T09's
+    not the teacher's horizon — see ``progress/t07_sefl_losses.md``. Left at the spec's value; T09's
     config selector may still want to scale it with the step budget."""
 
     # ----------------------------------------------------------------------------------

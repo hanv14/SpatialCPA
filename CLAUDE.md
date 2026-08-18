@@ -81,8 +81,12 @@ Both gates produce a report under `reports/` before anything downstream is writt
 
 - One task file = one PR-sized unit: implement, write its tests, run them, then move on. Do not
   skip ahead; later tasks depend on earlier ones.
-- At the end of each task, update the row in `PROGRESS.md` and append an entry: what was built,
-  the test numbers, and anything that deviated from the spec and why.
+- At the end of each task, update the row in the `PROGRESS.md` status table and append the entry to
+  **that task's own file under `progress/`** (`progress/t08_metric_aware.md`, …): what was built, the
+  test numbers, and anything that deviated from the spec and why. `PROGRESS.md` itself is a short
+  index — status table, gate status, risk summary, links — and is to stay that way. It was split at
+  T08 because a 2131-line log could no longer be rewritten in one pass, and a task's findings went
+  missing as a result.
 - Check `specs/11_COVERAGE_MATRIX.md` before starting a task and again before calling it done. A
   design-doc component missing from the matrix is an omission — flag it, don't silently skip it.
 - **When the spec is wrong or underspecified, say so and propose a fix rather than guessing.**
@@ -108,6 +112,7 @@ reference/            v20 (baseline), SpatialZ + Synthesize (competing method) �
 benchmark-pbya-v3/    existing benchmark harness; bench3/evaluate_paper.py holds the real `paper_*`
                       metric implementations used for published numbers
 reports/              gate1.md, gate2.md, benchmark.md, config_selection_*.md
+progress/             the task log, one file per task; PROGRESS.md is its index
 ```
 
 ## Commands
