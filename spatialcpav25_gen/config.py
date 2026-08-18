@@ -29,6 +29,7 @@ __all__ = [
     "GRANULARITIES",
     "HOLDOUT_MODES",
     "LAYOUT_MODES",
+    "METRIC_DISTRIBUTION_KINDS",
     "MU_LINKS",
     "POTTS_UPDATES",
     "PRIOR_MODES",
@@ -58,6 +59,7 @@ DEVICES: Final[frozenset[str]] = frozenset({"auto", "cpu", "cuda"})
 TEXT_POOLINGS: Final[frozenset[str]] = frozenset({"cls", "mean"})
 HOLDOUT_MODES: Final[frozenset[str]] = frozenset({"alternating", "consecutive"})
 GRANULARITIES: Final[frozenset[str]] = frozenset({"single-cell", "binned"})
+METRIC_DISTRIBUTION_KINDS: Final[frozenset[str]] = frozenset({"sinkhorn", "mmd"})
 
 
 class ConfigError(ValueError):
@@ -989,14 +991,52 @@ class Config:
     w_layout: float = 1.0
     """Poisson-process layout NLL."""
 
-    w_autocorr: float = 0.5
-    """Metric-aware Moran's I / Geary's C agreement (T08)."""
+    w_autocorr: float = 0.0
+    """Metric-aware Moran's I / Geary's C agreement (T08). **Shipped at 0: opt-in.**
 
-    w_profile: float = 0.5
-    """Metric-aware depth / field / per-type profile agreement (T08)."""
+    ``specs/08`` fixes no weight and T01 wrote 0.5 as a placeholder. T08 measured the three terms
+    at 0.5 each and ships them **off**, for one reason and with one caveat, both of which belong
+    together (the full table is in ``PROGRESS.md``, ablation A2).
 
-    w_distribution: float = 0.5
-    """Metric-aware Sinkhorn (or MMD) distribution matching (T08)."""
+    *The reason.* At T06's own 1200-step budget the terms cost on every statistic they are made
+    of — Moran's MAE 0.0287 -> 0.0408, marker-depth r 0.978 -> 0.967, cell-type localization
+    0.967 -> 0.962, gene-gene Frobenius 9.00 -> 11.15, reconstruction 1.590 -> 1.684 nats/pair.
+    A schedule-only control (internal LOSO hiding a section, no terms charged) sits between the
+    two, so it is the terms and not the hidden section that costs. Turning a term on by default
+    when it is measured to hurt is what T07 refused to do for SEFL, and the same answer applies.
+
+    *The caveat, and it is why this is "not yet" rather than "no".* The terms are **slower**, not
+    worse: they add a constraint, and 1200 steps is where T06 stopped *because the model without
+    them starts degrading there* — the early stop is itself R4's symptom. At 2400 steps the
+    ordering reverses on four of six statistics, including both of the ones these terms are named
+    for and the covariance the task exists to fix:
+
+    | statistic | off@1200 | on@1200 | off@2400 | on@2400 |
+    |---|---|---|---|---|
+    | reconstruction (nats/pair) | 1.5901 | 1.6843 | **1.5703** | 1.5885 |
+    | gene-gene Frobenius | 9.000 | 11.154 | 9.049 | **8.489** |
+    | Moran's MAE | 0.0287 | 0.0408 | 0.0339 | **0.0279** |
+    | marker-depth r | 0.978 | 0.967 | 0.983 | **0.990** |
+    | mean-variance slope (real 1.741) | 1.762 | 1.734 | 1.773 | **1.722** |
+    | cell-type localization | **0.967** | 0.962 | 0.958 | 0.957 |
+
+    The arm without the terms gets a better *likelihood* with the longer budget and a worse
+    covariance (9.000 -> 9.049 while the NLL falls 1.5901 -> 1.5703), which is open risk **R4**
+    in miniature; the arm with them improves on both. Whether that is worth its cost on the six
+    target metrics is exactly what T10's **A2** measures, and A2 is therefore an *addition*
+    experiment against this default, in the shape T07 left A7."""
+
+    w_profile: float = 0.0
+    """Metric-aware depth / field / per-type profile agreement (T08). **Shipped at 0** — see
+    ``w_autocorr`` for the measurement that decided all three."""
+
+    w_distribution: float = 0.0
+    """Metric-aware Sinkhorn (or MMD) distribution matching (T08). **Shipped at 0** — see
+    ``w_autocorr``.
+
+    ``specs/08`` §3's honest note, recorded here because this is the term it is about: mixing is
+    the metric where the competing method is genuinely strong, because its per-gene chimerism
+    maximises cloud overlap almost by construction. A tie there is an acceptable outcome."""
 
     w_cross: float = 0.0
     """SEFL plane-intersection consistency (T07). ``specs/07`` sets 0.3; **T07 measured it and
@@ -1099,6 +1139,96 @@ class Config:
 
     loso_max_cells: int = 4000
     """Cell subsample size for the metric-aware block."""
+
+    loso_epoch_steps: int = 50
+    """Optimiser steps one internal-LOSO *epoch* lasts, i.e. how long a section stays hidden.
+
+    ``specs/08`` states the schedule in epochs ("each epoch, hide one training section") and the
+    trainer counts steps (T06 §5), so the two units have to be related somewhere; putting the
+    conversion here keeps it out of the loop. It must be several times
+    ``loso_every_k_steps`` or a hidden section is measured once or twice before it changes and
+    the term is noise rather than a signal."""
+
+    metric_huber_delta: float = 1.0
+    """Huber transition point for the metric-aware agreement terms (T08 §1, §2).
+
+    Moran's I, Geary's C and a ``log1p`` profile all live in ranges of order one, so ``1.0`` is
+    the value at which the loss is quadratic over the normal disagreement and linear over the
+    outliers - which is the entire reason ``specs/08`` asks for a Huber rather than an L2."""
+
+    metric_marker_genes: int = 32
+    """Marker genes the profile terms are computed over: the most spatially autocorrelated
+    genes of the *real* (training) section being reconstructed.
+
+    ``specs/08`` §2 says "top-k spatially variable genes from training" without fixing k. 32 is
+    the width at which the mean over markers is stable on the fixture and the cost of the
+    profile terms stays below the autocorrelation term's."""
+
+    metric_marker_min_detection: float = 0.05
+    """Smallest real detection rate a gene may have and still be chosen as a marker.
+
+    ``specs/08`` §2 says "top-k spatially variable genes from training" and leaves the pool
+    open. Ranking the *whole* panel by Moran's I selects for sparse genes whose handful of
+    non-zero cells happen to be neighbours: their I is high and almost entirely an artefact of
+    the count, and the profile term — which compares each marker against its own mean — then
+    divides by a mean of order 1e-3. Measured: with no floor the profile term goes 1.9 -> 10.6
+    -> 1766 over forty training steps while every model parameter stays put, because the
+    explosion is in the loss's own arithmetic rather than in the model.
+
+    ``0.05`` is the floor T06's ``informative_genes`` already uses, for the same reason (a
+    correlation carried by two cells measures the draw, not the tissue)."""
+
+    metric_distribution_kind: str = "sinkhorn"
+    """Which divergence :func:`~spatialcpav25_gen.losses.metric_aware.loss_distribution` uses.
+
+    ``sinkhorn`` is ``specs/08`` §3's entropic Sinkhorn divergence and ``mmd`` its named
+    fallback. The implementation is the in-repo one T07 already wrote
+    (:func:`~spatialcpav25_gen.losses.sefl.sinkhorn_divergence`), **not** ``geomloss``, even
+    when ``geomloss`` is installed: a loss that silently changes implementation with the
+    environment makes a paper number a property of the machine it ran on (SPEC_QUESTIONS C20).
+    The solver's iteration count is ``sefl_sinkhorn_iters``, shared because it is a property of
+    the solver rather than of the caller."""
+
+    metric_distribution_points: int = 512
+    """Cells per side in the distribution term. The Sinkhorn cost matrix is quadratic in this,
+    and 512 x 512 is the point on the fixture where the divergence's own sampling noise stops
+    dominating the difference between two arms."""
+
+    metric_sinkhorn_blur_multiple: float = 1.0
+    """Sinkhorn blur as a multiple of the median nearest-neighbour distance in PC space, which
+    is ``specs/08`` §3's prescription. Measured on the *real* cloud and detached, so the
+    entropic scale cannot be reduced by shrinking the generated one."""
+
+    metric_dominance_ratio_warn: float = 1.0
+    """Warn when the weighted metric-aware terms exceed this multiple of the weighted
+    reconstruction terms. ``specs/08``'s "do NOT weight these losses above reconstruction",
+    made observable at run time the same way T07 made its own version observable
+    (``sefl_consistency_ratio_warn``)."""
+
+    metric_type_grid_ell_multiple: float = 1.0
+    """Grid-cell width of the **per-type** spatial histogram, in field correlation lengths.
+
+    The one place T08's profile terms do not share a grid with the marker-expression field, and
+    the reason is an asymmetry rather than a preference. Both sides of the expression field are
+    count draws at the same positions, so binning them finely is noisy but fair. The per-type
+    histogram compares a *smooth* predicted composition against *hard* labels, and at
+    ``profile_grid_size = 24`` a 1000 um section gives 42 um bins holding two or three cells —
+    so the target is a one-hot label map and the loss's own minimiser is an infinitely confident
+    intensity field. Measured: ``max_c lambda_c / sum_c lambda_c`` climbs 0.73 -> 0.9995 over 25
+    metric steps and the gradient follows it through the shared anatomical field into the flow
+    (0.4 -> 838) until ``mu`` is ``NaN``.
+
+    ``1.0`` means a bin is one ``ell_xy`` across, which is the same argument
+    ``intensity_basis_ell_multiple`` makes for the intensity head's own basis (B10): structure
+    finer than the field's correlation length is not something the data constrains, and asking
+    for it is asking to overfit. On the fixture it gives ~8 bins a side and ~23 cells a bin."""
+
+    metric_eps: float = 1e-8
+    """Denominator guard shared by the metric-aware losses: the soft-profile weight sums and
+    the Moran / Geary variance denominators. A gene with zero variance in a subsample, or a
+    profile bin with no cell near it, is a 0/0 rather than an error - the surrounding terms are
+    still well defined and dropping the whole step would make the loss depend on the
+    subsample."""
 
     # ----------------------------------------------------------------------------------
     # inference and calibration (T09)
@@ -1257,6 +1387,7 @@ class Config:
             ("decoder_mu_link", self.decoder_mu_link, MU_LINKS),
             ("gene_summary_fallback", self.gene_summary_fallback, SUMMARY_FALLBACKS),
             ("section_granularity", self.section_granularity, GRANULARITIES),
+            ("metric_distribution_kind", self.metric_distribution_kind, METRIC_DISTRIBUTION_KINDS),
         ]
         for name, value, allowed in choices:
             if value not in allowed:
@@ -1382,6 +1513,15 @@ class Config:
             "profile_sigma_frac": self.profile_sigma_frac,
             "loso_every_k_steps": self.loso_every_k_steps,
             "loso_max_cells": self.loso_max_cells,
+            "loso_epoch_steps": self.loso_epoch_steps,
+            "metric_huber_delta": self.metric_huber_delta,
+            "metric_marker_genes": self.metric_marker_genes,
+            "metric_marker_min_detection": self.metric_marker_min_detection,
+            "metric_distribution_points": self.metric_distribution_points,
+            "metric_sinkhorn_blur_multiple": self.metric_sinkhorn_blur_multiple,
+            "metric_dominance_ratio_warn": self.metric_dominance_ratio_warn,
+            "metric_type_grid_ell_multiple": self.metric_type_grid_ell_multiple,
+            "metric_eps": self.metric_eps,
             "ceiling_n_draws": self.ceiling_n_draws,
             "n_uncertainty_samples": self.n_uncertainty_samples,
             "bisection_max_iter": self.bisection_max_iter,
