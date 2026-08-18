@@ -81,6 +81,7 @@ from spatialcpav25_gen.model.spatialcpav25_gen import (
     TrainingData,
     train_ctfflow,
 )
+from spatialcpav25_gen.train.loso import LOSOScheduler
 
 from tests.fixtures.synthetic import make_synthetic_volume
 from tests.fixtures.text import fake_text_vecs
@@ -213,20 +214,28 @@ def train_model(
     steps: int = TRAIN_STEPS,
     gene_pool: np.ndarray | None = None,
     cfg: Config | None = None,
+    loso: bool = False,
 ) -> Trained:
-    """Build and train one model on the synthetic fixture. The expensive fixture body."""
+    """Build and train one model on the synthetic fixture. The expensive fixture body.
+
+    ``loso=True`` runs T08's internal leave-one-section-out schedule whatever the metric-aware
+    weights are, which is how its ablation A2 gets a schedule-only control arm.
+    """
     base = expression_cfg() if cfg is None else cfg
     base = base.replace(holdout_consecutive_k=3) if holdout_mode == "consecutive" else base
     vol, _ = make_synthetic_volume(seed=0)
     training, held = split_holdout(vol, holdout_mode, 0, base)
     data = TrainingData.build(training, base)
     model = CTFFlow(base, data, build_embeddings(base, vol), grf_seed=11)
+    schedule = LOSOScheduler(training, base, seed=SEED) if loso else None
     with warnings.catch_warnings():
         # T04's field clamps query points outside the volume's own bounding box and says so.
         # Rotation augmentation produces them by construction (a rotated box is not a box);
         # it is T04 behaviour, measured through GATE 2, and not something T06 changes.
         warnings.simplefilter("ignore", BBoxClampWarning)
-        history = train_ctfflow(model, base, steps=steps, seed=SEED, gene_pool=gene_pool)
+        history = train_ctfflow(
+            model, base, steps=steps, seed=SEED, gene_pool=gene_pool, loso=schedule
+        )
         model.repulsion = fit_repulsion(training, base, seed=SEED + 1)
     return Trained(
         model=model,
