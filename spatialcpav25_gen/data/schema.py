@@ -27,6 +27,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Any
 
 import numpy as np
@@ -269,7 +270,84 @@ class TrainingVolume(Volume):
     Produced only by :func:`spatialcpav25_gen.data.loaders.split_holdout`. Metric-aware
     losses (T08), calibration and config selection (T09) take this type and nothing else,
     so held-out data cannot reach them by accident.
+
+    It also carries :attr:`principal_axis`, the axis T08's depth profiles are taken along.
+    That field lives *here* and not on :class:`Volume` deliberately (SPEC_QUESTIONS C10):
+    computing it on a full volume would consult held-out sections, and computing it per
+    epoch would make the profile loss non-stationary and the metric incomparable between
+    epochs. A cached property of the training volume is leakage-free by construction and
+    cannot drift.
     """
+
+    @cached_property
+    def principal_axis(self) -> npt.NDArray[np.float64]:
+        """The principal tissue axis: ``(3,)`` float64 unit vector, ``(x, y, z)``.
+
+        The first principal component of this volume's own **in-plane** cell coordinates,
+        each section centred on its own centroid, returned with a zero ``z`` component.
+
+        Two choices worth stating, because ``specs/08`` §2 says only "first PC of cell
+        coordinates":
+
+        * **In-plane.** Every cell of a section shares one ``z``, so the component of the
+          axis along ``z`` contributes a constant to the projection and a depth profile
+          taken along it would measure nothing within a section. Pooling raw ``(x, y, z)``
+          on a stack that is wider than it is deep also just returns whichever in-plane
+          direction happens to be widest, with the ``z`` component along for the ride.
+        * **Centred per section.** Otherwise a stack whose sections drift laterally with
+          depth turns that drift into the leading component, which is a property of the
+          mounting rather than of the tissue.
+
+        The sign is canonicalised (the largest-magnitude component is made positive) so the
+        axis does not flip between machines, which would flip every depth profile.
+
+        :meth:`set_anatomical_axis` replaces it with a user-supplied anatomical direction;
+        that is ``specs/08`` §2's "or a user-supplied anatomical axis".
+        """
+        xy = np.concatenate(
+            [
+                np.asarray(s.coords, dtype=np.float64)
+                - np.asarray(s.coords, dtype=np.float64).mean(axis=0, keepdims=True)
+                for s in self.sections
+            ],
+            axis=0,
+        )
+        _, vectors = np.linalg.eigh(xy.T @ xy / float(xy.shape[0]))
+        first = np.asarray(vectors[:, -1], dtype=np.float64)  # eigh sorts ascending
+        axis = np.array([first[0], first[1], 0.0], dtype=np.float64)
+        norm = float(np.linalg.norm(axis))
+        if norm == 0.0:  # pragma: no cover - two coincident columns cannot both be zero
+            raise SchemaError(
+                f"TrainingVolume.principal_axis: specimen {self.specimen_id!r} has no "
+                "in-plane spread, so no principal axis is defined"
+            )
+        axis = axis / norm
+        return axis if axis[int(np.argmax(np.abs(axis)))] > 0 else -axis
+
+    def set_anatomical_axis(self, axis: npt.NDArray[np.float64] | Sequence[float]) -> None:
+        """Pin a user-supplied anatomical axis instead of the fitted first PC.
+
+        ``axis`` is any ``(3,)`` non-zero direction in ``(x, y, z)`` micrometre space; it is
+        normalised here. Raises if :attr:`principal_axis` has already been read, because an
+        axis that changes mid-run is exactly the drift ``specs/08`` forbids ("do not
+        recompute the principal tissue axis per epoch") - only louder.
+        """
+        if "principal_axis" in self.__dict__:
+            raise SchemaError(
+                "TrainingVolume.set_anatomical_axis: the principal axis has already been "
+                "used, and changing it now would make the depth profiles before and after "
+                "incomparable. Set it before the first metric-aware step."
+            )
+        vector = np.asarray(axis, dtype=np.float64).reshape(-1)
+        if vector.shape != (3,) or not np.all(np.isfinite(vector)):
+            raise SchemaError(
+                "TrainingVolume.set_anatomical_axis: axis must be a finite (3,) vector in "
+                f"(x, y, z), got {np.asarray(axis).shape}"
+            )
+        norm = float(np.linalg.norm(vector))
+        if norm == 0.0:
+            raise SchemaError("TrainingVolume.set_anatomical_axis: axis must be non-zero")
+        self.__dict__["principal_axis"] = vector / norm
 
 
 @dataclass
