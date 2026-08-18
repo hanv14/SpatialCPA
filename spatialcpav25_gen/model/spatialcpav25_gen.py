@@ -100,6 +100,7 @@ from spatialcpav25_gen.model.retrieval import (
 
 if TYPE_CHECKING:  # pragma: no cover - see the deferred import in `train_ctfflow`
     from spatialcpav25_gen.losses.sefl import EMATeacher
+    from spatialcpav25_gen.train.loso import LOSOScheduler
 
 __all__ = [
     "EMA",
@@ -127,12 +128,16 @@ LOSS_TERMS: tuple[str, ...] = (
     "cross",
     "thick",
     "prog",
+    "autocorr",
+    "profile",
+    "distribution",
 )
 """The named loss terms a training step can carry, in the order the trainer sums them.
 
 ``forward_train`` returns the first six; T07's ``cross``, ``thick`` and ``prog`` are added by
 the trainer's SEFL block, because they are properties of *two virtual sections* rather than of
-the batch. T08 adds ``autocorr``, ``profile`` and ``distribution``.
+the batch, and T08's ``autocorr``, ``profile`` and ``distribution`` by its metric-aware block,
+because they are properties of *a hidden training section reconstructed from the others*.
 """
 
 DIAG_PREFIX = "diag_"
@@ -319,6 +324,7 @@ class TrainingData:
         step: int = 0,
         gene_pool: IntArray | None = None,
         with_layout: bool = True,
+        hide: str | None = None,
     ) -> Batch:
         """Draw one batch. Deterministic given ``seed`` and ``step`` (Convention 3).
 
@@ -327,10 +333,17 @@ class TrainingData:
         is what the zero-shot experiment holds genes out with), and — when ``with_layout`` —
         one section's layout targets, cycling through the sections by ``step`` so that
         consecutive steps do not evaluate the same slab.
+
+        ``hide`` is T08's additive keyword: the ``section_id`` of the section internal LOSO has
+        hidden for this epoch. That section then contributes no cell to the batch, no layout
+        target, and no retrieval donor — ``specs/08`` §4's "excluded from the retrieval index
+        and from the field's supervision for that epoch — otherwise the model reconstructs it
+        by memorisation and the loss is vacuous". ``None`` is every other step, unchanged.
         """
         gen = np.random.default_rng([seed, step])
-        n_cells = min(int(cfg.batch_cells), self.n_cells)
-        rows = np.sort(gen.choice(self.n_cells, size=n_cells, replace=False)).astype(np.intp)
+        candidates, sections, hidden_z = self._visible(hide)
+        n_cells = min(int(cfg.batch_cells), int(candidates.size))
+        rows = np.sort(gen.choice(candidates, size=n_cells, replace=False)).astype(np.intp)
         pool = (
             np.arange(self.stats.n_genes, dtype=np.intp)
             if gene_pool is None
@@ -346,7 +359,7 @@ class TrainingData:
         xyz = self.index.coords[rows]
         neighbours, _ = self.index.query(
             xyz,
-            set(),
+            hidden_z,
             seed=int(gen.integers(0, 2**31 - 1)),
             source_section=self.index.section_index[rows],
             apply_dropout=cfg.section_dropout_p > 0.0,
@@ -357,7 +370,7 @@ class TrainingData:
             else torch.from_numpy(self.index.region[rows].astype(np.int64))
         )
         layout = (
-            self._layout_targets(cfg, gen, step=step)
+            self._layout_targets(cfg, gen, step=step, sections=sections)
             if with_layout and cfg.w_layout > 0.0
             else None
         )
@@ -375,9 +388,38 @@ class TrainingData:
             layout=layout,
         )
 
-    def _layout_targets(self, cfg: Config, gen: np.random.Generator, *, step: int) -> LayoutTargets:
+    def _visible(self, hide: str | None) -> tuple[IntArray, list[Section], set[float]]:
+        """Return the rows, sections and excluded depths a batch may use, given ``hide``.
+
+        With ``hide=None`` this is every row, every section and no exclusion, i.e. exactly what
+        the loop did before T08. With a section named, that section is removed from all three
+        channels at once — which is the point: a hidden section that stayed in *any* of them
+        would let the reconstruction succeed by memorisation.
+        """
+        if hide is None:
+            return np.arange(self.n_cells, dtype=np.intp), self.vol.sections, set()
+        ids = self.vol.section_ids
+        if hide not in ids:
+            raise ExpressionError(
+                f"sample_batch(hide={hide!r}): no such section in the training volume; it holds "
+                f"{ids}"
+            )
+        which = ids.index(hide)
+        rows = np.nonzero(self.index.section_index != which)[0].astype(np.intp)
+        sections = [s for i, s in enumerate(self.vol.sections) if i != which]
+        return rows, sections, {float(self.vol.sections[which].z)}
+
+    def _layout_targets(
+        self,
+        cfg: Config,
+        gen: np.random.Generator,
+        *,
+        step: int,
+        sections: list[Section] | None = None,
+    ) -> LayoutTargets:
         """Build one section's layout likelihood inputs, jitter and MC points redrawn."""
-        section = self.vol.sections[step % self.vol.n_sections]
+        pool = self.vol.sections if sections is None else sections
+        section = pool[step % len(pool)]
         plane = section_plane(section)
         xyz = to_xyz(section).astype(np.float64)
         half = 0.5 * float(section.thickness)
@@ -1023,6 +1065,11 @@ class TrainHistory:
     (``specs/07`` §5). Empty on a run with the SEFL weights at zero."""
     collapse_alarms: list[int] = dataclass_field(default_factory=list)
     """Steps at which the collapse alarm fired. ``specs/07``'s "collapse-alarm history"."""
+    metric_ratio: list[float] = dataclass_field(default_factory=list)
+    """``sum(weighted metric-aware) / sum(weighted reconstruction)`` at each step the
+    metric-aware block ran (``specs/08``'s "do not weight these losses above reconstruction").
+    Appended at every LOSO step and not only at logged ones, because the block runs on its own
+    schedule and the two need not coincide. Empty on a run with T08's weights at zero."""
     log_k: float = 0.0
 
     def record(self, step: int, terms: dict[str, Tensor], total: float) -> None:
@@ -1059,6 +1106,9 @@ def loss_weights(cfg: Config) -> dict[str, float]:
         "cross": float(cfg.w_cross),
         "thick": float(cfg.w_thick),
         "prog": float(cfg.w_prog),
+        "autocorr": float(cfg.w_autocorr),
+        "profile": float(cfg.w_profile),
+        "distribution": float(cfg.w_distribution),
     }
 
 
@@ -1071,6 +1121,7 @@ def train_ctfflow(
     gene_pool: IntArray | None = None,
     ema: EMA | None = None,
     teacher: EMATeacher | None = None,
+    loso: LOSOScheduler | None = None,
 ) -> TrainHistory:
     """Fit ``model`` for ``steps`` optimiser steps. Returns the recorded :class:`TrainHistory`.
 
@@ -1101,6 +1152,10 @@ def train_ctfflow(
         build one when any SEFL weight is non-zero. Separate from ``ema``: that one averages
         the weights a caller may want *afterwards*, this one is a second model evaluated
         *during* the step, and the two have different lifetimes.
+    loso
+        T08's :class:`~spatialcpav25_gen.train.loso.LOSOScheduler`, or ``None`` to build one
+        over the model's own training volume when any metric-aware weight is non-zero. Passing
+        one in is how a caller fixes the fold order across two arms of an ablation.
 
     SEFL
     ----
@@ -1112,12 +1167,28 @@ def train_ctfflow(
     ``backward`` per graph keeps the augmentation's in-place rebinding of the field's query
     frames out of the other's backward pass. The consistency/reconstruction ratio is logged
     and warned about, and the collapse alarm runs at every logged step.
+
+    Metric-aware losses
+    -------------------
+    When any of ``w_autocorr`` / ``w_profile`` / ``w_distribution`` is non-zero the loop hides
+    one **training** section per internal-LOSO epoch (``Config.loso_epoch_steps``) and, every
+    ``Config.loso_every_k_steps``-th step, reconstructs it from the others and charges T08's
+    three terms. The hidden section is dropped from that epoch's batches, layout targets and
+    retrieval pool at the same time, so nothing about it is available to the step being asked
+    to reproduce it. Like the SEFL block this one is backpropagated separately: it is built
+    outside the rotation context, in the data frame, because a profile compared across two
+    poses would measure the pose.
     """
     # Deferred, and it has to be: `losses.sefl` evaluates the model it is handed, so importing
     # it at module scope would close the loop `model -> losses.sefl -> model`. The losses need
     # no *type* from here (they annotate `CTFFlow` under `TYPE_CHECKING`), and this module needs
     # them only inside the loop, so one deferred import breaks the cycle in the right place.
     from spatialcpav25_gen.losses.sefl import EMATeacher, sefl_active, sefl_ramp, sefl_terms
+    from spatialcpav25_gen.train.loso import (
+        LOSOScheduler,
+        check_metric_dominance,
+        metric_aware_terms,
+    )
 
     if steps < 1:
         raise ValueError(f"train_ctfflow: steps must be >= 1, got {steps}")
@@ -1135,11 +1206,25 @@ def train_ctfflow(
     sefl_on = max(float(cfg.w_cross), float(cfg.w_thick), float(cfg.w_prog)) > 0.0
     sefl_teacher = (EMATeacher(model, cfg) if teacher is None else teacher) if sefl_on else None
     sefl_gen = np.random.default_rng([seed, 0x5EF1])
+    metric_on = max(float(cfg.w_autocorr), float(cfg.w_profile), float(cfg.w_distribution)) > 0.0
+    # A scheduler passed in applies whatever the weights are, which is what makes the
+    # schedule-only control arm of ablation A2 expressible: internal LOSO hides a section from
+    # the batch as well as from retrieval, so "with the terms" and "without" would otherwise
+    # differ in their training data too and the comparison would not be about the terms.
+    default_schedule = LOSOScheduler(data.vol, cfg, seed=seed) if metric_on else None
+    schedule = loso if loso is not None else default_schedule
 
     model.train()
     for step in range(steps):
         model.embeddings.set_progress(step / max(steps - 1, 1))
-        batch = data.sample_batch(cfg, seed=seed, step=step, gene_pool=gene_pool)
+        hidden = None if schedule is None else schedule.hidden_section(step)
+        batch = data.sample_batch(
+            cfg,
+            seed=seed,
+            step=step,
+            gene_pool=gene_pool,
+            hide=None if hidden is None else hidden.section_id,
+        )
         # No `planes` channel: every plane in a training step is consumed by drawing points on
         # it, and those points are rotated through `coords`. Naming the three used channels is
         # what makes the omission reviewable (GATE 2's G2.1h).
@@ -1188,6 +1273,19 @@ def train_ctfflow(
                     weighted.backward()  # type: ignore[no-untyped-call]
                 running += float(weighted.detach())
                 terms.update(consistency)
+
+        if schedule is not None and schedule.active(step):
+            metric = metric_aware_terms(
+                model, schedule, cfg, step=step, seed=seed, gene_pool=gene_pool
+            )
+            if metric:
+                weighted_metric = torch.stack(
+                    [weights[name] * value for name, value in metric.items()]
+                ).sum()
+                weighted_metric.backward()  # type: ignore[no-untyped-call]
+                running += float(weighted_metric.detach())
+                terms.update(metric)
+                history.metric_ratio.append(check_metric_dominance(terms, weights, cfg, step=step))
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), float(cfg.grad_clip))
         optimiser.step()
