@@ -115,6 +115,24 @@ For each point, obtain the model's predicted conditional state from each section
 L_cross = D_KL( ZINB₁ ‖ ZINB₂ ) + ‖h₁ − h₂‖² + CE(type-logits₁, type-logits₂) + ‖λ¹ − λ²‖²
 ```
 
+> **Measured at T07 (2026-08-17) — this loss is not needed in v25, and it is harmful here.**
+> The table in §5 says intersection consistency is "**Exact by construction** (shared 3D noise
+> field), and additionally trained for (`L_cross`)". The first half is right and is now asserted
+> bitwise on an *untrained* model: the continuous 3D field gives both branches the identical noise,
+> and the conditioning pathway is data-frame (retrieval, GRF and Fourier encoding are all queried at
+> physical points), so two crossing sections agree exactly where they cross whatever the model has
+> learned. The second half does not survive contact. Once the pathway is plane-independent, the only
+> thing two branches can differ by is the **augmentation pose** — and §2.1(a)'s pose-dependent
+> triplane is a *capacity* device, so a loss that equalises poses is a loss that asks the backbone
+> to give that capacity up. It does: generated per-gene variance falls to **0.067** of the real
+> section's at `λ_x = 0.3`, against **0.711** with SEFL off, while `L_cross` itself falls 90 %.
+> `w_cross` ships at 0; `L_thick` and `L_prog` are unaffected and stay on.
+>
+> For a cross-plane loss to earn its keep the branches would have to differ by the **evidence** each
+> plane has — its own flanking sections and dropout, as in v20 and the competing method — rather
+> than by the pose. That is the version of the loss that still has content in v25, and it is a
+> design change rather than a re-weighting.
+
 **Anti-collapse:** compute branch 2 under an **EMA teacher** with stop-gradient (BYOL-style). A
 symmetric consistency loss has a trivial minimiser — a constant field — and will find it. This is
 not optional.
@@ -188,7 +206,7 @@ explicitly and early in the paper, because a reviewer will raise it:
 | Object produced | A **discrete point cloud** densified along z by repeated pairwise interpolation | A **continuous field**; sections are queries |
 | Oblique sections | Rotate the finished point cloud and keep points within `slice_thickness` of a plane — a **thick slab projection** of pre-existing points | Direct generation on the plane at native resolution |
 | Resolution off-axis | Capped by the reconstructed z-density; between-slice regions contain no points | Unbounded; the field is defined everywhere |
-| Consistency between two different sections | **None.** Each slice comes from an independent SWD optimisation and independent per-gene sampling. Two oblique sections through the same tissue disagree where they cross. | **Exact by construction** (shared 3D noise field), and additionally trained for (`L_cross`) |
+| Consistency between two different sections | **None.** Each slice comes from an independent SWD optimisation and independent per-gene sampling. Two oblique sections through the same tissue disagree where they cross. | **Exact by construction** (shared 3D noise field *and* a data-frame conditioning pathway) — asserted **bitwise on an untrained model** at T07. The "additionally trained for (`L_cross`)" this row used to claim was dropped: it is unnecessary, and measured harmful (§3.1) |
 | Thickness | Post-hoc slab selection; a thicker slab is just more points | A modelled observation operator, with coarse-graining consistency |
 | Sectioning during training | Not used | The central self-supervision signal |
 
@@ -239,7 +257,9 @@ Insert after v23 §10 step 3, before the metric-aware losses:
 - **Step 3.5 — SEFL (1.5 weeks).** (i) Replace the 2D correlated prior with the 3D RFF noise field;
   verify intersection consistency is exact with conditioning frozen. (ii) Add rotation augmentation
   + multi-orientation planes; verify oblique-vs-coronal reconstruction parity on held-in sections.
-  (iii) Add `L_cross` with EMA teacher; watch for collapse. (iv) Add `L_thick`, `L_prog`.
+  (iii) ~~Add `L_cross` with EMA teacher; watch for collapse.~~ **Done at T07 and reverted on the
+  evidence** — the collapse arrives, through the field rather than the decoder, and the loss it
+  comes from is redundant with (i). (iv) Add `L_thick`, `L_prog`.
 - **Gate:** oblique reconstruction quality must reach ≥90% of coronal on held-in sections before
   proceeding. If it does not, the backbone is not equivariant enough and option (c) — a steerable
   backbone — becomes necessary. Better to learn this in week 4 than in month 3.

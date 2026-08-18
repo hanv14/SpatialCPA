@@ -94,6 +94,20 @@ VARIANCE_FLOOR = 0.60
 sections'. The collapse *alarm* fires at 25 % (``Config.sefl_collapse_warn_fraction``); this
 is the stricter acceptance criterion, so a run that passes here never approached the alarm."""
 
+VARIANCE_CEILING = 1.0 / VARIANCE_FLOOR
+"""...and no further above it than the floor is below: the band is a **factor of 1.67 either
+way**, not a one-sided floor.
+
+``specs/07`` states only the floor, because the failure it was written for is collapse. A
+one-sided criterion is satisfied at the opposite extreme from the failure it was written for —
+the same trap GATE 2's attention entropy fell into, where 0.987 log K passed a
+"not-collapsed" test by being *maximally* uninformative. Overdispersion is a real failure with
+a real name: a generated section whose genes vary more than the tissue's is not more
+informative, it is noisier, and every count statistic in the benchmark reads it as signal.
+Measured at the shipped weights: **1.127-1.331** across runs, inside the band but on the high
+side, and 0.711 with SEFL off. Whether the overshoot costs anything on the six target metrics
+is T10's A7 to answer; what T07 measured on the statistics it owns is in PROGRESS.md."""
+
 COST_OVERHEAD_MAX = 0.60
 """...and SEFL must add under 60 % wall-clock per epoch at the configured sampling rates."""
 
@@ -242,23 +256,29 @@ the four-arm measurement behind that — so the two arms that exercise ``L_cross
 explicitly. Everything else about them is the spec's schedule: warm-up 0.2, ramp 0.2, every
 third step."""
 
+SEFL_ON: dict[str, object] = {"w_thick": 0.2, "w_prog": 0.2}
+"""``specs/07``'s weights for the two terms that are *not* harmful, which also ship at **0**:
+SEFL is opt-in until T10's A7 measures it (``Config.w_prog`` carries the three T06 criteria it
+costs). Every test here that is about a SEFL loss therefore has to turn it on explicitly, which
+is the right shape — a test of a loss should name the loss."""
+
 
 @pytest.fixture(scope="module")
 def trained() -> Built:
-    """The shipped default arm: 500 steps, ``thick`` + ``prog`` live, ``w_cross = 0``."""
-    return train(build_model(sefl_cfg()))
+    """SEFL as ``specs/07`` weights it, minus ``L_cross``: 500 steps, ``thick`` + ``prog``."""
+    return train(build_model(sefl_cfg(**SEFL_ON)))
 
 
 @pytest.fixture(scope="module")
 def trained_cross() -> Built:
-    """The arm ``specs/07`` describes: the same run with ``w_cross`` at the spec's 0.3."""
-    return train(build_model(sefl_cfg(w_cross=SPEC_W_CROSS)))
+    """The arm ``specs/07`` describes in full: the same run with all three losses live."""
+    return train(build_model(sefl_cfg(**SEFL_ON, w_cross=SPEC_W_CROSS)))
 
 
 @pytest.fixture(scope="module")
 def trained_cross_no_teacher() -> Built:
-    """The negative control: ``w_cross`` at 0.3 with the stop-gradient teacher switched off."""
-    return train(build_model(sefl_cfg(w_cross=SPEC_W_CROSS, sefl_ema_teacher=False)))
+    """The negative control: all three losses live, stop-gradient teacher switched off."""
+    return train(build_model(sefl_cfg(**SEFL_ON, w_cross=SPEC_W_CROSS, sefl_ema_teacher=False)))
 
 
 def cross_at(built: Built, *, seed: int) -> float:
@@ -372,6 +392,28 @@ def test_consistency_ratio_warns_when_consistency_stops_being_a_regulariser():
     dominated = {"recon": torch.tensor(0.1), "cross": torch.tensor(10.0)}
     assert consistency_ratio(dominated, weights) > Config().sefl_consistency_ratio_warn
     assert consistency_ratio({"cross": torch.tensor(1.0)}, weights) == float("inf")
+
+
+def test_collapse_alarm_is_silent_on_a_run_shorter_than_its_floor(built: Built):
+    """A short run must not trip the alarm, however degenerate its untrained variance is.
+
+    The regression this pins: with only the ramp gate, a four-step run opens the gate at step
+    3 — a fraction of a very short run — and the alarm fires at 0.008 of the real variance on
+    a decoder that has taken three steps. That is initialisation, not collapse, and it fired
+    inside the *fast* suite, where it trains reviewers to ignore it. ``sefl_collapse_min_steps``
+    is the second gate.
+    """
+    cfg = built.cfg.replace(**SEFL_ON, sefl_warmup_frac=0.0, sefl_ramp_frac=0.0)
+    model = build_model(cfg).model
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", CollapseWarning)
+        warnings.simplefilter("ignore", BBoxClampWarning)
+        warnings.simplefilter("ignore", ConsistencyDominanceWarning)
+        history = train_ctfflow(model, cfg, steps=4, seed=SEED)
+    assert history.collapse_alarms == []
+    # ...and the variance it would have complained about really is degenerate, so the silence
+    # is the gate working rather than the model being fine.
+    assert history.variance_ratio[-1] < Config().sefl_collapse_warn_fraction
 
 
 def test_collapse_alarm_fires_below_the_configured_fraction():
@@ -903,10 +945,20 @@ def test_wrong_loss_actually_constrains_morans_i(built: Built):
 
 @pytest.mark.slow
 def test_no_collapse(trained: Built):
-    """With SEFL on at the shipped weights, generated per-gene variance stays above 60 %."""
+    """Generated per-gene variance stays inside a factor of 1.67 of the real section's.
+
+    Measured on the ``thick`` + ``prog`` arm — the losses SEFL still proposes to use — which is
+    not the shipped default (that is SEFL off entirely; ``Config.w_prog``).
+
+    Both sides of the band, not just ``specs/07``'s floor — see :data:`VARIANCE_CEILING`.
+    The SEFL-on arm sits **above** the real variance (1.127-1.331 across runs) where the
+    SEFL-off arm sits below it (0.711), so the one-sided criterion the spec states would pass
+    this arm without ever looking at the direction it moved.
+    """
     ratio = generated_variance_ratio(trained, seed=5)
     print(f"\nper-gene variance of generated / real, shipped weights: {ratio:.3f}")
-    assert ratio >= VARIANCE_FLOOR, f"per-gene variance ratio {ratio:.3f}"
+    assert ratio >= VARIANCE_FLOOR, f"collapsed: per-gene variance ratio {ratio:.3f}"
+    assert ratio <= VARIANCE_CEILING, f"overdispersed: per-gene variance ratio {ratio:.3f}"
 
 
 @pytest.mark.slow
@@ -967,8 +1019,10 @@ def test_sefl_cost():
     """
     steps = 15
     repeats = 2
-    base_cfg = sefl_cfg(w_cross=0.0, w_thick=0.0, w_prog=0.0)
-    sefl_on = sefl_cfg(sefl_warmup_frac=0.0, sefl_ramp_frac=0.0)
+    base_cfg = sefl_cfg()  # the shipped default *is* SEFL off
+    sefl_on = sefl_cfg(**SEFL_ON, w_cross=SPEC_W_CROSS, sefl_warmup_frac=0.0, sefl_ramp_frac=0.0)
+    assert max(sefl_on.w_cross, sefl_on.w_thick, sefl_on.w_prog) > 0.0
+    assert max(base_cfg.w_cross, base_cfg.w_thick, base_cfg.w_prog) == 0.0
 
     timings: dict[str, float] = {}
     for name, cfg in (("base", base_cfg), ("sefl", sefl_on)):

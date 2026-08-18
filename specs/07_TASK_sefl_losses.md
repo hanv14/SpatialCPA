@@ -87,6 +87,49 @@ and this is scale-stable, differentiable everywhere, and reads the same way in t
 Weight the three terms equally unless a measurement says otherwise, and log them separately so a
 collapse in one is visible.
 
+> **AMENDED at T07 (2026-08-17): `L_cross` is unnecessary in v25, and `w_cross` ships at 0.**
+> Everything below is implemented, tested and kept — T10's A7 and E5 need it — but it must not be
+> trained with on this architecture. Two measurements say so.
+>
+> **Intersection consistency is exact BY CONSTRUCTION, not by training.** The 3D noise field is
+> continuous (T03), so both branches receive the identical realisation along the intersection; and
+> the conditioning pathway is *data-frame* — retrieval, the GRF and the Fourier encoding are all
+> queried at physical points, and `CTFFlow.generate` conditions with the identity pose whatever
+> plane it was handed. So two crossing sections emit **bitwise identical** expression along their
+> intersection on an **untrained** model with no consistency loss applied
+> (`test_generation_is_intersection_consistent_by_construction`). This is a **stronger** claim than
+> the one the loss was written to earn: the property holds for every model of this architecture,
+> at every checkpoint, exactly — not approximately, and not as a consequence of optimisation. The
+> design document already anticipated it (`v23_sectioning_equivariance.md` §5: "Exact by
+> construction (shared 3D noise field)"); what T07 adds is that the "and additionally trained for"
+> half of that sentence is not merely redundant.
+>
+> **What is left for the loss to constrain is T04's capacity, and constraining it is harmful.** The
+> only plane-dependent channel remaining is the augmentation **pose**, so that is what a
+> two-branch loss actually compares — and T04 made the triplane pose-dependent *deliberately*, as
+> the mechanism GATE 2 rests on. Minimising `L_cross` drives the field towards pose-invariance,
+> i.e. towards constant, and a constant field carries no anatomy. Four arms, 500 steps, this
+> section's own schedule, differing only in which SEFL terms are live:
+>
+> | arm | reconstruction (nats/pair) | generated per-gene variance ÷ real |
+> |---|---|---|
+> | SEFL off | **1.738** | **0.711** |
+> | `thick` + `prog` only (shipped) | 2.082 | 1.127–1.331 |
+> | + `w_cross = 0.3` | 2.024 | **0.067** |
+> | + `w_cross = 0.3`, teacher off | 1.914 | 0.382 |
+>
+> `L_cross` falls **90 %** over the run it damages, so this is not a failure to optimise it.
+>
+> **What would have to be true for a cross-plane loss to earn its place.** The two branches must
+> differ by something a *correct* model can reconcile — that is, by the **evidence** each plane
+> would have, not by the pose it is presented in. In v20 and the competing method a section is
+> built from its flanking sections, so two crossing planes have different evidence and genuinely
+> disagree where they cross; that is the setting the loss was designed in, and there it has
+> content. A v25 version would have to make branch *i* condition on the retrieval evidence a
+> section cut on plane *i* actually has — its own flanking sections, its own gap-aware dropout —
+> and leave the pose alone. That is a design change, not a weight, and it is owed a decision
+> (SPEC_QUESTIONS C19, open risk R6) before any cross-plane term is switched back on.
+
 **Anti-collapse — mandatory.** Branch 2 must be the EMA teacher with `detach()`. A symmetric
 consistency loss has the trivial minimiser "constant field" and will find it. Add a runtime alarm:
 if the mean per-gene variance of generated expression drops below 25% of the real sections' at any

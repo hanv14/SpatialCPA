@@ -75,7 +75,7 @@ is an omission — flag it rather than skipping it.**
 | **V2 orthogonal-specimen validation** | T10 §5b | overlaps E3 |
 | **V3 anisotropy prediction** | T10 §5b | the equivariant-column payoff |
 | **V4 thickness transfer** | T10 §5b | validates `L_thick` |
-| Ablation A7 (SEFL off) | T10 | |
+| Ablation A7 (SEFL off) | T10 | **Inverted at T07: SEFL ships off, so A7 is an *addition* experiment** (`w_thick = w_prog = 0.2` against the shipped default). `w_cross` is 0 because intersection consistency is exact by construction in v25 and training the loss flattens the field (C19, R6); `w_thick` / `w_prog` are 0 because at their spec weights a model trained at T06's own budget fails three T06 acceptance tests (R7). SEFL's net contribution is **unverified** until A7 reports the six target metrics |
 
 ## Gates, restated
 

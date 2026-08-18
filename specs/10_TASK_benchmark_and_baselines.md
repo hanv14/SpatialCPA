@@ -232,8 +232,49 @@ Wire as config overrides so each is a one-line entry:
 | A4 | repulsion off (Poisson layout) | point-process realism — **the `g(r)` comparison must run over `[0, 3R]`, see below** |
 | A5 | `w_z=0` in retrieval | the specific competing-method flaw — **must be run in the wide-gap regime, see below** |
 | A6 | Gaussian mean decoder | sparsity/dispersion preservation |
-| A7 | `w_cross=w_thick=w_prog=0` | SEFL's contribution |
+| A7 | `w_thick=w_prog=0.2` (an **addition**, not an ablation — SEFL ships off) | SEFL's contribution — **two losses, not three**, and the number that decides whether SEFL is used at all. See below |
 | A8 | `loss_prog_WRONG` enabled | **negative control** — wrongly constraining equivariant quantities should be *worse* |
+
+### A7 tests two losses, and until it is run SEFL's net contribution is unverified (amended at T07)
+
+**A7 runs SEFL *on*, because all three SEFL weights ship at 0.** Two separate measurements at T07
+put them there, and they are different findings:
+
+* `w_cross = 0` — intersection consistency is exact **by construction** in v25 (asserted bitwise on
+  an untrained model), so the loss is redundant; and training it flattens the anatomical field,
+  because the only plane-dependent channel it can compare is T04's deliberately pose-dependent
+  triplane (generated per-gene variance **0.067** against **0.711** with SEFL off). `specs/07` §2's
+  amendment, SPEC_QUESTIONS C19, open risk R6.
+* `w_thick = w_prog = 0` — these two are *not* broken, but with them on at 0.2 a model trained at
+  **T06's own budget and configuration fails three of T06's acceptance tests**: detection-rate MAD
+  0.0551 against a < 0.05 criterion (T06 recorded 0.0191), mean-variance slope relative error
+  **0.2838** against < 0.15 (T06 recorded 0.0084), and gene-gene Frobenius covariance error
+  **20.301** against T06's 9.316 and the independent-donor baseline's 7.563. A default that breaks
+  the previous task's acceptance criteria is not a default.
+
+So A7 is an **addition** experiment: the shipped model (SEFL off) against the same model with
+`w_thick = w_prog = 0.2`, and the question it answers is not "how much does SEFL buy" but "is SEFL
+used at all". Describe it that way in the paper — as testing **`L_thick` and `L_prog`**, with the
+methods stating that the third SEFL loss is unnecessary in v25 and why, because the by-construction
+result is a *stronger* claim than the loss it replaces and belongs beside E5.
+
+**Until A7 has run on the six target metrics, SEFL's net contribution is unverified and the paper's
+SEFL section cannot be written.** T07 established that the losses are correct, bounded in cost and
+non-collapsing at their own weights; it did **not** establish that they help, and every distributional
+statistic it could measure moved the wrong way. The state of the evidence, to be superseded by this
+experiment:
+
+| term | status after T07 |
+|---|---|
+| `L_cross` | **not used** — redundant by construction, harmful when trained |
+| `L_thick` | verified against its own criterion (counts add at 3.000×, the loss charging 0.00); effect on the target metrics **unmeasured** |
+| `L_prog` | implemented; its conditioning claim **did not reproduce** on the synthetic fixture (SPEC_QUESTIONS B22); effect on the target metrics **unmeasured** |
+
+A7 must report all six metrics, and beside them the reconstruction NLL (**1.738** off against
+**2.082** on), the generated per-gene variance ratio (**0.711** off against **1.04-1.33** on, i.e.
+overshooting the real tissue rather than undershooting it) and the three T06 statistics above. State
+the verdict in the methods whichever way it falls; if SEFL loses, that is a result about a
+continuous-field model needing less self-supervision than a point-cloud one, not an embarrassment.
 
 ### A4's pair-correlation comparison must run over `[0, 3R]` (measured at T05)
 

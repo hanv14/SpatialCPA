@@ -1203,7 +1203,11 @@ def train_ctfflow(
                 weights,
                 cfg,
                 step=step,
-                alarm=sefl_teacher is not None and sefl_ramp(step, steps, cfg) > 0.0,
+                alarm=(
+                    sefl_teacher is not None
+                    and sefl_ramp(step, steps, cfg) > 0.0
+                    and step >= int(cfg.sefl_collapse_min_steps)
+                ),
             )
     model.eval()
     if not np.isfinite(history.total[-1]):
@@ -1232,11 +1236,14 @@ def _log_sefl(
     the trajectory is the diagnosis, while a run that ends with either of them firing has a
     result that must be reported rather than quietly used.
 
-    ``alarm`` gates the collapse check on the SEFL block being live. An *untrained* decoder
-    predicts nearly the panel mean for every cell, so a draw from it has a per-gene variance
-    of a few percent of the real cells' — measured 0.036 at step 0 — and the alarm would fire
-    on every run before it had learned anything. The alarm is about a variance that
-    **drops**, so it starts watching when the thing that could push it down does.
+    ``alarm`` gates the collapse check on two conditions, and both are needed. The SEFL block
+    must be **live** (past the warm-up, ramp above zero) — the alarm is about a variance that
+    *drops*, so it starts watching when the thing that could push it down does. And the run
+    must be past ``Config.sefl_collapse_min_steps``, because the ramp gate is a *fraction* of
+    the run and opens after a handful of steps on a short one, where an untrained decoder
+    predicting near the panel mean reads 0.008 of the real variance and trips it. That is
+    initialisation, not collapse, and an alarm that cries wolf on every short run is one
+    nobody believes on the long run where it matters.
     """
     from spatialcpav25_gen.losses.sefl import (
         ConsistencyDominanceWarning,

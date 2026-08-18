@@ -14,7 +14,7 @@ Status values: `TODO` | `IN PROGRESS` | `BLOCKED` | `DONE`.
 | T04 | Anatomical field + retrieval | `specs/04_TASK_field_and_retrieval_GATE2.md` | `model/field.py`, `model/retrieval.py`, `scripts/gate2_report.py`, `reports/gate2.md` | **GATE 2** | DONE — **GATE 2 passes**, depth-matched oblique parity **0.955** (edge-excluded check **0.979**); amended 2026-08-16 with the per-query z window (SPEC_QUESTIONS C1c), gate numbers unchanged |
 | T05 | Layout head | `specs/05_TASK_layout_head.md` | `model/layout.py`, `losses/reconstruction.py` (layout NLL), `infer/planes.py` (minimal `Plane`), intensity + Strauss sampler + Potts marks | — | DONE — all eight acceptance tests pass, both negative controls fail as they must |
 | T06 | Expression head + ZINB decoder | `specs/06_TASK_expression_head.md` | `model/expression.py`, `model/spatialcpav25_gen.py` (`CTFFlow` + trainer), `losses/reconstruction.py`, `eval/baselines.py` | — | DONE — with three recorded failures: the covariance criterion is **unsatisfiable as stated** (below the ceiling, B16) and the model half of the amendment does **not** hold out of sample; zero-shot decoding is **r = −0.368** (B18); T05's intensity overfit is answered at trainer level but not abolished (R4) |
-| T07 | SEFL consistency losses | `specs/07_TASK_sefl_losses.md` | `losses/sefl.py`, `infer/planes.py`, EMA teacher, collapse alarm | — | DONE — with one recorded failure and one result that reframes the loss it belongs to: intersection consistency is **exact by construction** in v25 (bitwise, untrained), so `L_cross` has only the augmentation pose left to constrain and minimising that flattens the field (generated per-gene variance **0.065** against **0.711** with SEFL off). `w_cross` ships at **0**, the failure is a strict xfail, and the decision is R6 / SPEC_QUESTIONS C19. `L_thick` and `L_prog` land as specified |
+| T07 | SEFL consistency losses | `specs/07_TASK_sefl_losses.md` | `losses/sefl.py`, `infer/planes.py`, EMA teacher, collapse alarm | — | DONE — **SEFL ships opt-in (all three weights 0)**, with one result that reframes the loss it belongs to: intersection consistency is **exact by construction** in v25 (bitwise, untrained), so `L_cross` has only the augmentation pose left to constrain and minimising that flattens the field (generated per-gene variance **0.065** against **0.711** with SEFL off). `w_cross` ships at **0**, the failure is a strict xfail, and the decision is R6 / SPEC_QUESTIONS C19. `L_thick` and `L_prog` land as specified but are **also off**, because at their spec weights they break three of T06's acceptance criteria (R7); A7 at T10 decides whether SEFL is used at all |
 | T08 | Metric-aware LOSO losses | `specs/08_TASK_metric_aware_losses.md` | `losses/metric_aware.py`, `train/loso.py` | — | TODO |
 | T09 | Inference + calibration | `specs/09_TASK_inference_and_calibration.md` | `infer/generate.py`, `infer/calibrate.py`, `train/select.py` | — | TODO |
 | T10 | Benchmark + baselines | `specs/10_TASK_benchmark_and_baselines.md` | `eval/metrics.py`, `eval/baselines.py`, `eval/benchmark.py`, `cli.py` | — | TODO |
@@ -34,6 +34,7 @@ table covers everything that has been done to the repository.
 | # | Risk | Raised | Owed to | Decision due |
 |---|---|---|---|---|
 | R1 | ~~**`ell_z` cannot be resolved by a 9-section stack** (fit 561 µm against a 200 µm ground truth)~~ — **DECIDED at T07, 2026-08-17.** Remedy **2** (calibrate `ell_z` at inference against observed between-section correlation) is adopted, **owed to T09**, with remedy **3** (treat the fit as a bracket endpoint and fail loudly) shipped alongside it as the guard; remedy 1 is rejected as the primary. The decision is evidence-based: T07 measured whether `L_cross` can serve as the training-time instrument remedy 2 might have used, and it **cannot** — see the R1 section below | T03 | T07 → T09 | **decided; implementation owed at T09** |
+| R7 | **SEFL as a whole is unverified and, on every statistic that could be measured, harmful.** With `w_thick = w_prog = 0.2` a model trained at **T06's own budget and config** fails three T06 acceptance tests: detection MAD **0.0551** (< 0.05, T06 recorded 0.0191), mean-variance slope error **0.2838** (< 0.15, recorded 0.0084), Frobenius covariance **20.301** (recorded 9.316, baseline 7.563). All three SEFL weights therefore ship at **0** and A7 becomes an *addition* experiment | T07 | T10 (A7) | **at T10** — SEFL is used only if A7 shows a gain on the six target metrics |
 | R6 | **`L_cross` is vacuous in v25 and its residual minimiser destroys the anatomical field.** Two crossing planes already emit bitwise identical expression (by construction, untrained); the only plane-dependent channel left is the augmentation pose, which T04 made pose-dependent on purpose. At `specs/07`'s `w_cross = 0.3` the generated section's per-gene variance falls to **0.065** of the real one's against **0.711** with SEFL off. `w_cross` ships at **0**; `loss_cross` is kept and pinned by a strict xfail | T07 | T10 (A7, E5) | **at T10**, or sooner if the spec's owner takes SPEC_QUESTIONS C19's option 1 |
 | R2 | ~~GATE 2's attention is near-uniform (0.987 × log K)~~ — **CLOSED at T06.** With the flow-matching head trained the entropy falls to **0.8563 × log K** (a fall of 0.132, required 0.05) and stays above the 0.5 collapse line. The query is what changed: T04's probe queried with the field feature alone, T06's with `[F(p), fourier(p), type_emb, region_emb, z_embed]`, and a query that knows its own cell type can prefer a donor that shares it. | T04 | T06 | **closed 2026-08-16** |
 | R5 | **C14 blocks the paper's headline novelty.** *(Sharpened: the table also has to be *built correctly* — see B19, four defects in `build_gene_meta` that produced four species' genes for a one-species request, all fixed and replayed, but the live mouse-only summary coverage is still unmeasured here.)* Open-vocabulary decoding has no positive evidence: zero-shot is r = −0.368 on the fixture (B18) because arbitrary gene names carry no text signal, and `resources/gene_meta.parquet` cannot be built here — every gene-annotation host is 403'd by the network policy. Needs one command on a networked machine (see C14). | T02, T06 | T10 (E1) | **before the first real run** |
@@ -1832,8 +1833,8 @@ exactly — G2.1a **0.954742**, G2.1b **0.979466**, G2.1c **+0.0783596**, G2.3a 
 `spatialcpav25_gen/losses/sefl.py` (new), the rest of `specs/07` §1's geometry in
 `infer/planes.py` (`LineSegment`, `Surface`, `intersect`, `random_plane_pair`, `curved_surface`,
 `plane_pose`, `Plane.basis` / `Plane.sample_points`), the SEFL block, the ramp, the dominance
-warning and the collapse alarm in `train_ctfflow`, `tests/test_sefl.py` (31 tests: 25 fast, 6 slow,
-2 strict xfails) and `tests/test_planes.py` (17 tests). 17 new `Config` fields and one new gate set
+warning and the collapse alarm in `train_ctfflow`, `tests/test_sefl.py` (32 tests: 25 fast, 7 slow,
+2 of them strict xfails) and `tests/test_planes.py` (17 tests). 18 new `Config` fields and one new gate set
 (`GRANULARITIES`); no constant outside `Config`. `minimal_rotation` and `coexpression_modules`
 promoted to public so the pose and the molecular programs are computed in one place each.
 
@@ -1845,7 +1846,7 @@ spec's own schedule (warm-up 0.2, ramp 0.2, every third step), seed 20260817.
 | `test_intersect_known_cases` | hand-computed: orthogonal planes, parallel planes → `None`, windows that miss → `None` | all five cases exact to 1e-9, including a 45° pair and an offset orthogonal pair |
 | `test_noise_identical_along_intersection` | GRF values along the segment **bitwise** equal from both pathways | `torch.equal` — exact, and the values are not constant (variance > 0) |
 | `test_cross_loss_decreases` | ≥ 60 % over 500 steps | **89.8 %** (14.89 → 1.52, medians of the first and last three logged values) |
-| `test_no_collapse` | generated per-gene variance ≥ 60 % of the real section's | **1.127** at the shipped weights (`w_cross = 0`) |
+| `test_no_collapse` | generated per-gene variance inside `[0.60, 1.67]` of the real section's (**both sides** — the spec states only the floor) | **1.04-1.33** on the `thick` + `prog` arm; 0.711 with SEFL off |
 | `test_no_collapse_at_the_spec_w_cross` | the same, at `specs/07`'s `w_cross = 0.3` | **0.067** — **strict xfail**, see below |
 | `test_no_collapse_negative_control_fails` | the criterion must **fail** with the teacher off | **0.382** < 0.60 — fails as required |
 | `test_thick_counts_add` | `N(3h)` within Poisson tolerance of `3 N(h)`, and the loss must not penalise it | ratio **3.000**, `|z|` **0.02** of the 3σ budget; the count term charges **0.00** where the naive equal-counts comparison charges 4.4e4 |
@@ -1881,6 +1882,17 @@ fixes — redefine the branch difference as each plane's *evidence*, or accept t
 result and drop the loss — are written up for the spec's owner in SPEC_QUESTIONS **C19**. The second
 is my inclination; either way it changes what the paper's SEFL section claims, so it is not a
 decision to make silently.
+
+**The collapse alarm needed two gates, not one (second one added on review).** Beyond moving it to
+the generation path (below), it now also stays silent for `Config.sefl_collapse_min_steps = 100`
+optimiser steps. The ramp gate alone is a *fraction* of the run, so on a four-step run it opens at
+step 3 and the alarm fired inside the **fast** suite — `test_trainer_forwards_the_gene_pool`, at
+0.008 of the real variance, which is an untrained decoder predicting the panel mean, not a collapse.
+An alarm that fires routinely on healthy short runs is one nobody reads at T08. The floor costs no
+sensitivity: the earliest alarm in any real arm measured here is step 110.
+`test_collapse_alarm_is_silent_on_a_run_shorter_than_its_floor` pins it, and asserts the variance it
+declines to complain about really is degenerate, so the silence is the gate working rather than the
+model being fine.
 
 **The collapse alarm had to be moved before it could see any of this.** As first written it watched
 the reconstruction path's per-gene variance, which decodes the **encoder**'s latent — and the encoder
@@ -1940,6 +1952,38 @@ which a `Plane` already carries). B21: `test_cross_loss_decreases` has no untrai
 `L_cross` on an untrained model is **3.9e-9**, because the feature planes start at σ = 1e-2 and both
 poses return the same nearly-constant field — so the criterion is measured on the run's own
 trajectory.
+
+**What the variance overshoot costs (added on review).** The shipped arm sits *above* the real
+per-gene variance (1.04-1.33 across runs) where the SEFL-free arm sits below it (0.711), and the
+spec's criterion is one-sided so it never looks at the direction — the same shape as GATE 2's
+attention entropy passing at the *uninformative* extreme. `test_no_collapse` now asserts both sides
+of a band symmetric in ratio (`[0.60, 1.67]`). The overshoot is **not** free, measured on the
+distributional statistics T06 owns (generated section vs the held-out real one, same seed):
+
+| statistic | SEFL off | SEFL on (shipped) | T06's criterion |
+|---|---|---|---|
+| per-gene variance ÷ real | 0.711 | **1.042** | — |
+| detection rate `r` | 0.9929 | 0.9756 | > 0.95, both pass |
+| detection rate MAD | 0.0233 | **0.0468** | < 0.05 — on uses 94 % of the budget |
+| mean-variance log-log slope, relative error | 0.0036 | **0.2104** | < 0.15 — **on fails** |
+| zero fraction (real 0.4808) | 0.4781 | 0.4877 | — |
+
+The mean-variance relation is T06's own acceptance criterion and the SEFL-on arm misses it by 40 %
+relative. These are not the six target metrics — those are T10's — so the question was put to T06's
+own suite directly, at **its** 1200-step budget and configuration, and the answer is worse:
+
+| T06 acceptance test | criterion | T06 recorded (SEFL off) | with `thick` + `prog` at 0.2 |
+|---|---|---|---|
+| `test_sparsity_preserved` | detection MAD < 0.05 | 0.0191 | **0.0551 — fails** |
+| `test_mean_variance_relation` | slope error < 0.15 | 0.0084 | **0.2838 — fails** |
+| gene-gene Frobenius covariance | vs a 7.563 baseline | 9.316 | **20.301** |
+
+**So all three SEFL weights now ship at 0 and SEFL is opt-in.** A default that breaks the previous
+task's acceptance criteria is not a default, and none of these losses has yet been shown to buy
+anything. `specs/10` restates A7 as an **addition** experiment — the shipped model against
+`w_thick = w_prog = 0.2` — reporting all six target metrics plus the numbers above; until it runs,
+SEFL's net contribution is unverified and the paper's SEFL section cannot be written. Carried as
+open risk **R7**.
 
 **Definition of done: partially met, and the gaps are the findings.** No collapse **holds at the
 shipped weights for `thick` + `prog`** (variance **1.127**; 10 alarms during the ramp, none of them

@@ -749,6 +749,18 @@ class Config:
     consistency terms reach full weight at 40 % of the run and spend the majority of training
     at their configured strength."""
 
+    sefl_collapse_min_steps: int = 100
+    """The collapse alarm stays silent for this many optimiser steps, whatever the ramp says.
+
+    The alarm is about a variance that **drops**, so it needs a model that has had one. Two
+    gates are needed and one is not enough: the ramp gate ("the SEFL weights are live") is a
+    *fraction* of the run, so on a short run it opens after a handful of steps and the alarm
+    fires on an untrained decoder that predicts near the panel mean for every cell — measured
+    at **0.008** of the real variance at step 3 of a four-step run, which is initialisation,
+    not collapse. An alarm that fires routinely on healthy short runs is one nobody reads on
+    the long run where it matters. 100 steps is below the first alarm of every real arm
+    measured at T07 (earliest: step 110), so it costs no sensitivity."""
+
     sefl_collapse_warn_fraction: float = 0.25
     """Collapse alarm: warn when the mean per-gene variance of **generated** expression falls
     below this fraction of the real cells'. ``specs/07`` §2's 25 %, verbatim. The comparison
@@ -1023,11 +1035,34 @@ class Config:
     SPEC_QUESTIONS C19; the alternative fix is a design change (make the branches differ by
     the *evidence* each plane would have, not by the pose), which is not a tuning fix."""
 
-    w_thick: float = 0.2
-    """SEFL thickness coarse-graining consistency (T07)."""
+    w_thick: float = 0.0
+    """SEFL thickness coarse-graining consistency (T07). ``specs/07`` implies 0.2; **T07 shipped
+    it at 0 with the rest of SEFL** — see ``w_prog`` for the measurement that decided it.
 
-    w_prog: float = 0.2
-    """SEFL molecular-program invariance (T07)."""
+    Unlike ``w_cross`` there is nothing wrong with this term: it is verified against its own
+    criterion (counts add at 3.000x with the loss charging 0.00) and it is not the one that
+    flattens the field. It is off because **SEFL as a whole has never been shown to help**, and
+    because leaving it on costs T06's criteria."""
+
+    w_prog: float = 0.0
+    """SEFL molecular-program invariance (T07). ``specs/07`` implies 0.2; **shipped at 0**.
+
+    SEFL is **opt-in until T10's A7 measures it on the six target metrics.** The reason is a
+    measurement, not caution: with ``w_thick`` and ``w_prog`` at 0.2 — ``w_cross`` already at 0
+    — a model trained at T06's own budget and configuration **fails three of T06's acceptance
+    tests**:
+
+    | statistic | T06 recorded (SEFL off) | with `thick` + `prog` on | criterion |
+    |---|---|---|---|
+    | detection-rate MAD | 0.0191 | **0.0551** | < 0.05 |
+    | mean-variance slope, relative error | 0.0084 | **0.2838** | < 0.15 |
+    | gene-gene Frobenius covariance error | 9.316 | **20.301** | vs a 7.563 baseline |
+
+    A default that breaks the previous task's acceptance criteria is not a default. Turning the
+    two terms on is one config override, which is what A7 becomes: an **addition** experiment
+    against this shipped default rather than an ablation away from it (``specs/10`` §4,
+    amended). If A7 shows a gain on the target metrics, these defaults move back; the numbers
+    above are what that gain has to beat."""
 
     w_distill: float = 0.1
     """Text -> free-residual distillation (T02)."""
@@ -1304,6 +1339,7 @@ class Config:
             "sefl_patch_cells": self.sefl_patch_cells,
             "sefl_n_line_points": self.sefl_n_line_points,
             "sefl_min_stratum_cells": self.sefl_min_stratum_cells,
+            "sefl_collapse_min_steps": self.sefl_collapse_min_steps,
             "sefl_genes_per_step": self.sefl_genes_per_step,
             "sefl_min_segment_nn_multiple": self.sefl_min_segment_nn_multiple,
             "sefl_rejection_max_rounds": self.sefl_rejection_max_rounds,
