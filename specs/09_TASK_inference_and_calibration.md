@@ -183,11 +183,56 @@ reconstructions of training sections**:
 | `prior_mode` | correlated / iid |
 | `expr_mode` | zinb-flow / cross-mix / auto-blend |
 | `text_emb` | medcpt+residual / lookup-only |
+| **`train_steps` × metric weights** | **one joint gate, four cells** — see below |
 
-- Fit a **reduced-epoch** model (25% of `cfg.epochs`) per candidate.
+- Fit a **reduced-epoch** model (25% of `cfg.epochs`) per candidate — **except for the budget
+  gate, which is scored at its own budget** (see below).
 - Score = median rank across the six metrics over LOSO folds.
 - Coordinate descent, 2 passes → ~10 fits, not 36.
 - Persist the chosen config and the full score table to `reports/config_selection_{dataset}.md`.
+
+### The training budget and the metric-aware weights are gates, and they must be selected *together* (added at T08)
+
+`train_steps` and T08's `w_autocorr` / `w_profile` / `w_distribution` are **not constants**. T08
+measured them and found that their effect **reverses with the budget**, so any fixed value for
+either is a value fitted to whatever budget happened to be in use when it was chosen:
+
+| statistic | off@1200 | on@1200 | off@2400 | on@2400 |
+|---|---|---|---|---|
+| reconstruction (nats/pair) | 1.5901 | 1.6843 | **1.5703** | 1.5885 |
+| gene–gene Frobenius | 9.000 | 11.154 | 9.049 | **8.489** |
+| Moran's MAE | 0.0287 | 0.0408 | 0.0339 | **0.0279** |
+| marker-depth r | 0.978 | 0.967 | 0.983 | **0.990** |
+
+T08 ships all three weights at **0** because that is what the measurement supports *at T06's
+1200-step budget*, and `specs/10`'s A2 is written as an addition experiment against it. But 1200
+steps is not a neutral reference point — it is where T06 stopped **because the arm without the
+terms starts degrading there**, which is open risk R4's own symptom. **So the shipped 0 is
+calibrated to an undertrained model, and it is this task's job to stop it being a constant.**
+
+Three requirements, and the second is the one a naive implementation gets wrong:
+
+1. **The budget is a `Config` field and a gate.** `Config.train_steps` (added at T08) is the
+   value `train_ctfflow` is called with, so a selected budget is persisted, hashed into the run,
+   and reported like every other gate. Options: `1×` and `2×` the base budget at minimum.
+2. **The budget and the weights are ONE gate with four cells, not two gates visited in turn.**
+   Coordinate descent varies one gate at a time from the incumbent, so starting at
+   `(1200, weights off)` it would score `(1200, weights on)` — which loses, by the table above —
+   conclude the weights are harmful, and never reach `(2400, weights on)`, which is the cell that
+   wins on four of six statistics. **Coordinate descent over interacting gates reproduces exactly
+   the error this amendment exists to prevent.** Score all four cells of the
+   `{1×, 2×} × {off, spec weights}` grid jointly and take the best; it costs four fits, once.
+3. **The budget gate is scored at its own budget.** The "25% of `cfg.epochs`" reduction above is a
+   cost control for gates whose effect is visible early. It is invalid here by construction: a
+   reduced-epoch fit of a `2×` candidate *is* the `1×` candidate, so the reduction would compare
+   a budget against itself and always return "no difference". Fit each cell of the joint gate at
+   the budget it names.
+
+The leakage discipline is unchanged and binds harder here, because the budget is the gate most
+easily fitted to a test set: the selection runs on **internal LOSO over training sections only**
+(T08's `LOSOScheduler`), never against held-out sections. T06's `TRAIN_STEPS = 1200` was chosen by
+reading the fixture's own degradation curve, which is the mistake this replaces — recorded in
+`SPEC_QUESTIONS` B10/R4 and now in the risk table as the thing T09 closes.
 
 **This is the "no regression" guarantee:** `layout_mode=resample` + `expr_mode=cross-mix` reproduces
 the previous version's behaviour, so if the new machinery does not help on a dataset it is switched
@@ -212,15 +257,32 @@ selected when the new components are artificially degraded.
 - `test_anchor_weight_monotone` — the fitted isotonic map is non-increasing in `v`.
 - `test_selector_runs_and_persists` — selection completes on the fixture and writes the report.
 - `test_selector_can_recover_v20_config` — described above.
+- `test_budget_and_metric_weights_are_selected_jointly` — the four cells of
+  `{1×, 2×} × {weights off, spec weights}` are all scored, and the selector can return
+  `(2×, weights on)`. Asserted **by construction on a stub scorer** that scores that cell best and
+  every other cell worse: a one-gate-at-a-time selector cannot return it, so this test fails on the
+  implementation the amendment above forbids.
+- `test_budget_gate_is_not_scored_at_a_reduced_budget` — the fits issued for the two budget
+  candidates use *different* step counts. Pins §3's third requirement, without which the budget gate
+  silently compares a candidate against itself.
+- `test_selection_never_sees_heldout` — `select_config` takes a `TrainingVolume` and raises
+  `TypeError` on `HeldOutSections`; the chosen budget is identical whether or not held-out sections
+  exist in the parent object. The budget is the gate most easily fitted to a test set.
 
 ## Definition of done
 
 On the fixture, LOSO reconstruction beats both `resample`-mode and the independent-donor baseline on
 ≥ 4 of the 6 target metrics; `reports/config_selection_synthetic.md` exists. `PROGRESS.md` records
-the calibrated `ell` values and the selected config.
+the calibrated `ell` values and the selected config — **including the selected `train_steps` and
+whether the metric-aware weights came out on or off**, since that is the decision T08 deferred here.
 
 ## Do NOT
 
 - Do not consult held-out sections anywhere in calibration or selection.
 - Do not expose gap/alpha/edit flags to users — the whole point is that these are inferred.
 - Do not draw a fresh GRF per section inside a stack (destroys coherence).
+- **Do not hardcode the training budget or the metric-aware weights, and do not visit them as
+  separate coordinate-descent gates.** Both are selected, jointly, per dataset. A fixed value for
+  either is a value fitted to one budget on one fixture — see §3.
+- **Do not score the budget gate at a reduced budget.** It compares a candidate against itself and
+  returns a null result for a gate that demonstrably moves four of six statistics.

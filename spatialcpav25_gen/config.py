@@ -992,11 +992,17 @@ class Config:
     """Poisson-process layout NLL."""
 
     w_autocorr: float = 0.0
-    """Metric-aware Moran's I / Geary's C agreement (T08). **Shipped at 0: opt-in.**
+    """Metric-aware Moran's I / Geary's C agreement (T08). **A selection gate; 0 is where the
+    search starts, not a decision.**
+
+    Chosen per dataset by ``specs/09`` §3's ``select_config``, **jointly with**
+    ``Config.train_steps``, on internal LOSO over training sections. The three metric-aware
+    weights move together as one gate (``{off, spec weights}``), because that is how T08 measured
+    them and nothing separates them.
 
     ``specs/08`` fixes no weight and T01 wrote 0.5 as a placeholder. T08 measured the three terms
-    at 0.5 each and ships them **off**, for one reason and with one caveat, both of which belong
-    together (the full table is in ``PROGRESS.md``, ablation A2).
+    at 0.5 each and left them at **0**, for one reason and with one caveat, both of which belong
+    together (the full table is in ``progress/t08_metric_aware.md``, ablation A2).
 
     *The reason.* At T06's own 1200-step budget the terms cost on every statistic they are made
     of — Moran's MAE 0.0287 -> 0.0408, marker-depth r 0.978 -> 0.967, cell-type localization
@@ -1022,17 +1028,22 @@ class Config:
 
     The arm without the terms gets a better *likelihood* with the longer budget and a worse
     covariance (9.000 -> 9.049 while the NLL falls 1.5901 -> 1.5703), which is open risk **R4**
-    in miniature; the arm with them improves on both. Whether that is worth its cost on the six
-    target metrics is exactly what T10's **A2** measures, and A2 is therefore an *addition*
-    experiment against this default, in the shape T07 left A7."""
+    in miniature; the arm with them improves on both.
+
+    *Which is why this value is selected rather than shipped.* A 0 chosen at 1200 steps is
+    calibrated to an undertrained model, so it is not hardcoded: ``select_config`` scores all four
+    cells of ``{1x, 2x train_steps} x {off, spec weights}`` and picks per dataset. T10's **A2**
+    reports the six target metrics **at both budgets**, and is an *addition* experiment against
+    this starting value, in the shape T07 left A7."""
 
     w_profile: float = 0.0
-    """Metric-aware depth / field / per-type profile agreement (T08). **Shipped at 0** — see
-    ``w_autocorr`` for the measurement that decided all three."""
+    """Metric-aware depth / field / per-type profile agreement (T08). **A selection gate; 0 is the
+    search's starting value** — see ``w_autocorr`` for the measurement and the joint gate that
+    decides all three."""
 
     w_distribution: float = 0.0
-    """Metric-aware Sinkhorn (or MMD) distribution matching (T08). **Shipped at 0** — see
-    ``w_autocorr``.
+    """Metric-aware Sinkhorn (or MMD) distribution matching (T08). **A selection gate; 0 is the
+    search's starting value** — see ``w_autocorr``.
 
     ``specs/08`` §3's honest note, recorded here because this is the term it is about: mixing is
     the metric where the competing method is genuinely strong, because its per-gene chimerism
@@ -1275,6 +1286,27 @@ class Config:
     # ----------------------------------------------------------------------------------
     epochs: int = 200
     """Training epochs."""
+
+    train_steps: int = 1200
+    """Optimiser steps for a full fit — **a selection gate, not a constant** (T08, chosen at T09).
+
+    The value `train_ctfflow` is called with. It is a `Config` field so that a selected budget is
+    persisted, hashed into the run and reported like every other gate, rather than living in a
+    caller's local variable where it cannot be recorded.
+
+    **Do not read 1200 as a decision.** It is T06's number, and T06 chose it by reading this
+    fixture's own degradation curve — the arm without T08's metric-aware terms starts getting
+    *worse* at generating sections past roughly this point while its likelihood keeps improving
+    (open risk R4). That makes 1200 a symptom, not a reference point, and it will not transfer to a
+    dataset with different section counts and panel width.
+
+    T08 measured the interaction that makes this a gate: the metric-aware weights **lose** at this
+    budget and **win** at twice it (four of six statistics reverse — the table is in `w_autocorr`).
+    So the budget and the weights are selected **jointly**, on internal LOSO over training sections
+    only, by `specs/09` §3's `select_config`, which requires all four cells of
+    `{1x, 2x} x {off, spec weights}` to be scored together — visiting them as separate
+    coordinate-descent gates would pick "weights off" from a 1200-step incumbent and stop.
+    """
 
     batch_cells: int = 2048
     """Cells per training batch."""
@@ -1531,6 +1563,7 @@ class Config:
             "potts_rare_retention": self.potts_rare_retention,
             "calibration_ell_max_fitted_multiple": self.calibration_ell_max_fitted_multiple,
             "epochs": self.epochs,
+            "train_steps": self.train_steps,
             "batch_cells": self.batch_cells,
             "lr": self.lr,
         }

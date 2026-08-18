@@ -174,7 +174,7 @@ They point opposite ways and the write-up must say so:
 
 | what | status |
 |---|---|
-| **the mechanism** — per-gene independent draws destroy covariance, a shared latent cannot | **established.** Donors held fixed, draw varied: retained |off-diag| 0.978 / 0.920 / 0.897 / 0.884 / 0.844 at D = 1/2/3/5/10, monotone, on both holdout regimes |
+| **the mechanism** — per-gene independent draws destroy covariance, a shared latent cannot | **established.** Donors held fixed, draw varied: retained \|off-diag\| 0.978 / 0.920 / **0.897** / 0.884 / 0.844 at D = 1/2/3/5/10 on `alternating`, and 0.955 / 0.818 / **0.783** / 0.714 at D = 1/2/3/10 on `consecutive-3`. Monotone on both regimes. The quantity the claim rests on is the step from a verbatim per-cell copy (D = 1) to the competing method's own **D = 3**, with the donors held fixed so only the draw varies: **−8 pp** of the real covariance magnitude at a 50 µm gap and **−17 pp** at 100 µm |
 | **the model beating the baseline on the correlation matrix** | **NOT established — it loses**, with T06's terms and with T08's. Frobenius error: model **9.316**, independent-donor **7.783**, nearest-copy 6.743, achievable ceiling **5.601**. Worse at `consecutive-3` (17.7 vs 11.3). T08's metric-aware terms move it to 11.022 / 13.391 against 7.732 / 11.383 — see below |
 
 **Until T08's `test_metric_losses_close_the_covariance_loss` passes on both regimes, no headline
@@ -185,8 +185,8 @@ closed it; if T08 cannot, the paper makes the smaller claim and says why — tha
 record in `PROGRESS.md`, not a gap to leave ambiguous.
 
 **T08 ran, and it did not close it. The claim is a mechanism claim.** (Decided 2026-08-18; the
-numbers are in `PROGRESS.md`, T08, and the criterion is a strict xfail carrying them.) With the
-metric-aware terms at `specs/08`'s own weights and T06's budget and configuration:
+numbers are in `progress/t08_metric_aware.md`, and the criterion is a strict xfail carrying them.)
+With the metric-aware terms at `specs/08`'s own weights and T06's budget and configuration:
 
 | regime | model, terms on | independent-donor baseline | achievable ceiling | T06, terms off |
 |---|---|---|---|---|
@@ -194,7 +194,17 @@ metric-aware terms at `specs/08`'s own weights and T06's budget and configuratio
 | `consecutive-3` | **13.391** | 11.383 | 5.513 | 17.7 |
 
 The terms help at the wide gap (17.7 → 13.4) and cost at the narrow one (9.3 → 11.0), and neither
-arm reaches its baseline. So the headline table reports the mechanism claim — *per-gene independent
+arm reaches its baseline.
+
+**Both rows are at 1200 steps, and that qualifier is load-bearing.** At 2400 steps the same terms
+take the model to **8.489** against a 7.948 baseline on `alternating` — still a loss, and the
+closest this project has come. The budget is therefore not a fixed property of the comparison:
+`specs/09` §3 selects it jointly with the metric weights per dataset, so **A2 must report this
+table at whichever budget the selector chose, alongside the 1200-step numbers above**, and a run
+whose selected budget differs from 1200 may not quote these rows as if they were its own. The
+framing rule below is unaffected either way — it is stated on the *result*, not on the budget.
+
+So the headline table reports the mechanism claim — *per-gene independent
 draws destroy within-cell covariance and a shared latent cannot* — with the chimerism table as its
 evidence, and reports the model-versus-baseline Frobenius numbers **as a loss**, in both regimes,
 beside the ceiling. No sentence anywhere in the paper says this method preserves gene–gene covariance
