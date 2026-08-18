@@ -1216,6 +1216,127 @@ across them asks the model for something false. What this fixture fails to demon
 of dropping it. Recorded as a strict xfail carrying the numbers, so a corrected experiment fails
 loudly rather than passing quietly.
 
+### C20. `specs/08` §3 names `geomloss`, which would make a paper number depend on the machine — **RESOLVED in T08 (in-repo implementation, always)** (raised in T08)
+
+`specs/08` §3 says "Entropic Sinkhorn divergence (via `geomloss`, blur = median NN distance in PC
+space) ... Fallback: multi-bandwidth RBF MMD if `geomloss` is unavailable". Read literally that makes
+the loss — and therefore the trained model, and therefore every number in the paper — a function of
+whether an optional dependency happens to be installed, and `geomloss` is in `pyproject.toml`'s
+`extra` group, i.e. present on some machines and not others. Two different divergences behind one
+config is exactly the kind of silent dependency variation the dependency pins exist to prevent.
+
+*Resolution (T08):* the divergence is **always** the in-repo one. T07 already implemented the
+debiased entropic Sinkhorn (`losses/sefl.sinkhorn_divergence`, log-domain, plan detached by the
+envelope theorem — the same thing `geomloss` computes and for the same reason), so there is no
+missing capability to import. `Config.metric_distribution_kind` selects `"sinkhorn"` (default) or
+`"mmd"`, the spec's named fallback, and the choice is a *config* setting rather than an accident of
+the environment. `geomloss` stays in `extra` unused; if a real run ever needs its GPU kernels the
+switch is one function and should be measured against the in-repo one first.
+
+### C21. `loss_profile`'s signature has nowhere to put the labels its own third bullet needs — **RESOLVED in T08 (keyword-only, additive)** (raised in T08)
+
+`specs/08` §2 states `loss_profile(x_gen, coords_gen, x_real, coords_real, vol, cfg)` and then asks
+it for three things, the third being "**Per-type spatial histogram** agreement — this is where
+cell-type localization is optimised". Cell types are not in the signature, and they are not derivable
+from `x` (a per-cell expression vector is not a label).
+
+*Resolution (T08):* the stated positional signature is kept exactly and gains two keyword-only
+arguments, `types_gen` and `types_real`, both or neither. `types_real` is the real one-hot labels;
+`types_gen` is the **intensity head's** per-type composition `lambda_c / sum_c lambda_c` at the same
+points, which is what makes the term differentiable — a *drawn* label carries no gradient, so a
+histogram of sampled marks could not optimise anything. Two smaller additive keywords land for the
+same reason: `soft_depth_profile` and `soft_field_profile` take a `bounds`, because two profiles that
+are going to be compared have to be binned on the same ruler and the spec's signatures have nowhere
+to say so.
+
+### C22. What "reconstruct at the hidden section's true plane" means for the layout — **RESOLVED in T08 (expression at the real positions; the layout enters through the intensity)** (raised in T08)
+
+`specs/08` §4 says "Reconstruct at the hidden section's true plane and thickness, then compute
+§1–§3", which could mean generating a whole section — layout sampled and all — or evaluating the
+expression pathway at the section's own cells.
+
+*Resolution (T08):* the second, and the reason is that the first cannot work. A sampled layout comes
+out of a discrete point process (T05's Strauss/Potts sampler), so there is no gradient from any
+statistic of the sampled positions back to the intensity head; and a freshly drawn point pattern
+would put the sampler's draw noise into every one of §1-§3 on top of what is being measured. The
+reconstruction therefore runs the generation path — GRF prior, flow, decoder — at the hidden
+section's **own** cell positions, with that section excluded from retrieval, and compares expression.
+The layout head is still constrained, differentiably, by the per-type spatial histogram of C21, which
+reads `lambda_c` at those positions. The consequence to state plainly: T08's terms **do not** train
+the point pattern, and nothing in this task claims they do.
+
+### C23. Constants `specs/08` leaves open — **RESOLVED in T08 (`Config` fields, defaults documented)** (raised in T08)
+
+Convention 1 forbids a magic number outside `Config`, and `specs/08` names several quantities without
+values: the Huber's transition point, "top-k spatially variable genes" without a k, the number of
+cells the divergence is estimated from, how long a hidden section stays hidden ("each epoch", against
+a trainer counted in steps), and the guard on a 0/0 in an empty profile bin. Added as documented
+fields: `metric_huber_delta`, `metric_marker_genes`, `metric_distribution_points`,
+`metric_sinkhorn_blur_multiple`, `metric_distribution_kind`, `metric_dominance_ratio_warn`,
+`loso_epoch_steps` and `metric_eps`. `metric_knn_k` (10, the vendored metric's own degree) and the
+four `profile_*` / `loso_*` fields already existed from T01. The Sinkhorn iteration count is **not**
+duplicated: `sefl_sinkhorn_iters` is a property of the solver, not of the caller, and both callers
+share it.
+
+### C24. `specs/08` compares a *model* against a *measurement* and does not say how — **RESOLVED in T08 (three answers, each measured; two of them are not the obvious one)** (raised in T08)
+
+`specs/08` states every one of its statistics on "the generated section" and "the real section" as
+if both were the same kind of object. They are not: the real section is one **draw**, and the model
+is a **distribution**. Nothing in the spec says which of the model's two faces — its mean field or a
+sample from it — enters each statistic, and it turns out that all three plausible answers are wrong
+for at least one of the three families. Each of the following was implemented, trained and measured
+on the fixture before the next was tried; the numbers are the reason the final shape is not the
+simplest one.
+
+| what enters the statistic | what happens | measured |
+|---|---|---|
+| the **mean field**, everywhere (log1p, both sides) | matching a tight mean cloud to a dispersed sample cloud can only be closed by distorting the mean | every metric the terms exist to improve got worse: marker-depth r **0.985 → 0.642**, Frobenius covariance **9.3 → 26.0**, Moran's MAE 0.319 → 0.355 |
+| a **count draw** on a straight-through estimator, everywhere (log1p) | `log1p` is concave and counts are sparse: at a zero draw its slope is 1 while `dE[log1p(X)]/dm` is a fraction of that, so every step overstates what raising the mean buys | generated mean normalised count **4 → 761** against a real 6.8, the distribution term's own value rising **1.43 → 5.56** while it did it; and on a **linear** scale the same estimator instead buys autocorrelation by out-sampling the noise, **4 → 551** |
+| **per family** (shipped) | see below | stable; ratio to reconstruction 0.375 median |
+
+**The shipped answer, one line per family.**
+
+* **Profiles** take the decoder's **mean**, on a **linear** library-normalised scale. A profile is a
+  bin mean, and the bin mean of a mean field is an exactly unbiased estimate of the bin mean of a
+  draw — no correction, no sampling noise in the gradient. (`specs/08` §1 suggests `log1p`; its
+  actual requirement is that both sides share a scale and that the choice is documented, which this
+  is. `log1p` is what makes the straight-through estimator biased, and the profiles are the terms
+  the scale matters for.)
+* **Autocorrelation** takes the mean field **plus the draw's analytic variance**, added to Moran's
+  and Geary's denominators (and, for Geary, to its numerator). Sampling noise attenuates a *measured*
+  Moran's I; an uncorrected mean field would be asked to be less autocorrelated than the tissue.
+  `draw_mean_variance` supplies the closed form for both decoders, and `morans_i` / `gearys_c` /
+  `loss_autocorr` gain a keyword-only `noise_var`. Moran's I and Geary's C are invariant to a
+  per-gene affine rescaling, so the linear scale costs them nothing.
+* **Distribution** takes a **reparameterised surrogate**, `clamp(mean + sqrt(variance) * eps, 0)` at
+  a seeded `eps`, in the `log1p` PCA basis it is stated in. A cloud comparison needs dispersed points
+  on both sides, and this one has the draw's first two moments with a pathwise gradient.
+
+**Four other things `specs/08` does not say, all decided the same way — by the failure they prevent.**
+
+1. **Both sides are divided by the *real* cell's library size**, not by their own row sums. With each
+   row divided by its own generated sum, every gene shares one denominator and the model can raise
+   the whole panel's autocorrelation at once by giving that denominator spatial structure — one gene
+   takes the library and every other gene inherits `-log(total)`. Measured: the autocorrelation term
+   fell 0.33 → 0.16 while the largest normalised value pinned at `log1p(reference)` and the
+   parameter gradient went 6 → 1.6e8.
+2. **The generated side uses the real cell's size factor**, not `SizeFactorHead`'s. Every statistic
+   is library-normalised, so library size is not what these terms measure (it is T06's and T09's);
+   leaving the head in the graph left a nearly flat direction with a large derivative through an
+   `exp`, and the gradient there reached 53 while every other parameter sat below 5.
+3. **The per-type histogram reads `lambda_c` at uniform slab points, not at the cells.** At the cells
+   the term has a second minimiser — a field that classifies each individual cell correctly averages,
+   over any bin, to exactly that bin's label fractions — so it pays nothing for unbounded confidence:
+   `max_c lambda_c / sum_c lambda_c` 0.62 → 0.9975, and the anatomical field the intensity head shares
+   with the expression path went with it.
+4. **Markers are chosen among genes detected in ≥ 5 % of real cells** (`metric_marker_min_detection`).
+   Ranking the whole panel by Moran's I selects sparse genes whose few non-zero cells happen to be
+   neighbours; the profile term divides each marker by its own mean, and a mean of order 1e-3 took
+   the term from 1.9 to 1766 in forty steps with every model parameter standing still.
+
+None of these is a tuning choice; each is a term that had a minimiser other than the one it was
+written for, and each is recorded in the docstring of the function that carries the fix.
+
 ## D. In the design docs but missing from `specs/11_COVERAGE_MATRIX.md` — **all five settled 2026-08-15**
 
 The matrix says an unmapped design component is an omission to be flagged. These were the ones I
