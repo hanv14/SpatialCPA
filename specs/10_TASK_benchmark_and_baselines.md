@@ -175,7 +175,7 @@ They point opposite ways and the write-up must say so:
 | what | status |
 |---|---|
 | **the mechanism** — per-gene independent draws destroy covariance, a shared latent cannot | **established.** Donors held fixed, draw varied: retained |off-diag| 0.978 / 0.920 / 0.897 / 0.884 / 0.844 at D = 1/2/3/5/10, monotone, on both holdout regimes |
-| **the model beating the baseline on the correlation matrix** | **NOT established — it loses.** Frobenius error: model **9.316**, independent-donor **7.783**, nearest-copy 6.743, achievable ceiling **5.601**. Worse at `consecutive-3` (17.7 vs 11.3) |
+| **the model beating the baseline on the correlation matrix** | **NOT established — it loses**, with T06's terms and with T08's. Frobenius error: model **9.316**, independent-donor **7.783**, nearest-copy 6.743, achievable ceiling **5.601**. Worse at `consecutive-3` (17.7 vs 11.3). T08's metric-aware terms move it to 11.022 / 13.391 against 7.732 / 11.383 — see below |
 
 **Until T08's `test_metric_losses_close_the_covariance_loss` passes on both regimes, no headline
 table, figure, abstract or methods sentence may claim that this method preserves gene–gene covariance
@@ -183,6 +183,23 @@ table, figure, abstract or methods sentence may claim that this method preserves
 table is the evidence for it. If T08 closes the loss, this section is updated with the numbers that
 closed it; if T08 cannot, the paper makes the smaller claim and says why — that is a decision to
 record in `PROGRESS.md`, not a gap to leave ambiguous.
+
+**T08 ran, and it did not close it. The claim is a mechanism claim.** (Decided 2026-08-18; the
+numbers are in `PROGRESS.md`, T08, and the criterion is a strict xfail carrying them.) With the
+metric-aware terms at `specs/08`'s own weights and T06's budget and configuration:
+
+| regime | model, terms on | independent-donor baseline | achievable ceiling | T06, terms off |
+|---|---|---|---|---|
+| `alternating` | **11.022** | 7.732 | 5.601 | 9.316 |
+| `consecutive-3` | **13.391** | 11.383 | 5.513 | 17.7 |
+
+The terms help at the wide gap (17.7 → 13.4) and cost at the narrow one (9.3 → 11.0), and neither
+arm reaches its baseline. So the headline table reports the mechanism claim — *per-gene independent
+draws destroy within-cell covariance and a shared latent cannot* — with the chimerism table as its
+evidence, and reports the model-versus-baseline Frobenius numbers **as a loss**, in both regimes,
+beside the ceiling. No sentence anywhere in the paper says this method preserves gene–gene covariance
+better than the competing method. A later task that closes it re-opens this section; nothing else
+does.
 
 The reason this needs writing down rather than trusting: T06's *first* reading of its own measurement
 found a decomposition on which the model did win by 2.2×, and it took an out-of-sample check
@@ -227,13 +244,41 @@ Wire as config overrides so each is a one-line entry:
 | ID | Override | Claim tested |
 |---|---|---|
 | A1 | `prior_mode=iid` | correlated prior preserves autocorrelation |
-| A2 | `w_autocorr=w_profile=w_distribution=0` | contribution of metric-aware training |
+| A2 | `w_autocorr=w_profile=w_distribution=0.5` (an **addition**, not an ablation — the terms ship off) | contribution of metric-aware training — **and it must be run at two step budgets**, see below |
 | A3 | `text_emb=lookup-only` | text channel's value on seen genes |
 | A4 | repulsion off (Poisson layout) | point-process realism — **the `g(r)` comparison must run over `[0, 3R]`, see below** |
 | A5 | `w_z=0` in retrieval | the specific competing-method flaw — **must be run in the wide-gap regime, see below** |
 | A6 | Gaussian mean decoder | sparsity/dispersion preservation |
 | A7 | `w_thick=w_prog=0.2` (an **addition**, not an ablation — SEFL ships off) | SEFL's contribution — **two losses, not three**, and the number that decides whether SEFL is used at all. See below |
 | A8 | `loss_prog_WRONG` enabled | **negative control** — wrongly constraining equivariant quantities should be *worse* |
+
+### A2 is an addition experiment, and one budget cannot answer it (amended at T08)
+
+**A2 runs the metric-aware terms *on*, because all three ship at 0** — the same inversion T07 made
+for SEFL, and for a related but not identical reason. T08 measured them at `specs/08`'s own weights
+and they cost at T06's 1200-step budget: Moran's MAE 0.0287 → 0.0408, marker-depth r 0.978 → 0.967,
+localization 0.967 → 0.962, gene–gene Frobenius 9.00 → 11.15. A schedule-only control — internal
+LOSO hiding a section, no terms charged — sits between the two arms, so the cost is the terms', not
+the hidden section's.
+
+**But the effect is a budget effect, and A2 has to be run at two budgets or it will report the wrong
+thing.** The terms add a constraint and converge more slowly, and 1200 steps is where T06 stopped
+*because the arm without them starts degrading there* — the early stop is R4's symptom, not a
+neutral reference point. At 2400 steps the ordering reverses on four of six statistics:
+
+| statistic | off@1200 | on@1200 | off@2400 | on@2400 |
+|---|---|---|---|---|
+| reconstruction (nats/pair) | 1.5901 | 1.6843 | **1.5703** | 1.5885 |
+| gene–gene Frobenius (baseline ≈ 7.9) | 9.000 | 11.154 | 9.049 | **8.489** |
+| Moran's MAE | 0.0287 | 0.0408 | 0.0339 | **0.0279** |
+| marker-depth r | 0.978 | 0.967 | 0.983 | **0.990** |
+| mean–variance slope (real 1.741) | 1.762 | 1.734 | 1.773 | **1.722** |
+| cell-type localization | **0.967** | 0.962 | 0.958 | 0.957 |
+
+The arm without the terms buys likelihood with the longer budget and pays covariance for it
+(1.5901 → 1.5703 while Frobenius goes 9.000 → 9.049); the arm with them improves on both. **A2
+therefore reports all six target metrics at both budgets**, and the decision it makes is whether the
+terms are on for the headline table. Reproduce with `python scripts/t08_metric_report.py`.
 
 ### A7 tests two losses, and until it is run SEFL's net contribution is unverified (amended at T07)
 
