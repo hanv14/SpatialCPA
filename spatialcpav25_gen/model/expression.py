@@ -65,6 +65,7 @@ __all__ = [
     "build_decoder",
     "cross_mix_counts",
     "detection_rate",
+    "draw_mean_variance",
     "sample_counts",
     "sample_zigamma",
     "time_embedding",
@@ -636,6 +637,32 @@ def sample_counts(
     counts = gen.poisson(lam)
     dropout = gen.random(mu_a.shape) < pi_a
     return torch.from_numpy(np.where(dropout, 0.0, counts).astype(np.float32))
+
+
+def draw_mean_variance(mu: Tensor, theta: Tensor, pi: Tensor, cfg: Config) -> tuple[Tensor, Tensor]:
+    """Mean and variance of one draw from the decoder. Three ``(N, G')`` -> two ``(N, G')``.
+
+    Closed forms for the two likelihoods this decoder can carry, both zero-inflated, both of
+    the shape ``Var = (1 - pi) * Var_base + pi (1 - pi) mu^2``:
+
+    * ``zinb`` — ``Var_base = mu (1 + mu / theta)``, the negative binomial's;
+    * ``zigamma`` — ``Var_base = mu^2 / theta``, the Gamma's, ``theta`` being its shape.
+
+    Differentiable in all three arguments and free of any draw, which is what it is for: T08's
+    metric-aware autocorrelation term needs the *expected* value of a statistic of a draw, and
+    a statistic that divides by a sample variance needs that variance analytically or not at
+    all (see :func:`~spatialcpav25_gen.losses.metric_aware.morans_i`'s ``noise_var``).
+    """
+    if cfg.decoder == "zinb":
+        base = mu * (1.0 + mu / theta)
+    elif cfg.decoder == "zigamma":
+        base = mu.pow(2) / theta
+    else:  # pragma: no cover - build_decoder refuses anything else first
+        raise ExpressionError(
+            f"draw_mean_variance: no closed form for Config.decoder={cfg.decoder!r}"
+        )
+    keep = 1.0 - pi
+    return keep * mu, keep * base + pi * keep * mu.pow(2)
 
 
 def sample_zigamma(
