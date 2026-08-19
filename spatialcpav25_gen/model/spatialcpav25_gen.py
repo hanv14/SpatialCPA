@@ -69,9 +69,7 @@ from spatialcpav25_gen.model.expression import (
     SizeFactorHead,
     ZIGammaDecoder,
     ZINBDecoder,
-    assert_detection_rate,
     build_decoder,
-    cross_mix_counts,
     sample_counts,
     sample_zigamma,
 )
@@ -82,14 +80,10 @@ from spatialcpav25_gen.model.field import (
     fourier_encode_dim,
 )
 from spatialcpav25_gen.model.layout import (
-    FlankingSection,
     IntensityHead,
     RepulsionParams,
-    flanking_from_section,
     fourier_bands_for_lengthscale,
-    intensity_fn_from_head,
     mean_cell_density,
-    sample_layout,
 )
 from spatialcpav25_gen.model.noise import GaussianRandomField
 from spatialcpav25_gen.model.retrieval import (
@@ -773,61 +767,27 @@ class CTFFlow(nn.Module):
     def generate(self, plane: Plane, cfg: Config, seed: int) -> Any:
         """Generate a virtual section on ``plane``. Returns an ``AnnData``.
 
-        Parameters
-        ----------
-        plane
-            Where to cut. Carries the slab thickness the cell count is integrated over.
-        cfg
-            The generation-time config. T06 §5 gives the signature with a ``cfg`` beside a
-            model that already has one, and the reason is real: ``layout_mode``, ``expr_mode``,
-            ``ode_steps`` and ``prior_mode`` are generation-time choices T09's selector varies
-            without retraining. Fields that change the *architecture* may not differ from the
-            model's own config, and the check below says so rather than producing a silently
-            mismatched section.
-        seed
-            Every draw derives from it (Convention 3): the layout, the count draw, and the
-            i.i.d. prior under ablation A1. The GRF is *not* reseeded — its realisation is the
-            model's, which is what makes two planes of one stack mutually coherent.
+        A thin delegate to :func:`~spatialcpav25_gen.infer.generate.generate_section`, which
+        is T09's entry point and owns the whole generation path — the layout, the GRF prior,
+        retrieval, the flow, the count draw, the uncertainty-gated anchoring and the emitted
+        ``uns``. The two signatures existed side by side from T06 and were flagged as a drift
+        (SPEC_QUESTIONS C9); this is the resolution, and the method is kept because
+        ``model.generate(plane, cfg, seed)`` reads better at a call site that has a model.
 
-        Notes
-        -----
-        The emitted matrix is **always a draw**, never ``mu``: :func:`sample_counts` under
-        ``expr_mode="zinb-flow"`` and :func:`cross_mix_counts` under ``"cross-mix"``, and
-        :func:`assert_detection_rate` checks the result against the training sections' median
-        detection rate before it is returned.
+        The keyword-only extras of the function — ``grf_seed``, ``calibration``, ``anchor``,
+        ``exclude_z``, ``z_window`` — are reached through the function itself.
         """
-        self._check_generation_cfg(cfg)
-        gen = np.random.default_rng(seed)
-        layout = sample_layout(
-            intensity_fn_from_head(self.intensity, self.field),
-            plane,
-            cfg,
-            seed,
-            repulsion=self.repulsion,
-            flanking=self._flanking(plane),
-        )
-        xyz = layout.coords_xyz.astype(np.float64)
-        cell_type = torch.from_numpy(layout.cell_type.astype(np.int64))
-        region = self._region_of(xyz)
+        from spatialcpav25_gen.infer.generate import generate_section
 
-        neighbours, weights = self.data.index.query(
-            xyz, set(), seed=int(gen.integers(0, 2**31 - 1))
-        )
-        if cfg.expr_mode == "cross-mix":
-            counts = self._cross_mix_expression(neighbours, weights, gen, cfg)
-        elif cfg.expr_mode == "zinb-flow":
-            counts = self._flow_expression(xyz, cell_type, region, neighbours, gen, cfg, seed=seed)
-        else:
-            raise ExpressionError(
-                f"Config.expr_mode={cfg.expr_mode!r} is not a T06 path. 'zinb-flow' and "
-                "'cross-mix' are built here; 'auto-blend' is T09's uncertainty-gated "
-                "anchoring, which blends between these two and owns the gate."
-            )
-        assert_detection_rate(counts, self.stats.median_detection, cfg)
-        return self._to_anndata(layout, counts, region, cfg)
+        return generate_section(self, plane, self.data.vol, cfg, seed)
 
-    def _check_generation_cfg(self, cfg: Config) -> None:
-        """Refuse a generation config that disagrees with the model's architecture."""
+    def check_generation_cfg(self, cfg: Config) -> None:
+        """Refuse a generation config that disagrees with the model's architecture.
+
+        Public because :func:`~spatialcpav25_gen.infer.generate.generate_section` is the
+        caller: the check belongs to the model (only it knows what it was built with) and the
+        generation path belongs to ``infer``.
+        """
         architectural = (
             "latent_dim",
             "field_dim",
@@ -852,120 +812,6 @@ class CTFFlow(nn.Module):
                 "policy. Vary layout_mode / expr_mode / ode_steps / prior_mode / ell_* here; "
                 "anything else needs a retrained model."
             )
-
-    def _flanking(self, plane: Plane) -> list[FlankingSection]:
-        """Return the two training sections nearest ``plane``, in its frame — T05's evidence."""
-        depth = float(plane.origin[2])
-        order = np.argsort(np.abs(self.data.vol.z_values.astype(np.float64) - depth))
-        return [flanking_from_section(self.data.vol.sections[int(i)], plane) for i in order[:2]]
-
-    def _region_of(self, xyz: FloatArray) -> Tensor | None:
-        """Nearest real cell's region code for each generated position. ``(N,)`` int64.
-
-        A generated cell has no region label of its own, and the field is not asked to invent
-        one: the label comes from the nearest *real* cell, which is the same nearest-neighbour
-        transfer the benchmark's own evaluators use. ``None`` when the dataset has no regions.
-        """
-        if self.data.index.region is None:
-            return None
-        idx, _ = self.data.index.query(xyz, set(), seed=0)
-        nearest = np.where(idx[:, 0] >= 0, idx[:, 0], 0)
-        return torch.from_numpy(self.data.index.region[nearest].astype(np.int64))
-
-    def _flow_expression(
-        self,
-        xyz: FloatArray,
-        cell_type: Tensor,
-        region: Tensor | None,
-        neighbours: IntArray,
-        gen: np.random.Generator,
-        cfg: Config,
-        *,
-        seed: int,
-    ) -> Tensor:
-        """Run the ``zinb-flow`` path: GRF -> flow -> decoder -> a draw. ``(N, G)`` float32."""
-        points = torch.from_numpy(xyz.astype(np.float32))
-        with torch.no_grad():
-            tokens, mask = self.data.index.neighbour_tokens(xyz, neighbours)
-            cond, _ = self.conditioning(points, points, cell_type, region, tokens, mask)
-            h0 = self.prior_latent(xyz, seed=seed)
-            h = self.flow.sample(h0, cond, int(cfg.ode_steps))
-            size_factor = self.size_head.size_factor(h)
-            gene_emb = self.embeddings.gene(torch.arange(self.stats.n_genes, dtype=torch.long))
-            mu, theta, pi = self.decoder(h, gene_emb, size_factor)
-        draw = sample_zigamma if cfg.decoder == "zigamma" else sample_counts
-        return draw(mu, theta, pi, gen)
-
-    def _cross_mix_expression(
-        self,
-        neighbours: IntArray,
-        weights: FloatArray,
-        gen: np.random.Generator,
-        cfg: Config,
-    ) -> Tensor:
-        """Run the ``cross-mix`` path: real donor counts, chosen per gene. ``(N, G)`` float32.
-
-        The retrieval score's donor weights *are* v20's mixing weights, renormalised over the
-        admissible donors — v20 read them off the two flanking sections and the fractional
-        depth between them, which is what this score's in-plane and z terms compute
-        continuously. Padded slots get weight zero, so a cell with fewer than ``K`` donors
-        mixes only over the ones it has.
-        """
-        valid = neighbours >= 0
-        w = np.where(valid, weights, 0.0)
-        total = w.sum(axis=1, keepdims=True)
-        if not np.all(total > 0):
-            raise ExpressionError(
-                "CTFFlow.generate: some generated cell has no admissible donor at all, so the "
-                "cross-mix has nothing real to emit. Widen Config.retrieval_z_window or "
-                "generate closer to the training sections."
-            )
-        w = w / total
-        safe = np.where(valid, neighbours, 0)
-        donors = np.asarray(self.data.counts[safe.reshape(-1)].todense(), dtype=np.float64)
-        donors = donors.reshape(safe.shape[0], safe.shape[1], -1)
-        return cross_mix_counts(donors, w, gen, cfg=cfg)
-
-    def _to_anndata(self, layout: Any, counts: Tensor, region: Tensor | None, cfg: Config) -> Any:
-        """Package a generated section as an AnnData the loader could read back."""
-        import anndata as ad
-        import pandas as pd
-
-        values = counts.detach().cpu().numpy()
-        obs = pd.DataFrame(
-            {
-                cfg.z_key: layout.coords_xyz[:, 2].astype(np.float64),
-                cfg.celltype_key: pd.Categorical(
-                    [self.data.vol.celltype_names[int(c)] for c in layout.cell_type],
-                    categories=list(self.data.vol.celltype_names),
-                ),
-            },
-            index=[f"gen{i:06d}" for i in range(values.shape[0])],
-        )
-        if region is not None and self.data.vol.region_names is not None:
-            obs[str(cfg.region_key)] = pd.Categorical(
-                [self.data.vol.region_names[int(r)] for r in region.numpy()],
-                categories=list(self.data.vol.region_names),
-            )
-        adata = ad.AnnData(
-            X=sparse.csr_matrix(values),
-            obs=obs,
-            var=pd.DataFrame(index=list(self.data.vol.gene_names)),
-        )
-        # In-plane (u, v) as the coordinate key, because that is what a section reports and
-        # what every in-plane metric is computed on; the physical 3-D positions travel beside
-        # it, because an oblique plane's cells do not share a depth.
-        adata.obsm[cfg.coord_key] = layout.coords_uv.astype(np.float32)
-        adata.obsm["xyz"] = layout.coords_xyz.astype(np.float32)
-        adata.uns[cfg.thickness_key] = float(layout.plane.thickness)
-        adata.uns["generated"] = {
-            "expr_mode": cfg.expr_mode,
-            "layout_mode": layout.mode,
-            "seed": int(layout.seed),
-            "n_expected": float(layout.n_expected),
-            "specimen_id": self.data.vol.specimen_id,
-        }
-        return adata
 
 
 # --------------------------------------------------------------------------------------

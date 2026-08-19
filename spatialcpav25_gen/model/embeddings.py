@@ -140,14 +140,35 @@ class TextGroundedEmbedding(nn.Module):
             raise ValueError(f"set_progress: frac must lie in [0, 1], got {frac!r}")
         warmup = self.cfg.residual_gate_warmup_frac
         gamma = 1.0 if warmup <= 0.0 else min(frac / warmup, 1.0)
+        if self.cfg.text_emb_mode == "lookup":
+            # No text prior to lead the way, so nothing to anneal *from*: under lookup-only
+            # the residual is the whole embedding, and a warm-up would leave it exactly zero
+            # for the first `residual_gate_warmup_frac` of training.
+            gamma = 1.0
         with torch.no_grad():
             self.gamma.fill_(gamma)
+
+    def _text_channel(self, vectors: Tensor) -> Tensor:
+        """``W t``, or zeros under ``Config.text_emb_mode = "lookup"``. ``(V, 768) -> (V, D)``.
+
+        The gate T01 declared and nothing consumed until now. ``"lookup"`` is the design
+        document's *lookup-only* arm: the embedding is a plain learned table with no text
+        prior, which is T10's ablation **A3** ("the text channel's value on seen genes") and
+        one of the four gates T09's ``select_config`` chooses between. Implemented here rather
+        than by passing different vectors in, because the *zero-shot* path has to lose the
+        same channel — an entity with no row in the table has no embedding at all without it,
+        which is precisely what A3 is asking about.
+        """
+        projected: Tensor = self.W(vectors)
+        if self.cfg.text_emb_mode == "lookup":
+            return torch.zeros_like(projected)
+        return projected
 
     def forward(self, idx: Tensor) -> Tensor:
         """Embed known entities by index. ``(V_query,)`` int64 -> ``(V_query, out_dim)``."""
         if idx.dtype not in (torch.int32, torch.int64):
             raise ValueError(f"TextGroundedEmbedding.forward: idx must be integer, got {idx.dtype}")
-        out: Tensor = self.norm(self.W(self.text_vecs[idx]) + self.gamma * self.r(idx))
+        out: Tensor = self.norm(self._text_channel(self.text_vecs[idx]) + self.gamma * self.r(idx))
         if self.cfg.debug_shapes:
             assert out.shape == (*idx.shape, self.out_dim)
         return out
@@ -165,7 +186,7 @@ class TextGroundedEmbedding(nn.Module):
                 f"got shape {tuple(text_vecs_new.shape)}"
             )
         text = text_vecs_new.to(self.text_vecs.dtype)
-        projected = self.W(text)
+        projected = self._text_channel(text)
         residual = self.distill(text) if use_distill else torch.zeros_like(projected)
         out: Tensor = self.norm(projected + self.gamma * residual)
         if self.cfg.debug_shapes:

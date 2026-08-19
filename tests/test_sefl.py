@@ -308,7 +308,7 @@ def generated_variance_ratio(built: Built, *, seed: int) -> float:
     # `repulsion=False` is a *generation-time* choice (T05 forbids a hand-set `r0`, and no
     # `RepulsionParams` were fitted for these arms): it changes where the cells are, which is
     # the layout's business, and not what any of them expresses, which is what is measured
-    # here. `CTFFlow._check_generation_cfg` allows it for exactly that reason.
+    # here. `CTFFlow.check_generation_cfg` allows it for exactly that reason.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", BBoxClampWarning)
         adata = built.model.generate(

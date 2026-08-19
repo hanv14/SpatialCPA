@@ -15,6 +15,7 @@ expression (T06), losses, metric-aware losses (T08), inference (T09), training.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -1281,6 +1282,131 @@ class Config:
     bisection_grid_size: int = 12
     """Grid size for the fallback search when bisection fails to bracket."""
 
+    calibration_morans_tol: float = 0.02
+    """Acceptance tolerance of the length-scale calibrator, in Moran's I.
+
+    ``specs/09``'s ``test_calibration_converges``: the bisection has converged when
+    ``|I_gen - I_flank| < 0.02`` within ``bisection_max_iter`` iterations. It is the
+    calibrator's own stopping rule as well as the test's threshold, so the two cannot drift."""
+
+    calibration_max_cells: int = 2000
+    """Cells the calibrator measures a generated section's Moran's I on.
+
+    One bisection is ~20 generations and Moran's I needs a kNN graph over the emitted cells;
+    capping the measurement keeps the cost linear in the number of iterations rather than in
+    the section's size. Subsampling changes the *variance* of the estimate, not its
+    expectation, and both sides of the comparison are capped the same way."""
+
+    calibration_ell_z_max_fitted_multiple: float = 1.0
+    """Upper end of the ``ell_z`` calibration bracket, as a multiple of the fitted ``ell_z``.
+
+    Open risk **R1**, remedy 3: on a short stack the along-z variogram extrapolates past its
+    data and reads **high** (561 um fitted against a 200 um ground truth on the fixture), so
+    the fitted value enters T09 as a **bracket endpoint, not a value**. 1.0 makes it exactly
+    the upper endpoint; the calibrated ``ell_z`` is whatever matches the *observed*
+    between-section correlation decay below it (remedy 2)."""
+
+    calibration_ell_z_min_factor: float = 0.25
+    """Lower end of the ``ell_z`` calibration bracket, as a multiple of the median section
+    spacing. Below one quarter of a spacing the stack cannot resolve the decay at all: the
+    shortest lag it can form *is* one spacing."""
+
+    calibration_detection_ridge: float = 10.0
+    """Pseudo-count ridge on the per-gene detection and dispersion corrections.
+
+    The corrections are per gene and fitted on a few thousand cells, so a gene detected in
+    three of them would otherwise get a correction fitted to three cells. The ridge shrinks
+    each gene's correction toward zero by ``n / (n + ridge)``; 10 cells is the scale at which
+    a per-gene rate stops being noise."""
+
+    calibration_logit_max: float = 8.0
+    """Clamp on the magnitude of the ``pi``-logit and ``log theta`` corrections.
+
+    ``logit(1e-4) ~ -9``, so eight nats is the whole usable range of a detection rate: past
+    it the correction is asking for a probability the decoder's own guards already floor, and
+    an unclamped affine fit on a gene detected in no cell at all is infinite."""
+
+    anchor_variance_bins: int = 8
+    """Latent-variance bins the anchor weight ``w(v)`` is fitted on.
+
+    The isotonic regression of ``specs/09`` §1 is fitted on bin means rather than on raw
+    per-cell pairs: the per-cell reconstruction error of a *draw* is far noisier than the
+    per-bin mean, and the map has one shape parameter per bin either way."""
+
+    anchor_weight_grid_size: int = 5
+    """Candidate blend weights per variance bin, spanning ``[0, 1]`` inclusive.
+
+    ``w`` is a Bernoulli mixing probability, so a five-point grid resolves it to 0.25 —
+    finer than the difference between two adjacent bins' optima measured on the fixture, and
+    cheap: the whole grid is scored from **one** pair of count matrices per bin."""
+
+    generation_empty_pool_tol: float = 0.01
+    """Fraction of generated cells that may have an empty retrieval pool before the
+    generation path **fails**.
+
+    ``specs/09`` §1: once the z window is derived from the geometry rather than fixed,
+    ``EmptyCandidatePoolWarning`` firing on more than a negligible fraction of queries means
+    the geometry is genuinely impossible and the caller needs to know. T06 measured
+    100-110 of every 512 cells (20%) at the fixed window on a ``consecutive-3`` holdout,
+    which is what this turns from a warning into an error."""
+
+    boundary_margin_spacings: float = 0.5
+    """How far outside the training stack a plane may sit before it is flagged as
+    extrapolation, in units of the median section spacing.
+
+    Open risk **R3**: a cell at the stack's end has evidence on one side only, and per-section
+    R2 on the gate fixture was 0.2912 / 0.3642 at the two ends against an interior mean of
+    0.4474. Half a spacing is the point at which a query plane has no flanking pair left, so
+    it is where the regime actually changes. The flag travels on the emitted AnnData's
+    ``uns`` rather than being left for the caller to infer from ``z``."""
+
+    # ----------------------------------------------------------------------------------
+    # automatic configuration selection (T09 3)
+    # ----------------------------------------------------------------------------------
+    selection_reduced_epoch_frac: float = 0.25
+    """Fraction of the full budget a *non-budget* gate's candidate is fitted at.
+
+    ``specs/09`` 3's "reduced-epoch model (25% of ``cfg.epochs``)". It is a cost control for
+    gates whose effect is visible early, and it is **invalid for the budget gate itself** —
+    a reduced fit of a ``2x`` candidate is the ``1x`` candidate — which is why
+    :func:`~spatialcpav25_gen.train.select.select_config` fits the joint gate's cells at the
+    budget each one names."""
+
+    selection_passes: int = 2
+    """Coordinate-descent passes over the non-joint gates. ``specs/09`` 3: "2 passes ->
+    ~10 fits, not 36"."""
+
+    selection_budget_multiple: float = 2.0
+    """The ``2x`` arm of the joint ``train_steps`` x metric-weights gate.
+
+    T08 measured the interaction this gate exists for at 1200 and 2400 steps: the
+    metric-aware terms lose at the first budget and win on four of six statistics at the
+    second. The multiple is a ``Config`` field because the *pair* of budgets is what is
+    scored, and a run has to record which pair it scored."""
+
+    selection_metric_weight: float = 0.5
+    """The "spec weights" cell of the joint gate: the value ``w_autocorr``, ``w_profile`` and
+    ``w_distribution`` take when the gate's weights are **on**.
+
+    ``specs/08`` 3's weights. They ship at 0 (see ``w_autocorr``) and this is the alternative
+    the selector scores them against, per dataset, at both budgets."""
+
+    selection_n_folds: int = 3
+    """Internal-LOSO folds each selection candidate is scored on.
+
+    Every fold is one generated section compared against the training section it was
+    generated in place of, so the cost of a candidate is linear in this. Three interior folds
+    is what makes a ~10-fit coordinate descent fit a CPU budget; the *number* matters less
+    than that every candidate is scored on the **same** folds, which
+    :func:`~spatialcpav25_gen.train.select.selection_folds` guarantees."""
+
+    selection_mixing_knn_k: int = 15
+    """Neighbours in the shared-embedding mixing metric of the selection scorer.
+
+    Larger than ``metric_knn_k`` on purpose: mixing is a property of a *neighbourhood*, and at
+    k = 10 a single duplicated profile moves the score by 10%. 15 is what the scoreboard's own
+    kNN mixing uses."""
+
     # ----------------------------------------------------------------------------------
     # training
     # ----------------------------------------------------------------------------------
@@ -1376,6 +1502,19 @@ class Config:
         """Write every field to ``path`` as a YAML mapping, keys in declaration order."""
         with Path(path).open("w", encoding="utf-8") as handle:
             yaml.safe_dump(self.to_dict(), handle, sort_keys=False, default_flow_style=False)
+
+    def content_hash(self) -> str:
+        """Return a stable 16-character hash of every field. Identical configs hash equally.
+
+        The identifier ``specs/09`` 1 requires on a generated section's ``uns``: a run that
+        cannot say which config produced it cannot be reproduced, and the full mapping is too
+        long to read on an AnnData. sha256 of the YAML serialisation with keys in declaration
+        order, truncated — the same construction as T02's descriptor cache key, and stable
+        across processes (Python's own ``hash`` is salted per process and would change
+        between runs).
+        """
+        payload = yaml.safe_dump(self.to_dict(), sort_keys=False, default_flow_style=False)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
     def replace(self, **kwargs: Any) -> Config:
         """Return a copy with ``kwargs`` overridden, validating the result."""
@@ -1562,6 +1701,21 @@ class Config:
             "potts_rare_prevalence": self.potts_rare_prevalence,
             "potts_rare_retention": self.potts_rare_retention,
             "calibration_ell_max_fitted_multiple": self.calibration_ell_max_fitted_multiple,
+            "calibration_morans_tol": self.calibration_morans_tol,
+            "calibration_max_cells": self.calibration_max_cells,
+            "calibration_ell_z_max_fitted_multiple": self.calibration_ell_z_max_fitted_multiple,
+            "calibration_ell_z_min_factor": self.calibration_ell_z_min_factor,
+            "calibration_detection_ridge": self.calibration_detection_ridge,
+            "calibration_logit_max": self.calibration_logit_max,
+            "anchor_variance_bins": self.anchor_variance_bins,
+            "anchor_weight_grid_size": self.anchor_weight_grid_size,
+            "boundary_margin_spacings": self.boundary_margin_spacings,
+            "selection_reduced_epoch_frac": self.selection_reduced_epoch_frac,
+            "selection_passes": self.selection_passes,
+            "selection_budget_multiple": self.selection_budget_multiple,
+            "selection_metric_weight": self.selection_metric_weight,
+            "selection_mixing_knn_k": self.selection_mixing_knn_k,
+            "selection_n_folds": self.selection_n_folds,
             "epochs": self.epochs,
             "train_steps": self.train_steps,
             "batch_cells": self.batch_cells,
@@ -1609,6 +1763,9 @@ class Config:
             "variogram_min_structured_frac": self.variogram_min_structured_frac,
             "variogram_min_saturation": self.variogram_min_saturation,
             "calibration_ell_max_extent_frac": self.calibration_ell_max_extent_frac,
+            "calibration_morans_tol": self.calibration_morans_tol,
+            "generation_empty_pool_tol": self.generation_empty_pool_tol,
+            "selection_reduced_epoch_frac": self.selection_reduced_epoch_frac,
             "potts_rare_prevalence": self.potts_rare_prevalence,
             "potts_rare_retention": self.potts_rare_retention,
         }
@@ -1767,6 +1924,36 @@ class Config:
             raise ConfigError(
                 f"Config.independent_donor_k={self.independent_donor_k} must be >= 2: with "
                 "one donor the baseline is a verbatim copy and has no chimerism to measure"
+            )
+        if self.selection_budget_multiple <= 1.0:
+            raise ConfigError(
+                f"Config.selection_budget_multiple={self.selection_budget_multiple!r} must be "
+                "> 1: the joint gate's two budget cells would otherwise be the same budget, "
+                "which is the null comparison specs/09 3's third requirement exists to forbid"
+            )
+        if self.anchor_variance_bins < 2:
+            raise ConfigError(
+                f"Config.anchor_variance_bins={self.anchor_variance_bins} must be >= 2: a "
+                "one-bin isotonic map is a hand-set blend weight, which specs/09 1 forbids"
+            )
+        if self.anchor_weight_grid_size < 2:
+            raise ConfigError(
+                f"Config.anchor_weight_grid_size={self.anchor_weight_grid_size} must be >= 2: "
+                "the grid has to contain both endpoints of [0, 1] to express 'never anchor' "
+                "and 'always anchor'"
+            )
+        if self.selection_passes < 1:
+            raise ConfigError(
+                f"Config.selection_passes={self.selection_passes} must be >= 1: with no pass "
+                "the selector returns the incumbent and selects nothing"
+            )
+        if self.calibration_ell_z_min_factor >= self.calibration_ell_z_max_fitted_multiple:
+            raise ConfigError(
+                "Config requires calibration_ell_z_min_factor < "
+                "calibration_ell_z_max_fitted_multiple, got "
+                f"({self.calibration_ell_z_min_factor}, "
+                f"{self.calibration_ell_z_max_fitted_multiple}); the ell_z bracket would be "
+                "empty and R1's remedy 3 has nothing to bracket"
             )
         if self.retrieval_ctx_dim % self.retrieval_n_heads != 0:
             raise ConfigError(

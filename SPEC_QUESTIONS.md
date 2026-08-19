@@ -1351,6 +1351,88 @@ and each is **due at that task**, not before.
 | `v23_design.md` §2.2 / §7 E1 | Zero-shot table must report **both** `r_g = 0` (pure text) and `r_g = ψ(t_g)` (distilled) | **Both arms.** One arm cannot separate "the text channel carries the gene" from "the distillation head guessed a residual", which is the open-vocabulary claim | `specs/10` §5 (E1) |
 | `v23_design.md` §5, §6 | The v20 **Bernoulli cross-mix** itself (see A6) | **Implement in T06**, behaviour pinned by a test | `specs/06` §4b |
 
+### C25. `text_emb_mode` was declared at T01 and consumed by nothing — **RESOLVED in T09 (implemented in the embedding)** (raised in T09)
+
+`Config.text_emb_mode ∈ {medcpt, lookup}` has existed since T01, `specs/09` §3 lists `text_emb` as
+one of the four coordinate-descended gates, and `specs/10`'s ablation **A3** is
+`text_emb=lookup-only`. Nothing read the field: `TextGroundedEmbedding.forward` always applied the
+text channel. The selector would therefore have scored four identical candidates and reported a
+decision it had not made.
+
+*Resolution (T09):* implemented once, in `TextGroundedEmbedding._text_channel` — `"lookup"` zeroes
+the projected text vector on **both** the seen path and the zero-shot path, and pins the residual
+gate at 1 (there is no text prior to anneal from, so a warm-up would leave the embedding exactly
+zero for the first 30 % of training). T10's A3 uses the same switch.
+`test_lookup_only_text_mode_drops_the_text_channel` asserts it.
+
+### C26. T09 §3 scores on "the six target metrics", which `eval/metrics.py` (T10) has not vendored yet — **RESOLVED in T09 (same names, T08's kernels, T10 re-scores)** (raised in T09)
+
+`specs/09` §3 scores every candidate on the six target metrics; `specs/10` §1 requires those to be
+**vendored verbatim** from `bench3/evaluate_paper.py` with a pinned content hash, and that module is
+T10's. Vendoring it early would pin the scoreboard in two places.
+
+*Resolution (T09):* `train/select.py` computes the six under **T10's names** with T08's own kernels
+(`morans_i`, `gearys_c`, `soft_field_profile`, `soft_depth_profile`) plus a PCA-space kNN mixing
+score in place of the UMAP one — a linear stand-in chosen so the selector stays reproducible from a
+seed alone. The substitution is stated in the module docstring and in every report the selector
+writes. **T10 re-scores the selected config with the vendored code**; if the two disagree about a
+gate, that disagreement is a T10 finding and the selector's scorer is a one-line swap
+(`Scorer` is a protocol).
+
+### C27. E5's expression criterion is above the achievable ceiling — **RECORDED in T09 (strict xfail, ceiling measured)** (raised in T09)
+
+`specs/09`'s `test_oblique_intersection_agreement` requires cell-type concordance > 0.8 **and
+expression correlation > 0.85** between the cells two crossing oblique sections place at the same
+point. Both sections emit *draws*, and their layouts are independent, so two matched cells carry
+independent ZINB noise on the same mean: the highest correlation any model can reach is what two
+draws of **one** plane reach under one realisation.
+
+Measured on the fixture at a 600-step fit: ceiling **0.726**, oblique pair **0.724** — 99.7 % of the
+achievable range — against the spec's 0.85. Concordance reaches **0.814** against a ceiling of
+0.781, so *that* half of the criterion is achievable and is asserted absolutely.
+
+*Resolution (T09), following the pattern T06 used for its covariance criterion (B16):* the headline
+test asserts concordance absolutely and expression correlation **relative to the measured ceiling**
+(≥ 0.95 × it), and the literal 0.85 is kept by name as a **strict xfail** so the day it becomes
+reachable the suite says so. The spec's owner may prefer to restate the criterion in ceiling-relative
+terms, which is what `specs/10`'s own "achievable ceiling" section already requires of every metric.
+
+### C28. The `pi` and `theta` corrections are not orthogonal, and the fixture leaves them no headroom — **RESOLVED in T09 (alternating solve); the transfer result is a finding** (raised in T09)
+
+Two things, both measured:
+
+1. **Coupling.** `theta` enters the detection rate through `P_NB(0) = (theta/(theta+mu))^theta`, so a
+   `pi` shift solved at the uncorrected `theta` is wrong by however much `theta` then moves. Solved
+   independently the two corrections together made the per-gene detection MAE **worse**, 0.055 →
+   0.230, while each matched its own target exactly. `_fold_statistics` now alternates the two solves
+   twice, and targets the **mean–variance relation** (`Var = mean + phi mean^2` at the model's own
+   mean) rather than the absolute variance — matching the absolute variance asks `theta` to repair a
+   wrong *mean*, and on the dense genes it drove `theta` to 0.007 and collapsed their detection rate.
+2. **Headroom.** On this fixture there is none. At a 600-step fit the model's own per-gene detection
+   error is **0.0217** while the *real* per-gene rate varies by **0.040** between training sections,
+   so a correction fitted on other sections imports more of that variation than it removes: cross-fold
+   **0.0326**, against an oracle (fitted on the very section it is applied to, which no leakage-free
+   procedure can reach) of **0.0191**.
+
+*Resolution (T09):* the calibrators ship, `generate_section(..., calibration=None)` does **not** apply
+them by default, and the numbers above are recorded in `progress/t09_inference_and_calibration.md`.
+`test_detection_calibration_does_not_transfer_between_sections` asserts the *diagnosis* — that the
+real between-section variation still exceeds the model's own error — so the day a dataset gives the
+correction something to do, the test fails and the measurement is re-run. T10 decides on real data.
+
+### C29. `select_config(vol, base_cfg)` has nowhere to put a seed, a scorer or the embeddings — **RESOLVED in T09 (additive keywords)** (raised in T09)
+
+The spec fixes the signature at `select_config(vol: TrainingVolume, base_cfg: Config) -> Config`, but
+the default scorer fits a model per candidate and a model needs T02's `EntityEmbeddings`, which come
+from a cache this module has no business knowing about; Convention 3 also requires an explicit seed.
+
+*Resolution (T09):* keyword-only additions — `seed` (defaulting to `base_cfg.seed`, so the run is
+reproducible from the config alone rather than from an implicit RNG), `embeddings` (a
+`Config -> EntityEmbeddings` **factory**, because every candidate is a fresh fit and reusing one
+object would leak the first candidate's training into the rest), `scorer` (the seam the acceptance
+tests need), `dataset` and `report_path`. `run_selection` is the same call returning the whole score
+table instead of only the winner; `select_config` is `run_selection(...).config`.
+
 ---
 
 ## E. Recorded, no action needed
