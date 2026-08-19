@@ -239,25 +239,68 @@ maximum over the log grid already sits below the target, so the bisector has not
 towards. It is not a search that ran out of budget; it is a target outside the reachable set.
 
 `ell_z = 25.0 um` is the bracket's **lower** endpoint (`calibration_ell_z_min_factor = 0.25` x the
-100 um median spacing), not its upper one. The generated between-section correlation is *highest*
-at the short end and falls as `ell_z` grows — backwards for a GRF prior, where a longer `ell_z`
-should couple neighbouring depths more tightly. R1's remedy 3 still does the job it was written
-for: the variogram's own `ell_z` (364.6 um here, 561 um on the gate fixture against a 200 um truth)
-enters only as the bracket's upper endpoint and is never returned as a value, so the 561 um
-over-fit cannot propagate into a shipped number. Remedy 2 — calibrating against the *observed*
-between-section correlation rather than against the fit — is what produced the 0.6734-vs-0.9182
-row, and it is the row that says the remedy did not rescue `ell_z` on this fixture either.
+100 um median spacing), not its upper one — and `specs/09` §2 explicitly requires an unreachable
+target to return the grid maximiser and **not** an endpoint. An endpoint coming back is the tell.
 
-**Why neither target is reachable, and why that is not a calibrator bug.** The selector chose
-`expr_mode = "cross-mix"`, under which every emitted count is taken **verbatim** from a donor cell
-(`cross_mix`, T06). The GRF therefore reaches the output only through the donor *weights*, never
-through the counts themselves. Restoring `prior_mode = "correlated"` gives the calibrator a live
-`ell` — that is what the new guard enforces — but not enough leverage on the emitted expression to
-carry mean Moran's I from 0.2390 to 0.4102. **Calibration headroom is a property of the
-`prior_mode` x `expr_mode` pair, not of `ell` alone.** That is R8, and it is the honest answer to
-"why is R1 still open after T09": T09's calibrators are correct and now refuse the configurations
-where they would be meaningless, but on the configuration this fixture selects there is no
-mechanism left for them to act through.
+**Diagnosis: the objective is not backwards, it is exactly constant.** Three sweeps, run to settle
+whether this is a defect in the objective or a real limit of a 400 um stack:
+
+| sweep | 25 | 60 | 137 | 200 | 275 | 364.6 um |
+|---|---|---|---|---|---|---|
+| GRF field, r between two planes 100 um apart | −0.005 | 0.202 | 0.654 | 0.794 | 0.874 | **0.921** |
+| generated sections, `expr_mode="zinb-flow"` | 0.887 | 0.913 | 0.919 | 0.924 | 0.927 | **0.932** |
+| generated sections, `expr_mode="cross-mix"` | 0.6728 | 0.6728 | 0.6728 | 0.6728 | 0.6728 | 0.6728 |
+
+*Neither* candidate explanation survives. The **field** is correct: its between-plane correlation
+rises strictly and monotonically over the bracket, and `with_lengthscale` — the rescale path the
+calibrator uses, which carries the draws over rather than redrawing — reproduces it value for value.
+The **stack** is adequate: on this same 6-section, 400 um volume the whole generation pipeline
+inherits that monotonicity under `zinb-flow`, reaching 0.932 against an observed target of 0.918, so
+100 um spacing resolves this correlation length perfectly well. What is actually happening is that
+under the **selected** `expr_mode = "cross-mix"` the objective is identical to **ten decimal
+places** (0.6727617248) across a 15x sweep. `_cross_mix` copies each emitted count verbatim from a
+donor cell and never evaluates the flow — the donor weights come from the retrieval score, not from
+the latent — so the GRF is absent from the expression path entirely and `ell_z` cannot move a single
+count. A constant function has no maximiser; the grid argmax is whichever point ties first, which is
+the endpoint.
+
+That is the same failure as `prior_mode = "iid"`, one stage further down the pipeline, and the guard
+now covers both: `calibrate_lengthscale` and `calibrate_ell_z` refuse `expr_mode="cross-mix"` as
+well as a non-GRF prior (`test_calibrator_refuses_an_expression_path_that_ignores_ell`, which also
+asserts `zinb-flow` and `auto-blend` are *not* refused — under `auto-blend` the fitted `w(v)` is 0
+everywhere on this fixture, so the flow's draw passes through unblended and `ell` acts in full).
+**So the 25.0 um and its `target_unreachable` status are artefacts of a flat objective, not
+measurements of this tissue.** The honest reading is that `ell_z` was never measurable on the
+selected config — not that it is small. Correcting an earlier claim in this entry's first draft: I
+described the response as falling with `ell_z`; it does not fall, it does not move at all.
+
+R1's remedy 3 is untouched by any of this: the variogram's own `ell_z` (364.6 um here, 561 um on the
+gate fixture against a 200 um truth) enters only as the bracket's upper endpoint and is never
+returned as a value, so the 561 um over-fit still cannot propagate into a shipped number.
+
+**What actually ships when the status is `target_unreachable` — and the answer is "neither number".**
+Nothing in the package applies a `LengthscaleCalibration`. `generate_section`'s `calibration=`
+argument takes a `DetectionCalibration`; the `ell` that reaches the prior is `cfg.ell_xy` /
+`cfg.ell_z`, swapped into the field by `_using_field`. So the `ell_z` in force at generation is
+whatever the `Config` held — **100 um**, the default — and the calibrator's 25.0 um is reported and
+dropped. `specs/09` §2 specifies the return value and the status but never names the writer, so this
+is a spec gap (**C30**), not a missed line.
+
+Two consequences, one reassuring and one not:
+
+* **GATE 2 never ran under a calibrated `ell_z`.** Its oblique-parity number was measured at the
+  config's 100 um, so the gate stands as measured and is not resting on the 25 um artefact.
+* **Oblique generation is where a naive wiring would bite first.** An oblique plane spans z, so its
+  cells query the field at many depths at once; `ell_z = 25 um` against 100 um spacing decorrelates
+  the prior within a quarter of one spacing, and the field would contribute noise rather than
+  structure along the tilt, while axis-aligned planes at constant z would barely notice. The remedy
+  is not to clamp the number but to refuse to produce it, which is what the extended guard now does
+  at source; the apply step itself should additionally require `status == "converged"` (C30).
+
+**Calibration headroom is a property of the `prior_mode` x `expr_mode` pair, not of `ell` alone** —
+that is R8, and it is the honest answer to "why is R1 still open after T09": the calibrators are
+correct, and now refuse the configurations where they would be meaningless, but the configuration
+this fixture selects leaves them no mechanism to act through.
 
 **The per-module diagnostic (A2)** — one global `ell`, per-module agreement reported and *not*
 targeted — shows the deficit is **global rather than per-module**: |I_gen − I_real| is 0.1241 /

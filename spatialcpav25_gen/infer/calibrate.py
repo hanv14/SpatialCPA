@@ -443,29 +443,50 @@ def _locate_and_bisect(
     )
 
 
-def _require_correlated_prior(cfg: Config, where: str, generates: bool) -> None:
-    """Refuse to calibrate ``ell`` when the prior it parameterises is not in use.
+def _require_ell_reaches_output(cfg: Config, where: str, generates: bool) -> None:
+    """Refuse to calibrate ``ell`` when it cannot reach the generated section at all.
 
-    ``ell`` is the **GRF's** length-scale, and under ``Config.prior_mode = "iid"`` — ablation
-    A1 — the prior is white noise that never queries the field, so the objective is constant
-    in ``ell`` up to the layout's and the draw's own noise. Bisecting it would return whichever
-    grid point noise happened to favour and a status that looked like a measurement.
+    ``ell`` is the **GRF's** length-scale, so it moves the output only if the prior draws from
+    the field *and* the expression path reads the latent that prior produces. Two configs break
+    that chain, and both make the objective constant rather than merely weak:
 
-    Measured on the fixture, and the reason this guard exists: the selector chose
-    ``prior_mode="iid"`` and the calibration that followed reported ``target_unreachable`` with
-    the maximiser pinned at the bracket's low end (``ell_xy`` 7.0 um) — the correct answer to a
-    question that could not be asked. A run that wants both must calibrate under
-    ``correlated`` and say so.
+    * ``prior_mode = "iid"`` (ablation A1) — the prior is white noise and never queries the
+      field;
+    * ``expr_mode = "cross-mix"`` (the v20 fallback) — :func:`_cross_mix` copies each emitted
+      count **verbatim** from a donor cell and never evaluates the flow, so no latent, and
+      therefore no ``ell``, is consulted on the output path.
+
+    Both were measured on the fixture, and both are why this guard exists. Under
+    ``prior_mode="iid"`` the first calibration reported ``target_unreachable`` with the
+    maximiser pinned at the bracket's low end. Under ``expr_mode="cross-mix"`` the
+    between-section objective is **bitwise identical** — 0.6727617248 at every one of
+    ``ell_z`` 25, 60, 137, 200, 275 and 364.6 um, a 15x sweep — while the same sweep under
+    ``zinb-flow`` rises monotonically 0.8867 -> 0.9316 and the GRF's own between-plane
+    correlation rises -0.005 -> 0.921. A flat objective has no maximiser: the grid argmax is
+    whichever point ties first, which is the bracket's endpoint, and ``specs/09`` §2 requires
+    precisely that an unreachable target *not* return an endpoint. So the answer would look
+    like a measurement and be an artefact of tie-breaking.
 
     ``generates`` is ``False`` when the caller injected its own objective; the search is then
     being tested against a planted curve and no prior is consulted at all.
     """
-    if generates and cfg.prior_mode != "correlated":
+    if not generates:
+        return
+    if cfg.prior_mode != "correlated":
         raise CalibrationError(
             f"{where}: Config.prior_mode={cfg.prior_mode!r} does not use the GRF, so ell has "
             "no effect on the generated section and the calibration objective is flat. "
             "Calibrate under prior_mode='correlated' (the shipped default); 'iid' is ablation "
             "A1 and needs no length-scale."
+        )
+    if cfg.expr_mode == "cross-mix":
+        raise CalibrationError(
+            f"{where}: Config.expr_mode='cross-mix' emits donor counts verbatim and never "
+            "evaluates the flow, so the latent the GRF parameterises never reaches the "
+            "output and the calibration objective is constant in ell (measured: identical to "
+            "10 decimal places across a 15x ell_z sweep). Calibrate under "
+            "expr_mode='zinb-flow' or 'auto-blend'; 'cross-mix' is the v20 fallback and needs "
+            "no length-scale."
         )
 
 
@@ -520,7 +541,7 @@ def calibrate_lengthscale(
         The same for ``ell_z -> adjacent-section correlation``.
     """
     require_training_volume(vol, "calibrate_lengthscale")
-    _require_correlated_prior(cfg, "calibrate_lengthscale", measure is None)
+    _require_ell_reaches_output(cfg, "calibrate_lengthscale", measure is None)
     fitted = fit_lengthscale_from_sections(vol, cfg, seed=seed)
     probe, flanks = _probe_section(vol)
     lo, hi = _bracket(vol, cfg, fitted[0])
@@ -615,7 +636,7 @@ def calibrate_ell_z(
     T09 inherited from the R1 decision.
     """
     require_training_volume(vol, "calibrate_ell_z")
-    _require_correlated_prior(cfg, "calibrate_ell_z", measure is None)
+    _require_ell_reaches_output(cfg, "calibrate_ell_z", measure is None)
     # ``fitted`` is threaded in by :func:`calibrate_lengthscale`, which has already paid for
     # the variogram: fitting it twice would cost a second pass and — worse — let the two
     # calibrations disagree about the bracket if the subsample ever changed.

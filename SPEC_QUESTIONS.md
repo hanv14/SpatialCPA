@@ -1433,6 +1433,25 @@ object would leak the first candidate's training into the rest), `scorer` (the s
 tests need), `dataset` and `report_path`. `run_selection` is the same call returning the whole score
 table instead of only the winner; `select_config` is `run_selection(...).config`.
 
+### C30. Nothing applies a `LengthscaleCalibration` — the spec names the return value but not the writer — **OPEN (raised in T09)**
+
+`specs/09` §2 fixes `calibrate_lengthscale(model, vol, cfg) -> LengthscaleCalibration` and says what
+the object carries (`ell`, `status`, achieved and target), but never says who writes the calibrated
+`ell` back into the `Config` that generation reads. `generate_section`'s `calibration=` argument is
+the **detection** calibration; `ell` reaches the prior only as `cfg.ell_xy` / `cfg.ell_z` through
+`_using_field`. So as specified and as built, a calibration is measured, reported, and then not
+used: generation runs at the config's own `ell_z` (100 um by default).
+
+Leaving it unwired is the safe half of the bug — GATE 2's oblique parity was measured at the
+config's 100 um and not at the fixture's artefactual 25 um. But a calibrator whose result nothing
+consumes cannot discharge R1.
+
+*Proposed resolution, for the spec owner:* an explicit apply step that refuses a status other than
+`converged` — `cfg.replace(ell_xy=..., ell_z=...)` guarded on `status == "converged"`, so a
+`target_unreachable` or `boundary` result can never silently become the shipped length-scale. T09
+implements the upstream half of that (the calibrators now refuse configurations where `ell` cannot
+reach the output at all) but does not invent the apply API.
+
 ---
 
 ## E. Recorded, no action needed

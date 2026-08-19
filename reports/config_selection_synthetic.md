@@ -73,20 +73,65 @@ measured on flanking **training** sections `synthetic_s03`, `synthetic_s07`.
 | between-section r | gen 0.6734 vs observed 0.9182 | R1 remedy 2 |
 
 Both axes are `target_unreachable`, and `0 iterations` says why: the objective's maximum over the
-log grid is already below the target, so there is nothing to bisect towards. `ell_z = 25.0 um` is
-the bracket's **lower** endpoint (`calibration_ell_z_min_factor` x the 100 um median spacing), not
-its upper one — the generated between-section correlation is highest at the short end of the
-bracket and falls as `ell_z` grows, which is the opposite of what a GRF prior should do. R1's
-remedy 3 still holds in the sense it was written for: the variogram's own `ell_z` (364.6 um here,
-561 um on the gate fixture against a 200 um truth) enters only as the bracket's upper endpoint and
-is never returned as a value.
+log grid is already below the target, so there is nothing to bisect towards.
 
-The reason both axes are unreachable is the expression path the selector chose, and it bounds what
-any `ell` could have done: under `expr_mode = "cross-mix"` every emitted count is taken **verbatim**
-from a donor cell, so the GRF reaches the output only through the donor *weights*, never through the
-counts. Restoring `prior_mode = "correlated"` gives the calibrator a live `ell`, but not enough
-leverage on the emitted expression to move Moran's I from 0.2390 to 0.4102. Calibration headroom is
-a property of the `prior_mode` x `expr_mode` pair, not of `ell` alone — recorded as R8.
+`ell_z = 25.0 um` is the bracket's **lower** endpoint (`calibration_ell_z_min_factor = 0.25` x
+the 100 um median spacing). `specs/09` §2 requires that an unreachable target return the grid
+maximiser and *not* an endpoint, so an endpoint coming back is itself the tell: the objective has
+no maximiser because **it is exactly constant**. Three sweeps locate the flat stage:
+
+| sweep | ell_z = 25 | 60 | 137 | 200 | 275 | 364.6 |
+|---|---|---|---|---|---|---|
+| GRF field, r between planes 100 um apart | −0.005 | 0.202 | 0.654 | 0.794 | 0.874 | **0.921** |
+| generated sections, `expr_mode="zinb-flow"` | 0.887 | 0.913 | 0.919 | 0.924 | 0.927 | **0.932** |
+| generated sections, `expr_mode="cross-mix"` | 0.6728 | 0.6728 | 0.6728 | 0.6728 | 0.6728 | 0.6728 |
+
+The field is sound and strictly monotone, and `with_lengthscale` — the rescale path calibration
+uses — reproduces it exactly. The stack is sound too: under `zinb-flow` the *whole pipeline*
+inherits that monotonicity on this same 400 um, 6-section volume, so "a 400 um stack cannot resolve
+the correlation length" is **not** what is happening. Under the selected `cross-mix` path the
+objective is identical to **ten decimal places** (0.6727617248) across a 15x sweep, because
+`_cross_mix` copies each emitted count verbatim from a donor cell and never evaluates the flow: no
+latent is read, so `ell` cannot move a single count. The maximiser of a constant function is
+whichever grid point ties first, which is the endpoint.
+
+This is the same failure as `prior_mode="iid"`, one stage further down, and the guard now covers
+both: `calibrate_lengthscale` and `calibrate_ell_z` refuse `expr_mode="cross-mix"` as well as a
+non-GRF prior (`test_calibrator_refuses_an_expression_path_that_ignores_ell`). **The 25.0 um figure
+and its `target_unreachable` status are therefore artefacts and not measurements of this tissue** —
+the honest reading of the fixture is that on the selected config `ell_z` was never measurable, not
+that it is small. R1's remedy 3 is untouched by this: the variogram's `ell_z` (364.6 um here, 561 um
+on the gate fixture against a 200 um truth) enters only as the bracket's upper endpoint and is never
+returned as a value.
+
+### What ships when the status is `target_unreachable`
+
+Neither the calibrated value nor the variogram's: **today, nothing applies a
+`LengthscaleCalibration` at all.** `generate_section`'s `calibration=` argument takes a
+`DetectionCalibration`; the `ell` that reaches the prior is `cfg.ell_xy` / `cfg.ell_z`, swapped into
+the field by `_using_field` via `with_lengthscale`. So the `ell_z` in force at generation is
+whatever the `Config` already held — **100 um**, the default — and the calibrator's 25.0 um is
+reported and then dropped on the floor. `specs/09` §2 specifies the calibrator's return value and
+its status but never says who writes it back into the config, so this is a spec gap rather than a
+missed line (raised as C30).
+
+That has one reassuring consequence and one that needs stating:
+
+* **GATE 2 never ran under the calibrated value.** Its oblique-parity measurement used
+  `ell_z = 100 um` from the config, so the gate result stands as measured and is not silently
+  resting on a 25 um artefact.
+* **If the wiring is added naively, oblique generation is where it would bite first.** An oblique
+  plane spans z, so its cells query the field at many depths; `ell_z = 25 um` against a 100 um
+  section spacing decorrelates the prior within a quarter of one spacing, and the field would
+  contribute noise rather than structure along the tilt. Axis-aligned planes sit at constant z and
+  would barely notice. The fix is not to clamp the number: it is that a `target_unreachable` `ell`
+  from a flat objective must not be applied at all, which is what the new guard now prevents at
+  source by refusing to produce one.
+
+Recommendation before R1 is called closed: add the apply step explicitly (`Config.replace` from a
+calibration whose status is `converged`, refusing otherwise), and re-run the calibration on a config
+where `ell` can act — `expr_mode="zinb-flow"`, where the sweep above shows a live, monotone
+objective that comes within 0.02 of the observed target at the bracket's top.
 
 Derived `retrieval_z_window` = **3** spacings (largest section gap 100 um). `Config.retrieval_z_window` remains the fallback and the ablation handle.
 

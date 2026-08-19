@@ -36,8 +36,10 @@ from spatialcpav25_gen.infer.calibrate import (
     DetectionCalibration,
     IsotonicRegressor,
     UnreachableTargetWarning,
+    _require_ell_reaches_output,
     calibrate_anchor_weight,
     calibrate_detection,
+    calibrate_ell_z,
     calibrate_lengthscale,
     calibrate_retrieval_window,
     mean_morans_i,
@@ -228,6 +230,30 @@ def test_calibrator_refuses_a_prior_that_ignores_ell(training_volume):
         measure_z=unimodal(peak=120.0, height=0.9),
     )
     assert result.status in CALIBRATION_STATUSES
+
+
+def test_calibrator_refuses_an_expression_path_that_ignores_ell(training_volume):
+    """Calibrating ``ell`` under ``expr_mode="cross-mix"`` is refused for the same reason.
+
+    ``prior_mode="iid"`` is not the only way to sever ``ell`` from the output. ``cross-mix``
+    copies every emitted count verbatim from a donor cell and never evaluates the flow, so the
+    latent the GRF parameterises never reaches the counts. Measured on the fixture: the
+    between-section objective is identical to ten decimal places (0.6727617248) at ``ell_z``
+    25, 60, 137, 200, 275 and 364.6 um, while the same sweep under ``zinb-flow`` rises
+    monotonically 0.8867 -> 0.9316. A constant objective has no maximiser, so the search
+    returns whichever grid point ties first — the bracket endpoint ``specs/09`` §2 says an
+    unreachable target must never return.
+    """
+    _, training, _ = training_volume
+    cfg = t09_cfg(prior_mode="correlated", expr_mode="cross-mix")
+    for calibrate in (calibrate_lengthscale, calibrate_ell_z):
+        with pytest.raises(CalibrationError, match="emits donor counts verbatim"):
+            calibrate(_StubModel(), training, cfg, seed=SEED)  # type: ignore[arg-type]
+    # The two paths ell *can* act through are not refused.
+    for expr_mode in ("zinb-flow", "auto-blend"):
+        _require_ell_reaches_output(
+            t09_cfg(prior_mode="correlated", expr_mode=expr_mode), "probe", True
+        )
 
 
 def test_observed_z_decay_is_measured_not_fitted(training_volume):
