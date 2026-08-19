@@ -121,10 +121,40 @@ and returns it as if it were an answer. The calibrator therefore:
    Moran's I exceeds `max(I_gen)` over the bracket there is **no root**: return the maximiser with
    `status="target_unreachable"` and log a warning naming both numbers. Never return a bracket
    endpoint as though bisection had converged (Convention 6 — no silent fallbacks).
+4. **Is written back by an explicit writer** (amended after T09; the original spec named the
+   return value but not who applies it, and the two were never connected — the calibrator
+   measured an `ell` and generation went on using the config's own).
+
+```python
+def apply_lengthscale(cfg: Config, calibration: LengthscaleCalibration) -> Config
+```
+   `ell` reaches the GRF only as `Config.ell_xy` / `Config.ell_z`, which `generate_section`
+   swaps into the field through `with_lengthscale`. `apply_lengthscale` is the only sanctioned
+   way to get a calibrated length-scale into generation.
+
+   **Only a `"converged"` axis is applied.** `target_unreachable` and `boundary` both mean the
+   search found no root, and T09 measured what such a value is worth: on an objective that is
+   constant in `ell` — which `expr_mode="cross-mix"` produces, being flat to ten decimal places
+   across a 15× `ell_z` sweep — the returned number is whichever grid point tied first.
+   Applying it would ship a tie-break as a length-scale. A non-converged axis is **dropped with
+   a `CalibrationNotAppliedWarning` naming the achieved and target values**, and the config's
+   existing value stands.
+
+   The two axes are decided **separately**, on `status` and `ell_z_status`: an in-plane
+   calibration that converged is not made worthless by a stack too short to constrain `ell_z`
+   (open risk R1), and discarding it would throw away a real measurement. The cost — a
+   half-applied result whose anisotropy ratio mixes a calibrated axis with a default one — is
+   why each dropped axis warns rather than passing silently.
 
 Acceptance tests:
 - `test_calibrator_recovers_a_reachable_target` — plant a target inside the achievable range;
   `status == "converged"` and the achieved `I_gen` is within tolerance.
+- `test_apply_lengthscale_writes_a_converged_result_through_to_the_prior` — a converged
+  calibration reaches the field the generator builds, not just the returned object.
+- `test_apply_lengthscale_drops_a_non_converged_axis_with_both_numbers` — an unreachable axis
+  leaves `Config` alone and warns, naming achieved and target.
+- `test_apply_lengthscale_decides_the_two_axes_separately` — a converged `ell_xy` survives an
+  unresolvable `ell_z`.
 - `test_calibrator_reports_unreachable_target` — plant a target above `max(I_gen)`; the calibrator
   returns `status == "target_unreachable"`, the returned `ell` **is** the grid maximiser, and it does
   not sit at either bracket endpoint. This is the branch T03 measured and the one a naive bisection

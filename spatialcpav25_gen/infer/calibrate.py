@@ -65,11 +65,13 @@ if TYPE_CHECKING:  # pragma: no cover - the model imports this package, not the 
 __all__ = [
     "CALIBRATION_STATUSES",
     "CalibrationError",
+    "CalibrationNotAppliedWarning",
     "DetectionCalibration",
     "IsotonicRegressor",
     "LengthscaleCalibration",
     "RetrievalWindowCalibration",
     "UnreachableTargetWarning",
+    "apply_lengthscale",
     "calibrate_anchor_weight",
     "calibrate_detection",
     "calibrate_ell_z",
@@ -118,8 +120,21 @@ class UnreachableTargetWarning(UserWarning):
     """A calibration target lies outside what the objective can reach on its bracket.
 
     Carries both numbers, because "the calibration did not converge" without them is not a
-    diagnosis. For ``ell_z`` this is open risk **R1**'s guard firing: the value returned is
-    an **upper bound**, not a fitted length-scale.
+    diagnosis. For ``ell_z`` this is open risk **R1**'s guard firing: the value returned is a
+    **bound**, not a fitted length-scale. Which bound depends on where the objective ran out.
+    Measured under ``expr_mode="zinb-flow"``, where the objective is live and monotone
+    increasing, it terminates at the bracket's **top** and still undershoots — so the data say
+    the true ``ell_z`` is at least that large, and the number is a **lower** bound on the
+    tissue even though it is the largest value the search was allowed to try.
+    """
+
+
+class CalibrationNotAppliedWarning(UserWarning):
+    """A calibrated length-scale was dropped rather than written into the ``Config``.
+
+    Raised by :func:`apply_lengthscale` for an axis whose status is not ``"converged"``.
+    Carries the achieved and target values, because "not applied" without them does not say
+    whether the search was close or the objective was dead.
     """
 
 
@@ -287,8 +302,10 @@ class LengthscaleCalibration:
     ell_fitted
         The variogram fit, for reference. Never the returned value on its own.
     ell_z_status
-        The ``ell_z`` calibration's own status. ``target_unreachable`` means the fitted value
-        is being returned as an **upper bound** (open risk R1, remedy 3).
+        The ``ell_z`` calibration's own status. ``target_unreachable`` means the returned
+        number is a **bound rather than a fit** (open risk R1, remedy 3) — read its direction
+        off ``z_achieved`` against ``z_target``: an objective that undershoots at the bracket's
+        top makes it a *lower* bound on the tissue's ``ell_z``.
     z_target, z_achieved
         Observed and generated adjacent-section correlation.
     section_ids
@@ -321,7 +338,7 @@ class LengthscaleCalibration:
 
     @property
     def ell_z_is_upper_bound(self) -> bool:
-        """Whether ``ell_z`` must be read as an upper bound rather than a fitted value."""
+        """Whether ``ell_z`` must be read as a bound rather than as a fitted value."""
         return self.ell_z_status != "converged"
 
 
@@ -490,6 +507,70 @@ def _require_ell_reaches_output(cfg: Config, where: str, generates: bool) -> Non
         )
 
 
+def apply_lengthscale(cfg: Config, calibration: LengthscaleCalibration) -> Config:
+    """Write a calibrated ``ell`` into ``cfg`` so it reaches the prior at generation.
+
+    This is the step that makes a calibration do anything: ``ell`` reaches the GRF only as
+    ``Config.ell_xy`` / ``Config.ell_z``, which
+    :func:`~spatialcpav25_gen.infer.generate.generate_section` swaps into the field through
+    ``with_lengthscale``. Without a writer, ``calibrate_lengthscale`` measures a length-scale
+    and generation goes on using the config's own (``specs/09`` §2, added after T09 measured
+    that the two were never connected).
+
+    **Only a ``"converged"`` axis is applied.** ``target_unreachable`` and ``boundary`` are the
+    two ways the search reports that it did not find a root, and T09 measured what a
+    non-converged value is worth: on a flat objective the returned number is whichever grid
+    point tied first, so applying it would ship a tie-break as a length-scale. Such an axis is
+    **dropped with a** :class:`CalibrationNotAppliedWarning` **naming the achieved and target
+    values**, and the config's existing value stands.
+
+    The two axes are decided **separately**, on ``status`` and ``ell_z_status`` respectively,
+    because they are separate searches against separate targets: an in-plane calibration that
+    converged is not made worthless by a stack too short to constrain ``ell_z``. The cost is
+    that a half-applied result has an anisotropy ratio mixing a calibrated axis with a default
+    one, which is why each dropped axis says so out loud rather than silently.
+
+    Parameters
+    ----------
+    cfg
+        The config generation will run under.
+    calibration
+        What :func:`calibrate_lengthscale` returned.
+
+    Returns
+    -------
+    Config
+        ``cfg`` with the converged axes replaced. Returns an equal config when neither axis
+        converged — never a partially-mutated one, since ``Config`` is frozen.
+    """
+    updates: dict[str, float] = {}
+    if calibration.status == "converged":
+        updates["ell_xy"] = float(calibration.ell[0])
+    else:
+        warnings.warn(
+            f"apply_lengthscale: ell_xy is not applied — status={calibration.status!r}, so "
+            f"the search found no root and {calibration.ell[0]:.4g} um is the grid maximiser "
+            f"rather than a calibrated value (achieved mean Moran's I {calibration.i_gen:.4f} "
+            f"against a target of {calibration.i_target:.4f}). Config.ell_xy stays at "
+            f"{float(cfg.ell_xy):.4g} um.",
+            CalibrationNotAppliedWarning,
+            stacklevel=2,
+        )
+    if calibration.ell_z_status == "converged":
+        updates["ell_z"] = float(calibration.ell[2])
+    else:
+        warnings.warn(
+            f"apply_lengthscale: ell_z is not applied — status={calibration.ell_z_status!r}, "
+            f"so {calibration.ell[2]:.4g} um is a bound rather than a calibrated value "
+            f"(achieved between-section correlation {calibration.z_achieved:.4f} against an "
+            f"observed {calibration.z_target:.4f}; open risk R1). Config.ell_z stays at "
+            f"{float(cfg.ell_z):.4g} um.",
+            CalibrationNotAppliedWarning,
+            stacklevel=2,
+        )
+    return cfg.replace(**updates) if updates else cfg
+
+
 def _probe_section(vol: TrainingVolume) -> tuple[Section, list[Section]]:
     """Return the section a calibration generates at, and its flanking training sections.
 
@@ -632,8 +713,13 @@ def calibrate_ell_z(
     **3**: on a nine-section stack the fit extrapolates past its data and reads 561 um
     against a 200 um truth, so it enters here as the bracket's **upper endpoint, never as a
     value**. When even that endpoint cannot reach the observed correlation the status is
-    ``target_unreachable`` and the returned number is an upper bound, which is the criterion
-    T09 inherited from the R1 decision.
+    ``target_unreachable`` and the returned number is a **bound, not a fit**, which is the
+    criterion T09 inherited from the R1 decision. Measured on the fixture under a live
+    objective: the search terminates at the bracket's top (364.6 um) with the generated
+    correlation at 0.8706 against an observed 0.9182, so what the data support is
+    ``ell_z >= 364.6 um`` — a *lower* bound on the tissue, even though the number is the
+    largest the bracket allowed. Either way :func:`apply_lengthscale` drops it and the
+    config's own ``ell_z`` stands.
     """
     require_training_volume(vol, "calibrate_ell_z")
     _require_ell_reaches_output(cfg, "calibrate_ell_z", measure is None)

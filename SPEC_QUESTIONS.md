@@ -1433,7 +1433,7 @@ object would leak the first candidate's training into the rest), `scorer` (the s
 tests need), `dataset` and `report_path`. `run_selection` is the same call returning the whole score
 table instead of only the winner; `select_config` is `run_selection(...).config`.
 
-### C30. Nothing applies a `LengthscaleCalibration` — the spec names the return value but not the writer — **OPEN (raised in T09)**
+### C30. Nothing applies a `LengthscaleCalibration` — the spec names the return value but not the writer — **RESOLVED in T09 (`apply_lengthscale`, spec amended)** (raised in T09)
 
 `specs/09` §2 fixes `calibrate_lengthscale(model, vol, cfg) -> LengthscaleCalibration` and says what
 the object carries (`ell`, `status`, achieved and target), but never says who writes the calibrated
@@ -1446,11 +1446,16 @@ Leaving it unwired is the safe half of the bug — GATE 2's oblique parity was m
 config's 100 um and not at the fixture's artefactual 25 um. But a calibrator whose result nothing
 consumes cannot discharge R1.
 
-*Proposed resolution, for the spec owner:* an explicit apply step that refuses a status other than
-`converged` — `cfg.replace(ell_xy=..., ell_z=...)` guarded on `status == "converged"`, so a
-`target_unreachable` or `boundary` result can never silently become the shipped length-scale. T09
-implements the upstream half of that (the calibrators now refuse configurations where `ell` cannot
-reach the output at all) but does not invent the apply API.
+*Resolution (accepted by the spec owner, `specs/09` §2 amended to name the writer):*
+`apply_lengthscale(cfg, calibration) -> Config` is the only sanctioned way a calibrated `ell`
+reaches generation. It applies **only a `"converged"` axis**; `target_unreachable` and `boundary`
+are dropped with a `CalibrationNotAppliedWarning` naming the achieved and target values, and the
+config's own value stands — so a tie-break on a flat objective can never become the shipped
+length-scale. The two axes are decided separately on `status` and `ell_z_status`, because an
+in-plane result that converged is not made worthless by a stack too short to constrain `ell_z`
+(R1); the cost, a half-applied anisotropy ratio, is why the dropped axis warns rather than passing
+silently. Three acceptance tests pin it, including the round trip through to the field the
+generator builds.
 
 ---
 

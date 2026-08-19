@@ -38,6 +38,8 @@ from spatialcpav25_gen.data.loaders import split_holdout
 from spatialcpav25_gen.data.schema import to_xyz
 from spatialcpav25_gen.eval.baselines import IndependentDonorBaseline
 from spatialcpav25_gen.infer.calibrate import (
+    CalibrationNotAppliedWarning,
+    apply_lengthscale,
     calibrate_anchor_weight,
     calibrate_detection,
     calibrate_lengthscale,
@@ -192,6 +194,15 @@ def main() -> None:
     parser.add_argument("--passes", type=int, default=2)
     parser.add_argument("--out", default="reports/config_selection_synthetic.md")
     parser.add_argument(
+        "--expr-mode",
+        default="zinb-flow",
+        help=(
+            "The expression path to calibrate under. 'cross-mix' never evaluates the flow, so "
+            "the calibration objective is constant in ell and the calibrators refuse it; the "
+            "default runs the arm on a path where ell is live."
+        ),
+    )
+    parser.add_argument(
         "--config",
         default=None,
         help=(
@@ -236,11 +247,18 @@ def main() -> None:
     # nothing (`calibrate_lengthscale` now refuses it outright). When the selector switches
     # the correlated prior off, the calibration arm is the same config with the prior it
     # parameterises switched back on — and the report says so.
-    calibration_cfg = selected.replace(prior_mode="correlated")
+    calibration_cfg = selected.replace(prior_mode="correlated", expr_mode=args.expr_mode)
     if calibration_cfg.prior_mode != selected.prior_mode:
         print(
             f"calibrating under prior_mode='correlated' (selected: {selected.prior_mode!r}) — "
             "ell has no effect on an i.i.d. prior",
+            flush=True,
+        )
+    if calibration_cfg.expr_mode != selected.expr_mode:
+        print(
+            f"calibrating under expr_mode={args.expr_mode!r} (selected: "
+            f"{selected.expr_mode!r}) — 'cross-mix' emits donor counts verbatim, so the flow "
+            "and therefore ell never reach the output",
             flush=True,
         )
     model = fit(calibration_cfg, training, volume, steps=int(selected.train_steps))
@@ -255,7 +273,19 @@ def main() -> None:
         boundary = boundary_regime(model, training, calibration_cfg)
         arms = baseline_scores(model, training, calibration_cfg)
 
+    # The step C30 added: a calibration only means something once it reaches the prior, and
+    # only a converged axis is allowed to.
+    with warnings.catch_warnings(record=True) as dropped:
+        warnings.simplefilter("always", CalibrationNotAppliedWarning)
+        applied_cfg = apply_lengthscale(calibration_cfg, calibration)
     print("calibration:", calibration.ell, calibration.status, calibration.ell_z_status)
+    print(
+        f"  applied: ell_xy {calibration_cfg.ell_xy:g} -> {applied_cfg.ell_xy:g} um, "
+        f"ell_z {calibration_cfg.ell_z:g} -> {applied_cfg.ell_z:g} um"
+    )
+    for entry in dropped:
+        if issubclass(entry.category, CalibrationNotAppliedWarning):
+            print(f"  dropped: {entry.message}")
     print(
         f"  fitted ell {calibration.ell_fitted} | Moran I gen {calibration.i_gen:.4f} "
         f"vs target {calibration.i_target:.4f} in {calibration.iterations} iterations | "

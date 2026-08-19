@@ -33,10 +33,12 @@ from spatialcpav25_gen.data.schema import HeldOutSections
 from spatialcpav25_gen.infer.calibrate import (
     CALIBRATION_STATUSES,
     CalibrationError,
+    CalibrationNotAppliedWarning,
     DetectionCalibration,
     IsotonicRegressor,
     UnreachableTargetWarning,
     _require_ell_reaches_output,
+    apply_lengthscale,
     calibrate_anchor_weight,
     calibrate_detection,
     calibrate_ell_z,
@@ -46,6 +48,7 @@ from spatialcpav25_gen.infer.calibrate import (
     observed_z_decay,
 )
 from spatialcpav25_gen.model.field import BBoxClampWarning
+from spatialcpav25_gen.model.noise import GaussianRandomField
 
 from tests.fixtures.synthetic import make_synthetic_volume
 from tests.test_generate import E5_STEPS, SEED, build_model, t09_cfg
@@ -254,6 +257,99 @@ def test_calibrator_refuses_an_expression_path_that_ignores_ell(training_volume)
         _require_ell_reaches_output(
             t09_cfg(prior_mode="correlated", expr_mode=expr_mode), "probe", True
         )
+
+
+def test_apply_lengthscale_writes_a_converged_result_through_to_the_prior(training_volume):
+    """A converged calibration reaches the GRF, which is the whole point of the writer.
+
+    ``ell`` acts on generation only as ``Config.ell_xy`` / ``Config.ell_z``. This asserts the
+    round trip end to end: calibrate, apply, and check both that the config carries the
+    calibrated numbers and that the field ``generate_section`` would build under it is the
+    rescaled one rather than the model's own.
+    """
+    _, training, _ = training_volume
+    cfg = t09_cfg()
+    result = calibrate_lengthscale(
+        _StubModel(),  # type: ignore[arg-type]
+        training,
+        cfg,
+        seed=SEED,
+        measure=unimodal(peak=0.6 * float(cfg.ell_xy), height=0.6),
+        measure_z=unimodal(peak=100.0, height=0.99),
+    )
+    assert result.status == "converged"
+    assert result.ell_z_status == "converged"
+
+    applied = apply_lengthscale(cfg, result)
+    assert applied.ell_xy == pytest.approx(result.ell[0])
+    assert applied.ell_z == pytest.approx(result.ell[2])
+    assert applied.ell_xy != cfg.ell_xy or applied.ell_z != cfg.ell_z
+
+    # ...and the value the prior is actually built with is the calibrated one.
+    field = GaussianRandomField(applied, (applied.ell_xy, applied.ell_xy, applied.ell_z), 0)
+    assert field.ell == pytest.approx((result.ell[0], result.ell[0], result.ell[2]))
+
+
+def test_apply_lengthscale_drops_a_non_converged_axis_with_both_numbers(training_volume):
+    """``target_unreachable`` and ``boundary`` are dropped, warned about, and the default stands.
+
+    T09 measured what a non-converged value is worth: on an objective that is constant in
+    ``ell`` the returned number is whichever grid point tied first, so applying it would ship
+    a tie-break as a length-scale. The warning has to name the achieved *and* target values,
+    because "not applied" alone does not say whether the search was close or the objective was
+    dead.
+    """
+    _, training, _ = training_volume
+    cfg = t09_cfg()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UnreachableTargetWarning)
+        result = calibrate_lengthscale(
+            _StubModel(),  # type: ignore[arg-type]
+            training,
+            cfg,
+            seed=SEED,
+            measure=unimodal(peak=0.9 * float(cfg.ell_xy), height=0.2),
+            measure_z=unimodal(peak=100.0, height=0.2),
+        )
+    assert result.status == "target_unreachable"
+    assert result.ell_z_status == "target_unreachable"
+
+    with pytest.warns(CalibrationNotAppliedWarning) as caught:
+        applied = apply_lengthscale(cfg, result)
+    assert applied.ell_xy == cfg.ell_xy, "a dropped axis must leave the config's value alone"
+    assert applied.ell_z == cfg.ell_z
+    messages = " ".join(str(w.message) for w in caught)
+    assert "ell_xy is not applied" in messages
+    assert "ell_z is not applied" in messages
+    for value in (result.i_gen, result.i_target, result.z_achieved, result.z_target):
+        assert f"{value:.4f}" in messages, f"the warning must name {value:.4f}"
+
+
+def test_apply_lengthscale_decides_the_two_axes_separately(training_volume):
+    """An in-plane result that converged is not thrown away by an unresolvable ``ell_z``.
+
+    The fixture's own case: the stack constrains ``ell_xy`` and does not constrain ``ell_z``
+    (open risk R1). Applying neither would discard a real measurement; applying both would
+    ship R1's artefact.
+    """
+    _, training, _ = training_volume
+    cfg = t09_cfg()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UnreachableTargetWarning)
+        result = calibrate_lengthscale(
+            _StubModel(),  # type: ignore[arg-type]
+            training,
+            cfg,
+            seed=SEED,
+            measure=unimodal(peak=0.6 * float(cfg.ell_xy), height=0.6),
+            measure_z=unimodal(peak=100.0, height=0.2),
+        )
+    assert result.status == "converged"
+    assert result.ell_z_status == "target_unreachable"
+    with pytest.warns(CalibrationNotAppliedWarning, match="ell_z is not applied"):
+        applied = apply_lengthscale(cfg, result)
+    assert applied.ell_xy == pytest.approx(result.ell[0])
+    assert applied.ell_z == cfg.ell_z
 
 
 def test_observed_z_decay_is_measured_not_fitted(training_volume):

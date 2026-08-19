@@ -58,27 +58,55 @@ The six metrics are computed with T08's kernels rather than `bench3`'s vendored 
 
 ## Calibration (leakage-free, flanking training sections only)
 
-Run as a separate **arm** with `prior_mode = "correlated"` restored over the selected config
-(`train_steps = 2400`, `expr_mode = "cross-mix"`). The selector chose `prior_mode = "iid"`, under
-which the prior never queries the GRF and `ell` has no effect at all; `calibrate_lengthscale` and
-`calibrate_ell_z` now refuse that combination rather than bisecting a flat objective. Targets
+Run as a separate **arm** over the selected config with the two gates that sever `ell` from the
+output put back: `prior_mode = "correlated"` (the selector chose `iid`, under which the prior never
+queries the field) and `expr_mode = "zinb-flow"` (it chose `cross-mix`, which copies donor counts
+verbatim and never evaluates the flow). Both calibrators now **refuse** those configurations rather
+than reporting a tie-break on a flat objective as a measurement. `train_steps = 2400`; targets
 measured on flanking **training** sections `synthetic_s03`, `synthetic_s07`.
 
-| quantity | value | status |
-|---|---|---|
-| `ell_xy` | 7.0 um | target_unreachable |
-| `ell_z` | 25.0 um | target_unreachable (upper bound, R1) |
-| fitted `ell` | 136.8 / 364.6 um | variogram |
-| Moran's I | gen 0.2390 vs flanking 0.4102 | 0 iterations |
-| between-section r | gen 0.6734 vs observed 0.9182 | R1 remedy 2 |
+**This is the first arm in which the objective is live, and so the first real measurement.**
 
-Both axes are `target_unreachable`, and `0 iterations` says why: the objective's maximum over the
-log grid is already below the target, so there is nothing to bisect towards.
+| quantity | value | status | applied? |
+|---|---|---|---|
+| `ell_xy` | **86.4 um** | `converged` in 2 iterations | **yes** — `Config.ell_xy` 100 → 86.4 um |
+| `ell_z` | 364.6 um | `target_unreachable` | no — dropped, `Config.ell_z` stays 100 um |
+| fitted `ell` (variogram) | 136.8 / 364.6 um | bracket endpoint | — |
+| Moran's I | gen **0.4051** vs flanking **0.4102** | |gap| 0.0051 vs a 0.02 tolerance | — |
+| between-section r | gen **0.8706** vs observed **0.9182** | R1 remedy 2 | — |
 
-`ell_z = 25.0 um` is the bracket's **lower** endpoint (`calibration_ell_z_min_factor = 0.25` x
-the 100 um median spacing). `specs/09` §2 requires that an unreachable target return the grid
-maximiser and *not* an endpoint, so an endpoint coming back is itself the tell: the objective has
-no maximiser because **it is exactly constant**. Three sweeps locate the flat stage:
+`ell_xy` converges cleanly and lands **13.6% below** the variogram's own 136.8 um, in the direction
+T03 predicted (the fit is window-biased). It is written into the config by `apply_lengthscale` and
+reaches the prior through `with_lengthscale`.
+
+`ell_z` does not converge, and the *direction* it fails in is the informative part. The objective is
+monotone increasing in `ell_z`, so the search terminates at the bracket's **top** — 364.6 um, the
+variogram fit — and still undershoots, 0.8706 against 0.9182. What the data support is therefore
+`ell_z >= 364.6 um`: a **lower** bound on the tissue, even though the number is the largest the
+bracket allowed. (The earlier "upper bound" phrasing in the code and in R1's notes has been
+corrected accordingly; it described the search's endpoint, not the parameter.) `apply_lengthscale`
+drops it and `Config.ell_z` stands at 100 um, so nothing about R1 propagates into a shipped value.
+
+**Why the `ell_z` target may be unreachable by construction, not by tuning.** The objective
+deliberately generates both sections with **both excluded from retrieval**, so their correlation
+comes from the field alone — otherwise a shared donor pool would correlate them at any `ell_z` and
+the curve would be flat. But real adjacent sections get much of their 0.9182 from exactly that
+shared anatomy. Remedy 2's target and its objective are therefore not measuring the same quantity,
+and no `ell_z` need exist that closes the gap. That is a question for the spec owner rather than a
+tuning knob, and it is the reason R1 stays open on the measurement even though every mechanism it
+asked for now works.
+
+**The anisotropy the oblique claim rests on.** Calibrated in-plane, bounded along z: the ratio is
+`ell_z / ell_xy >= 364.6 / 86.4 = 4.2`, against the fixture's generative truth of 200/120 = 1.7 and
+the variogram's own 364.6/136.8 = 2.7. All three agree the field is elongated along z by a factor of
+at least two, which is what makes an oblique cut a different sampling problem from an axis-aligned
+one. The lower bound is the honest form of the statement: this stack constrains the ratio from
+below and not from above.
+
+### The `cross-mix` arm, recorded as the negative result
+
+The same calibration on the config the selector actually chose, kept because it is the measurement
+that motivated the guard:
 
 | sweep | ell_z = 25 | 60 | 137 | 200 | 275 | 364.6 |
 |---|---|---|---|---|---|---|
@@ -86,52 +114,15 @@ no maximiser because **it is exactly constant**. Three sweeps locate the flat st
 | generated sections, `expr_mode="zinb-flow"` | 0.887 | 0.913 | 0.919 | 0.924 | 0.927 | **0.932** |
 | generated sections, `expr_mode="cross-mix"` | 0.6728 | 0.6728 | 0.6728 | 0.6728 | 0.6728 | 0.6728 |
 
-The field is sound and strictly monotone, and `with_lengthscale` — the rescale path calibration
-uses — reproduces it exactly. The stack is sound too: under `zinb-flow` the *whole pipeline*
-inherits that monotonicity on this same 400 um, 6-section volume, so "a 400 um stack cannot resolve
-the correlation length" is **not** what is happening. Under the selected `cross-mix` path the
-objective is identical to **ten decimal places** (0.6727617248) across a 15x sweep, because
-`_cross_mix` copies each emitted count verbatim from a donor cell and never evaluates the flow: no
-latent is read, so `ell` cannot move a single count. The maximiser of a constant function is
-whichever grid point ties first, which is the endpoint.
-
-This is the same failure as `prior_mode="iid"`, one stage further down, and the guard now covers
-both: `calibrate_lengthscale` and `calibrate_ell_z` refuse `expr_mode="cross-mix"` as well as a
-non-GRF prior (`test_calibrator_refuses_an_expression_path_that_ignores_ell`). **The 25.0 um figure
-and its `target_unreachable` status are therefore artefacts and not measurements of this tissue** —
-the honest reading of the fixture is that on the selected config `ell_z` was never measurable, not
-that it is small. R1's remedy 3 is untouched by this: the variogram's `ell_z` (364.6 um here, 561 um
-on the gate fixture against a 200 um truth) enters only as the bracket's upper endpoint and is never
-returned as a value.
-
-### What ships when the status is `target_unreachable`
-
-Neither the calibrated value nor the variogram's: **today, nothing applies a
-`LengthscaleCalibration` at all.** `generate_section`'s `calibration=` argument takes a
-`DetectionCalibration`; the `ell` that reaches the prior is `cfg.ell_xy` / `cfg.ell_z`, swapped into
-the field by `_using_field` via `with_lengthscale`. So the `ell_z` in force at generation is
-whatever the `Config` already held — **100 um**, the default — and the calibrator's 25.0 um is
-reported and then dropped on the floor. `specs/09` §2 specifies the calibrator's return value and
-its status but never says who writes it back into the config, so this is a spec gap rather than a
-missed line (raised as C30).
-
-That has one reassuring consequence and one that needs stating:
-
-* **GATE 2 never ran under the calibrated value.** Its oblique-parity measurement used
-  `ell_z = 100 um` from the config, so the gate result stands as measured and is not silently
-  resting on a 25 um artefact.
-* **If the wiring is added naively, oblique generation is where it would bite first.** An oblique
-  plane spans z, so its cells query the field at many depths; `ell_z = 25 um` against a 100 um
-  section spacing decorrelates the prior within a quarter of one spacing, and the field would
-  contribute noise rather than structure along the tilt. Axis-aligned planes sit at constant z and
-  would barely notice. The fix is not to clamp the number: it is that a `target_unreachable` `ell`
-  from a flat objective must not be applied at all, which is what the new guard now prevents at
-  source by refusing to produce one.
-
-Recommendation before R1 is called closed: add the apply step explicitly (`Config.replace` from a
-calibration whose status is `converged`, refusing otherwise), and re-run the calibration on a config
-where `ell` can act — `expr_mode="zinb-flow"`, where the sweep above shows a live, monotone
-objective that comes within 0.02 of the observed target at the bracket's top.
+Under `cross-mix` the objective is identical to **ten decimal places** across a 15x sweep, and the
+calibration returned `ell_xy = 7.0 um` / `ell_z = 25.0 um`, both `target_unreachable` in 0
+iterations — the bracket's lower endpoints, which `specs/09` §2 says an unreachable target must
+never return. That was the tell. `_cross_mix` copies each emitted count verbatim from a donor cell
+and the donor weights come from the retrieval score rather than the latent, so the GRF is absent
+from the expression path and `ell` cannot move a single count; the grid argmax of a constant
+function is whichever point ties first. The field is sound (row 1, strictly monotone, reproduced
+exactly through `with_lengthscale`) and so is the 400 um stack (row 2), so neither was ever the
+limit.
 
 Derived `retrieval_z_window` = **3** spacings (largest section gap 100 um). `Config.retrieval_z_window` remains the fallback and the ablation handle.
 
@@ -141,15 +132,18 @@ One **global** `ell` is calibrated; this table says whether it serves every gene
 
 | module | genes | I_gen | I_real | |diff| |
 |---|---|---|---|---|
-| 0 | 55 | 0.2336 | 0.3538 | 0.1241 |
-| 1 | 55 | 0.2852 | 0.3849 | 0.1056 |
-| 2 | 54 | 0.2730 | 0.4175 | 0.1467 |
-| 3 | 36 | 0.3097 | 0.4296 | 0.1298 |
+| 0 | 55 | 0.3996 | 0.3538 | 0.0585 |
+| 1 | 55 | 0.4129 | 0.3849 | 0.0577 |
+| 2 | 54 | 0.4584 | 0.4175 | 0.0586 |
+| 3 | 36 | 0.4698 | 0.4296 | 0.0491 |
 
-Measured on the same `prior_mode = "correlated"` arm as the calibration above. The deficit is
-**global rather than per-module**: every module misses in the same direction by 0.11-0.15, so there
-is no module the single `ell` serves badly and the others well. That is evidence against the
-per-channel-group escalation, not for it.
+Measured on the live (`zinb-flow`) arm, under the calibrated `ell_xy`. The spread is **0.0491 to
+0.0586 — flat across modules**, and now slightly *over*-shooting rather than under-shooting, which
+is what a global `ell` tuned to the mean should look like. There is no module the single `ell`
+serves badly and the others well, so this is evidence **against** the per-channel-group escalation
+`specs/09` §2 describes. (On the dead `cross-mix` arm the same table read 0.1241 / 0.1056 / 0.1467 /
+0.1298 — uniformly worse, and uniformly, which is the signature of a global deficit rather than a
+per-module one.)
 
 ## Open risk R3 — the boundary is a different regime
 
@@ -162,9 +156,11 @@ Mean latent variance of the uncertainty gate at the stack's ends against its int
 | last | 0.045761 | +8.8% |
 
 The gate notices the boundary and elevates there, which is the direction `specs/09` §1 asked for.
-On the `prior_mode = "correlated"` calibration arm the same measurement **inverts** — first 0.783784,
-middle 0.846727, last 0.820789, i.e. the ends run 7.4% and 3.1% *below* the interior — and the
-absolute variance is ~20x larger because the prior itself is correlated. So the sign of the boundary
+On the `correlated` calibration arms the same measurement **inverts** — first 0.783784, middle
+0.846727, last 0.820789 under `cross-mix`, and first 0.741742, middle 0.782572, last 0.753801 under
+`zinb-flow` (ends 5.2% and 3.7% *below* the interior) — with the absolute variance ~20x larger
+because the prior itself is correlated. Two independent arms agree on the inversion, so it is the
+prior's signature and not noise. So the sign of the boundary
 effect is a property of the prior, not a fixed property of the gate; only the `iid` row above
 describes what ships. Every emitted section carries `uns["boundary"]` in either regime.
 
@@ -178,20 +174,29 @@ Selected config (`prior_mode = "iid"`):
 | resample | 0.8278 | 0.7683 | 0.6844 | -0.0374 | 0.0195 | -0.0660 |
 | donor | 0.8454 | 0.8218 | 0.7358 | -0.0345 | 0.0218 | -0.0480 |
 
-Calibration arm (`prior_mode = "correlated"`), for comparison:
+Calibration arms, `prior_mode = "correlated"`:
 
-| arm | morans_pearson | gearys_pearson | umap_mixing | marker_field_r | marker_depth_r | celltype_localization |
-|---|---|---|---|---|---|---|
-| method | 0.8215 | 0.7285 | 0.6923 | -0.0355 | 0.0393 | -0.0532 |
-| resample | 0.8278 | 0.7683 | 0.6844 | -0.0374 | 0.0195 | -0.0660 |
-| donor | 0.8599 | 0.8220 | 0.7370 | -0.0386 | 0.0313 | -0.0532 |
+| arm | expr_mode | morans_pearson | gearys_pearson | umap_mixing | marker_field_r | marker_depth_r | celltype_localization |
+|---|---|---|---|---|---|---|---|
+| method | cross-mix | 0.8215 | 0.7285 | 0.6923 | -0.0355 | 0.0393 | -0.0532 |
+| **method** | **zinb-flow** | **0.9386** | **0.9067** | **0.9211** | -0.0467 | 0.0350 | -0.0502 |
+| resample | cross-mix | 0.8278 | 0.7683 | 0.6844 | -0.0374 | 0.0195 | -0.0660 |
+| donor | — | 0.8694 | 0.8347 | 0.7256 | -0.0373 | 0.0255 | -0.0502 |
 
-The method beats `resample` on **5 of 6** in the selected (`iid`) arm — everything but
-`gearys_pearson` — and on 4 of 6 in the `correlated` arm. Against the independent-donor sampler it
-wins **2 of 6** in both arms (`marker_field_r`, `marker_depth_r`), ties `celltype_localization`, and
-loses the three distribution-level statistics. The definition of done is therefore **half met**: the
-no-regression guarantee holds against v20's layout path, the donor bar does not.
+**The definition of done depends on which config you ask about, and that is the finding.** As
+selected (`iid` + `cross-mix`) the method beats `resample` on 5 of 6 and the independent-donor
+sampler on only **2 of 6** — half met. On the live arm (`correlated` + `zinb-flow`) it beats
+`resample` on 5 of 6 and the donor baseline on **4 of 6** (`morans_pearson` 0.9386 vs 0.8694,
+`gearys_pearson` 0.9067 vs 0.8347, `umap_mixing` 0.9211 vs 0.7256, `marker_depth_r` 0.0350 vs
+0.0255), ties `celltype_localization`, and loses only `marker_field_r`. The three distribution-level
+statistics the method loses as selected are the three it wins by the widest margin when the flow is
+switched on.
 
-Detection / dispersion calibration fitted on ['synthetic_s00', 'synthetic_s01', 'synthetic_s03']; per-gene detection MAD before it 0.0093 (`iid`) and 0.0091 (`correlated` arm) — there is no headroom to correct on this fixture, which is why the correction ships off by default.
+So the definition of done is **met on the configuration that exercises the method and not on the one
+the selector shipped** — which is R8 with a price attached, not a separate result: the 25% reduced
+budget picks `iid` and `cross-mix`, and both choices switch off the machinery the headline claim
+rests on.
+
+Detection / dispersion calibration fitted on ['synthetic_s00', 'synthetic_s01', 'synthetic_s03']; per-gene detection MAD before it 0.0093 (`iid`), 0.0091 (`correlated`+`cross-mix`) and 0.0084 (`correlated`+`zinb-flow`) — there is no headroom to correct on this fixture, which is why the correction ships off by default.
 
 Anchor weight w(v) is **0.0 at every knot** in both arms — at variances [0.02776, 0.0336, 0.03732, 0.04088, 0.04451, 0.04888, 0.05495, 0.06937] under `iid` and [0.50616, 0.6106, 0.67725, 0.7393, 0.80093, 0.87268, 0.96339, 1.15094] under `correlated`, non-increasing by construction. The isotonic fit finds no variance band on this fixture where blending toward the retrieved anchor beats the generated value, so the gate is a no-op here rather than untested: `test_anchor_weight_is_monotone_non_increasing` and the randomised PAVA test cover the mechanism.

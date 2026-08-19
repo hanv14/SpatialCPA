@@ -278,24 +278,67 @@ R1's remedy 3 is untouched by any of this: the variogram's own `ell_z` (364.6 um
 gate fixture against a 200 um truth) enters only as the bracket's upper endpoint and is never
 returned as a value, so the 561 um over-fit still cannot propagate into a shipped number.
 
-**What actually ships when the status is `target_unreachable` — and the answer is "neither number".**
-Nothing in the package applies a `LengthscaleCalibration`. `generate_section`'s `calibration=`
-argument takes a `DetectionCalibration`; the `ell` that reaches the prior is `cfg.ell_xy` /
-`cfg.ell_z`, swapped into the field by `_using_field`. So the `ell_z` in force at generation is
-whatever the `Config` held — **100 um**, the default — and the calibrator's 25.0 um is reported and
-dropped. `specs/09` §2 specifies the return value and the status but never names the writer, so this
-is a spec gap (**C30**), not a missed line.
+**C30 is closed: the writer exists, and only a converged axis gets through it.** The gap the
+diagnosis found was that nothing applied a `LengthscaleCalibration` at all —
+`generate_section`'s `calibration=` argument is the *detection* calibration, and `ell` reaches the
+prior only as `cfg.ell_xy` / `cfg.ell_z`. `apply_lengthscale(cfg, calibration) -> Config` is now the
+only sanctioned route, `specs/09` §2 names it, and it applies **only** a `"converged"` axis:
+`target_unreachable` and `boundary` are dropped with a `CalibrationNotAppliedWarning` naming the
+achieved and target values, and the config's own value stands. The two axes are decided separately
+on `status` and `ell_z_status`, because an in-plane result that converged is not made worthless by a
+stack too short to constrain `ell_z` — which is exactly the fixture's case, below.
 
-Two consequences, one reassuring and one not:
+#### 6b. The live arm — the first real measurement of the anisotropy
 
-* **GATE 2 never ran under a calibrated `ell_z`.** Its oblique-parity number was measured at the
-  config's 100 um, so the gate stands as measured and is not resting on the 25 um artefact.
-* **Oblique generation is where a naive wiring would bite first.** An oblique plane spans z, so its
-  cells query the field at many depths at once; `ell_z = 25 um` against 100 um spacing decorrelates
-  the prior within a quarter of one spacing, and the field would contribute noise rather than
-  structure along the tilt, while axis-aligned planes at constant z would barely notice. The remedy
-  is not to clamp the number but to refuse to produce it, which is what the extended guard now does
-  at source; the apply step itself should additionally require `status == "converged"` (C30).
+With both severing gates put back (`prior_mode="correlated"`, `expr_mode="zinb-flow"`) at the
+selected 2400 steps:
+
+| quantity | value | status | applied? |
+|---|---|---|---|
+| `ell_xy` | **86.4 um** | `converged`, 2 iterations | **yes**, `Config.ell_xy` 100 → 86.4 um |
+| `ell_z` | 364.6 um | `target_unreachable` | **no**, dropped; `Config.ell_z` stays 100 um |
+| Moran's I | gen **0.4051** vs flanking **0.4102** | gap 0.0051 against a 0.02 tolerance | |
+| between-section r | gen **0.8706** vs observed **0.9182** | R1 remedy 2 | |
+
+`ell_xy` converges in two iterations to 86.4 um, **13.6 % below** the variogram's 136.8 um and in
+the direction T03 predicted for a window-biased fit. It is written through to the prior; the arm's
+per-module diagnostic under it reads |I_gen − I_real| = 0.0585 / 0.0577 / 0.0586 / 0.0491 — flat
+across modules and now slightly *over*-shooting, which is what a global `ell` tuned to the mean
+should look like, and evidence **against** the per-channel-group escalation. On the dead `cross-mix`
+arm the same table read 0.1241 / 0.1056 / 0.1467 / 0.1298: uniformly worse, and uniformly.
+
+**`ell_z` fails upward, and that inverts a claim this entry made twice.** The objective is monotone
+increasing, so the search terminates at the bracket's **top** — 364.6 um, the variogram fit — and
+still undershoots. What the data support is `ell_z >= 364.6 um`: a **lower** bound on the tissue,
+not an upper one. The "upper bound" phrasing inherited from R1 described where the *search* stopped,
+not what the *parameter* can be, and is corrected in the code, the warning text and the report.
+Remedy 3's actual protection is unaffected and is doing its job: the fit never becomes a value
+because `apply_lengthscale` drops it.
+
+**Why remedy 2's target may be unreachable by construction.** The objective generates both sections
+with **both excluded from retrieval**, so their correlation comes from the field alone — without
+that exclusion a shared donor pool would correlate them at any `ell_z` and the curve would be flat,
+which is the trap the whole calibrator is built around. But real adjacent sections draw much of
+their 0.9182 from precisely that shared anatomy. Target and objective are not measuring the same
+quantity, so there need not exist an `ell_z` that closes the gap. That is a question for the spec
+owner, and it is why **R1 stays open on the measurement even though every mechanism it asked for now
+works**.
+
+**The anisotropy the oblique claim depends on**, stated as measured: `ell_z / ell_xy >= 364.6 / 86.4
+= 4.2`, against the fixture's generative truth of 200/120 = 1.7 and the variogram's own 2.7. All
+three agree the field is elongated along z by at least a factor of two, which is what makes an
+oblique cut a different sampling problem from an axis-aligned one. The bound form is the honest one:
+this stack constrains the ratio from below, not from above.
+
+**And the live arm changes the definition of done.** Method vs the two fallbacks on the six metrics:
+0.9386 / 0.9067 / 0.9211 / −0.0467 / 0.0350 / −0.0502, against `resample` at 0.8278 / 0.7683 /
+0.6844 / −0.0374 / 0.0195 / −0.0660 and the independent-donor sampler at 0.8694 / 0.8347 / 0.7256 /
+−0.0373 / 0.0255 / −0.0502. That is **5 of 6 against `resample` and 4 of 6 against the donor
+baseline**, where the selected `cross-mix` config managed 5 of 6 and only **2 of 6**. The three
+distribution-level metrics the method loses as selected are the three it wins by the widest margin
+once the flow is on. The definition of done is met on the configuration that exercises the method
+and not on the one the selector shipped — which is R8 with a price attached rather than a separate
+finding.
 
 **Calibration headroom is a property of the `prior_mode` x `expr_mode` pair, not of `ell` alone** —
 that is R8, and it is the honest answer to "why is R1 still open after T09": the calibrators are

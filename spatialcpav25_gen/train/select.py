@@ -801,7 +801,7 @@ def calibration_chunks(
                         "`ell_z`",
                         f"{calibration.ell[2]:.1f} um",
                         str(calibration.ell_z_status)
-                        + (" (upper bound, R1)" if calibration.ell_z_is_upper_bound else ""),
+                        + (" (bound, not a fit — R1)" if calibration.ell_z_is_upper_bound else ""),
                     ],
                     [
                         "fitted `ell`",
