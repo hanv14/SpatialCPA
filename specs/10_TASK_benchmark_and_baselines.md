@@ -405,6 +405,45 @@ owns it entirely, reading `all_metrics.csv` and `per_section_metrics.csv` from o
 - **Forest plot** per metric: median difference ± CI, one row per dataset. This is paper Figure 2.
 - `assert_tier_purity` (§1) runs before any table is emitted.
 
+### 4.6 The estimator is the MEDIAN. Stated once, used everywhere.
+
+**Every statistic over sections is a median with a bootstrap CI. Never a mean.** This is the
+original requirement and it is restated here as a single rule because it was violated once already
+and the violation changed a conclusion.
+
+| quantity | estimator |
+|---|---|
+| a method's score on a (dataset, holdout) | **median over held-out sections**, with the 95% bootstrap CI |
+| a method's score across seeds | **median across seeds**, with min–max spread (§4.2) |
+| method-vs-competitor gap | **median difference**, 95% bootstrap CI, 10 000 resamples |
+| the achievable ceiling and its spread (§2) | median over draws; the spread stays mean ± sd, because it is a Monte-Carlo *noise* estimate, not a score |
+
+**Why this is not a style preference.** The paper design holds out **three** sections, so every
+tier-1 number is a statistic on n = 3. At that n a single bad section moves a mean by more than the
+gaps being claimed. Measured on the prior campaign's tier-1 rows (§13):
+
+| `paper_marker_depth_r` | section_2 | section_4 | section_6 | median | mean |
+|---|---|---|---|---|---|
+| spatialcpav20_gen | **0.7422** | 0.9704 | 0.9783 | **0.9704** | 0.8970 |
+| spatialz | 0.8966 | 0.9267 | 0.9367 | **0.9267** | 0.9200 |
+
+Median says v20 wins by 0.044; mean says SpatialZ wins by 0.023. **One outlier section inverts the
+verdict.** Exactly one of the seven tier-1 metrics flips this way for SpatialZ vs v20 — which is the
+point: the flips are rare enough to be invisible and frequent enough to be wrong.
+
+**And the outlier is not random.** Across the prior campaign's tier-1 rows, `section_2` is the
+worst-scoring held-out section in **37 of 49** (method, metric) cells, and in 6 or 7 of 7 metrics for
+every SpatialCPA method. `section_2` is bracketed by `section_1` — the **first section of the
+stack** — so its evidence is boundary-adjacent. **Even `paper_2_4_6`, which holds out interior
+sections by construction, contains one boundary-adjacent section, and it is systematically the
+hardest.** That is open risk **R3** appearing *inside* the tier-1 design, it is a fixed structural
+effect rather than noise, and a mean over three sections silently lets it dominate. Report the
+per-section values beside every tier-1 median so the effect stays visible.
+
+`eval/stats.py::assert_no_mean_over_sections` enforces this: any headline or claim-bearing statistic
+computed by averaging over the `section` axis raises, naming the metric. The corresponding test is
+`test_no_headline_statistic_is_a_mean_over_sections`.
+
 ---
 
 ## 5. Datasets — which may carry a claim-bearing number, and why
@@ -994,6 +1033,126 @@ the paper; make sure it is literally true of the CLI.
 sets `BENCH_V3_RESULTS` per cell, calls `run_benchmark.run_single`, then hands the roots to
 `eval/stats.py`. It asserts `evaluate_paper.py`'s SHA-256 before and after (§0).
 
+### 10.1 How v25 is invoked — the same shape as v20, with no tuning flags
+
+**Requirement: v25 runs the way v20 runs.** Same command shape, same `--dataset` and `--design`
+arguments, resumable, one command per run.
+
+```bash
+# shipped run — the headline invocation, no flags after the --
+python -m src.bench3.run_all --methods spatialcpav25_gen --dataset allen_merfish_brain
+
+# wide regime
+python -m src.bench3.run_all --methods spatialcpav25_gen --dataset allen_merfish_brain \
+    --design wide --holdout-block 7
+
+# one ablation arm (A1) — its own results root, never mixed with the shipped run
+BENCH_V3_RESULTS=runs/t2/ablation_a1/seed_1 \
+python -m src.bench3.run_all --methods spatialcpav25_gen --dataset allen_merfish_brain \
+    -- --prior-mode iid
+
+# one seed
+BENCH_V3_RESULTS=runs/t1/headline/seed_2 \
+python -m src.bench3.run_all --methods spatialcpav25_gen --dataset allen_merfish_brain --seed 2
+```
+
+#### The flag policy: v20 took eleven tuning flags, v25 takes none
+
+v20's wrapper accepted `--edit-weight`, `--gap-scale`, `--alpha-tol` and eight more. **v25 accepts
+no tuning flags at all** — configuration is selected internally per dataset (`specs/09` §3), and
+*"`fit` takes no method flags"* is a claim in the paper. **A bare invocation must therefore produce
+the shipped configuration**, and there must be no flag that could produce a different one by
+tuning.
+
+Nothing named `--gap-scale`, `--alpha-tol` or `--edit-weight` exists anywhere in the package (T09
+removed the concepts, not just the flags), so there is nothing to re-expose. The flags after `--`
+are exactly two kinds, and the wrapper's `argparse` carries no third:
+
+| kind | flags | effect |
+|---|---|---|
+| **shared `_v2_io`** | `--input`, `--target-section`, `--target-z`, `--output`, `--seed` | supplied by `run_benchmark`; `--seed` is the seed switch |
+| **ablation switches** (§6) | `--prior-mode {correlated,iid}` (A1) · `--w-autocorr/--w-profile/--w-distribution` (A2) · `--text-emb-mode {medcpt,lookup-only}` (A3) · `--no-repulsion` (A4) · `--retrieval-w-z` (A5) · `--decoder {zinb,zigamma,gaussian}` (A6) · `--w-thick/--w-prog` (A7) · `--prog-wrong` (A8) · `--layout-mode`, `--expr-mode`, `--train-steps` (gate overrides for the selection-recovery checks) | each overrides exactly one `Config` field **after** the selected config is loaded |
+
+Every ablation switch defaults to `None`, meaning *"do not override"*. `method_params` in the
+prediction records the resolved `Config.content_hash()` and every override actually applied, so a
+result is self-describing and a bare run is provably bare.
+
+⚠️ **`--results-root` is not a wrapper flag and cannot be.** `run_benchmark.run_single` resolves
+`out_dir` from `config.RESULTS_DIR` *before* it invokes the wrapper, so a wrapper flag could not
+move where the prediction is written. The results root is the **`BENCH_V3_RESULTS` environment
+variable**, set per (tier, arm, seed) by the driver or by hand, as in the examples above (§4.1).
+
+⚠️ **A8 has no `Config` gate yet.** `loss_prog_WRONG` is built (`losses/sefl.py:1139`) and
+deliberately excluded from the weighted loss set, so there is no field for `--prog-wrong` to set.
+**T10 must add `Config.w_prog_wrong: float = 0.0`** — a one-field addition in T01's style, with the
+docstring naming it the A8 negative control — or A8 cannot be run as a config override as §6
+requires. Flagged rather than assumed: it is an omission in T07's wiring, not in T10's.
+
+`test_bare_invocation_reproduces_shipped_config` asserts that a bare wrapper run's recorded
+`content_hash` equals the hash in the dataset's persisted selection, and that its applied-override
+list is empty.
+
+#### Where per-dataset selection runs, and how it is reused
+
+**This is the difference between a one-command run and a day-long one, so it is specified rather
+than left to the implementation.** Selection is ~23 fits (`specs/09` §3: a joint budget × weights
+gate, a merged 18-cell full-budget gate, then coordinate-descent passes). Running it inside every
+invocation would make each bare run cost ~23 fits before producing a single section — on
+`allen_merfish_brain` (~45× fixture weight, §12) that is weeks, not a run.
+
+**Selection runs once per dataset, out of band, and is persisted.** It is not part of a benchmark
+run; a benchmark run *resolves* it.
+
+```
+$SPATIALCPAV25_SELECT_DIR/            (default: runs/select/)
+  <dataset_id>/
+    selected.yaml           the chosen Config, plus the provenance block below
+    scores.csv              the ScoreCache — every scored cell, flushed per row
+    selection_report.md     write_selection_report's table (every cell, not the winner)
+```
+
+* **Keyed on `dataset_id`** — `uns['dataset_name']` from the built file, falling back to the
+  resolved path's stem, so a derived dataset (§9) gets its own directory and can never reuse the
+  source's selection.
+* ⚠️ **`ScoreCache.key` is `f"{cfg.content_hash()}:{steps}"` and does NOT include the dataset.**
+  One cache file shared across datasets would silently return dataset A's score for a dataset B
+  cell. **The per-dataset directory is what makes the cache correct, not merely tidy** —
+  `test_score_cache_is_per_dataset` pins it.
+* **`selected.yaml` carries a provenance block**: `dataset_id`, the base `Config.content_hash()`,
+  the selection seed, and a **volume fingerprint** (n cells, n genes, sorted section ids, and the
+  built `data.h5ad`'s mtime). The wrapper **refuses a selection whose fingerprint does not match
+  the input it was handed**, naming both — the same staleness class bench3 already guards for its
+  own `_inputs/` cache, where a stale cache cost a fix being applied twice.
+* **Shared across every seed, arm and tier.** Selection is 1-seed by classification (§4.2) and an
+  ablation *inherits* the shipped config by definition (§6), so the three headline seed roots and
+  every ablation root resolve the same `selected.yaml`. It deliberately does **not** live under
+  `BENCH_V3_RESULTS`.
+
+**How the wrapper resolves it**, in order:
+
+1. `selected.yaml` exists for this `dataset_id` and its fingerprint matches → load it, fit once,
+   generate. This is the steady state: **one command, one fit.**
+2. It is absent → the wrapper **runs selection inline, persists it, then proceeds.** It prints the
+   plan and the estimated cost first (`~23 fits at <dataset> scale`), so the bill is visible before
+   it is incurred rather than discovered afterwards. `scores.csv` is flushed per cell, so an
+   interrupted first run **resumes** rather than restarts — which is what makes a single command
+   survive a dataset this size.
+3. It is present but **stale** (fingerprint mismatch) → **raise**, naming the dataset, both
+   fingerprints, and the command to re-select. Never silently re-select and never silently reuse:
+   a config selected against a different build is exactly the silent fallback Convention 6 forbids.
+
+Two switches control step 2, and neither tunes anything:
+
+```bash
+--select-only     run selection, persist it, write no prediction   # pre-warm a dataset
+--require-config  refuse to select; raise if selected.yaml is absent  # for campaign runs,
+                  #  so an unattended job cannot silently start a 23-fit selection
+```
+
+**Recommended for a campaign**: pre-warm each headline dataset once with `--select-only`, then run
+every seed and arm with `--require-config`. The pilot (§11) does exactly this at step 6, which is
+also where the ~23-fit selection cost is measured for real rather than modelled.
+
 ---
 
 ## 11. The pilot — run this before any campaign
@@ -1007,7 +1166,7 @@ sets `BENCH_V3_RESULTS` per cell, calls `run_benchmark.run_single`, then hands t
 | 3 | `python -m src.bench3.selftest` — the four probes, on the real build |
 | 4 | Add `run_spatialcpav25_gen.py` + the one `METHODS` entry; confirm `run_all` with no arguments still plans exactly the previous campaign |
 | 5 | Comparators on tier 1: SpatialZ, FEAST, isoST, v20, plus `oracle` and `flanking_copy` — **required, because the existing numbers are not in this repo (§3)** |
-| 6 | Config selection on STARmap (§12: this is the single largest line item — time it) |
+| 6 | Config selection on STARmap via `--select-only` (§10.1), persisted to `runs/select/starmap_visual_cortex/`. **Time it** — §12 models it as the single largest line item and the pilot is what replaces the model with a number. Every later step runs `--require-config` |
 | 7 | Headline six-metric table at **3 seeds**, three results roots |
 | 8 | `eval/stats.py` on those roots: Wilcoxon, BH, bootstrap CI, Cliff's delta, forest plot |
 | 9 | **E5** — cheapest and most decisive, no bench3 dependency |
@@ -1027,8 +1186,9 @@ why the referents have to be re-measured rather than quoted.
 **C1 — `paper_celltype_localization` on tier 1.** This is the one tier-1 metric where the published
 competitor leads the whole SpatialCPA line, and it is precisely what v25's intensity-field layout
 head (T05: per-type intensity field, fitted Strauss/hard-core repulsion, fitted Potts mark
-smoothing) exists to attack. Measured in the prior campaign (§13.2, cross-instrument — see the
-warning there): SpatialZ **0.8175**, best internal version **0.7954**, v20 **0.7766**.
+smoothing) exists to attack. Measured in the prior campaign (§13.2 — medians per §4.6, and
+cross-instrument, see the warning there): SpatialZ **0.8372**, best internal version **0.8227**,
+v20 **0.7760**. It is SpatialZ's **only** tier-1 win, against every SpatialCPA version.
 
 > **The question C1 answers:** does v25 close the localization gap to SpatialZ on STARmap under
 > `paper_2_4_6`, at 3 seeds, with the gap read against the across-seed envelope?
@@ -1039,13 +1199,17 @@ can come entirely from types with no headroom. Report `paper_rare_celltype_local
 rare-niche placement is the half of the claim the layout head most directly addresses.
 
 **C2 — the wide regime.** No SpatialCPA version has established a wide-gap win, and §13.3 shows the
-evidence is weaker than the design docs assume: **there is no head-to-head wide comparison on
-STARmap in the prior campaign at all.** Wide-gap performance is the stated reason earlier versions
+evidence runs the other way on the metrics the claim is about: by median, SpatialZ beats v20 on
+`morans_pearson` in **6 of 7** wide holdouts and `gearys_pearson` in **5 of 7**. And **there is no
+head-to-head wide comparison on STARmap in the prior campaign at all**, so the tier-1 case has never
+been measured. Wide-gap performance is the stated reason earlier versions
 were not publishable, and it is what the correlated 3D prior (T03) and the z-proximity retrieval
 term (T04, ablation A5) are for.
 
 > **The question C2 answers:** on STARmap `wide_3_4_5`, at 3 seeds, does v25 beat SpatialZ on the six
-> target metrics — and is the margin larger than at `paper_2_4_6`?
+> target metrics — and is the margin larger than at `paper_2_4_6`? Read the autocorrelation family
+> (`morans_pearson`, `gearys_pearson`) and `marker_field_r` separately: in the prior campaign they
+> point in **opposite** directions in the wide regime (6/7 and 5/7 to SpatialZ, 0/7 to v20).
 
 **The pilot therefore generates the first tier-1 wide head-to-head this project has ever had.** That
 means running SpatialZ (and v20 as the no-regression reference) at `--design wide` as well as at
@@ -1161,9 +1325,9 @@ SpatialCPA `v14`, `v18`, `v19`, `v20`, `v21`), across `paper_*` and `wide_*` des
 comparator evidence this project currently holds, and it is worth reading carefully — but **none of
 its numbers may be quoted as a baseline**, for the reason in §13.1.
 
-Everything below was recomputed from that file, weighted by `n_gt_cells` exactly as `evaluate_paper`
-pools sections. Where a figure differs from one previously circulated, the recomputed value is the
-one stated.
+Everything below is the **median over held-out sections**, per §4.6. An earlier pass through this
+file used means and inverted one finding (`marker_depth_r`); the medians are the numbers, and the
+per-section values are given wherever the two disagree.
 
 ### 13.1 ⚠️ The file is evaluator-heterogeneous — the tier-1 comparison is cross-instrument
 
@@ -1203,22 +1367,24 @@ sections:
 
 | method | `celltype_localization` | `marker_depth_r` | `marker_field_r` | `morans_pearson` |
 |---|---|---|---|---|
-| **spatialz** | **0.8175** | 0.9199 | 0.8535 | 0.9289 |
-| spatialcpav21_gen | 0.7954 | **0.9580** | **0.8757** | 0.9768 |
-| spatialcpav20_gen | 0.7766 | 0.8963 | 0.8707 | **0.9811** |
-| spatialcpav14_gen | 0.7776 | 0.8203 | 0.8524 | 0.9314 |
-| feast | **0.0000** | 0.7690 | 0.5686 | 0.7742 |
-| isost | **0.0000** | 0.6984 | 0.6344 | 0.7884 |
+| **spatialz** | **0.8372** | 0.9267 | 0.8522 | 0.9316 |
+| spatialcpav21_gen | 0.8227 | **0.9817** | **0.8881** | 0.9831 |
+| spatialcpav20_gen | 0.7760 | 0.9704 | 0.8804 | **0.9837** |
+| spatialcpav14_gen | 0.7733 | 0.8950 | 0.8540 | 0.9411 |
+| feast | **0.0000** | 0.7786 | 0.5717 | 0.7693 |
+| isost | **0.0000** | 0.6645 | 0.6292 | 0.7754 |
 
 **The signal holds and C1 is well-motivated**: SpatialZ leads the entire SpatialCPA line on
-localization, by **+0.022** over the best internal version and **+0.041** over v20.
+localization, by **+0.015** over the best internal version and **+0.061** over v20.
 
-**Three corrections to how it has been described.**
+**`celltype_localization` is SpatialZ's only tier-1 win — against every SpatialCPA version, not
+merely the best one.** Under the median it loses `marker_depth_r` to v20 (0.9267 vs **0.9704**) as
+well as to v21, and loses `marker_field_r`, `morans_pearson`, `gearys_pearson`, `umap_mixing` and
+`gene_mean_spearman` to both. It is a single, isolated, well-defined deficit — which is precisely
+what makes it a good criterion to aim a mechanism at.
 
-* **It is not SpatialZ's *only* tier-1 win.** Against **v20**, SpatialZ also wins `marker_depth_r`
-  (0.9199 vs 0.8963). The accurate statement is that localization is SpatialZ's **only remaining
-  tier-1 lead over the best internal version** — v21 takes `marker_depth_r`, `marker_field_r`,
-  `morans_pearson`, `gearys_pearson`, `umap_mixing` and `gene_mean_spearman`.
+**Two things about how it must be read.**
+
 * **FEAST and isoST score exactly 0.0000.** By the metric's own normalisation that is "no better than
   scattering the type anywhere in the tissue". Two published methods hitting the floor exactly is a
   **suspicious value, not a competitive one** — the likely cause is that neither emits usable cell
@@ -1226,9 +1392,10 @@ localization, by **+0.022** over the best internal version and **+0.041** over v
   before any localization number is published**: if they emit no types, they are absent from the
   comparison rather than losing it, and the tier-1 `localization` group is a five-method race whose
   ranks change accordingly.
-* **The margin is close to the reproducibility envelope.** T09 measured refit-at-same-seed drift up
-  to **0.0120**. The +0.022 gap to v21 is under 2× that, which is why C1 is stated at **3 seeds with
-  the spread reported** and not as a single-run comparison.
+* **The margin is inside twice the reproducibility envelope.** T09 measured refit-at-same-seed drift
+  up to **0.0120**. The **+0.015** gap to v21 is barely above it, which is why C1 is stated at
+  **3 seeds with the spread reported** and never as a single-run comparison — and why a v25 result
+  that merely ties v21 here says nothing at all.
 
 ### 13.3 C2 — the wide regime is unestablished in *both* directions
 
@@ -1241,29 +1408,37 @@ Pooled across the four datasets that do have wide runs (`allen_merfish_brain`, `
 
 | method | `morans_pearson` | `gearys_pearson` | n |
 |---|---|---|---|
-| **spatialz** | **0.9120** | **0.8927** | 33 |
-| spatialcpav20_gen | 0.9048 | 0.8908 | 33 |
-| spatialcpav21_gen | 0.9010 | 0.8837 | 33 |
+| **spatialz** | **0.9193** | **0.9205** | 33 |
+| spatialcpav20_gen | 0.9173 | 0.9175 | 33 |
+| spatialcpav21_gen | 0.9082 | 0.9105 | 33 |
 
-**But that pooled average is not a legitimate comparison** — it is exactly the cross-dataset pooling
+**That pooled median is not a legitimate comparison** — it is exactly the cross-dataset pooling
 bench3's README forbids ("averaging STARmap's and ExSeq's composites would compare places in two
 different races") and this spec's own **Do NOT** forbids. **24 of its 33 rows are
-`allen_merfish_brain`**, so it is very close to a single-volume result wearing four volumes' clothes.
+`allen_merfish_brain`**, so it is close to a single-volume result wearing four volumes' clothes.
 
-Per dataset and holdout — the legitimate view — SpatialZ vs v20 is **mixed**:
+But per dataset and holdout — the legitimate view, and by median — **the autocorrelation deficit is
+real and consistent**, not an artifact of the pooling:
 
 | metric | wide holdouts where SpatialZ beats v20 |
 |---|---|
-| `morans_pearson` | **4 of 7** |
-| `gearys_pearson` | **3 of 7** |
-| `marker_field_r` | **3 of 7** |
-| `celltype_localization` | **2 of 7** |
+| `morans_pearson` | **6 of 7** |
+| `gearys_pearson` | **5 of 7** |
+| `celltype_localization` | 4 of 7 |
+| `marker_field_r` | **0 of 7** — v20 wins every one |
 
-**So the honest finding is stronger than "SpatialCPA has not won the wide regime": no wide-regime
-conclusion is supportable from this evidence in either direction.** The design docs' claim is
-unsupported, and so would be its opposite. That is what makes C2 a good pilot criterion rather than
-a discouraging one — the pilot produces the first tier-1 wide head-to-head that has ever existed
-here, on one volume, on the pinned instrument, at 3 seeds.
+**So the wide-regime finding survives the correct estimator and is strengthened by it.** On the two
+autocorrelation metrics — the ones the correlated 3D prior (T03) and the z-proximity retrieval term
+(T04/A5) exist to move — the published competitor beats v20 on nearly every wide holdout it was run
+on. The design docs' "wins decisively at wide gaps" is not merely unsupported; the available
+evidence points the other way on the metrics the claim is about. (`marker_field_r` goes the opposite
+way, 0 of 7 — see §13.4.)
+
+**What is still unestablished is the tier-1 case**, and that is what C2 is for: `starmap` /
+`wide_3_4_5` holds one method and no competitor, so this project has never measured a wide-gap
+head-to-head on the protocol dataset. The pilot produces the first one — one volume, the pinned
+instrument, 3 seeds, medians with CIs. A result that confirms the deficit is as publishable as one
+that closes it, and either is better than the current state.
 
 (`spatialcpav19_gen` tops several pooled wide columns. Ignore it: 14–17 rows over a **different**
 dataset subset — it is the only method present on STARmap's wide design and absent from
@@ -1277,15 +1452,18 @@ SpatialZ is relatively strongest against the SpatialCPA line in the prior campai
 pointing at one metric is worth a diagnosis rather than a hope. But the claim needs stating exactly,
 because the pooled and per-dataset views disagree:
 
-| view | result |
+| view (all medians) | result |
 |---|---|
-| **Tier 1** (`starmap` / `paper_2_4_6`) | **v20 (0.8707) and v21 (0.8757) BEAT SpatialZ (0.8535).** It is not a tier-1 loss |
-| Pooled over all 18 datasets and designs | spatialz **0.5666** > v20 0.5498 > v21 0.5461 — but this is the forbidden cross-dataset average |
-| **Per dataset, `paper_*` designs, SpatialZ vs v20** | **9 wins each — a dead tie**, not a systematic loss |
+| **Tier 1** (`starmap` / `paper_2_4_6`) | **v20 (0.8804) and v21 (0.8881) BEAT SpatialZ (0.8522).** It is not a tier-1 loss |
+| **Wide holdouts, per dataset** | **v20 wins 7 of 7** — the one family where the wide regime favours SpatialCPA |
+| Pooled over all 18 datasets and designs | favours SpatialZ — but this is the forbidden cross-dataset average |
+| **Per dataset, `paper_*` designs, SpatialZ vs v20** | **9 wins each — a dead tie** |
 
-So: **not a systematic deficit; a metric on which the SpatialCPA line has no margin, and on which
-v25 already regressed once on the fixture.** Treat it as a watch item with a named diagnostic path,
-not as a known defect.
+So: **not a systematic deficit.** It is a metric on which the SpatialCPA line has no margin in the
+`paper_*` designs, wins outright in the wide ones, and on which v25 regressed once on the fixture at
+T09. Treat it as a watch item with a named diagnostic path, not as a known defect — and note that it
+and the autocorrelation family point in **opposite** directions in the wide regime (§13.3), which is
+itself worth understanding rather than averaging away.
 
 **The diagnostic, and why it is cheap.** `marker_field_r` is one of only **two pose-dependent
 metrics** (with `celltype_localization`): both are computed after `align.py` rotates the prediction
@@ -1341,6 +1519,19 @@ reason the comparators must be re-scored.
   in ≥ 94% of 200 simulations.
 - `test_metric_registry_complete` — all six target and ≥ 5 control metrics registered with direction
   and range.
+- `test_no_headline_statistic_is_a_mean_over_sections` — `assert_no_mean_over_sections` raises on any
+  headline or claim-bearing statistic computed by averaging the `section` axis, naming the metric.
+- `test_median_and_mean_disagree_on_the_fixture` — a fixed 3-section case in which the two
+  estimators invert the verdict, so the rule's reason stays exercised rather than asserted.
+- `test_bare_invocation_reproduces_shipped_config` — a bare wrapper run records a `content_hash`
+  equal to the dataset's persisted selection, with an empty applied-override list.
+- `test_score_cache_is_per_dataset` — `ScoreCache.key` omits the dataset, so two datasets sharing one
+  cache file is a correctness bug; the per-dataset directory is asserted.
+- `test_stale_selection_raises` — a `selected.yaml` whose volume fingerprint does not match the input
+  raises, naming both fingerprints and the re-selection command.
+- `test_no_tuning_flags` — the wrapper's `argparse` exposes only the shared `_v2_io` arguments and the
+  §10.1 ablation switches; any flag that could change the fitted configuration without being an
+  ablation fails the test.
 - `test_no_cross_dataset_pooling` — any statistic computed over rows spanning more than one `dataset`
   raises unless explicitly constructed as a labelled cross-dataset diagnostic.
 - `test_headline_comparators_are_published_methods` — a tier-1 headline table whose comparator set
@@ -1368,6 +1559,8 @@ tier and holdout id**:
 - V1's cycle degradation, V3's predicted-vs-observed r, V4a and the labelled V4b;
 - the `evaluate_paper.py` SHA-256, recorded before and after.
 
+- every statistic a **median with its 95% bootstrap CI** (§4.6), with the per-section values shown
+  beside every tier-1 median;
 - **C1 and C2** (§11.1) read out explicitly: the localization gap to SpatialZ pooled *and* per cell
   type, and the tier-1 `wide_3_4_5` head-to-head — each against the across-seed envelope;
 - `paper_marker_field_r` reported with its alignment record and `field_ssim` beside it (§13.4).
@@ -1390,6 +1583,14 @@ tier and holdout id**:
 - Do not report a `zigamma` number as claim-bearing until the decoder and its calibration are
   validated (§5.1).
 - Do not report E4 as a scored metric.
+- **Do not compute any headline or claim-bearing statistic as a mean over sections** (§4.6). With
+  n = 3 the median and the mean disagree often enough to change a conclusion, and `section_2` is a
+  systematic outlier, not noise.
+- Do not add a tuning flag to the v25 wrapper. The flags after `--` are ablation switches and the
+  seed; anything that could change the fitted configuration otherwise breaks the paper's
+  "no method flags" claim (§10.1).
+- Do not run selection inside a campaign invocation — pre-warm with `--select-only` and run with
+  `--require-config` (§10.1).
 - Do not frame any headline claim around beating an internal SpatialCPA version — the competitors are
   SpatialZ, FEAST and isoST; v14–v24 are development history and v20 is the no-regression reference
   (§3).
