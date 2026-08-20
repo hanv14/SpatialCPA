@@ -1,192 +1,536 @@
-# T10 — Metrics, baselines, and the benchmark harness
+# T10 — Scoring SpatialCPA-v25-Gen on bench3
 
-**Goal.** Produce the paper's numbers: six target metrics plus unoptimised control metrics, across
-two holdout regimes and all datasets, against the competing method and ablations, with proper
-statistics.
+**Goal.** Produce the paper's numbers on the **existing** instrument. `benchmark-pbya-v3` is a
+complete benchmark — the SpatialZ STARmap paper protocol, the leakage machinery, the metrics, the
+published baselines, aggregation, ranking and the Nature-themed figures. T10 does **not** build a
+benchmark. It adds a wrapper, a driver that runs bench3 from outside, the statistics bench3 lacks,
+a preprocessor for the derived datasets the extension claims need, and the experiments.
 
-**Files:** `spatialcpav25_gen/eval/metrics.py`, `spatialcpav25_gen/eval/baselines.py`, `spatialcpav25_gen/eval/benchmark.py`,
-`spatialcpav25_gen/cli.py`, `tests/test_metrics.py`, `tests/test_baselines.py`
+**Files (all new, all ours):** `spatialcpav25_gen/eval/metrics.py`, `eval/baselines.py`,
+`eval/bench3_driver.py`, `eval/resection.py`, `eval/stats.py`, `eval/ceiling.py`,
+`eval/experiments.py`, `spatialcpav25_gen/cli.py`, plus `tests/test_metrics.py`,
+`tests/test_baselines.py`, `tests/test_bench3_driver.py`, `tests/test_resection.py`,
+`tests/test_stats.py`.
 
 **Dependencies:** T01–T09.
 
 ---
 
-## 1. Metrics — `spatialcpav25_gen/eval/metrics.py`
+## 0. The additivity contract
 
-**Do not port, and do not reimplement.** The scoreboard is
-`benchmark-pbya-v3/src/bench3/evaluate_paper.py`, and every published v20/v22 number came out of it.
-A reimplementation that "agrees closely" is not comparable: the paper's claim is a *difference*
-between methods measured on one instrument, and two instruments that agree to 1e-3 turn a 0.01 median
-gap into an argument. So (settled, SPEC_QUESTIONS A3):
+**Existing bench3 results must never need re-running.** Every change is additive; nothing in
+`benchmark-pbya-v3` is edited in place. If any part of this task cannot be done additively,
+**stop and report it** — do not edit and explain afterwards.
 
-1. **Vendor or import it verbatim.** Either import `bench3.evaluate_paper` directly, or vendor the
-   file into `spatialcpav25_gen/eval/_bench3_evaluate_paper.py` **byte for byte**, with a header
-   comment saying where it came from and that it must not be edited. Fixing anything in it is a
-   change to the scoreboard and needs its own decision, not a drive-by edit.
-2. **Pin it with a content hash.** `eval/metrics.py` records
-   `BENCH3_EVALUATE_PAPER_SHA256 = "7362669200bbd2be905adf1715c4c6d44842ef1652edb2f4aba697c039538992"`
-   (`benchmark-pbya-v3/src/bench3/evaluate_paper.py` as of 2026-08-15, 764 lines) and checks it at
-   import. A changed hash raises and names the file — silently scoring against a different instrument
-   is exactly the failure this pin exists to prevent (Convention 6).
-3. **Assert bit-identical output on fixed inputs.** `test_metrics_match_bench3_bitwise` runs both the
-   wrapper and `evaluate_paper` on a small fixed synthetic pair and asserts every metric is `==`, not
-   `allclose`. Any difference at all means the wrapper is doing something of its own.
+### The complete list of bench3 files T10 touches
 
-`eval/metrics.py` is therefore a thin adapter: it maps our `AnnData` pairs onto `evaluate_paper`'s
-call signature, unpacks its result dict into `METRIC_REGISTRY`, and adds the control metrics below.
-It owns no metric arithmetic.
+| File | Change | Why it is additive |
+|---|---|---|
+| `src/bench3/methods/run_spatialcpav25_gen.py` | **NEW FILE** | Nothing reads it but the `METHODS` entry below. |
+| `src/bench3/config.py` | **One appended `METHODS` dict entry.** Nothing else — not `METHOD_ORDER`, not `DATASET_SPECS`, not a constant, not a metric name. | `config.py`'s own comment: a method in `METHODS` but absent from `METHOD_ORDER` "is never run unless it is named explicitly". So a bare `run_all` behaves exactly as before, and `_method_sort_key` sorts v25 last by its index fallback without reordering anything. |
+
+**That is the entire footprint.** In particular:
+
+- `evaluate_paper.py` is **not touched at all.** Its SHA-256 is asserted **before and after** every
+  campaign run and recorded in the report:
+  `7362669200bbd2be905adf1715c4c6d44842ef1652edb2f4aba697c039538992` (764 lines, re-verified
+  2026-08-20). A mismatch at either end aborts and names the file.
+- **No new `DATASET_SPECS` entry.** Every derived dataset (§9) is passed **by path** —
+  `resolve_dataset_arg` accepts a path as readily as a registered name, on every stage that has
+  `--dataset`. `run_benchmark.dataset_meta` falls back to `REGISTRATION = "none"` for an
+  unregistered name, and our driver passes `registration=` explicitly anyway. Nothing in
+  `DATASET_SPECS` changes, so no existing build changes.
+- **No new design function.** `run_benchmark.run_single(method, holdout_config, ...)` takes the
+  holdout config as a plain dict. The boundary holdout (§4.3) is a dict our driver constructs;
+  `design.py` is never called for it and never edited.
+- **No path or schema change.** Seeds and arms are separated by `BENCH_V3_RESULTS`, one results
+  root per (tier, arm, seed). `build_input` caches under `INPUTS_CACHE/<dataset>/<holdout_id>/`,
+  so a new holdout id creates a new cache directory and touches no existing one.
+
+### ⚠️ `summary_by_method.csv` averages across holdout ids — never read it
+
+`aggregate_results.summarize` groups by `(dataset, method)` and **means every metric across
+holdout ids**. Point it at a results root holding both `paper_2_4_6` and `wide_3_4_5` and it will
+average the alternating and consecutive regimes into one number — precisely the thing this spec's
+**Do NOT** forbids. Two consequences, both mandatory:
+
+1. **`eval/stats.py` reads `all_metrics.csv` and `per_section_metrics.csv` only.** Those keep one
+   row per holdout and per section respectively. `summary_by_method.csv` is never an input to any
+   published number.
+2. **One results root per tier, arm and seed** — this is what keeps the averaging harmless, and it
+   is the same isolation the seed rule needs anyway.
+
+---
+
+## 1. The two tiers — every number is labelled
+
+**STARmap is protocol-faithful and stays untouched.** It follows the SpatialZ paper exactly: the
+same trim (`z = 6–13`, `91–94`, always applied, `--no-trim` refused), the same 7 × 11-plane
+partition, the same 2/4/6 holdout. That is the headline comparison, and nothing about it may be
+varied.
+
+| Tier | What it is | What may appear in it |
+|---|---|---|
+| **Tier 1 — protocol-faithful** | `starmap_visual_cortex`, holdout `paper_2_4_6`, unmodified build, unmodified evaluator | The headline six-metric table; the direct SpatialZ / FEAST / isoST / v20 comparison; the control-metric table; the statistics (Wilcoxon, BH, bootstrap CI, Cliff's delta) computed on it |
+| **Tier 2 — extensions** | Anything needing a modified design: the boundary rows (R3), the `wide` regimes, the re-sectioned datasets (E3/V1/V2/V3), the analogue datasets, E1's wide-panel home, V4's thickness pair | Reported in its own tables and figures, always labelled with the design that produced it |
+
+**Rules, enforced in code (`eval/stats.py::assert_tier_purity`):**
+
+- A tier-1 table may contain **only** rows whose `dataset == "starmap_visual_cortex"` **and**
+  `holdout_id == "paper_2_4_6"`. Anything else raises and names the offending row.
+- Tier-2 numbers are **never merged into a tier-1 table**, never averaged with tier-1 numbers, and
+  never used to compute a tier-1 rank. A rank is a position in a field; changing the field changes
+  it.
+- Every table, figure caption and report line states its tier and its holdout id. A number without
+  a tier is not publishable.
+
+Why this matters beyond bookkeeping: the tier-1 claim is *reproduction of a published protocol*.
+The moment an average includes a section that the paper did not hold out, or a volume it did not
+use, the sentence "measured under the SpatialZ STARmap protocol" stops being true.
+
+---
+
+## 2. Metrics — `spatialcpav25_gen/eval/metrics.py`
+
+**Do not port, and do not reimplement** (settled, SPEC_QUESTIONS A3). The scoreboard is
+`benchmark-pbya-v3/src/bench3/evaluate_paper.py`, and it is the instrument every comparable number
+came out of. A reimplementation that "agrees closely" is not comparable: the claim is a *difference*
+between methods measured on one instrument, and two instruments agreeing to 1e-3 turn a 0.01 median
+gap into an argument.
+
+1. **Vendor or import it verbatim.** Either import `bench3.evaluate_paper` directly, or vendor it
+   into `eval/_bench3_evaluate_paper.py` **byte for byte**, with a header saying where it came from
+   and that it must not be edited.
+2. **Pin it with a content hash.** `BENCH3_EVALUATE_PAPER_SHA256 =
+   "7362669200bbd2be905adf1715c4c6d44842ef1652edb2f4aba697c039538992"`, checked at import and again
+   after every campaign run (§0). A changed hash raises and names the file.
+3. **Assert bit-identical output.** `test_metrics_match_bench3_bitwise` runs the adapter and
+   `evaluate_paper` on a fixed synthetic pair and asserts every metric is `==`, not `allclose`.
+
+`eval/metrics.py` is a thin adapter: it maps our `AnnData` pairs onto `evaluate_paper`'s signature,
+unpacks the result into `METRIC_REGISTRY`, and adds the one control metric bench3 lacks. **It owns
+no metric arithmetic.**
 
 *Footnote on v20's two bugs.* `reference/learn_spatialcpav20.py` computes `gene_mean_spearman` /
 `gene_var_spearman` with `np.corrcoef` (Pearson under a Spearman name, `:1876`) and rank-normalises
-with `argsort`, which gives tied zeros distinct ranks (`:1810`). Both are real, and both matter for
-reading v20's *internal* tuning signal — that is what its own development was steered by. Neither is
-present in `bench3/evaluate_paper.py`, which already uses `scipy.stats.spearmanr` and
-`rankdata(method="average")`, so there is nothing to fix on the scoreboard and no "bug fix" to apply
-to the baselines. Say this in the paper's methods rather than claiming to have fixed the benchmark.
+with `argsort`, giving tied zeros distinct ranks (`:1810`). Both are real and both matter for
+reading v20's *internal* tuning signal — that is what its own development was steered by. Neither
+is present in `bench3/evaluate_paper.py`, which uses `scipy.stats.spearmanr` and
+`rankdata(method="average")`. There is nothing to fix on the scoreboard and no "bug fix" to apply to
+the baselines. Say this in the methods rather than claiming to have fixed the benchmark.
 
-The six target metrics, as named by the scoreboard:
+The six target metrics, as the scoreboard names them:
 
-```python
-def morans_pearson(gen, real) -> float        # r between per-gene Moran's I vectors
-def gearys_pearson(gen, real) -> float
-def umap_mixing(gen, real) -> float           # kNN mixing in a shared embedding
-def marker_field_r(gen, real) -> float        # 2-D binned marker field agreement
-def marker_depth_r(gen, real) -> float        # depth-profile agreement
-def celltype_localization(gen, real) -> float # per-type spatial distribution agreement
+```
+paper_morans_pearson          r between per-gene Moran's I vectors
+paper_gearys_pearson          r between per-gene Geary's C vectors
+paper_umap_mixing             kNN mixing in a shared embedding
+paper_marker_field_r          2-D binned marker field agreement
+paper_marker_depth_r          laminar depth-profile agreement
+paper_celltype_localization   per-type spatial distribution agreement
 ```
 
 ⚠️ `marker_field_r` and `celltype_localization` do **not** exist in v20 under those names; they come
-from `evaluate_paper`'s `marker_metrics` and `celltype_localization`. Map the names in the adapter
-and record the mapping in the report, so a reader can trace a paper number back to the function that
-produced it.
+from `evaluate_paper`'s `marker_metrics` and `celltype_localization`. Record the mapping in the
+report so a reader can trace a paper number to the function that produced it.
 
-**Unoptimised control metrics** — required for paper integrity, since six of the metrics are trained
-against (T08). Report at least five:
+### Control metrics — build one, not six
 
-```python
-def sinkhorn_profile_distance(gen, real) -> float
-def coexpression_module_preservation(gen, real) -> float
-def neighbourhood_enrichment_agreement(gen, real) -> float
-def gene_variance_rank_corr(gen, real) -> float
-def duplicate_profile_rate(gen) -> float        # fraction of exactly-repeated profiles
-def detection_rate_agreement(gen, real) -> float
-```
+Five of the six unoptimised controls the original spec asked for are already columns bench3
+computes on every run. Reimplementing them would create a second instrument for no gain:
 
-Every metric: fixed random seeds, documented normalisation, and a docstring stating whether higher
-is better and its range. Build `METRIC_REGISTRY: dict[str, MetricSpec]` so the harness is
-data-driven.
+| Control (original spec) | bench3 column | Action |
+|---|---|---|
+| `sinkhorn_profile_distance` | `gen_sinkhorn` | read it |
+| `coexpression_module_preservation` | `gen_coexpression_agreement` | read it |
+| `neighbourhood_enrichment_agreement` | `gen_celltype_nhood_agreement` | read it |
+| `gene_variance_rank_corr` | `paper_gene_var_spearman` (+ `gen_gene_var_pearson`) | read it |
+| `detection_rate_agreement` | `paper_gene_detection_spearman` | read it |
+| `duplicate_profile_rate` | **absent** | **T10 builds this one** |
 
-### The achievable ceiling — required for every metric (added at T05)
+`duplicate_profile_rate(gen) -> float` is the fraction of emitted profiles that exactly repeat
+another emitted profile. It is the metric that catches a method copying real cells, and it is what
+§2's "a method above the ceiling is usually a bug" check reads. Fixed seed, documented
+normalisation, docstring stating direction and range, registered in `METRIC_REGISTRY` like the rest.
 
-**A metric's stated range is not its achievable range.** Every one of these metrics compares a
-*generated* section with a *real* one, so a perfect model — one that samples from exactly the right
-distribution — still scores below the top of the scale, because a different **realisation** of the
-same law is not the same point cloud. Measured at T05 for `celltype_localization` on the synthetic
-fixture: the held-out section scored against itself reaches 0.9221, while an independent draw from
-the fixture's own generative law reaches **0.7178**. A method scoring 0.71 there is not mediocre; it
-is at **99%** of what is achievable, and reporting the raw number alone says the opposite.
+The control table is **not optional**: six of the target metrics are trained against (T08).
 
-So, on the synthetic fixture (the only dataset with a known generative law):
+### The achievable ceiling
 
-1. **Measure a ceiling for all six target metrics and all control metrics.** Generate the *ideal*
-   arm by drawing from `tests.fixtures.synthetic`'s `GroundTruthField` directly — positions from the
-   true intensity, marks from the true composition, expression from `expression_mu` + `sample_counts`
-   — never from the trained model. Same held-out sections, same seeds, same metric code path.
-2. **Report every method number twice**: raw, and as a fraction of that ceiling. This applies to the
-   headline table, the **ablation** table and the **baseline** table alike — an ablation that costs
-   0.02 raw on a metric whose ceiling is 0.72 has cost 3% of the achievable range, and that is the
-   number a reader needs.
-3. **Report the ceiling's own spread** across held-out sections and across seeds. It is a Monte-Carlo
-   quantity: at least `Config.ceiling_n_draws` independent draws, mean and standard
-   deviation, so a method-vs-ceiling gap can be read against the ceiling's own noise.
-4. **A method above the ceiling is a finding, and usually a bug.** It means either the ideal arm is
-   not drawing from the true law, or the method is copying real cells (check `duplicate_profile_rate`
-   and `layout_mode`). T05 measured one such case legitimately — `field` mode scored 1.110× the
-   ideal on one section, inside the ceiling's own per-section spread — which is exactly why 3 exists.
-5. **Where a metric averages over parts, report per-part ceilings**, not only the aggregate. For
-   `celltype_localization` that means **per cell type**: T05 measured the ceiling for the most
-   abundant type (34% of cells) at a score of 0.33–0.84 across sections while localised minority
-   types sat at 0.60–0.91, because the metric normalises by the divergence to a within-tissue null
-   and that null collapses (`d_null` ≈ 0.08) for a type which is already spread tissue-wide. The
-   abundant types are where the headroom is smallest and the variance largest, and a weighted
-   average hides both. See `specs/05`'s "Why the criterion is a LOSO mean".
+**A metric's stated range is not its achievable range.** Every metric compares a *generated* section
+with a *real* one, so a perfect model — one sampling from exactly the right law — still scores below
+the top of the scale, because a different **realisation** of the same law is not the same point
+cloud. Measured at T05 for `celltype_localization` on the synthetic fixture: the held-out section
+scored against itself reaches 0.9221; an independent draw from the fixture's own generative law
+reaches **0.7178**. A method scoring 0.71 there is at **99%** of what is achievable, and the raw
+number alone says the opposite.
 
-On the real datasets there is no generative law and therefore no ceiling. The referent there is the
-**flanking-section baseline** — `run_nearest_copy`, which is what a real neighbouring section
-achieves on the same held-out section — reported beside every metric for the same reason.
+**On the synthetic fixture** (the only dataset with a known generative law) the full protocol
+stands, unchanged from the original spec:
 
-## 2. Baselines — `spatialcpav25_gen/eval/baselines.py`
+1. **Measure a ceiling for all six target metrics and every control.** Generate the *ideal* arm by
+   drawing from `tests.fixtures.synthetic`'s `GroundTruthField` directly — positions from the true
+   intensity, marks from the true composition, expression from `expression_mu` + `sample_counts` —
+   never from the trained model. Same held-out sections, same seeds, same metric code path.
+2. **Report every method number twice**: raw, and as a fraction of the ceiling. Headline table,
+   ablation table and baseline table alike — an ablation costing 0.02 raw on a metric whose ceiling
+   is 0.72 has cost 3% of the achievable range, and that is the number a reader needs.
+3. **Report the ceiling's own spread** across held-out sections and seeds: at least
+   `Config.ceiling_n_draws` (8) independent draws, mean and standard deviation, so a
+   method-vs-ceiling gap can be read against the ceiling's own noise.
+4. **A method above the ceiling is a finding, and usually a bug.** Either the ideal arm is not
+   drawing from the true law, or the method is copying real cells — check `duplicate_profile_rate`
+   and `layout_mode`. T05 measured one legitimate case (`field` mode at 1.110× on one section,
+   inside the ceiling's per-section spread), which is why rule 3 exists.
+5. **Where a metric averages over parts, report per-part ceilings.** For `celltype_localization`
+   that means **per cell type**: T05 measured the most abundant type (34% of cells) at 0.33–0.84
+   across sections while localised minority types sat at 0.60–0.91, because the metric normalises by
+   the divergence to a within-tissue null and that null collapses (`d_null` ≈ 0.08) for a type
+   already spread tissue-wide. The abundant types are where the headroom is smallest and the
+   variance largest, and a weighted average hides both. See `specs/05`, "Why the criterion is a LOSO
+   mean".
 
-```python
-def run_spatialz(vol, target_z, cfg) -> AnnData      # wraps reference/SpatialZ.py
-def run_nearest_copy(vol, target_z) -> AnnData       # floor
-def run_convex_interp(vol, target_z) -> AnnData      # smooth ceiling / realism floor
-def run_independent_donor(vol, target_z, cfg) -> AnnData   # from T06; isolates chimerism
-def run_v20(vol, target_z, cfg) -> AnnData           # previous version
-```
+**On real datasets there is no generative law and therefore no ceiling** — and the referent the
+original spec names is already implemented. bench3's `selftest.make_probe` writes four
+known-quality reconstructions through the *real* prediction contract:
 
-**v14 and v18 are dropped as baselines** (settled; they are listed in `design/v23_design.md` §7).
-Reason: both are superseded by v20 on every metric of the existing bench3 campaign, so they add two
-more columns without adding a comparison anyone would read — v20 is the version the no-regression
-guarantee is stated against, and it is the one that has to be beaten. Say so in one line in the
-paper's methods rather than leaving their absence unexplained.
+| probe | role here |
+|---|---|
+| `oracle` | the real held-out cells — the self-score upper bound |
+| `flanking_copy` | the nearest **training** slice, copied — this **is** `run_nearest_copy`, the flanking-section referent |
+| `spatial_scramble` | perfect marginals, destroyed spatial structure — the discriminating control |
+| `random` | the floor |
+
+So on real data the ceiling protocol reduces to **scoring `oracle` and `flanking_copy` as two extra
+methods in each results root** and reporting every method number against them. Do not rebuild them.
+
+---
+
+## 3. Baselines — `spatialcpav25_gen/eval/baselines.py`
+
+Most of the baseline set already runs on the instrument. Build only what is missing.
+
+| Baseline | Status | Action |
+|---|---|---|
+| `run_spatialz` | bench3 `METHODS["spatialz"]`, published defaults, `bench_spatialz` env | **run it, do not wrap it** |
+| `run_v20` | bench3 `METHODS["spatialcpav20_gen"]` | **run it** |
+| `run_nearest_copy` | `selftest.make_probe("flanking_copy")` | **score the probe as a method** |
+| `run_independent_donor` | built at T06 (`eval/baselines.py::IndependentDonorBaseline`) | needs a bench3 wrapper so it is scored on the instrument; training-free, no fit |
+| `run_convex_interp` | **absent** | **T10 builds it** — smooth ceiling / realism floor; training-free |
+
+FEAST and isoST come free as additional published comparators.
+
+**v14 and v18 are dropped as baselines** (settled; listed in `design/v23_design.md` §7). Both are
+superseded by v20 on every metric of the existing bench3 campaign, so they add two columns nobody
+would read — v20 is the version the no-regression guarantee is stated against and the one that has
+to be beaten. Say so in one line in the methods rather than leaving their absence unexplained.
 
 For the competing method, use its published defaults (`syn_mode='default'`, `k_sam=3`,
 `k_neighbors=1`, `nb_iter_max=3000`, `num_projections=80`) and its own MENDER-based niche pipeline.
 Do not tune it; do not cripple it. Record the exact settings in the report — reviewers check this.
+bench3 already pins the invocation in `METHODS`, so quote that entry rather than restating it.
 
-⚠️ It mutates `adata.obs_names` in place (appends slice ids). **Deep-copy inputs before calling it**
-or subsequent baselines silently receive corrupted data. This has bitten people before.
+⚠️ SpatialZ mutates `adata.obs_names` in place (appends slice ids). **Deep-copy inputs before
+calling it** or subsequent baselines silently receive corrupted data. bench3 isolates each method in
+its own subprocess so this cannot bite there; it bites in `eval/baselines.py`, which does not.
 
-For the alternating/consecutive regimes, generate at the same `alpha` positions the held-out sections
-occupy, so the comparison is like-for-like.
+### ⚠️ The existing v20/v22 numbers are NOT in this repository
 
-### E1 must load the gene table with its species, and report the table's own coverage
+Verified 2026-08-20: `benchmark-pbya-v3/results/`, `benchmark-pbya-v2/results/` and
+`benchmark-pbya/results/` **do not exist**; there is no `metrics.json`, no `all_metrics.csv` and no
+`summary_by_method.csv` anywhere in the tree, and `progress/numbers.md` carries no bench3 rows. The
+results tree is gitignored and was never committed.
 
-`load_gene_meta(path, species=...)` **raises** on a table of the wrong organism (added after a mouse
-panel's table came back holding four other mammals' genes and nothing noticed). E1 must pass
-`Config.mygene_species`, and the headline text must quote the table's own coverage —
-`gene_meta_summary` reports rows, resolved taxid, how many rows carry a summary, and the Ensembl-id
-prefix histogram — because "the model decodes unseen genes at r = X" means nothing without knowing
-that the descriptors were real. **One table per organism**, at different `Config.gene_meta_path`s: the
-mouse and human datasets do not share one.
+**Consequence: comparability requires re-running the comparators.** A v25 row is only comparable to
+a v20 row if both came off the same instrument, and the v20 row does not exist here. Budget it
+(§12): the tier-1 comparator set is SpatialZ, FEAST, isoST and v20 on STARmap under `paper_2_4_6`,
+plus the two probes. These are cheap relative to a v25 fit and they are a **prerequisite of the
+pilot**, not a follow-up. If the numbers exist on another machine, confirming that and copying the
+tree in is the cheaper path — check before running.
 
-**And the coverage must be quoted split by `summary_source`, never as one number.** Mouse NCBI
-summaries cover 148/1138 (13%) of the real panel, so `Config.gene_summary_fallback="ortholog"` (the
-default) backfills the rest from the 1:1 human orthologue's summary, labelled in the descriptor text.
-`gene_meta_summary` reports `summary_sources` as `native / ortholog / none`; a bare "N/1138 carry a
-summary" hides whether the text the encoder read was mouse biology or human. E1 therefore reports
-**two summary arms as well**, and both are filters on the `summary_source` column of one table rather
-than two builds:
+---
 
-| arm | descriptors |
-|---|---|
-| native-only | rows with `summary_source == "native"` keep their summary; the rest are `"{symbol}. {full_name}."` |
-| with fallback | as built |
+## 4. The driver — `spatialcpav25_gen/eval/bench3_driver.py`
 
-If zero-shot transfer holds only on the fallback arm, the claim is that *human* gene descriptions
-transfer to a mouse model — true and interesting, and not the same sentence as the design's.
+bench3 already provides everything §3 of the original spec asked a harness to provide: long-format
+per-section rows (`aggregate_results`), per-(dataset, method, holdout) caching (`results/…`),
+resumability (`--skip-existing`), a shared training-only input built once per holdout and reused by
+every method, and decoupled re-evaluation (`evaluate_all --force`). **Do not rebuild any of it.**
 
-### ⛔ The gene–gene covariance comparison is a LOSS as of T06. Framing rule for the paper.
+The driver's whole job is the three dimensions bench3's results path does not carry — seed, arm and
+tier — plus the boundary holdout, and it does that entirely from outside.
 
-`run_independent_donor` exists to isolate chimerism, and T06 measured both halves of that comparison.
-They point opposite ways and the write-up must say so:
+### 4.1 One results root per (tier, arm, seed)
+
+`results/<method>/<dataset>/<holdout_id>/` has no seed and no arm dimension, so a second seed would
+overwrite the first. The driver sets `BENCH_V3_RESULTS` per cell:
+
+```
+runs/t1/headline/seed_{1,2,3}/          tier 1, shipped config
+runs/t1/ablation_a2_2400/seed_{1,2,3}/  tier 1, one arm
+runs/t2/wide3/seed_{1,2,3}/             tier 2
+runs/t2/boundary/seed_{1,2,3}/
+```
+
+Each root is an ordinary bench3 results tree, aggregated by bench3's own `aggregate_results`, then
+read across roots by `eval/stats.py`. No path change, no schema change, and a root containing a
+single design cannot be mis-averaged by `summarize`.
+
+### 4.2 The repeated-seed rule, and exactly which measurements pay for it
+
+`specs/09` §3's rule: any measurement reaching a paper claim runs at least `Config.claim_min_seeds`
+(**3**) seeds and reports the spread, not a point estimate. T09 measured why — refitting one
+configuration at the same seed in a different process moved its scores by up to **0.0120**, while
+the gap between the two `text_emb_mode` options was **0.0110**, so "wins" and "wins by less than the
+run-to-run variation" were indistinguishable. A benchmark whose purpose is claiming wins cannot
+leave them that way (open risk **R10**).
+
+**Scoped, because three seeds on everything is not what the rule is for.** The rule attaches to
+*claims*, not measurements. `eval/bench3_driver.py` provides **`CLAIM_BEARING`** — the
+machine-readable form of the table below — and `_check_claim_coverage`, which refuses to emit a
+headline table containing a measurement classified neither way. Same derived enforcement
+`TRAINING_FREE_OPTIONS` and `CAPABILITY_CLAIM` carry in `train/select.py`, for the same reason: the
+classification is made when a measurement is added, not rediscovered after a reviewer asks.
+
+| measurement | claim-bearing? | seeds |
+|---|---|---|
+| headline six-metric table, per regime | **yes** — this *is* the claim | **3** |
+| ablation arms that carry a claim (A2 on/off, A7 SEFL net contribution, A8 `loss_prog_WRONG`) | **yes** — each is stated as an effect | **3** |
+| capability experiments E1–E5 | **yes** — each is a claim of a capability | **3** |
+| boundary stratification of the headline metrics | **yes** — reported as a gap | **3** |
+| SEFL validations V1–V4 | **yes** | **3** (V4: see §8) |
+| achievable-ceiling measurements | no — a bound on interpretation, not a claim of superiority | 1 |
+| diagnostics (per-module Moran's agreement, detection MAD, `w(v)`, retrieval-window derivation) | no — they inform, they do not claim | 1 |
+| calibration statuses and their achieved-vs-target numbers | no — reported as statuses, not compared against a baseline | 1 |
+| config selection itself | no — `specs/09` §3's rules govern it, and its margins are checked against the envelope | 1 |
+
+Report the spread as **min–max across seeds** beside every claim-bearing median, and state the
+campaign's own **envelope** (the largest across-seed spread observed) in the methods. **A claim
+whose effect is smaller than that envelope is not a claim** — report it as a tie, with the numbers.
+
+### 4.3 The boundary holdout (R3) — additive, no new dataset, no new design function
+
+**Open risk R3, raised at T04, re-surfaced at T09.** The T04 probe reconstructed the two **edge**
+sections at R² **0.2912** and **0.3642** against an interior mean of **0.4474**; at T09 the
+uncertainty gate elevated at the ends (+13.2% / +8.8% latent variance). It appeared in two
+independent measurements and generation near stack ends is routine, so it is measured, not assumed.
+
+**bench3 cannot currently measure it.** `paper_design` holds out 2/4/6, and
+`loo_design(exclude_boundary=True)` is hardwired in `design.py`'s `main()` — no exposed design ever
+holds out section 1 or section 7. But `run_benchmark.run_single` takes the holdout config as a
+**plain dict**, so the driver constructs it directly:
+
+```python
+{"holdout_id": "boundary_1", "design": "boundary",
+ "holdout_sections": ["section_1"],
+ "remaining_sections": ["section_2", ..., "section_7"],
+ "holdout_z": {"section_1": <median z>}}
+```
+
+`design.py` is never called and never edited; `build_input` caches under a fresh
+`_inputs/<dataset>/boundary_1/` directory; results land in `<root>/<method>/<dataset>/boundary_1/`.
+Additive in every direction.
+
+**A boundary section is extrapolation, not interpolation.** It has evidence on one side only, which
+is a different task from every other row in this spec. It is **Tier 2**, it gets its own table, and
+it is never pooled with `paper_2_4_6`. Report `boundary_1` and `boundary_7` separately from each
+other too — they are the two ends of a stack with different neighbours. If the baselines degrade
+there as well (SpatialZ interpolates between flanking slices and has no flank at an end either),
+that comparison is itself a result worth a row.
+
+Also state, for every headline number, **which regime it came from and how much boundary tissue it
+contained.** `paper_2_4_6` holds out interior sections by construction and so under-samples the
+regime where the model is weakest; `consecutive-5` on a 7-section stack pushes the held-out run
+against both ends. A regime change silently moves the metric otherwise.
+
+### 4.4 Regimes — all three already exist
+
+Corrected: `paper_2_4_6` **is** the alternating design. bench3's README states the generalisation
+outright — "hold out every even section, keep the first and last as input"; at n = 7 that is exactly
+2/4/6. And `design.py::consecutive_design` provides the wide-gap regimes.
+
+| `specs/10` regime | bench3 invocation | holdout id | tier |
+|---|---|---|---|
+| `alternating` | `--design paper` | `paper_2_4_6` | **1** |
+| `consecutive-3` | `--design wide` (`DEFAULT_WIDE_BLOCK = 3`) | `wide_3_4_5` | 2 |
+| `consecutive-5` | `--design wide --holdout-block 5` | `wide_2_3_4_5_6` | 2 |
+
+`DEFAULT_WIDE_BLOCK = 3` is chosen so `paper` and `wide` remove the *same number* of slices and
+differ only in adjacency, which isolates gap width itself. Report the three **separately** — the
+expected story is "ties or wins at narrow gaps, wins decisively at wide gaps", and averaging
+destroys it.
+
+⚠️ **`consecutive-5` on STARmap clamps to n − 2 = 5**, leaving only sections 1 and 7 as input —
+about **8.2 k training cells**, half the tier-1 input. Report it as the thin-evidence extreme, not
+as a peer of the other two regimes, and state the training cell count beside every number from it.
+
+⚠️ The number of held-out sections **varies by dataset** (`paper_2_4_6` on STARmap,
+`paper_alt7of15` on the Allen atlases, `paper_2_4` on CosMx). That changes the *n* of the
+per-section Wilcoxon, so `eval/stats.py` reports n per test and never compares a statistic computed
+at different n as if it were the same test.
+
+### 4.5 Statistics — `spatialcpav25_gen/eval/stats.py`
+
+bench3 has **none** of this: `rank_methods` averages group ranks, which is not significance. T10
+owns it entirely, reading `all_metrics.csv` and `per_section_metrics.csv` from outside.
+
+- Paired **Wilcoxon signed-rank** vs. the competing method, per metric, **paired by section**.
+- **Benjamini–Hochberg** across the six metrics.
+- **Median difference with 95% bootstrap CI** (10 000 resamples, stratified by dataset) — this is
+  the "clear gap in medians" claim, stated defensibly.
+- **Cliff's delta** as a nonparametric effect size.
+- **Forest plot** per metric: median difference ± CI, one row per dataset. This is paper Figure 2.
+- `assert_tier_purity` (§1) runs before any table is emitted.
+
+---
+
+## 5. Datasets — which may carry a claim-bearing number, and why
+
+bench3 registers eighteen datasets. They are **not interchangeable**, and two properties decide
+what a row from each may be used for.
+
+### 5.1 `expression_type` decides which decoder runs — and only one decoder has been run
+
+`Config.decoder` has three options (`zinb`, `zigamma`, `gaussian`). Every measurement this project
+has ever made ran **`zinb`**. `ZIGammaDecoder` is implemented (`model/expression.py:536`,
+`sample_zigamma`, `zigamma_log_prob`) but has **never been trained, generated from, calibrated or
+benchmarked** — its only test coverage is one parametrised `log_prob` shape check
+(`tests/test_expression.py:405`).
+
+⚠️ **And it is not merely untested — T09's calibration is ZINB-only.** `calibrate_detection`'s
+core computes the zero-probability through `_zinb_detection` (`infer/calibrate.py:1086`) and solves
+the mean–variance intercept on the **negative binomial's** variance. There is no ZIGamma branch.
+Under `decoder="zigamma"` that path would compute an NB zero-probability for a Gamma model and
+report it as a calibration. Only `_draw_counts` (`calibrate.py:1381`) dispatches on the decoder.
+
+**Making ZIGamma claim-bearing is T06/T09 work, not T10 work.** T10 does not silently do it. Until
+it is done:
+
+| `expression_type` | decoder | may carry a claim-bearing number? |
+|---|---|---|
+| `raw_counts` | `zinb` | **yes** |
+| `normalized`, `log2_normalized`, `fluorescence_intensity` | `zigamma` | **no** — diagnostic / qualitative rows only, labelled `decoder=zigamma (unvalidated)` |
+
+Six datasets fall on the wrong side: `imc_breast_cancer`, `merfish_hypothalamus`,
+`easi_fish_lha1/2/3`, `allen_zhuang_abca1/2`.
+
+### 5.2 The non-transcriptomic requirement collides with 5.1 — state it, do not paper over it
+
+`design/v23_design.md` §7 requires the campaign to include **at least one non-brain** dataset and
+**at least one non-transcriptomic panel**. It is a reviewer defence: every version of this project
+has been tuned on brain sections with a transcriptomic panel, and a method whose oblique-sectioning
+claim rests on laminar structure would look excellent on brain and fail silently elsewhere.
+
+`imc_breast_cancer` satisfies **both** halves alone — human HER2+ breast cancer, 25-channel protein
+panel, 15 real serial sections. It is also `fluorescence_intensity`, i.e. exactly the dataset whose
+decoder path has never been run.
+
+**Resolution, stated in the paper rather than hidden:**
+
+- The **non-brain** half is discharged claim-bearingly by `cosmx_nsclc_3d` (human NSCLC tumour,
+  960 genes, `raw_counts`, 18 cell types) or `exseq_breast_cancer` (human breast cancer, 297 genes,
+  `raw_counts`, 13 types, ~2 k cells).
+- The **non-transcriptomic** half is `imc_breast_cancer`, reported as a **Tier-2 diagnostic row,
+  explicitly not claim-bearing**, with the reason (`zigamma` unvalidated, calibration ZINB-only)
+  stated in the caption.
+- `run_benchmark` refuses to emit a headline table unless both halves are present and names what is
+  missing (Convention 6). A campaign run without them is a development run and the report says so on
+  its first line.
+
+If ZIGamma is validated later, the IMC row is promoted and this section is re-opened. Nothing else
+changes.
+
+### 5.3 Cell-type annotations — two datasets have none
+
+`openst_lymph_node` and `visium_mouse_brain_c2l` are **100% unannotated** (`n_cell_types = 0`).
+
+What actually happens: bench3 writes a single `"unknown"` category rather than omitting the column,
+so `data/schema.py` — which **requires** `Section.cell_type` as an `int32` code array and shape-checks
+it (`schema.py:495`) — loads them without raising, with one type. `IntensityHead` permits
+`n_types >= 1` (`layout.py:1213`). So the pipeline runs. But:
+
+- **Potts mark smoothing is degenerate.** With one type, neighbourhood purity is identically 1.0,
+  `fit_potts_beta`'s purity constraint is vacuous and the rare-type floor has no rare type to
+  protect. The fitted `beta` is meaningless, not merely small.
+- **A whole ranked metric group is lost.** `paper_celltype_localization`,
+  `paper_rare_celltype_localization` and `paper_rare_celltype_recall` are unavailable or degenerate,
+  so `rank_methods`'s `localization` group is empty and the composite is computed over four groups
+  instead of five — **not comparable** with any other dataset's composite.
+
+**Decision: both are out of scope for T10.** They are not claim-bearing, not diagnostic, and not
+run. `openst_lymph_node` additionally carries bench3's own documented OOM gap (uncapped
+whole-transcriptome, ~1.55 M cells; a v14 run was killed by the OOM killer). `visium_mouse_brain_c2l`
+additionally has 3 sections with 1 held out and **spot** resolution.
+
+**What would have to happen first**, if they are ever wanted: a type-free path in the layout head
+(intensity without marks, `fit_potts_beta` skipped rather than fitted degenerately), a test that
+exercises it, and a stated rule for how a four-group composite may be compared with a five-group
+one. That is T05 work.
+
+### 5.4 The dataset picks, revised against the table
+
+| dataset | role | tier | claim-bearing | why |
+|---|---|---|---|---|
+| `starmap_visual_cortex` | **headline** | **1** | ✅ | the protocol; 28 978 cells, 28 genes, 19 types, `raw_counts`, `paper_2_4_6` |
+| `deep_starmap` | **E1 home** (§7) | 2 | ✅ | 1 017 genes, mouse brain, `raw_counts`, 137 types, **`paper_2_4_6` — the same design as the headline** |
+| `cosmx_nsclc_3d` | non-brain | 2 | ✅ | human NSCLC, 960 genes, `raw_counts`; 340 k cells / 57 k per section — expensive |
+| `merfish_thick_cortex` | second brain volume | 2 | ✅ | 28.8 k cells, 254 genes, `raw_counts`, `paper_2_4_6`, 13 µm slabs — **cheapest claim-bearing analogue** |
+| `merfish_thick_hypothalamus` | **V4 home** (§8) | 2 | ✅ | 79 k cells, 156 genes, `raw_counts`, 27 µm slabs from a 200 µm block |
+| `exseq_breast_cancer` | non-brain, cheap | 2 | ✅ | 1 979 cells, 297 genes, `raw_counts` — but min 57 cells/section, just over bench3's 50-cell floor; treat as a small-n row |
+| `imc_breast_cancer` | non-transcriptomic | 2 | ❌ diagnostic | `fluorescence_intensity` → `zigamma` (§5.1) |
+| `exseq_visual_cortex` | E2 partner (§7) | 2 | ⚠️ | same tissue as STARmap, `raw_counts` — but 1 130 cells, 5 sections, 28% unannotated, only 1 of 3 markers resolved |
+| `allen_zhuang_abca1/2`, `merfish_hypothalamus`, `easi_fish_lha*` | — | 2 | ❌ | `zigamma` (§5.1) |
+| `allen_merfish_brain` | — | — | ✅ in principle | 1.17 M cells, 59 sections — cost-prohibitive; excluded unless the pilot says otherwise |
+| `openst_lymph_node`, `visium_mouse_brain_c2l`, `st_mouse_brain_ortiz` | — | — | ❌ | no cell types (§5.3); `st_mouse_brain_ortiz` is **spot** resolution |
+
+**Changed from the earlier proposal, because of the table:**
+
+- **E1 moves from `allen_zhuang_abca2` to `deep_starmap`.** ABCA-2 is `log2_normalized` (→ ZIGamma,
+  §5.1) and its design is `paper_alt7of15`, so its numbers could not sit beside the headline.
+  `deep_starmap` is `raw_counts` and runs `paper_2_4_6` — **the same design as tier 1** — so the
+  zero-shot result is read against a headline-shaped row. See §7 for its gene-table blocker.
+- **`allen_zhuang_abca2` is dropped from the campaign entirely.**
+- **`merfish_thick_cortex` is added** as the cheap claim-bearing analogue (28.8 k cells, the same
+  size as STARmap) in place of a second expensive volume.
+- **`imc_breast_cancer` is retained but demoted** to a labelled non-claim-bearing diagnostic.
+- **`openst_lymph_node`, `visium_mouse_brain_c2l`, `st_mouse_brain_ortiz`, `allen_merfish_brain`
+  are out.**
+
+---
+
+## 6. Ablations A1–A8
+
+Each is a config override, wired as a wrapper flag so an arm is one line. Each arm gets its own
+results root (§4.1); nothing about the arm mechanism touches bench3.
+
+| ID | Override | Claim tested |
+|---|---|---|
+| A1 | `prior_mode=iid` | correlated prior preserves autocorrelation |
+| A2 | `w_autocorr=w_profile=w_distribution=0.5` (an **addition** — the terms ship off) | contribution of metric-aware training — **at two step budgets**, below |
+| A3 | `text_emb=lookup-only` | text channel's value on seen genes |
+| A4 | repulsion off (Poisson layout) | point-process realism — **`g(r)` over `[0, 3R]`**, below |
+| A5 | `w_z=0` in retrieval | the competing method's specific flaw — **wide-gap regime only**, below |
+| A6 | Gaussian mean decoder | sparsity/dispersion preservation |
+| A7 | `w_thick=w_prog=0.2` (an **addition** — SEFL ships off) | SEFL's contribution — **two losses, not three**; decides whether SEFL is used at all |
+| A8 | `loss_prog_WRONG` enabled | **negative control** — wrongly constraining an equivariant quantity should be *worse* |
+
+Ablations run on **STARmap (tier 1)** and **one non-brain claim-bearing dataset**, at `alternating`,
+**except A5** (below). They **inherit the headline dataset's selected config** and override one
+gate — an ablation is by definition an override of the shipped configuration, so an arm never
+re-runs config selection.
+
+### ⛔ Before the ablation table: the gene–gene covariance comparison is a LOSS
+
+`run_independent_donor` exists to isolate chimerism, and T06 measured both halves. They point
+opposite ways and the write-up must say so:
 
 | what | status |
 |---|---|
-| **the mechanism** — per-gene independent draws destroy covariance, a shared latent cannot | **established.** Donors held fixed, draw varied: retained \|off-diag\| 0.978 / 0.920 / **0.897** / 0.884 / 0.844 at D = 1/2/3/5/10 on `alternating`, and 0.955 / 0.818 / **0.783** / 0.714 at D = 1/2/3/10 on `consecutive-3`. Monotone on both regimes. The quantity the claim rests on is the step from a verbatim per-cell copy (D = 1) to the competing method's own **D = 3**, with the donors held fixed so only the draw varies: **−8 pp** of the real covariance magnitude at a 50 µm gap and **−17 pp** at 100 µm |
-| **the model beating the baseline on the correlation matrix** | **NOT established — it loses**, with T06's terms and with T08's. Frobenius error: model **9.316**, independent-donor **7.783**, nearest-copy 6.743, achievable ceiling **5.601**. Worse at `consecutive-3` (17.7 vs 11.3). T08's metric-aware terms move it to 11.022 / 13.391 against 7.732 / 11.383 — see below |
+| **the mechanism** — per-gene independent draws destroy covariance, a shared latent cannot | **established.** Donors held fixed, draw varied: retained \|off-diag\| 0.978 / 0.920 / **0.897** / 0.884 / 0.844 at D = 1/2/3/5/10 on `alternating`, and 0.955 / 0.818 / **0.783** / 0.714 at D = 1/2/3/10 on `consecutive-3`. Monotone on both. The quantity the claim rests on is the step from a verbatim per-cell copy (D = 1) to the competing method's own **D = 3**, donors held fixed so only the draw varies: **−8 pp** of the real covariance magnitude at a 50 µm gap, **−17 pp** at 100 µm |
+| **the model beating the baseline on the correlation matrix** | **NOT established — it loses.** Frobenius error: model **9.316**, independent-donor **7.783**, nearest-copy 6.743, achievable ceiling **5.601**. Worse at `consecutive-3` (17.7 vs 11.3) |
 
-**Until T08's `test_metric_losses_close_the_covariance_loss` passes on both regimes, no headline
-table, figure, abstract or methods sentence may claim that this method preserves gene–gene covariance
-*better than* the competing method.** The claim it may make is the mechanism claim, and the chimerism
-table is the evidence for it. If T08 closes the loss, this section is updated with the numbers that
-closed it; if T08 cannot, the paper makes the smaller claim and says why — that is a decision to
-record in `PROGRESS.md`, not a gap to leave ambiguous.
-
-**T08 ran, and it did not close it. The claim is a mechanism claim.** (Decided 2026-08-18; the
-numbers are in `progress/t08_metric_aware.md`, and the criterion is a strict xfail carrying them.)
-With the metric-aware terms at `specs/08`'s own weights and T06's budget and configuration:
+**T08 ran, and it did not close it. The claim is a mechanism claim.** (Decided 2026-08-18; numbers
+in `progress/t08_metric_aware.md`, criterion held as a strict xfail carrying them.)
 
 | regime | model, terms on | independent-donor baseline | achievable ceiling | T06, terms off |
 |---|---|---|---|---|
@@ -194,128 +538,36 @@ With the metric-aware terms at `specs/08`'s own weights and T06's budget and con
 | `consecutive-3` | **13.391** | 11.383 | 5.513 | 17.7 |
 
 The terms help at the wide gap (17.7 → 13.4) and cost at the narrow one (9.3 → 11.0), and neither
-arm reaches its baseline.
+arm reaches its baseline. **Both rows are at 1200 steps, and that qualifier is load-bearing.** At
+2400 steps the same terms reach **8.489** against a 7.948 baseline on `alternating` — still a loss,
+and the closest this project has come. `specs/09` §3 selects the budget jointly with the metric
+weights per dataset, so **A2 reports this table at whichever budget the selector chose, alongside
+the 1200-step numbers**, and a run whose selected budget differs from 1200 may not quote these rows
+as its own.
 
-**Both rows are at 1200 steps, and that qualifier is load-bearing.** At 2400 steps the same terms
-take the model to **8.489** against a 7.948 baseline on `alternating` — still a loss, and the
-closest this project has come. The budget is therefore not a fixed property of the comparison:
-`specs/09` §3 selects it jointly with the metric weights per dataset, so **A2 must report this
-table at whichever budget the selector chose, alongside the 1200-step numbers above**, and a run
-whose selected budget differs from 1200 may not quote these rows as if they were its own. The
-framing rule below is unaffected either way — it is stated on the *result*, not on the budget.
+**Until T08's `test_metric_losses_close_the_covariance_loss` passes on both regimes, no headline
+table, figure, abstract or methods sentence may claim that this method preserves gene–gene
+covariance *better than* the competing method.** The claim it may make is the mechanism claim, and
+the chimerism table is the evidence. The headline table reports the model-versus-baseline Frobenius
+numbers **as a loss**, in both regimes, beside the ceiling. A later task that closes it re-opens
+this section; nothing else does.
 
-So the headline table reports the mechanism claim — *per-gene independent
-draws destroy within-cell covariance and a shared latent cannot* — with the chimerism table as its
-evidence, and reports the model-versus-baseline Frobenius numbers **as a loss**, in both regimes,
-beside the ceiling. No sentence anywhere in the paper says this method preserves gene–gene covariance
-better than the competing method. A later task that closes it re-opens this section; nothing else
-does.
+Why this needs writing down rather than trusting: T06's *first* reading of its own measurement found
+a decomposition on which the model won by 2.2×, and it took an out-of-sample check
+(`consecutive-3`, ratio 0.995) to establish that the decomposition had been chosen after seeing
+which component passed. The same temptation will exist when this table is assembled.
 
-The reason this needs writing down rather than trusting: T06's *first* reading of its own measurement
-found a decomposition on which the model did win by 2.2×, and it took an out-of-sample check
-(`consecutive-3`, ratio 0.995) to establish that the decomposition had been chosen after seeing which
-component passed. The same temptation will exist when this table is assembled.
-
-## 3. Harness — `spatialcpav25_gen/eval/benchmark.py`
-
-```python
-def run_benchmark(datasets, methods, regimes, folds, out_dir) -> pd.DataFrame
-```
-
-**Dataset requirement (settled; from `design/v23_design.md` §7, previously unstated in `specs/`).**
-The campaign must include **at least one non-brain dataset** (embryo or tumour) and **at least one
-non-transcriptomic panel** (e.g. EASI-FISH). This is a reviewer defence, not a nicety: every version
-of this project so far has been tuned on brain sections with a transcriptomic panel, and a method
-whose oblique-sectioning claim rests on laminar structure would look excellent on brain and fail
-silently elsewhere. `run_benchmark` refuses to produce a headline table unless both are present, and
-names what is missing (Convention 6). A campaign run without them is a development run, and the
-report says so on its first line.
-
-- Regimes: `alternating`, `consecutive-3`, `consecutive-5`. Report **separately** — the expected
-  story is "ties or wins at narrow gaps, wins decisively at wide gaps", and averaging destroys it.
-- Long-format output: one row per (dataset, regime, fold, section, method, metric, value). Everything
-  downstream is a groupby.
-- Cache per-(dataset, method, fold) generations to disk so metrics can be recomputed without
-  regeneration.
-- Resumable: skip completed cells; a benchmark that cannot resume will not survive a 3-day run.
-
-### Repeated seeds, and exactly which measurements pay for them (added at T09)
-
-`specs/09` §3's **repeated-seed rule**: any measurement that reaches a paper claim runs at least
-`Config.claim_min_seeds` (**3**) seeds and reports the spread, not a point estimate. T09 measured
-why — refitting one configuration at the same seed in a different process moved its scores by up
-to **0.0120**, while the gap between the two `text_emb_mode` options was **0.0110**, so "wins" and
-"wins by less than the run-to-run variation" were indistinguishable. A benchmark whose purpose is
-claiming wins cannot leave them that way.
-
-**Scoped, because three seeds on everything is not what the rule is for.** The rule attaches to
-*claims*, not to measurements. **T10 must provide `CLAIM_BEARING` in `eval/benchmark.py`** — the
-machine-readable form of the table below — and a `_check_claim_coverage` that refuses to emit a
-headline table containing a measurement classified neither way. This is the same derived
-enforcement `TRAINING_FREE_OPTIONS` and `CAPABILITY_CLAIM` carry in `train/select.py`, and for the
-same reason: the classification is made when a measurement is added, not rediscovered after a
-reviewer asks how many seeds it ran.
-
-| measurement | claim-bearing? | seeds |
-|---|---|---|
-| headline six-metric table, per regime | **yes** — this *is* the claim | **3** |
-| ablation arms that carry a claim (A2 weights-on vs off, A7 SEFL net contribution, A8 `loss_prog_WRONG`) | **yes** — each is stated as an effect | **3** |
-| capability experiments E1–E5 | **yes** — each is a claim of a capability | **3** |
-| boundary stratification of the headline metrics | **yes** — reported as a gap | **3** |
-| achievable-ceiling measurements | no — a bound on interpretation, not a claim of superiority | 1 |
-| diagnostics (per-module Moran's agreement, detection MAD, `w(v)`, retrieval-window derivation) | no — they inform, they do not claim | 1 |
-| calibration statuses and their achieved-vs-target numbers | no — reported as statuses, not compared against a baseline | 1 |
-| config selection itself | no — `specs/09` §3's rules govern it, and its own margins are checked against the envelope | 1 |
-
-**The bill, before it is incurred.** On the synthetic fixture one full-budget fit costs ~29 min, and
-the headline table needs one fit per (dataset, regime, method, fold). Three seeds multiplies only
-the claim-bearing rows above: the headline table and the boundary stratification share their fits
-(the stratification is a groupby of the same generations, not a re-run), the ablation arms that
-carry a claim are **3** of A2/A7/A8's arms, and E1–E5 are cheap relative to a fit. So the campaign's
-cost is **3x the headline table and the claiming ablation arms**, and **1x** everything else —
-roughly a **2.4x** multiple on a single-seed campaign rather than 3x, because the diagnostics,
-ceilings and calibration are the long tail and stay at one seed.
-
-Report the spread as **min–max across seeds** beside every claim-bearing median, and state the
-campaign's own envelope (the largest across-seed spread observed) in the methods section. A claim
-whose effect is smaller than that envelope is **not a claim**: report it as a tie, with the numbers.
-
-**Statistics** (`benchmark.py` or `stats.py`):
-- Paired Wilcoxon signed-rank vs. the competing method, per metric, paired by section.
-- Benjamini–Hochberg across the six metrics.
-- **Median difference with 95% bootstrap CI** (10 000 resamples, stratified by dataset) — this is
-  the "clear gap in medians" claim, stated defensibly.
-- Cliff's delta as a nonparametric effect size.
-- Forest plot per metric: median difference ± CI, one row per dataset. This is paper Figure 2.
-
-## 4. Ablations
-
-Wire as config overrides so each is a one-line entry:
-
-| ID | Override | Claim tested |
-|---|---|---|
-| A1 | `prior_mode=iid` | correlated prior preserves autocorrelation |
-| A2 | `w_autocorr=w_profile=w_distribution=0.5` (an **addition**, not an ablation — the terms ship off) | contribution of metric-aware training — **and it must be run at two step budgets**, see below |
-| A3 | `text_emb=lookup-only` | text channel's value on seen genes |
-| A4 | repulsion off (Poisson layout) | point-process realism — **the `g(r)` comparison must run over `[0, 3R]`, see below** |
-| A5 | `w_z=0` in retrieval | the specific competing-method flaw — **must be run in the wide-gap regime, see below** |
-| A6 | Gaussian mean decoder | sparsity/dispersion preservation |
-| A7 | `w_thick=w_prog=0.2` (an **addition**, not an ablation — SEFL ships off) | SEFL's contribution — **two losses, not three**, and the number that decides whether SEFL is used at all. See below |
-| A8 | `loss_prog_WRONG` enabled | **negative control** — wrongly constraining equivariant quantities should be *worse* |
-
-### A2 is an addition experiment, and one budget cannot answer it (amended at T08)
+### A2 is an addition experiment, and one budget cannot answer it
 
 **A2 runs the metric-aware terms *on*, because all three ship at 0** — the same inversion T07 made
-for SEFL, and for a related but not identical reason. T08 measured them at `specs/08`'s own weights
-and they cost at T06's 1200-step budget: Moran's MAE 0.0287 → 0.0408, marker-depth r 0.978 → 0.967,
-localization 0.967 → 0.962, gene–gene Frobenius 9.00 → 11.15. A schedule-only control — internal
-LOSO hiding a section, no terms charged — sits between the two arms, so the cost is the terms', not
-the hidden section's.
+for SEFL. T08 measured them at `specs/08`'s weights and they cost at T06's 1200-step budget:
+Moran's MAE 0.0287 → 0.0408, marker-depth r 0.978 → 0.967, localization 0.967 → 0.962, gene–gene
+Frobenius 9.00 → 11.15. A schedule-only control — internal LOSO hiding a section, no terms charged
+— sits between the two arms, so the cost is the terms', not the hidden section's.
 
-**But the effect is a budget effect, and A2 has to be run at two budgets or it will report the wrong
-thing.** The terms add a constraint and converge more slowly, and 1200 steps is where T06 stopped
-*because the arm without them starts degrading there* — the early stop is R4's symptom, not a
-neutral reference point. At 2400 steps the ordering reverses on four of six statistics:
+**But the effect is a budget effect.** The terms add a constraint and converge more slowly, and 1200
+steps is where T06 stopped *because the arm without them starts degrading there* — the early stop is
+R4's symptom, not a neutral reference. At 2400 steps the ordering reverses on four of six:
 
 | statistic | off@1200 | on@1200 | off@2400 | on@2400 |
 |---|---|---|---|---|
@@ -328,235 +580,583 @@ neutral reference point. At 2400 steps the ordering reverses on four of six stat
 
 The arm without the terms buys likelihood with the longer budget and pays covariance for it
 (1.5901 → 1.5703 while Frobenius goes 9.000 → 9.049); the arm with them improves on both. **A2
-therefore reports all six target metrics at both budgets**, and the decision it makes is whether the
-terms are on for the headline table. Reproduce with `python scripts/t08_metric_report.py`.
+reports all six target metrics at both budgets**, and the decision it makes is whether the terms are
+on for the headline table. Reproduce with `python scripts/t08_metric_report.py`.
 
-### A7 tests two losses, and until it is run SEFL's net contribution is unverified (amended at T07)
+### A7 tests two losses, and until it runs SEFL's net contribution is unverified
 
-**A7 runs SEFL *on*, because all three SEFL weights ship at 0.** Two separate measurements at T07
-put them there, and they are different findings:
+**A7 runs SEFL *on*, because all three SEFL weights ship at 0.** Two separate T07 measurements put
+them there, and they are different findings:
 
 * `w_cross = 0` — intersection consistency is exact **by construction** in v25 (asserted bitwise on
   an untrained model), so the loss is redundant; and training it flattens the anatomical field,
   because the only plane-dependent channel it can compare is T04's deliberately pose-dependent
   triplane (generated per-gene variance **0.067** against **0.711** with SEFL off). `specs/07` §2's
   amendment, SPEC_QUESTIONS C19, open risk R6.
-* `w_thick = w_prog = 0` — these two are *not* broken, but with them on at 0.2 a model trained at
-  **T06's own budget and configuration fails three of T06's acceptance tests**: detection-rate MAD
-  0.0551 against a < 0.05 criterion (T06 recorded 0.0191), mean-variance slope relative error
-  **0.2838** against < 0.15 (T06 recorded 0.0084), and gene-gene Frobenius covariance error
-  **20.301** against T06's 9.316 and the independent-donor baseline's 7.563. A default that breaks
-  the previous task's acceptance criteria is not a default.
+* `w_thick = w_prog = 0` — these two are *not* broken, but at 0.2 a model trained at **T06's own
+  budget and configuration fails three of T06's acceptance tests**: detection-rate MAD 0.0551
+  against < 0.05 (T06 recorded 0.0191), mean–variance slope relative error **0.2838** against < 0.15
+  (T06 recorded 0.0084), and gene–gene Frobenius **20.301** against T06's 9.316 and the
+  independent-donor baseline's 7.563. A default that breaks the previous task's acceptance criteria
+  is not a default.
 
 So A7 is an **addition** experiment: the shipped model (SEFL off) against the same model with
-`w_thick = w_prog = 0.2`, and the question it answers is not "how much does SEFL buy" but "is SEFL
-used at all". Describe it that way in the paper — as testing **`L_thick` and `L_prog`**, with the
-methods stating that the third SEFL loss is unnecessary in v25 and why, because the by-construction
-result is a *stronger* claim than the loss it replaces and belongs beside E5.
+`w_thick = w_prog = 0.2`. The question is not "how much does SEFL buy" but "is SEFL used at all".
+Describe it that way — as testing **`L_thick` and `L_prog`**, with the methods stating that the
+third SEFL loss is unnecessary in v25 and why, because the by-construction result is a *stronger*
+claim than the loss it replaces and belongs beside E5.
 
 **Until A7 has run on the six target metrics, SEFL's net contribution is unverified and the paper's
-SEFL section cannot be written.** T07 established that the losses are correct, bounded in cost and
-non-collapsing at their own weights; it did **not** establish that they help, and every distributional
-statistic it could measure moved the wrong way. The state of the evidence, to be superseded by this
-experiment:
+SEFL section cannot be written.** T07 established the losses are correct, bounded in cost and
+non-collapsing at their own weights; it did **not** establish that they help, and every
+distributional statistic it could measure moved the wrong way:
 
 | term | status after T07 |
 |---|---|
 | `L_cross` | **not used** — redundant by construction, harmful when trained |
-| `L_thick` | verified against its own criterion (counts add at 3.000×, the loss charging 0.00); effect on the target metrics **unmeasured** |
+| `L_thick` | verified against its own criterion (counts add at 3.000×, loss charging 0.00); effect on the target metrics **unmeasured** |
 | `L_prog` | implemented; its conditioning claim **did not reproduce** on the synthetic fixture (SPEC_QUESTIONS B22); effect on the target metrics **unmeasured** |
 
-A7 must report all six metrics, and beside them the reconstruction NLL (**1.738** off against
-**2.082** on), the generated per-gene variance ratio (**0.711** off against **1.04-1.33** on, i.e.
-overshooting the real tissue rather than undershooting it) and the three T06 statistics above. State
-the verdict in the methods whichever way it falls; if SEFL loses, that is a result about a
-continuous-field model needing less self-supervision than a point-cloud one, not an embarrassment.
+A7 reports all six metrics, and beside them the reconstruction NLL (**1.738** off against **2.082**
+on), the generated per-gene variance ratio (**0.711** off against **1.04–1.33** on, i.e. overshooting
+the real tissue rather than undershooting it) and the three T06 statistics above. State the verdict
+in the methods whichever way it falls; if SEFL loses, that is a result about a continuous-field model
+needing less self-supervision than a point-cloud one, not an embarrassment.
 
-### A4's pair-correlation comparison must run over `[0, 3R]` (measured at T05)
+### A4's pair-correlation comparison must run over `[0, 3R]`
 
-**Do not report A4 against `g(r)` restricted to `[r0, 3R]`.** T05 originally stated the
-pair-correlation criterion over that range and it **cannot fail**: a hard-core process differs from a
-Poisson one only *inside* the correlation hole, and the hole ends at about `r0`, because `r0` **is**
-a low percentile of the nearest-neighbour distances. Measured on the synthetic fixture, with the real
-`g` pooled over the training sections and the simulated one over three seeds:
+**Do not report A4 against `g(r)` restricted to `[r0, 3R]`.** T05 originally stated the criterion
+over that range and it **cannot fail**: a hard-core process differs from a Poisson one only *inside*
+the correlation hole, and the hole ends at about `r0`, because `r0` **is** a low percentile of the
+nearest-neighbour distances. Measured on the fixture, real `g` pooled over training sections and the
+simulated one over three seeds:
 
 | Range | `field` mode | pure Poisson (A4) |
 |---|---|---|
 | `[r0, 3R]` | 0.093 | **0.070 — indistinguishable from the full model** |
 | `[0, 3R]` | 0.093 | **0.994** |
 
-Reported over `[r0, 3R]`, A4 is a **false null**: the ablation table would say the repulsion buys
-nothing while `g(r)` below `r0` says it is the difference between tissue and confetti. `specs/05` is
-amended to `[0, 3R]` and `tests/test_layout.py` asserts both ranges, the second of them precisely so
-that the blindness stays visible. Any A4 number in `reports/benchmark.md` states its range.
+Over `[r0, 3R]`, A4 is a **false null**: the table would say the repulsion buys nothing while `g(r)`
+below `r0` says it is the difference between tissue and confetti. `specs/05` is amended to
+`[0, 3R]`; `tests/test_layout.py` asserts both ranges, the second precisely so the blindness stays
+visible. Any A4 number in the report states its range. The same caution applies to every A4
+companion metric: choose statistics that can see inside the hole (nearest-neighbour distance
+distribution, `g(r)` from 0) rather than ones evaluated only where the two processes agree by
+construction.
 
-The same caution applies to every A4 companion metric: choose statistics that can see inside the
-hole (nearest-neighbour distance distribution, `g(r)` from 0) rather than ones evaluated only where
-the two processes agree by construction.
+### A5 must be run in the wide-gap regime, at the derived window
 
-### A5 must be run in the wide-gap regime (measured at T04's GATE 2)
+**...and not at a fixed `retrieval_z_window`.** On `consecutive-3` the default window of 3 × median
+spacing leaves 100–110 of every 512 cells with **no admissible donor at all** after the own-section
+exclusion, so the retrieval branch is silently absent for a fifth of them and an ablation of
+`retrieval_w_z` would be measuring the window. `specs/09` §1 requires the window to be derived from
+the gap; A5 runs against the derived window with the **empty-pool fraction reported beside the
+ablation delta**. This is the trap G2.3 fell into with `retrieval_candidates_per_section`: the
+ablation read as a no-op, with the wrong sign, until the cap was raised.
 
-**...and not at a fixed `retrieval_z_window`** (measured at T06). On the `consecutive-3` holdout the
-default window of 3 × median spacing leaves 100–110 of every 512 cells with **no admissible donor at
-all** after the own-section exclusion, so the retrieval branch is silently absent for a fifth of them
-and an ablation of `retrieval_w_z` would be measuring the window. `specs/09` §1 requires the window to
-be derived from the gap; A5 must be run against the derived window, with the empty-pool fraction
-reported beside the ablation delta. This is the same trap G2.3 fell into with
-`retrieval_candidates_per_section` and recorded — the ablation read as a no-op, with the wrong sign,
-until the cap was raised.
-
-**Do not report A5 from the `alternating` holdout, and do not report it with the whole stack
-admissible.** GATE 2's G2.3 measured the ablation both ways on the synthetic fixture, with the two
-arms sharing a training seed so that initialisation, batch order and per-step rotations were
-identical and the retrieval score was the only difference:
+**Do not report A5 from `alternating`, and do not report it with the whole stack admissible.**
+GATE 2's G2.3 measured it both ways with the two arms sharing a training seed, so initialisation,
+batch order and per-step rotations were identical and the retrieval score was the only difference:
 
 | Candidate pool | R² lost by `w_z = 0` at fractional depth 0.2 / 0.5 / 0.8 |
 |---|---|
-| Two flanking sections, the near one 1 spacing away and the far one 4 (the wide-gap regime) | **+0.0303 / +0.0034 / +0.0486** |
+| Two flanking sections, near one 1 spacing away and far one 4 (the wide-gap regime) | **+0.0303 / +0.0034 / +0.0486** |
 | Whole stack admissible | +0.0004 / +0.0034 / +0.0019 — **inside the noise** |
 
-The reason is mechanical, not statistical. With every section admissible, the *nearest* section is
-always in the pool and in-plane distance alone already ranks it first, so the z term has nothing
-left to decide. It earns its place only when the evidence is far and asymmetric — which is the
-regime in-silico sectioning actually lives in, and the one the competing method's score cannot see.
-Run whole-stack and A5 reports a **null result for a term that demonstrably works**, which would be
-a false negative in the paper's own ablation table.
+The reason is mechanical, not statistical. With every section admissible the *nearest* section is
+always in the pool and in-plane distance alone ranks it first, so the z term has nothing left to
+decide. It earns its place only when the evidence is far and asymmetric — which is the regime
+in-silico sectioning actually lives in, and the one the competing method's score cannot see. Run
+whole-stack and A5 reports a **null result for a term that demonstrably works**.
 
-Concretely, A5 must be reported at `consecutive-3` and `consecutive-5` (the regimes where the gap to
-the nearest real section is 2–3 spacings), and `reports/benchmark.md` must state which holdout
-regime each A5 number came from. Reporting it at `alternating` as well is fine as a second row,
-labelled as the dense-evidence control, but it is not the headline.
+A5 is therefore reported at `consecutive-3` and `consecutive-5` (**Tier 2**, where the gap to the
+nearest real section is 2–3 spacings), and the report states which regime each A5 number came from.
+An `alternating` row is fine as a second, labelled dense-evidence control; it is not the headline.
 
 **Check `retrieval_candidates_per_section` before trusting any A5 number.** The invariant that makes
-the retrieval score do anything at all is about the candidate **union**:
+the retrieval score do anything is about the candidate **union**:
 `candidates_per_section × n_admissible_sections` must exceed `retrieval_k`, or the top-K returns the
 whole pool and the score decides nothing. A wide-gap holdout is exactly where the number of
 admissible sections is smallest, so this is exactly where it bites. `Config.validate` enforces
-`retrieval_candidates_per_section >= retrieval_k` and `RetrievalIndex.query` warns at runtime
+`retrieval_candidates_per_section >= retrieval_k` and `RetrievalIndex.query` warns
 (`InertScoreWarning`) when a query's union falls to `K` or below. **An A5 run that emits that
 warning is void.**
 
-### Stratify every headline metric by distance to the stack boundary
+---
 
-**Open risk R3, raised at T04.** The T04 probe reconstructed the two **edge** sections at R²
-**0.2912** and **0.3642** against an interior mean of **0.4474**. The cause is one-sided evidence at
-the volume boundary, it is a property of serial sectioning rather than of the fixture, and it is
-large enough to move a pooled average.
-
-Two consequences for this task:
-
-1. **Report boundary and interior separately** for the six `paper_*` metrics, not just pooled. A
-   method that is strong in the interior and weak at the ends is a different claim from one that is
-   uniformly mediocre, and the pooled number cannot distinguish them. If the baselines degrade at the
-   boundary too — SpatialZ interpolates between flanking slices and has no flanks there either — that
-   comparison is itself a result worth a row.
-2. **Check the holdout regimes for boundary loading.** `alternating` holds out interior sections by
-   construction (`split_holdout` never holds out the first or last), so it under-samples the regime
-   where the model is weakest, while `consecutive-5` on a short stack pushes the held-out run close
-   to an end. State which regime each headline number came from and how much boundary tissue it
-   contained; otherwise a regime change silently moves the metric.
-
-## 5. Capability experiments
+## 7. Capability experiments E1–E5 — `spatialcpav25_gen/eval/experiments.py`
 
 ```python
-def exp_zero_shot_genes(...)      # E1: hold out 20% of genes entirely (both arms, see below)
-def exp_cross_panel(...)          # E2: train on A, generate B's panel
-def exp_oblique_validation(...)   # E3: vs. orthogonally-sectioned specimen
-def exp_throughput(...)           # E4: 10x z-density, recover fine 3D structure
-def exp_intersection_agreement(...)# E5: mutual coherence vs. the competing method
+def exp_zero_shot_genes(...)       # E1
+def exp_cross_panel(...)           # E2
+def exp_oblique_validation(...)    # E3
+def exp_throughput(...)            # E4
+def exp_intersection_agreement(...)# E5
 ```
 
-**E1 reports both arms** (settled; `design/v23_design.md` §2.2 / §7, previously unstated here). A
-held-out gene has no learned residual `r_g`, so the zero-shot table must show *both*
-`forward_zero_shot(use_distill=False)` — the pure-text arm, `r_g = 0` — and `use_distill=True`, the
-distilled `r_g = psi(t_g)`. Both exist and are shape-tested in T02. One arm alone cannot separate
-"the text channel carries the gene" from "the distillation head guessed a residual", which is the
-whole claim of open-vocabulary generation.
+### E1 — zero-shot genes. Home: `deep_starmap`, not STARmap
 
-**E5 is the cheapest and most decisive.** Generate two intersecting oblique sections with each
-method and measure agreement along the intersection line as a function of dihedral angle. The
-competing method optimises each slice independently, so its two sections have no mechanism forcing
-agreement where they cross; ours share one 3D noise field and are trained for it. Expect a
-categorical rather than incremental gap. One panel, minimal compute — run it early, as soon as T09
+**STARmap's 28-gene panel cannot measure E1.** 20% of 28 is 5–6 genes. Per-gene Moran's and Geary's
+correlations over 5 genes are noise, and `MARKER_GENES = ("Flt1", "Pcp4", "Cux2")` are 3 of the 28,
+so a random split has a large chance of taking a marker and silently disabling `paper_marker_*`.
+
+**`deep_starmap` is the home** (Tier 2): 1 017 genes, mouse brain, `raw_counts` (so the ZINB path,
+§5.1), 137 cell types, 198 675 cells — and crucially `paper_2_4_6`, **the same design as tier 1**,
+so the zero-shot row is read against a headline-shaped comparison rather than a differently-shaped
+one.
+
+**Gene-subset scoring is free — do not build it.** `evaluate_paper` computes
+`common = intersect1d(pred.gene_names, gt.var_names)` and scores on that intersection. Emit a
+prediction whose `gene_names` is only the held-out 20%, and every metric lands on exactly the
+zero-shot genes, on the pinned instrument, with no bench3 change.
+
+One catch: markers and layer genes come from `uns['paper_protocol']`, so a split that excludes them
+makes `paper_marker_*` unavailable on that arm. **Run two gene splits** — markers-held-out and
+markers-seen — so the marker family is reportable either way, and say which split each number is
+from.
+
+⚠️ **Blocker, measured: the existing gene table does not cover `deep_starmap`.**
+`resources/gene_meta.parquet` is exactly `zhuang_abca2_panel_symbols.txt` (1 122) ∪
+`starmap_panel_symbols.txt` (28) = **1 138 symbols**, verified by set arithmetic — no other panel is
+in it. It is mouse-cased: **3** of its 1 138 symbols are all-uppercase. `deep_starmap`'s symbols are
+**uppercase** despite being mouse (`FLT1`, `PCP4`, `CUX2` in its own marker list), so on an exact
+match **every one of its 1 017 symbols misses**. Two things follow:
+
+1. **Case normalisation is mandatory** in `load_gene_meta` lookup — fold to the table's casing
+   before matching, and report how many symbols resolved only after folding.
+2. **Even after folding, coverage is unmeasured** and probably partial: the table was built for
+   Zhuang-ABCA-2 + STARmap, not for a 1 017-gene Deep-STARmap panel. **Measure the overlap before
+   running E1**, and if it is short, a new table build is required — which needs `mygene` network
+   access that `progress/t02_text_embeddings.md` records as **403'd in this container**
+   (SPEC_QUESTIONS C14). **E1 is blocked on either network access or a supplied table.** Surface
+   this at the pilot; do not discover it mid-campaign.
+
+**E1 reports both distillation arms** (settled; `design/v23_design.md` §2.2 / §7). A held-out gene
+has no learned residual `r_g`, so the table shows *both* `forward_zero_shot(use_distill=False)` —
+the pure-text arm, `r_g = 0` — and `use_distill=True`, the distilled `r_g = psi(t_g)`. Both exist
+and are shape-tested at T02. One arm alone cannot separate "the text channel carries the gene" from
+"the distillation head guessed a residual", which is the whole claim. These are **generation-time**
+arms: one fit is scored twice.
+
+**`load_gene_meta(path, species=...)` raises on a table of the wrong organism** (added after a mouse
+panel's table came back holding four other mammals' genes and nothing noticed). E1 passes
+`Config.mygene_species`, and the headline text quotes the table's own coverage — `gene_meta_summary`
+reports rows, resolved taxid, how many rows carry a summary, and the Ensembl-id prefix histogram —
+because "the model decodes unseen genes at r = X" means nothing without knowing the descriptors were
+real. **One table per organism**, at different `Config.gene_meta_path`s.
+
+**Coverage must be quoted split by `summary_source`, never as one number.** Mouse NCBI summaries
+cover 148/1138 (13%) of the current table, so `Config.gene_summary_fallback="ortholog"` (the
+default) backfills the rest from the 1:1 human orthologue's summary, labelled in the descriptor
+text. `gene_meta_summary` reports `summary_sources` as `native / ortholog / none`; a bare
+"N/1138 carry a summary" hides whether the text the encoder read was mouse biology or human. E1
+therefore reports **two summary arms**, both filters on the `summary_source` column of one table
+rather than two builds:
+
+| arm | descriptors |
+|---|---|
+| native-only | rows with `summary_source == "native"` keep their summary; the rest are `"{symbol}. {full_name}."` |
+| with fallback | as built |
+
+If zero-shot transfer holds only on the fallback arm, the claim is that *human* gene descriptions
+transfer to a mouse model — true and interesting, and not the same sentence as the design's.
+
+Fit count: **2 gene splits × 2 summary arms = 4 fits per seed** (the descriptors change what the
+model trains on); × 3 seeds = 12. The 2 distillation arms are free.
+
+### E2 — cross-panel. Pair: STARmap ↔ `exseq_visual_cortex`
+
+Train on A's panel, generate B's. bench3 scores a prediction against **one** dataset's ground truth,
+so this needs a pairing driver, not a harness — and it only means anything for a **same-tissue**
+pair. STARmap (28 genes) and `exseq_visual_cortex` (42 genes) are both mouse visual cortex,
+`raw_counts`, and bench3's own README gives that as the reason ExSeq is the chosen analogue: same
+tissue, so the marker genes and the laminar axis carry over unchanged.
+
+⚠️ ExSeq is small and thin — **1 130 cells, 5 sections, `paper_2_4`, 28% unannotated, and only 1 of
+3 markers resolved (`Cux2`)**. Report E2 with those numbers in the caption; the marker family is
+effectively one gene on that side. Both directions, 3 seeds: **6 fits**.
+
+### E3 — oblique validation. Home: the re-sectioned STARmap (§9)
+
+Train on z-sections, generate x-sections, score against the **real** cells of the re-sectioned
+volume. This is the oblique claim validated on real data with real ground truth rather than on the
+fixture. **Tier 2** — the design is modified by construction. Overlaps V2; implement once, reference
+from both. Read §9 before costing it: the geometry has a hard constraint.
+
+### E4 — throughput. A structure-recovery figure, not a scored row
+
+Generate at 10× the training z-density and show the recovered fine 3-D structure. **There is no
+ground truth at 10× density** — the volume does not contain sections between its own sections — so
+E4 produces **no scored metric and no claim-bearing number**. It is a qualitative figure plus
+self-consistency diagnostics (continuity of the generated stack, absence of a spike at a training
+section's depth — `test_stack_coherence` already pins both). Generation-only from an existing fit:
+**0 extra fits**. Amend the original spec's implication that it is scored.
+
+### E5 — intersection agreement. Cheapest, most decisive, no bench3 dependency
+
+Generate two intersecting oblique sections with each method and measure agreement along the
+intersection line as a function of dihedral angle. The competing method optimises each slice
+independently, so its two sections have no mechanism forcing agreement where they cross; ours share
+one 3D noise field and are trained for it. Expect a categorical rather than incremental gap.
+
+**E5 needs no ground truth and therefore no bench3 at all** — it measures mutual coherence between
+two generated slices. One panel, minimal compute, **0 extra fits**. Run it early, as soon as T09
 lands, because it is the figure that establishes the contribution is structural.
 
-## 5b. SEFL validations (V1–V4)
+⚠️ **T09 measured the criterion and half of it is above its ceiling** (SPEC_QUESTIONS C27):
+concordance **0.814** against the spec's 0.8 (ceiling 0.781), expression correlation **0.724**
+against the spec's 0.85 with a measured ceiling of **0.726** — two independent draws of one plane
+under one realisation. The headline test asserts concordance absolutely and correlation
+**ceiling-relative**; the literal 0.85 is a strict xfail.
+
+---
+
+## 8. SEFL validations V1–V4
 
 These validate the sectioning-equivariance claims specifically. They are what justify SEFL as a
-scientific contribution rather than a regulariser, so they are not optional.
+scientific contribution rather than a regulariser, so they are not optional. All are **Tier 2**.
 
 ```python
-def val_resectioning_cycle(...)     # V1
-def val_orthogonal_specimen(...)    # V2
-def val_anisotropy_prediction(...)  # V3
-def val_thickness_transfer(...)     # V4
+def val_resectioning_cycle(...)   # V1
+def val_orthogonal_specimen(...)  # V2
+def val_anisotropy_prediction(...)# V3
+def val_thickness_transfer(...)   # V4
 ```
 
 **V1 — virtual re-sectioning cycle.** From a coronally-sectioned volume, generate a full sagittal
-stack; treat that generated stack as input and regenerate the original coronal sections; compare to
-the real ones. End-to-end and ground-truthed, and it cannot be passed by memorisation because the
-intermediate representation is entirely synthetic. Report the six target metrics on the round trip
-and compare against a single-pass generation as the ceiling. Degradation over the cycle is the
-quantity of interest — report it, do not hide it.
+stack; treat that generated stack as input and regenerate the original coronal sections; compare
+against the real ones. End-to-end and ground-truthed, and it cannot be passed by memorisation
+because the intermediate representation is entirely synthetic. Report the six target metrics on the
+round trip against a single-pass generation as the ceiling. **Degradation over the cycle is the
+quantity of interest — report it, do not hide it.** Needs the §9 preprocessor for the sagittal
+target. 1 fit on the generated stack per seed: **3 fits**.
 
 **V2 — orthogonal-specimen validation.** Train on a coronally-sectioned specimen, generate sagittal
 sections, compare against a *different* specimen actually sectioned sagittally. Comparison must be
 **distribution-level** (Sinkhorn on cell-state distributions, laminar profile agreement, cell-type
-localization), never per-cell — the specimens are different animals. Overlaps with E3; implement
-once and reference from both.
+localization), never per-cell — the specimens are different animals. Overlaps E3; implement once.
+
+⚠️ **No bench3 dataset is a second specimen sectioned on a different axis.** V2's literal form has
+no data. What §9 provides is the *same* specimen re-sectioned, which is E3, and which is a **stronger**
+ground truth (real cells, same animal) but a **weaker** generalisation claim (no cross-animal
+transfer). State that distinction in the methods rather than presenting E3 as if it were V2. If a
+genuinely sagittal second specimen is ever available, V2 is re-opened; **0 extra fits** either way.
 
 **V3 — anisotropy prediction (the equivariant-column payoff).** From the fitted 3D covariance
 structure, *predict* how in-plane Moran's I should vary with section angle; verify against real
-sections cut at different angles. This is the correct use of the quantities T07 forbids constraining:
-they are predicted, not matched. A model that had merely memorised a stack of 2D fits cannot pass
-this. Report predicted-vs-observed r across angles.
+sections cut at different angles. This is the correct use of the quantities T07 forbids
+constraining: they are predicted, not matched. A model that had merely memorised a stack of 2D fits
+cannot pass this. Report predicted-vs-observed r across angles. Reads a fitted model plus §9's
+angle sweep: **0 extra fits**.
 
-**V4 — thickness transfer.** Train on thin sections and predict thick-section (spot/bin-level) data,
-and the reverse. Validates `L_thick` and supports the cross-technology harmonisation claim. Metric:
-agreement of binned expression totals and per-type counts. Include an ablation with `w_thick=0` to
-show the loss is what buys the transfer.
+**V4 — thickness transfer. Reinstated as a real-data experiment, with a decoder caveat and a better
+primary design.**
 
-## 6. CLI — `spatialcpav25_gen/cli.py`
+The cross-dataset pair is real: `merfish_hypothalamus` (thin, 12 sections at 50 µm spacing, 155
+genes) and `merfish_thick_hypothalamus` (a 200 µm block cut into 7 slabs of ~27 µm, 156 genes) —
+same tissue, near-identical panel, same technology family.
+
+⚠️ **But the two sit on different decoders.** `merfish_hypothalamus` is `normalized` → `zigamma`;
+`merfish_thick_hypothalamus` is `raw_counts` → `zinb` (§5.1). A thin↔thick transfer measured across
+a decoder change is not measuring `L_thick` — it is measuring `L_thick` confounded with an
+unvalidated decoder swap.
+
+**So V4 has two rows, and the primary one is not the cross-dataset pair:**
+
+| row | design | decoder | claim-bearing |
+|---|---|---|---|
+| **V4a (primary)** | `merfish_thick_hypothalamus` re-partitioned by §9 into **14 slabs of ~13.5 µm** (thin) vs its shipped **7 slabs of ~27 µm** (thick) — same volume, same cells, same panel, thickness the only variable | `zinb` both sides | ✅ |
+| V4b (secondary) | `merfish_hypothalamus` (thin) ↔ `merfish_thick_hypothalamus` (thick), as originally proposed | `zigamma` ↔ `zinb` | ❌ — labelled, decoder confound stated |
+
+V4a is a clean single-variable experiment and it costs nothing extra: `merfish_thick_hypothalamus`
+is `partition="z_width"`, so a 14-slab build is a re-partition of the same point cloud — exactly
+what §9's preprocessor does, emitted as a new dataset id, with the shipped 7-slab build untouched.
+
+Metric for both: agreement of binned expression totals and per-type counts. **Include an ablation
+with `w_thick=0`** to show the loss is what buys the transfer. 2 arms × 3 seeds on V4a: **6 fits**;
+V4b diagnostic at 1 seed: **2 fits**.
+
+---
+
+## 9. The re-sectioning preprocessor — `spatialcpav25_gen/eval/resection.py`
+
+STARmap is a real 3-D point cloud at single-cell resolution, so re-slicing it along a different axis
+gives **genuine orthogonal sections with real ground truth**. A model trained on z-sections that
+reproduces x-sections is the oblique claim validated on real data — not on the synthetic fixture,
+and not by proxy. This is what makes E3, V1 and V3 measurable on the pinned instrument instead of on
+a bespoke rig, and it is why it is worth building.
+
+```python
+def resection(source_h5ad, out_h5ad, *, normal, n_sections, dataset_id, seed) -> Path
+def repartition(source_h5ad, out_h5ad, *, n_sections, dataset_id, seed) -> Path
+```
+
+### It emits a new dataset id and nothing else changes
+
+The output is an ordinary bench3 `data.h5ad` — same `obsm['spatial']`, `obs['section']`,
+`obs['cell_type']`, and a `uns['paper_protocol']` our preprocessor writes (marker genes, layer
+genes, held-out sections) so `evaluate_paper` reads its panel from the file exactly as for any other
+dataset. It is written under a **new dataset id** and passed **by path** (`--dataset /path/to/...`),
+so:
+
+- `DATASET_SPECS` is not edited; **no existing spec, build or result changes**.
+- The tier-1 `starmap_visual_cortex/data.h5ad` build is **byte-identical** — the preprocessor reads
+  it (or the raw volume) and never writes to it. `test_resection_leaves_source_bitwise_identical`
+  asserts the source SHA-256 before and after.
+- `run_benchmark.dataset_meta` falls back to `REGISTRATION = "none"` for an unregistered name, which
+  is correct for a re-sliced single imaging block; the driver passes `registration="none"`
+  explicitly regardless.
+
+`repartition` is the same machinery with `normal` unchanged — used by V4a (§8) to cut
+`merfish_thick_hypothalamus`'s 200 µm block into 14 thin slabs instead of 7 thick ones.
+
+### ⚠️ The geometry constraint — read this before costing E3
+
+**Every bench3 volume is a thin slab, not an isotropic block.** STARmap after trimming is
+approximately **1545 × 1545 × 77 µm** (lateral extent from bench3's own calibration comment,
+`VOXEL_XY_UM = 0.859` × 1800 px = 1545 µm; 77 retained planes at `VOXEL_Z_UM = 1.0`). Re-slicing at
+**90°** therefore produces sections that are:
+
+- **~220 µm thick** (1545 / 7) against the original **11 µm** — a **20×** change in
+  `Section.thickness`, which is a first-class field that `L_thick` and the slab-volume intensity
+  integral both read. A 90° re-slice confounds the orientation claim with a 20× thickness change.
+- **1545 × 77 µm in plane** — an aspect ratio of about **20:1**. `evaluate_paper` bins the marker
+  field on a `FIELD_GRID = 20` square grid, so 20 bins would span 77 µm on one axis and 1545 µm on
+  the other: `paper_marker_field_r` and `paper_marker_field_ssim` degenerate to a 1-D comparison.
+
+This is a property of the data, not of the method, and it is not fixable by tuning. **So E3 sweeps
+the angle rather than jumping to 90°:**
+
+1. **Determine which in-plane axis carries the laminar gradient first.** STARmap's laminar axis is
+   in-plane (`Cux2` superficial → `Pcp4` deep) and `evaluate_paper.laminar_axis` derives it from the
+   ground truth. If the gradient runs along x, re-slicing along x puts every section at a single
+   cortical depth and **destroys the very structure the marker family measures**; if along y, it
+   survives. One line from the built dataset settles it. **Measure it before choosing the normal.**
+2. **Sweep `normal` over a set of angles** from the original z-normal (e.g. 15°, 30°, 45°, 60°, 90°),
+   emitting one dataset id per angle. Ground truth is real cells at every angle, so all of them are
+   valid; what varies is footprint and thickness.
+3. **`resection` refuses a build whose footprint aspect ratio exceeds
+   `Config.resection_max_aspect`** (proposed default 4.0) or whose section thickness departs from
+   the source's by more than `Config.resection_max_thickness_ratio`, and the error names the angle
+   and the measured values. A silently degenerate field metric is exactly the failure this guard
+   exists to prevent (Convention 6). 90° is expected to trip it on STARmap; report that as a
+   **result about the data** — "the published volume is too thin to be re-sectioned orthogonally" —
+   rather than forcing it through.
+4. **Every re-sectioned number states its angle, footprint and thickness**, and the anisotropy
+   sweep is what V3 reads.
+
+Also inherited from bench3: the build refuses any section under 50 cells and prints
+`cells/section: min/median/max`. STARmap gives 28 978 / 7 ≈ 4 140 per section at any angle, so the
+cell-count floor is never the binding constraint — the footprint is.
+
+`deep_starmap` (125 µm z span, 199 k cells) and `merfish_thick_hypothalamus` (170 µm z span) are the
+two other true 3-D point clouds worth re-sectioning; both are still slabs, so the same guard
+applies. `easi_fish_lha*` have the thickest blocks (213–261 µm) but only 26 genes and are `zigamma`.
+
+---
+
+## 10. CLI — `spatialcpav25_gen/cli.py`
 
 ```
-spatialcpav25_gen fit      --data X.h5ad --out runs/foo          # includes select_config + calibration
-spatialcpav25_gen generate --run runs/foo --plane oblique --angle 45 --n 20 --out slices.h5ad
+spatialcpav25-gen fit      --data X.h5ad --out runs/foo      # includes select_config + calibration
+spatialcpav25-gen generate --run runs/foo --plane oblique --angle 45 --n 20 --out slices.h5ad
 spatialcpav25-gen bench    --config bench.yaml --out reports/
-spatialcpav25_gen report   --results reports/results.parquet --out reports/figures/
+spatialcpav25-gen report   --results reports/results.parquet --out reports/figures/
 ```
 
 `fit` takes **no method flags** — configuration is selected internally (T09 §3). That is a claim in
 the paper; make sure it is literally true of the CLI.
 
+`bench` is a **driver over bench3**, not a harness: it resolves the campaign matrix from the YAML,
+sets `BENCH_V3_RESULTS` per cell, calls `run_benchmark.run_single`, then hands the roots to
+`eval/stats.py`. It asserts `evaluate_paper.py`'s SHA-256 before and after (§0).
+
+---
+
+## 11. The pilot — run this before any campaign
+
+**STARmap only, end to end.** Nothing else is run until the pilot has been read.
+
+| step | what |
+|---|---|
+| 1 | Assert the `evaluate_paper.py` SHA-256; record it |
+| 2 | Install the environment; build `starmap_visual_cortex` (tier 1, unmodified) |
+| 3 | `python -m src.bench3.selftest` — the four probes, on the real build |
+| 4 | Add `run_spatialcpav25_gen.py` + the one `METHODS` entry; confirm `run_all` with no arguments still plans exactly the previous campaign |
+| 5 | Comparators on tier 1: SpatialZ, FEAST, isoST, v20, plus `oracle` and `flanking_copy` — **required, because the existing numbers are not in this repo (§3)** |
+| 6 | Config selection on STARmap (§12: this is the single largest line item — time it) |
+| 7 | Headline six-metric table at **3 seeds**, three results roots |
+| 8 | `eval/stats.py` on those roots: Wilcoxon, BH, bootstrap CI, Cliff's delta, forest plot |
+| 9 | **E5** — cheapest and most decisive, no bench3 dependency |
+| 10 | **One ablation: A1** (`prior_mode=iid`) — the simplest override, and it exercises the per-arm results-root mechanism |
+| 11 | Measure the laminar-gradient axis and the re-sectioning footprint (§9) — a measurement, not a run |
+| 12 | Measure `deep_starmap` gene-table coverage after case-folding (§7) — a measurement, not a run |
+
+**Report:** what one real-data fit actually costs (wall clock, peak RSS, CPU vs GPU), the measured
+across-seed envelope, what broke, and the answers to steps 11 and 12. **Then** the 3-vs-5 dataset
+decision is taken with real numbers rather than estimates.
+
+---
+
+## 12. Cost
+
+### The compute assumption, stated explicitly
+
+**Every timing this project has ever measured is CPU.** `specs/10`'s "~29 min per full-budget fit"
+and T09's selection runs (19 fits / 9 195 s ≈ 8 min each at the reduced budget; 23 fits / 21 330 s
+≈ 15.5 min each at 2400 steps) were all measured **on CPU, on the synthetic fixture** — 9 sections ×
+1 500 cells = 13 500 cells, 200 genes. `torch==2.2.2` is pinned and CUDA is available in principle,
+but **no GPU timing exists for this codebase**, so a GPU figure would be a guess. The budget below
+is therefore **CPU**, and any GPU speed-up is unmeasured upside to be established by the pilot.
+
+The natural unit is a **fixture-equivalent fit (FEF)**: one full-budget fit at 2400 steps on
+fixture-scale data, **≈ 25 min CPU** (T09's 15.5 min measured, rounded up for real-data overhead).
+Panel width is nearly free — `genes_per_step` is what makes it so — so datasets scale by **training
+cell count**:
+
+| dataset | training cells | FEF weight |
+|---|---|---|
+| synthetic fixture | 13 500 | 1.0 |
+| `starmap_visual_cortex` | 16 527 (sections 1/3/5/7) | **1.0** |
+| `merfish_thick_cortex` | ~16 500 | 1.0 |
+| `exseq_breast_cancer` | ~1 300 | 0.1 |
+| `merfish_thick_hypothalamus` | ~45 000 | 3 |
+| `deep_starmap` | ~113 000 | **8** |
+| `cosmx_nsclc_3d` | ~227 000 | **17** |
+| `allen_merfish_brain` | ~600 000 | ~45 — excluded |
+
+### The bill, by table
+
+Three headline datasets: `starmap_visual_cortex` (tier 1), `merfish_thick_cortex`,
+`exseq_breast_cancer`. `deep_starmap` and `merfish_thick_hypothalamus` are experiment homes, not
+headline datasets, and **inherit the shipped config** (§6) rather than re-running selection.
+
+| Table / experiment | Arms × regimes × datasets × seeds | fits | **FEF** |
+|---|---|---|---|
+| **Per-dataset config selection** (specs/09 §3) | ~23 × 3 headline ds × 1 seed | 69 | **48** |
+| Headline six-metric table | 3 ds × 3 regimes × 3 seeds | 27 | 19 |
+| Boundary rows, R3 (STARmap, both ends) | 2 × 1 ds × 3 seeds | 6 | 6 |
+| A1, A3, A4, A6 | 4 arms × 2 ds × 1 seed | 8 | 4 |
+| A5 | 1 arm × 2 wide regimes × 2 ds × 1 seed | 4 | 2 |
+| A2 (claim; two budgets) | 2 budgets × 2 ds × 3 seeds | 12 | 7 |
+| A7 (claim) | 2 ds × 3 seeds | 6 | 3 |
+| A8 (claim) | 2 ds × 3 seeds | 6 | 3 |
+| **E1 zero-shot** (`deep_starmap`) | 2 gene splits × 2 summary arms × 3 seeds | 12 | **96** |
+| E2 cross-panel (STARmap ↔ ExSeq V1) | 2 directions × 3 seeds | 6 | 6 |
+| E3 oblique (re-sectioned, ≤3 admissible angles) | 3 angles × 3 seeds | 9 | 9 |
+| E4 throughput | — | 0 | 0 |
+| E5 intersection agreement | — | 0 | 0 |
+| V1 re-sectioning cycle | 1 fit on the generated stack × 3 seeds | 3 | 3 |
+| V2 orthogonal specimen | — (folded into E3) | 0 | 0 |
+| V3 anisotropy prediction | — (reads a fitted model) | 0 | 0 |
+| V4a thickness (re-partition, `w_thick` on/off) | 2 arms × 3 seeds | 6 | 18 |
+| V4b thickness (cross-dataset, diagnostic) | 2 × 1 seed | 2 | 6 |
+| Achievable ceiling (fixture, 8 draws) | — | 0 | 0 |
+| Baselines: convex-interp, independent-donor, nearest-copy | — | 0 | 0 |
+| **Total** | | **176 fits** | **≈ 230 FEF** |
+
+**≈ 230 FEF × 25 min ≈ 96 CPU-hours ≈ 4 days serial**, or under a day across five cores — the runs
+are independent per (dataset, arm, seed), so wall clock is a scheduling choice.
+
+**Plus the comparators**, which are not v25 fits: SpatialZ, FEAST, isoST and v20 on 3 datasets × 3
+regimes = 36 method runs, plus 2 probes × 3 datasets × 3 regimes = 18 probe evaluations. Individually
+far cheaper than a fit, and **required** — §3 established that the existing v20/v22 numbers are not
+in this repository.
+
+### The three things that dominate, and what to do about them
+
+1. **Config selection: 48 FEF, 21% of the total, and absent from every earlier estimate.**
+   `specs/09` §3 selects per dataset (~23 fits: a coordinate descent plus two non-descended joint
+   gates). It is 1-seed by classification and `ScoreCache` checkpoints it, so it resumes. The lever
+   is dataset count, not the selector: **each additional headline dataset costs ~23 fits of
+   selection before it produces a single headline number.** That is the real content of the 3-vs-5
+   decision, and it is why the pilot takes it.
+2. **E1 on `deep_starmap`: 96 FEF, 42% of the total** — 12 fits at 8× weight. It is the price of a
+   panel wide enough to measure zero-shot at all (§7), and the alternative (`allen_zhuang_abca2`) is
+   ruled out by `zigamma`. If it proves prohibitive after the pilot, the honest lever is bench3's own
+   `--max-cells-per-section` on a **new** `deep_starmap` dataset id (additive, §9's `repartition`
+   machinery) — subsampling changes the dataset, so it would be reported as such, not silently.
+3. **`cosmx_nsclc_3d` is a cost bomb: 17× weight.** Adding it as the non-brain headline dataset
+   would add ~23 × 17 = **391 FEF of selection alone** — more than doubling the campaign for one
+   row. `exseq_breast_cancer` (0.1×, human breast cancer, `raw_counts`, 297 genes) discharges the
+   non-brain requirement for ~1% of that, at the cost of small-n (1 979 cells, 57 in its thinnest
+   section). **Recommendation: `exseq_breast_cancer` for the campaign; `cosmx_nsclc_3d` only if the
+   pilot shows fits are much cheaper than modelled.**
+
+A five-dataset campaign adding `deep_starmap` and `cosmx_nsclc_3d` as headline datasets would run
+**~240 fits / ~1 000 FEF ≈ 415 CPU-hours**, a 4.3× increase driven almost entirely by those two
+volumes' cell counts. Take that decision on pilot numbers.
+
+---
+
 ## Acceptance tests
 
+- `test_evaluate_paper_sha256_unchanged` — the pinned SHA-256 matches **before and after** a campaign
+  run; the assertion names the file on mismatch.
 - `test_metrics_match_bench3_bitwise` — the adapter and `bench3.evaluate_paper` return `==` values,
-  not `allclose`, on a fixed synthetic pair; and the pinned SHA-256 of `evaluate_paper.py` matches.
-- `test_metrics_match_reference_after_fixes` — *superseded by the above* (SPEC_QUESTIONS A3): the
-  reference is bench3, not v20, and agreement with it is asserted bitwise. Kept named here only so a
-  reader of the original spec can find where it went. Each metric reproduces the v20 implementation on
-  fixed inputs *except* the two documented bug fixes, which are asserted to differ in the expected
-  direction.
+  not `allclose`, on a fixed synthetic pair.
+- `test_bench3_footprint_is_two_files` — the only bench3 paths T10 writes are
+  `methods/run_spatialcpav25_gen.py` and one appended `METHODS` key; asserted by diffing the bench3
+  tree against a recorded manifest.
+- `test_method_order_unchanged` — `config.METHOD_ORDER` is byte-identical to its pre-T10 value, so a
+  bare `run_all` plans exactly the previous campaign.
+- `test_resection_leaves_source_bitwise_identical` — the source `data.h5ad`'s SHA-256 is unchanged
+  after `resection` and `repartition`.
+- `test_resection_refuses_degenerate_footprint` — an angle exceeding `Config.resection_max_aspect`
+  raises and names the angle and the measured ratio.
+- `test_tier_purity` — a tier-1 table containing a non-`paper_2_4_6` or non-STARmap row raises.
+- `test_stats_never_reads_summary_by_method` — `eval/stats.py`'s inputs are `all_metrics.csv` and
+  `per_section_metrics.csv` only.
+- `test_claim_coverage` — a measurement classified in neither branch of `CLAIM_BEARING` blocks the
+  headline table.
 - `test_rankdata_ties` — a vector with 60% zeros gets identical average ranks for all zeros.
 - `test_spearman_is_spearman` — a monotone-nonlinear transform leaves the value unchanged.
 - `test_spatialz_wrapper_no_mutation` — input AnnData is byte-identical after the call.
 - `test_baselines_run_on_fixture` — all five produce valid AnnData.
-- `test_benchmark_resumable` — kill and restart; results identical, completed cells skipped.
+- `test_benchmark_resumable` — kill and restart; results identical, completed cells skipped
+  (exercises bench3's `--skip-existing`, which T10 does not reimplement).
 - `test_stats_bootstrap_ci` — on synthetic data with a known median difference, the CI covers truth
   in ≥ 94% of 200 simulations.
-- `test_metric_registry_complete` — all six target and ≥ 5 control metrics registered with
-  direction and range.
+- `test_metric_registry_complete` — all six target and ≥ 5 control metrics registered with direction
+  and range.
+- `test_gene_meta_case_folding` — an uppercase mouse symbol resolves against the mouse-cased table,
+  and the resolved-only-after-folding count is reported.
 
 ## Definition of done
 
-`reports/results.parquet` + a rendered `reports/benchmark.md` with: the six-metric table by regime,
-forest plots, the ablation table (A1–A8), the control-metric table, the E5 intersection-agreement
-figure, and the V1–V4 validation results. `PROGRESS.md` records the headline median gaps and the V1
-cycle degradation.
+`reports/results.parquet` + a rendered `reports/benchmark.md` carrying, **each labelled with its
+tier and holdout id**:
+
+- the tier-1 headline six-metric table (STARmap, `paper_2_4_6`, 3 seeds, min–max spread) with the
+  campaign envelope stated;
+- the statistics: Wilcoxon + BH, median difference with 95% bootstrap CI, Cliff's delta, and the
+  forest plot (Figure 2);
+- the tier-2 tables: wide regimes, boundary rows, analogue datasets, each separate;
+- the ablation table A1–A8, with A2 at both budgets and A5's regime and empty-pool fraction stated;
+- the control-metric table;
+- the achievable-ceiling table (fixture) and the `oracle` / `flanking_copy` referents (real data),
+  with every method number reported raw **and** ceiling-relative;
+- the gene–gene covariance rows reported **as a loss**, in both regimes, beside the ceiling;
+- E1 (both distillation arms × both summary arms × both gene splits, with the table's own coverage
+  quoted by `summary_source`), E2, the E3 angle sweep, the E4 figure, the E5 figure;
+- V1's cycle degradation, V3's predicted-vs-observed r, V4a and the labelled V4b;
+- the `evaluate_paper.py` SHA-256, recorded before and after.
+
+`PROGRESS.md` records the headline median gaps and the V1 cycle degradation;
+`progress/t10_benchmark.md` carries the full log.
 
 ## Do NOT
 
-- Do not tune the competing method's hyperparameters, in either direction.
+- Do not edit any bench3 file beyond the two in §0. If something cannot be done additively,
+  **stop and report which** — do not edit and explain afterwards.
+- Do not touch `evaluate_paper.py`, for any reason, including a bug.
+- Do not add to `METHOD_ORDER` or to `DATASET_SPECS`.
+- Do not read `summary_by_method.csv` for any published number.
+- Do not merge a tier-2 number into a tier-1 table, or average across tiers.
 - Do not average across regimes.
+- Do not tune the competing method's hyperparameters, in either direction.
 - Do not report only the metrics that were trained against — the control table is not optional.
-- Do not let the two metric bug-fixes apply to some methods and not others.
+- Do not let the two v20 metric bugs be described as fixed on the benchmark; they were never there.
+- Do not report a `zigamma` number as claim-bearing until the decoder and its calibration are
+  validated (§5.1).
+- Do not report E4 as a scored metric.
