@@ -220,6 +220,22 @@ Most of the baseline set already runs on the instrument. Build only what is miss
 
 FEAST and isoST come free as additional published comparators.
 
+### Who is a competitor and who is development history
+
+**The competitors are the three published methods: SpatialZ, FEAST and isoST.** They are what the
+paper is measured against, and they are what the tier-1 headline table compares.
+
+**Prior SpatialCPA versions (v14, v18, v19, v20, v21, v22, v23, v24) are internal development
+history, not comparators.** They belong in a **development table**, reported separately and
+labelled as such, and they serve exactly one formal role: **v20 is the no-regression reference**
+(`test_selector_can_recover_v20_config`; `layout_mode=resample` + `expr_mode=cross-mix`). v25 has to
+beat it, but beating it is not the paper's claim.
+
+Concretely: no headline table, figure, abstract or methods sentence is framed around beating an
+internal version. "v25 improves on v21" is a development result; "v25 improves on SpatialZ" is the
+claim. `eval/stats.py::assert_tier_purity` also refuses a headline table whose comparator set
+contains a `spatialcpav*` method other than v25 itself.
+
 **v14 and v18 are dropped as baselines** (settled; listed in `design/v23_design.md` §7). Both are
 superseded by v20 on every metric of the existing bench3 campaign, so they add two columns nobody
 would read — v20 is the version the no-regression guarantee is stated against and the one that has
@@ -356,9 +372,16 @@ outright — "hold out every even section, keep the first and last as input"; at
 | `consecutive-5` | `--design wide --holdout-block 5` | `wide_2_3_4_5_6` | 2 |
 
 `DEFAULT_WIDE_BLOCK = 3` is chosen so `paper` and `wide` remove the *same number* of slices and
-differ only in adjacency, which isolates gap width itself. Report the three **separately** — the
-expected story is "ties or wins at narrow gaps, wins decisively at wide gaps", and averaging
-destroys it.
+differ only in adjacency, which isolates gap width itself. Report the three **separately** — a
+regime average would destroy the only thing the comparison is for.
+
+⚠️ **The design docs' expectation — "ties or wins at narrow gaps, wins decisively at wide gaps" — is
+not supported by any evidence this project holds.** §13.3 audits what the prior campaign actually
+measured: there is **no head-to-head wide comparison on STARmap at all**, the per-dataset wide
+results are mixed rather than favourable, and the pooled number that looks decisive is an
+illegitimate cross-dataset average dominated by one volume. **Rewrite the claim as an open question
+the pilot answers**, and do not let any figure caption, abstract or methods sentence assert the
+wide-gap advantage until a tier-1 wide comparison exists. This is **pilot criterion C2** (§11.1).
 
 ⚠️ **`consecutive-5` on STARmap clamps to n − 2 = 5**, leaving only sections 1 and 7 as input —
 about **8.2 k training cells**, half the tier-1 input. Report it as the thin-evidence extreme, not
@@ -988,9 +1011,48 @@ sets `BENCH_V3_RESULTS` per cell, calls `run_benchmark.run_single`, then hands t
 | 7 | Headline six-metric table at **3 seeds**, three results roots |
 | 8 | `eval/stats.py` on those roots: Wilcoxon, BH, bootstrap CI, Cliff's delta, forest plot |
 | 9 | **E5** — cheapest and most decisive, no bench3 dependency |
-| 10 | **One ablation: A1** (`prior_mode=iid`) — the simplest override, and it exercises the per-arm results-root mechanism |
+| 10 | **One ablation: A1** (`prior_mode=iid`) — the simplest override, it exercises the per-arm results-root mechanism, and it is the term **C2** rests on |
+| 10b | **C1 and C2 read out** (§11.1), including the per-cell-type localization breakdown and the tier-1 `wide_3_4_5` head-to-head |
+| 10c | **`marker_field_r` diagnosed, not hoped away** (§13.4) — report the alignment record beside it |
 | 11 | Measure the laminar-gradient axis and the re-sectioning footprint (§9) — a measurement, not a run |
 | 12 | Measure `deep_starmap` gene-table coverage after case-folding (§7) — a measurement, not a run |
+
+### 11.1 The two named pilot criteria
+
+The pilot does not merely produce six numbers. **Two of them are named criteria**, chosen because
+they are where the prior campaign says the method must improve, and the pilot is read against them
+first. Both are stated as questions with a measured referent, not as targets to hit — §13 explains
+why the referents have to be re-measured rather than quoted.
+
+**C1 — `paper_celltype_localization` on tier 1.** This is the one tier-1 metric where the published
+competitor leads the whole SpatialCPA line, and it is precisely what v25's intensity-field layout
+head (T05: per-type intensity field, fitted Strauss/hard-core repulsion, fitted Potts mark
+smoothing) exists to attack. Measured in the prior campaign (§13.2, cross-instrument — see the
+warning there): SpatialZ **0.8175**, best internal version **0.7954**, v20 **0.7766**.
+
+> **The question C1 answers:** does v25 close the localization gap to SpatialZ on STARmap under
+> `paper_2_4_6`, at 3 seeds, with the gap read against the across-seed envelope?
+
+Report it **per cell type as well as pooled** (§2's rule 5): the metric normalises by the divergence
+to a within-tissue null, and that null collapses for an abundant tissue-wide type, so a pooled move
+can come entirely from types with no headroom. Report `paper_rare_celltype_localization` beside it —
+rare-niche placement is the half of the claim the layout head most directly addresses.
+
+**C2 — the wide regime.** No SpatialCPA version has established a wide-gap win, and §13.3 shows the
+evidence is weaker than the design docs assume: **there is no head-to-head wide comparison on
+STARmap in the prior campaign at all.** Wide-gap performance is the stated reason earlier versions
+were not publishable, and it is what the correlated 3D prior (T03) and the z-proximity retrieval
+term (T04, ablation A5) are for.
+
+> **The question C2 answers:** on STARmap `wide_3_4_5`, at 3 seeds, does v25 beat SpatialZ on the six
+> target metrics — and is the margin larger than at `paper_2_4_6`?
+
+**The pilot therefore generates the first tier-1 wide head-to-head this project has ever had.** That
+means running SpatialZ (and v20 as the no-regression reference) at `--design wide` as well as at
+`paper_2_4_6` — an addition to pilot step 5, costed in §12 as 2 extra comparator runs.
+
+Neither criterion is pass/fail for the pilot. A criterion that does not move is a **result** and is
+reported as one; what is not acceptable is a pilot report that does not state where both landed.
 
 **Report:** what one real-data fit actually costs (wall clock, peak RSS, CPU vs GPU), the measured
 across-seed envelope, what broke, and the answers to steps 11 and 12. **Then** the 3-vs-5 dataset
@@ -1089,6 +1151,166 @@ volumes' cell counts. Take that decision on pilot numbers.
 
 ---
 
+---
+
+## 13. Evidence from the prior campaign — and why it cannot be a baseline
+
+A `per_section_metrics.csv` from an earlier campaign was recovered (the machine holding the full
+results tree is down). 829 rows: 18 datasets, 8 methods (`spatialz`, `feast`, `isost`, and
+SpatialCPA `v14`, `v18`, `v19`, `v20`, `v21`), across `paper_*` and `wide_*` designs. It is the only
+comparator evidence this project currently holds, and it is worth reading carefully — but **none of
+its numbers may be quoted as a baseline**, for the reason in §13.1.
+
+Everything below was recomputed from that file, weighted by `n_gt_cells` exactly as `evaluate_paper`
+pools sections. Where a figure differs from one previously circulated, the recomputed value is the
+one stated.
+
+### 13.1 ⚠️ The file is evaluator-heterogeneous — the tier-1 comparison is cross-instrument
+
+`paper_marker_field_ssim`, `paper_gene_detection_spearman` and `paper_rare_celltype_localization`
+are populated on **132/132** rows for `v18`, `v20` and `v21` — every dataset — but on only **33/132**
+for `spatialz`, and **14/76** for `feast` and `isost`.
+
+On `starmap_visual_cortex` specifically: `v20` has them on **3/3** rows, `spatialz` on **0/3**.
+
+**So the two sides of the tier-1 head-to-head were scored by different revisions of
+`evaluate_paper.py`.** That is precisely the failure SPEC_QUESTIONS A3's SHA-256 pin exists to
+prevent: "a reimplementation that merely agrees closely is not comparable — the claim is a
+*difference* between methods measured on one instrument." Whether the *shared* metrics moved between
+the two revisions is **unknown** and cannot be determined from the CSV; `celltype_localization`
+gained its rare-type split in the same change that added these columns, so it is not safe to assume
+it did not.
+
+**Consequences, both already in this spec and now doubly justified:**
+
+1. **§3's "re-run the comparators" is not only about missing files.** Even a recovered results tree
+   would need every prediction re-scored on the pinned evaluator. bench3's
+   `evaluate_all --force` does exactly that **without re-running any method**, so if the predictions
+   are ever recovered, re-scoring is cheap and is the first thing to do.
+2. **No number in §13.2–13.4 enters a paper table.** They are read as *directional signals* that set
+   the pilot's criteria (§11.1), and every one of them is re-measured on the pinned instrument
+   before it is quoted.
+
+Also missing from that campaign: **`v22`, `v23` and `v24` were never run**, so the internal
+development table has a three-version gap, and `v19` appears on only 17 rows over a different
+dataset subset than the others — its apparent wide-regime strength (§13.3) is not comparable with
+the rest and must not be read as one.
+
+### 13.2 C1 — cell-type localization is where the competitor leads
+
+Tier 1, `starmap_visual_cortex` / `paper_2_4_6`, cell-count-weighted over the three held-out
+sections:
+
+| method | `celltype_localization` | `marker_depth_r` | `marker_field_r` | `morans_pearson` |
+|---|---|---|---|---|
+| **spatialz** | **0.8175** | 0.9199 | 0.8535 | 0.9289 |
+| spatialcpav21_gen | 0.7954 | **0.9580** | **0.8757** | 0.9768 |
+| spatialcpav20_gen | 0.7766 | 0.8963 | 0.8707 | **0.9811** |
+| spatialcpav14_gen | 0.7776 | 0.8203 | 0.8524 | 0.9314 |
+| feast | **0.0000** | 0.7690 | 0.5686 | 0.7742 |
+| isost | **0.0000** | 0.6984 | 0.6344 | 0.7884 |
+
+**The signal holds and C1 is well-motivated**: SpatialZ leads the entire SpatialCPA line on
+localization, by **+0.022** over the best internal version and **+0.041** over v20.
+
+**Three corrections to how it has been described.**
+
+* **It is not SpatialZ's *only* tier-1 win.** Against **v20**, SpatialZ also wins `marker_depth_r`
+  (0.9199 vs 0.8963). The accurate statement is that localization is SpatialZ's **only remaining
+  tier-1 lead over the best internal version** — v21 takes `marker_depth_r`, `marker_field_r`,
+  `morans_pearson`, `gearys_pearson`, `umap_mixing` and `gene_mean_spearman`.
+* **FEAST and isoST score exactly 0.0000.** By the metric's own normalisation that is "no better than
+  scattering the type anywhere in the tissue". Two published methods hitting the floor exactly is a
+  **suspicious value, not a competitive one** — the likely cause is that neither emits usable cell
+  types, which `evaluate_paper` cannot distinguish from a genuinely random placement. **Check this
+  before any localization number is published**: if they emit no types, they are absent from the
+  comparison rather than losing it, and the tier-1 `localization` group is a five-method race whose
+  ranks change accordingly.
+* **The margin is close to the reproducibility envelope.** T09 measured refit-at-same-seed drift up
+  to **0.0120**. The +0.022 gap to v21 is under 2× that, which is why C1 is stated at **3 seeds with
+  the spread reported** and not as a single-run comparison.
+
+### 13.3 C2 — the wide regime is unestablished in *both* directions
+
+**There is no head-to-head wide comparison on STARmap.** `starmap_visual_cortex` / `wide_3_4_5`
+contains **3 rows, all `spatialcpav19_gen`** — one method, no competitor. Every wide-regime statement
+in circulation therefore comes from other volumes.
+
+Pooled across the four datasets that do have wide runs (`allen_merfish_brain`, `allen_zhuang_abca2`,
+`merfish_hypothalamus`, `st_mouse_brain_ortiz`):
+
+| method | `morans_pearson` | `gearys_pearson` | n |
+|---|---|---|---|
+| **spatialz** | **0.9120** | **0.8927** | 33 |
+| spatialcpav20_gen | 0.9048 | 0.8908 | 33 |
+| spatialcpav21_gen | 0.9010 | 0.8837 | 33 |
+
+**But that pooled average is not a legitimate comparison** — it is exactly the cross-dataset pooling
+bench3's README forbids ("averaging STARmap's and ExSeq's composites would compare places in two
+different races") and this spec's own **Do NOT** forbids. **24 of its 33 rows are
+`allen_merfish_brain`**, so it is very close to a single-volume result wearing four volumes' clothes.
+
+Per dataset and holdout — the legitimate view — SpatialZ vs v20 is **mixed**:
+
+| metric | wide holdouts where SpatialZ beats v20 |
+|---|---|
+| `morans_pearson` | **4 of 7** |
+| `gearys_pearson` | **3 of 7** |
+| `marker_field_r` | **3 of 7** |
+| `celltype_localization` | **2 of 7** |
+
+**So the honest finding is stronger than "SpatialCPA has not won the wide regime": no wide-regime
+conclusion is supportable from this evidence in either direction.** The design docs' claim is
+unsupported, and so would be its opposite. That is what makes C2 a good pilot criterion rather than
+a discouraging one — the pilot produces the first tier-1 wide head-to-head that has ever existed
+here, on one volume, on the pinned instrument, at 3 seeds.
+
+(`spatialcpav19_gen` tops several pooled wide columns. Ignore it: 14–17 rows over a **different**
+dataset subset — it is the only method present on STARmap's wide design and absent from
+`st_mouse_brain_ortiz` — so its average is over a different, easier mixture. This is the same
+cross-dataset trap in miniature.)
+
+### 13.4 `marker_field_r` — a known weakness to diagnose, stated precisely
+
+`paper_marker_field_r` was **v25's single loss on the synthetic fixture at T09**, and it is where
+SpatialZ is relatively strongest against the SpatialCPA line in the prior campaign. Two generations
+pointing at one metric is worth a diagnosis rather than a hope. But the claim needs stating exactly,
+because the pooled and per-dataset views disagree:
+
+| view | result |
+|---|---|
+| **Tier 1** (`starmap` / `paper_2_4_6`) | **v20 (0.8707) and v21 (0.8757) BEAT SpatialZ (0.8535).** It is not a tier-1 loss |
+| Pooled over all 18 datasets and designs | spatialz **0.5666** > v20 0.5498 > v21 0.5461 — but this is the forbidden cross-dataset average |
+| **Per dataset, `paper_*` designs, SpatialZ vs v20** | **9 wins each — a dead tie**, not a systematic loss |
+
+So: **not a systematic deficit; a metric on which the SpatialCPA line has no margin, and on which
+v25 already regressed once on the fixture.** Treat it as a watch item with a named diagnostic path,
+not as a known defect.
+
+**The diagnostic, and why it is cheap.** `marker_field_r` is one of only **two pose-dependent
+metrics** (with `celltype_localization`): both are computed after `align.py` rotates the prediction
+into the ground-truth frame, and `evaluate_paper` writes the whole alignment record into every
+section's entry — `align_rotation_deg`, `align_score`, `align_runner_up`, `align_coverage`,
+`align_basis`. So a field-r deficit can be an **alignment** artifact rather than a fidelity one, and
+the evidence to tell them apart is already in the output.
+
+**Report the alignment record beside every `marker_field_r` number**, and treat a small
+`align_score − align_runner_up` margin as a caution flag on that row.
+
+Checked on tier 1 in the prior campaign: rotations are **0.0°–0.3°** for every SpatialCPA method and
+**0.0°–1.5°** for SpatialZ, with `align_score` tracking `field_r` closely. **Alignment is not
+confounding the tier-1 ordering** — v20 and v21 genuinely beat SpatialZ there. That result also
+means the diagnostic has a clean tier-1 reference: if v25's field-r drops while its rotations stay
+at 0°, the cause is the field, not the pose, and the place to look is T05's intensity head and the
+`FIELD_GRID = 20` binning rather than `align.py`.
+
+Also report `paper_marker_field_ssim` beside `field_r` wherever both exist. `r` is invariant to an
+affine rescale of the field, so a marker reproduced with the right *shape* but the wrong *level*
+passes `r` and fails SSIM — and per §13.1 the competitor rows largely lack SSIM, which is a further
+reason the comparators must be re-scored.
+
+---
+
 ## Acceptance tests
 
 - `test_evaluate_paper_sha256_unchanged` — the pinned SHA-256 matches **before and after** a campaign
@@ -1119,6 +1341,10 @@ volumes' cell counts. Take that decision on pilot numbers.
   in ≥ 94% of 200 simulations.
 - `test_metric_registry_complete` — all six target and ≥ 5 control metrics registered with direction
   and range.
+- `test_no_cross_dataset_pooling` — any statistic computed over rows spanning more than one `dataset`
+  raises unless explicitly constructed as a labelled cross-dataset diagnostic.
+- `test_headline_comparators_are_published_methods` — a tier-1 headline table whose comparator set
+  contains a `spatialcpav*` method other than v25 raises (§3).
 - `test_gene_meta_case_folding` — an uppercase mouse symbol resolves against the mouse-cased table,
   and the resolved-only-after-folding count is reported.
 
@@ -1142,6 +1368,10 @@ tier and holdout id**:
 - V1's cycle degradation, V3's predicted-vs-observed r, V4a and the labelled V4b;
 - the `evaluate_paper.py` SHA-256, recorded before and after.
 
+- **C1 and C2** (§11.1) read out explicitly: the localization gap to SpatialZ pooled *and* per cell
+  type, and the tier-1 `wide_3_4_5` head-to-head — each against the across-seed envelope;
+- `paper_marker_field_r` reported with its alignment record and `field_ssim` beside it (§13.4).
+
 `PROGRESS.md` records the headline median gaps and the V1 cycle degradation;
 `progress/t10_benchmark.md` carries the full log.
 
@@ -1160,3 +1390,11 @@ tier and holdout id**:
 - Do not report a `zigamma` number as claim-bearing until the decoder and its calibration are
   validated (§5.1).
 - Do not report E4 as a scored metric.
+- Do not frame any headline claim around beating an internal SpatialCPA version — the competitors are
+  SpatialZ, FEAST and isoST; v14–v24 are development history and v20 is the no-regression reference
+  (§3).
+- Do not quote a number from the prior campaign as a baseline: its two sides were scored by different
+  `evaluate_paper.py` revisions (§13.1).
+- Do not pool metrics across datasets — the wide-regime "result" in the prior campaign is an artifact
+  of exactly that (§13.3).
+- Do not assert the wide-gap advantage anywhere until a tier-1 wide comparison exists (§4.4, C2).
