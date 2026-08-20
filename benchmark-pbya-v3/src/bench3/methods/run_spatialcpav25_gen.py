@@ -1,0 +1,364 @@
+"""SpatialCPA-v25-Gen (CTF-Flow) — benchmark-pbya-v3 wrapper.
+
+Like the v16/v18-v24 wrappers this lives in ``benchmark-pbya-v3`` rather than in the
+frozen v2 tree, and speaks the identical ``_v2_io`` contract, so ``run_benchmark``
+invokes it like every other method and ``evaluate_paper`` reads its output unchanged.
+
+**No tuning flags.** v20's wrapper took eleven (``--edit-weight``, ``--gap-scale``,
+``--alpha-tol`` and the rest). This one takes none: the configuration is selected
+internally per dataset (``specs/09`` §3), and *"fit takes no method flags"* is a claim in
+the paper. Everything after the shared ``_v2_io`` arguments is either the seed or an
+**ablation** switch from ``specs/10`` §6, each of which overrides exactly one ``Config``
+field *after* the selected configuration is loaded, and each of which is recorded in
+``method_params`` so a result says what produced it.
+
+Per-dataset selection is **not** run on every invocation — it is ~23 fits, which would make
+a bare run cost more than the campaign it belongs to. It runs once per dataset, is persisted
+under ``$SPATIALCPAV25_SELECT_DIR/<dataset_id>/``, and is shared by every seed, arm and
+tier (``specs/10`` §10.1). ``--select-only`` pre-warms a dataset; ``--require-config``
+refuses to select, which is what campaign runs use.
+
+Generation-only: the input file physically excludes the held-out sections and the method
+receives one scalar target z per section.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from pathlib import Path
+
+import anndata as ad
+import numpy as np
+import scipy.sparse as sp
+
+_V2_BENCH = Path(__file__).resolve().parents[4] / "benchmark-pbya-v2" / "src" / "benchmark"
+sys.path.insert(0, str(_V2_BENCH / "methods"))   # _v2_io
+sys.path.insert(0, str(_V2_BENCH))               # leakage_guard
+import _v2_io  # noqa: E402
+import leakage_guard  # noqa: E402
+
+SELECT_DIR_ENV = "SPATIALCPAV25_SELECT_DIR"
+DEFAULT_SELECT_DIR = "runs/select"
+
+
+def check_environment() -> bool:
+    """Report the package and torch, exactly as the sibling wrappers do."""
+    try:
+        import spatialcpav25_gen
+        import torch
+    except Exception as exc:                       # pragma: no cover - env probe
+        print(f"ERROR: spatialcpav25_gen is not importable: {exc}", file=sys.stderr)
+        print("  install it with `make install` in the repository root.", file=sys.stderr)
+        return False
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"spatialcpav25_gen {spatialcpav25_gen.__version__ if hasattr(spatialcpav25_gen, '__version__') else ''} "
+          f"(CTF-Flow); torch {torch.__version__} ({device})")
+    return True
+
+
+# ── the volume fingerprint that makes a persisted selection self-invalidating ──
+
+def volume_fingerprint(adata, input_path: str) -> dict:
+    """Identify the training volume a selection was made against.
+
+    A configuration chosen on a different build of the same dataset is not this dataset's
+    configuration. bench3 already learned this lesson for its own ``_inputs/`` cache, where
+    a stale copy made a build fix apply twice; the selection needs the same guard.
+    """
+    sections = sorted({str(s) for s in adata.obs["section"].values})
+    return {
+        "n_cells": int(adata.n_obs),
+        "n_genes": int(adata.n_vars),
+        "sections": sections,
+        "input_mtime": round(Path(input_path).stat().st_mtime, 3),
+    }
+
+
+def dataset_id(adata, input_path: str) -> str:
+    """Stable per-dataset key. Derived datasets get their own, never the source's."""
+    name = adata.uns.get("dataset_name")
+    if name is not None and str(name).strip():
+        return str(name)
+    return Path(input_path).resolve().parent.name
+
+
+def select_dir(dsid: str) -> Path:
+    import os
+
+    root = Path(os.environ.get(SELECT_DIR_ENV, DEFAULT_SELECT_DIR))
+    return root / dsid
+
+
+# ── configuration: selected once per dataset, then overridden only by ablations ──
+
+def resolve_config(adata, args, fingerprint: dict, dsid: str):
+    """Return ``(cfg, provenance)``: the shipped config for this dataset, or A-arm of it."""
+    from spatialcpav25_gen.config import Config
+
+    out_dir = select_dir(dsid)
+    selected = out_dir / "selected.yaml"
+    provenance: dict = {"dataset_id": dsid, "selection_path": str(selected)}
+
+    if selected.exists():
+        import yaml
+
+        payload = yaml.safe_load(selected.read_text())
+        stored = payload.get("volume_fingerprint")
+        if stored != fingerprint:
+            raise SystemExit(
+                f"stale selection for dataset {dsid!r}:\n"
+                f"  {selected}\n"
+                f"  selected against: {stored}\n"
+                f"  this input      : {fingerprint}\n"
+                f"  A configuration chosen on a different build is not this build's "
+                f"configuration. Re-select with --select-only, or point "
+                f"${SELECT_DIR_ENV} at the right tree."
+            )
+        cfg = Config(**payload["config"])
+        provenance["selection"] = "loaded"
+    elif args.require_config:
+        raise SystemExit(
+            f"no selected configuration for dataset {dsid!r} at {selected}, and "
+            f"--require-config forbids selecting one here.\n"
+            f"  Pre-warm it once with:  --select-only\n"
+            f"  (selection is ~23 fits; a campaign run must not start one silently.)"
+        )
+    else:
+        cfg = run_selection_for(adata, args, fingerprint, dsid)
+        provenance["selection"] = "ran"
+
+    overrides = applied_overrides(args)
+    if overrides:
+        cfg = cfg.replace(**overrides)
+    provenance["overrides"] = overrides
+    provenance["config_hash"] = cfg.content_hash()
+    return cfg, provenance
+
+
+def applied_overrides(args) -> dict:
+    """The ablation switches actually set. Empty for a bare run — that is the paper claim."""
+    mapping = {
+        "prior_mode": args.prior_mode,              # A1
+        "w_autocorr": args.w_autocorr,              # A2
+        "w_profile": args.w_profile,                # A2
+        "w_distribution": args.w_distribution,      # A2
+        "text_emb_mode": args.text_emb_mode,        # A3
+        "retrieval_w_z": args.retrieval_w_z,        # A5
+        "decoder": args.decoder,                    # A6
+        "w_thick": args.w_thick,                    # A7
+        "w_prog": args.w_prog,                      # A7
+        "w_prog_wrong": args.w_prog_wrong,          # A8
+        "layout_mode": args.layout_mode,
+        "expr_mode": args.expr_mode,
+        "train_steps": args.train_steps,
+    }
+    out = {k: v for k, v in mapping.items() if v is not None}
+    if args.no_repulsion:                           # A4
+        out["repulsion"] = False
+    return out
+
+
+def run_selection_for(adata, args, fingerprint: dict, dsid: str):
+    """Run ``specs/09`` §3's selection once for this dataset and persist it."""
+    import yaml
+    from spatialcpav25_gen.config import Config
+    from spatialcpav25_gen.train.select import ScoreCache, run_selection
+
+    out_dir = select_dir(dsid)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"  no selected config for {dsid!r}; running selection (~23 fits at this "
+          f"dataset's scale). Checkpointed to {out_dir / 'scores.csv'} — an interrupted "
+          f"run resumes rather than restarts.")
+    volume = load_training_volume(adata, args)
+    result = run_selection(
+        volume,
+        Config(seed=args.seed),
+        seed=args.seed,
+        dataset=dsid,
+        report_path=out_dir / "selection_report.md",
+        checkpoint=ScoreCache(out_dir / "scores.csv"),
+    )
+    (out_dir / "selected.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "dataset_id": dsid,
+                "volume_fingerprint": fingerprint,
+                "selection_seed": args.seed,
+                "config_hash": result.config.content_hash(),
+                "config": result.config.to_dict(),
+            },
+            sort_keys=False,
+        )
+    )
+    print(f"  selected config {result.config.content_hash()} -> {out_dir / 'selected.yaml'}")
+    return result.config
+
+
+# ── data ──────────────────────────────────────────────────────────────────────
+
+def load_training_volume(adata, args, cfg=None):
+    """bench3's training-only input as a ``TrainingVolume``.
+
+    Everything in the file is training data — ``run_benchmark`` removed the held-out
+    sections before the wrapper ever saw it — so the whole volume is the training volume,
+    and the type carries that guarantee downstream.
+    """
+    from spatialcpav25_gen.config import Config
+    from spatialcpav25_gen.data.loaders import load_volume
+    from spatialcpav25_gen.data.schema import TrainingVolume
+
+    cfg = cfg or Config(seed=args.seed)
+    cfg = cfg.replace(section_key="section", coord_key="spatial", celltype_key="cell_type",
+                      region_key=None)
+    tmp = Path(args.input).with_suffix(".v25input.h5ad")
+    adata.write_h5ad(tmp)
+    try:
+        volume = load_volume(tmp, cfg)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return TrainingVolume(
+        specimen_id=volume.specimen_id,
+        sections=volume.sections,
+        gene_names=volume.gene_names,
+        celltype_names=volume.celltype_names,
+        region_names=volume.region_names,
+        thickness_is_assumed=volume.thickness_is_assumed,
+    )
+
+
+def build_embeddings(cfg, volume):
+    """T02's entity embeddings for this panel.
+
+    Under ``text_emb_mode='medcpt'`` the descriptors are encoded by the frozen MedCPT
+    encoder, which needs ``transformers`` and the model weights. If that is unavailable the
+    wrapper **raises** rather than substituting a lookup table: a silent downgrade would
+    make A3's two arms indistinguishable and the shipped configuration unreproducible
+    (Convention 6).
+    """
+    import torch
+    from spatialcpav25_gen.data.text import TextEncoder, gene_descriptor
+    from spatialcpav25_gen.model.embeddings import EntityEmbeddings
+
+    if cfg.text_emb_mode == "lookup":
+        zeros = torch.zeros((volume.n_genes, cfg.text_dim_in), dtype=torch.float32)
+        types = torch.zeros((len(volume.celltype_names), cfg.text_dim_in), dtype=torch.float32)
+        return EntityEmbeddings(cfg, zeros, types, None)
+
+    encoder = TextEncoder(cfg)
+    genes = encoder.encode([gene_descriptor(g, None) for g in volume.gene_names])
+    types = encoder.encode([f"{t}. A cell type." for t in volume.celltype_names])
+    return EntityEmbeddings(cfg, torch.from_numpy(genes), torch.from_numpy(types), None)
+
+
+# ── run ───────────────────────────────────────────────────────────────────────
+
+def run_method(adata, targets, args, cfg, volume):
+    from spatialcpav25_gen.infer.generate import generate_section
+    from spatialcpav25_gen.infer.planes import Plane
+    from spatialcpav25_gen.model.layout import fit_repulsion
+    from spatialcpav25_gen.model.spatialcpav25_gen import CTFFlow, TrainingData, train_ctfflow
+
+    data = TrainingData.build(volume, cfg)
+    model = CTFFlow(cfg, data, build_embeddings(cfg, volume), grf_seed=args.seed)
+    t0 = time.time()
+    train_ctfflow(model, cfg, steps=int(cfg.train_steps), seed=args.seed)
+    if cfg.repulsion:
+        model.repulsion = fit_repulsion(volume, cfg, seed=args.seed + 1)
+    print(f"  fit: {int(cfg.train_steps)} steps in {time.time() - t0:.1f}s")
+
+    results = {}
+    for sec, z in targets:
+        plane = Plane.axis_aligned(float(z), thickness=float(volume.sections[0].thickness))
+        print(f"  {sec}: field query at z={float(z):.2f} ...")
+        emitted = generate_section(model, plane, volume, cfg, seed=args.seed)
+        n = int(emitted.n_obs)
+        if n == 0:
+            continue
+        print(f"    -> {n} cells synthesized")
+        counts = emitted.X
+        results[sec] = {
+            "X": sp.csr_matrix(np.asarray(counts.toarray() if sp.issparse(counts) else counts,
+                                          dtype=np.float32)),
+            "coords": np.asarray(emitted.obsm["spatial"], dtype=np.float64),
+            "cell_type": np.asarray(emitted.obs["cell_type"].values, dtype=str),
+        }
+    return results
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(
+        description="SpatialCPA-v25-Gen wrapper (CTF-Flow). No tuning flags — "
+                    "configuration is selected internally per dataset.")
+    _v2_io.add_v2_args(p)
+    # selection control (not tuning: these choose *when* selection runs, never what it picks)
+    p.add_argument("--select-only", action="store_true",
+                   help="run per-dataset selection, persist it, write no prediction")
+    p.add_argument("--require-config", action="store_true",
+                   help="refuse to select; raise if no selected config exists for this dataset")
+    # ablation switches (specs/10 §6). Each overrides ONE Config field after selection.
+    p.add_argument("--prior-mode", default=None, choices=["correlated", "iid"], help="A1")
+    p.add_argument("--w-autocorr", type=float, default=None, help="A2")
+    p.add_argument("--w-profile", type=float, default=None, help="A2")
+    p.add_argument("--w-distribution", type=float, default=None, help="A2")
+    p.add_argument("--text-emb-mode", default=None, choices=["medcpt", "lookup"], help="A3")
+    p.add_argument("--no-repulsion", action="store_true", help="A4")
+    p.add_argument("--retrieval-w-z", type=float, default=None, help="A5")
+    p.add_argument("--decoder", default=None, choices=["zinb", "zigamma", "gaussian"], help="A6")
+    p.add_argument("--w-thick", type=float, default=None, help="A7")
+    p.add_argument("--w-prog", type=float, default=None, help="A7")
+    p.add_argument("--w-prog-wrong", type=float, default=None, help="A8 negative control")
+    p.add_argument("--layout-mode", default=None, choices=["field", "hybrid", "resample"])
+    p.add_argument("--expr-mode", default=None, choices=["zinb-flow", "cross-mix", "auto-blend"])
+    p.add_argument("--train-steps", type=int, default=None)
+    args = p.parse_args()
+
+    if not check_environment():
+        return 1
+
+    targets = _v2_io.load_targets(args)
+    target_sections = [s for s, _ in targets]
+    print(f"Loading training-only input {args.input} ...")
+    adata = ad.read_h5ad(args.input)
+    _v2_io.guard_no_holdout(adata, target_sections)
+    print(f"  input: {adata.n_obs} cells x {adata.n_vars} genes, "
+          f"{adata.obs['section'].nunique()} sections")
+
+    dsid = dataset_id(adata, args.input)
+    fingerprint = volume_fingerprint(adata, args.input)
+    cfg, provenance = resolve_config(adata, args, fingerprint, dsid)
+    print(f"  dataset_id={dsid} config={provenance['config_hash']} "
+          f"selection={provenance.get('selection')} overrides={provenance['overrides'] or 'none'}")
+    if args.select_only:
+        print("  --select-only: selection persisted, no prediction written.")
+        return 0
+
+    volume = load_training_volume(adata, args, cfg)
+    _ = leakage_guard  # the held-out sections are absent from the file by construction
+
+    print(f"Running SpatialCPA-v25-Gen for targets "
+          f"{[(s, round(float(z), 2)) for s, z in targets]} ...")
+    t0 = time.time()
+    results = run_method(adata, targets, args, cfg, volume)
+    wall = time.time() - t0
+    if not results:
+        print("No sections synthesized.")
+        return 1
+
+    method_params = {
+        "seed": args.seed,
+        "design": "CTF-Flow (SpatialCPA-v25-Gen)",
+        "generation_only": True,
+        **{f"provenance_{k}": (json.dumps(v) if isinstance(v, dict) else v)
+           for k, v in provenance.items()},
+    }
+    _v2_io.write_prediction_h5(
+        results, list(adata.var_names), target_sections, method_params, wall,
+        args.output, "spatialcpav25_gen")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

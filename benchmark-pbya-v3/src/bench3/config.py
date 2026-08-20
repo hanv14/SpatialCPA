@@ -1299,6 +1299,38 @@ METHODS = {
                                 "[v24] neural generation failed",
                                 "[v24] neural tier disabled"),
     },
+    "spatialcpav25_gen": {
+        # v25 is the ``spatialcpav25_gen`` package (SpatialCPA-v25-Gen / CTF-Flow), not a
+        # single file and not a package v2 ever ran, so its wrapper lives here like
+        # v16/v18-v24's and speaks the identical _v2_io contract.
+        #
+        # Deliberately NOT added to METHOD_ORDER: a method registered here but absent from
+        # that list "is never run unless it is named explicitly", so a bare ``run_all``
+        # plans exactly the campaign it planned before this entry existed and no existing
+        # result is affected. Run it with ``--methods spatialcpav25_gen``.
+        "wrapper": _v3_wrapper("run_spatialcpav25_gen.py"),
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "CTF-Flow — continuous transcriptomic field with a 3D GRF prior, "
+                 "rotation-equivariant triplane, z-proximity retrieval and a "
+                 "gene-conditioned ZINB decoder. Configuration is selected internally "
+                 "per dataset: the wrapper takes NO tuning flags.",
+        # No ``wrapper_args``: a bare invocation must produce the shipped configuration,
+        # because "fit takes no method flags" is a claim in the paper. The flags the
+        # wrapper does accept are ablation switches (specs/10 §6) and the two selection
+        # controls, never tuning.
+        #
+        # v25 has no silent fallback to quarantine — Convention 6 makes a missing
+        # requirement raise rather than degrade — so these markers cover only the cases
+        # where a *dependency* is absent and the run would otherwise look like a method
+        # result: no torch, and the MedCPT encoder unavailable under the shipped
+        # ``text_emb_mode="medcpt"`` (substituting a lookup table would silently turn every
+        # run into ablation A3).
+        "invalid_log_markers": ("torch UNAVAILABLE",
+                                "spatialcpav25_gen is not importable",
+                                "MedCPT encoder unavailable"),
+    },
     "spatialz": {
         "wrapper": _v2_wrapper("run_spatialz.py"),
         "conda_env": "bench_spatialz",
