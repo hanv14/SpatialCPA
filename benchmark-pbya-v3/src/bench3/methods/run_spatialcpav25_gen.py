@@ -285,10 +285,13 @@ def run_method(adata, targets, args, cfg, volume):
             continue
         print(f"    -> {n} cells synthesized")
         counts = emitted.X
+        # _v2_io wants physical (N, 3). ``obsm[coord_key]`` is the in-plane (u, v) a section
+        # reports — T01's documented 2-D exception — so take the 3-D positions that travel
+        # beside it, which are correct for an oblique plane too, where cells share no depth.
         results[sec] = {
             "X": sp.csr_matrix(np.asarray(counts.toarray() if sp.issparse(counts) else counts,
                                           dtype=np.float32)),
-            "coords": np.asarray(emitted.obsm["spatial"], dtype=np.float64),
+            "coords": np.asarray(emitted.obsm["xyz"], dtype=np.float64),
             "cell_type": np.asarray(emitted.obs["cell_type"].values, dtype=str),
         }
     return results

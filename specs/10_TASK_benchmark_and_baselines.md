@@ -1357,6 +1357,14 @@ and T09's selection runs (19 fits / 9 195 s ≈ 8 min each at the reduced budget
 but **no GPU timing exists for this codebase**, so a GPU figure would be a guess. The budget below
 is therefore **CPU**, and any GPU speed-up is unmeasured upside to be established by the pilot.
 
+⚠️ **The pilot measured a real fit and the model is ~2.3x optimistic.** One 1200-step fit on
+tier-1 STARmap (16 527 cells x 28 genes) took **1712.7 s = 28.5 min** of training, 1729.4 s total
+wall, 1709 MB peak RSS, uncontended on CPU — so a 2400-step fit is **~57 min**, against the 25 min
+this model assumes. **STARmap's FEF weight is therefore ~2.3, not 1.0**, and every figure below
+scales with it: the three-dataset campaign is closer to **220 CPU-hours than 96**. Re-derive this
+table from the pilot's number before taking the 3-vs-5 decision. (A run sharing cores with the test
+suite took 2224 s — 30 % slower — so quote uncontended figures only.)
+
 The natural unit is a **fixture-equivalent fit (FEF)**: one full-budget fit at 2400 steps on
 fixture-scale data, **≈ 25 min CPU** (T09's 15.5 min measured, rounded up for real-data overhead).
 Panel width is nearly free — `genes_per_step` is what makes it so — so datasets scale by **training
