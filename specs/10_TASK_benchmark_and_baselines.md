@@ -74,6 +74,43 @@ varied.
 | **Tier 1 — protocol-faithful** | `starmap_visual_cortex`, holdout `paper_2_4_6`, unmodified build, unmodified evaluator | The headline six-metric table; the direct SpatialZ / FEAST / isoST / v20 comparison; the control-metric table; the statistics (Wilcoxon, BH, bootstrap CI, Cliff's delta) computed on it |
 | **Tier 2 — extensions** | Anything needing a modified design: the boundary rows (R3), the `wide` regimes, the re-sectioned datasets (E3/V1/V2/V3), the analogue datasets, E1's wide-panel home, V4's thickness pair | Reported in its own tables and figures, always labelled with the design that produced it |
 
+### ⚠️ Tier 1 carries boundary contamination — a caveat on the protocol itself
+
+**The paper protocol's held-out set includes a section adjacent to the stack boundary.** With
+sections 1/3/5/7 as input, `section_2` is bracketed by `section_1` — the **first section of the
+volume** — so its evidence is one-sided in a way `section_4` and `section_6` are not.
+
+It is measurable, large, and consistent across methods. In the prior campaign's tier-1 rows,
+`section_2` is the **worst-scoring held-out section in 37 of 49 (method, metric) cells**, and in 6
+or 7 of 7 metrics for every SpatialCPA method — including SpatialZ, FEAST and isoST. This is open
+risk **R3** appearing *inside* the design that was supposed to exclude it: bench3's `split_holdout`
+never holds out the first or last section, and that is usually described as making `paper_2_4_6` a
+purely interior test. It is not.
+
+**Three consequences.**
+
+1. **It is a caveat on the protocol, not on any method.** Every method pays it equally — it is a
+   property of where the sections sit, not of who reconstructed them. So it does not bias the
+   tier-1 *comparison*, and the headline table stands. State it once in the methods, and report
+   per-section values beside every tier-1 median so a reader can see it.
+2. **It is why the estimator is a median** (§4.6). A fixed structural penalty on one of three
+   sections is exactly what a mean over n = 3 launders into the headline number, and it already
+   inverted one verdict.
+3. **It may be part of what C1 measures, and that must be tested rather than assumed.** SpatialZ's
+   `celltype_localization` lead is its only tier-1 win, and `section_2` is the section where every
+   method is weakest. **A method that is merely more robust at a one-sided boundary would show
+   exactly the same pooled lead as one with a better layout model.** So when C1 is measured
+   (§11.1), report the localization gap **per section**, not only pooled, and state which of the
+   two readings the data supports:
+
+   | if the gap is… | the reading is |
+   |---|---|
+   | concentrated in `section_2` | **boundary robustness** — SpatialZ degrades less with one-sided evidence, and v25's layout head is not the thing being tested |
+   | uniform across `section_2/4/6` | **layout quality** — the intensity-field/Potts/repulsion stack is the right place to attack it |
+
+   The tier-2 boundary rows (§4.3), which hold out `section_1` and `section_7` outright, are the
+   clean version of the same question and should be read together with this split.
+
 **Rules, enforced in code (`eval/stats.py::assert_tier_purity`):**
 
 - A tier-1 table may contain **only** rows whose `dataset == "starmap_visual_cortex"` **and**
@@ -1193,7 +1230,9 @@ v20 **0.7760**. It is SpatialZ's **only** tier-1 win, against every SpatialCPA v
 > **The question C1 answers:** does v25 close the localization gap to SpatialZ on STARmap under
 > `paper_2_4_6`, at 3 seeds, with the gap read against the across-seed envelope?
 
-Report it **per cell type as well as pooled** (§2's rule 5): the metric normalises by the divergence
+Report it **per held-out section** as well as pooled — §1's boundary caveat gives two readings of
+the same pooled gap (boundary robustness vs layout quality) and only the per-section split separates
+them. Report it **per cell type as well as pooled** (§2's rule 5): the metric normalises by the divergence
 to a within-tissue null, and that null collapses for an abundant tissue-wide type, so a pooled move
 can come entirely from types with no headroom. Report `paper_rare_celltype_localization` beside it —
 rare-niche placement is the half of the claim the layout head most directly addresses.

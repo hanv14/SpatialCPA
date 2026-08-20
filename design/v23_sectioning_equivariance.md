@@ -277,3 +277,37 @@ be defended.
 
 Revised title candidate: *Sectioning-consistent neural fields learn the three-dimensional molecular
 organisation of tissue from a handful of sections.*
+
+---
+
+### ⚠️ Amendment, 2026-08-20 — what this framing may and may not assert
+
+This addendum is written from, and read alongside, `v23_design.md`, whose §7 target sentence has
+been amended from measured evidence. Three constraints carry into any paper text written from this
+document:
+
+1. **No wide-gap advantage may be asserted.** `v23_design.md` §7 previously stated the story as
+   "ties or wins narrow, wins decisively wide". The prior campaign contradicts it on the metrics
+   the claim is about — by median, per wide holdout, SpatialZ beats v20 on Moran's in **6 of 7**
+   and Geary's in **5 of 7** — and the tier-1 case has **never been measured**. It is an open
+   question (`specs/10` §11.1, criterion C2), not a result. This matters here specifically because
+   the wide gap is where the **shared 3D field** is supposed to pay off, so it is this document's
+   claim that is under test.
+
+2. **§4's E5 prediction is an expectation, and T09 measured half of it above its own ceiling.**
+   "v23 near-perfect by construction; SpatialZ substantially below, with the gap widening at larger
+   dihedral angles" is the hypothesis. Measured: concordance **0.814** against a ceiling of 0.781,
+   but expression correlation **0.724** against a measured ceiling of **0.726** — two independent
+   draws of *one* plane under one realisation reach only 0.726, so the literal 0.85 criterion was
+   unsatisfiable and is now a strict xfail, with the headline test asserting correlation
+   **ceiling-relative** (SPEC_QUESTIONS C27). The *categorical* half of the claim — exact
+   intersection consistency by construction, asserted bitwise on an untrained model — stands and is
+   the stronger result. Do not quote the incremental half without its ceiling.
+
+3. **`L_cross` is not part of the shipped method, and the reason is a stronger claim than the
+   loss.** §3.1's intersection-consistency loss ships at `w_cross = 0`: consistency is exact **by
+   construction** in v25, so the loss is redundant, and training it flattens the anatomical field
+   (generated per-gene variance **0.067** against **0.711** with SEFL off). Any paper text
+   describing "three new losses" must say that the third is unnecessary and why — the
+   by-construction result belongs beside E5 as a contribution, not buried as an ablation. Whether
+   `L_thick` and `L_prog` are used at all is decided by A7 and is **unverified** until it runs.

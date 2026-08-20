@@ -47,6 +47,7 @@ from spatialcpav25_gen.infer.planes import (
 from spatialcpav25_gen.losses.sefl import (
     EQUIVARIANT_QUANTITIES,
     INVARIANT_QUANTITIES,
+    SEFL_DEFAULT_TERMS,
     SEFL_LOSSES,
     SEFL_TERMS,
     CollapseWarning,
@@ -66,14 +67,17 @@ from spatialcpav25_gen.losses.sefl import (
     morans_i_torch,
     sefl_active,
     sefl_ramp,
+    sefl_terms,
     sinkhorn_divergence,
     thick_terms,
 )
 from spatialcpav25_gen.model.embeddings import EntityEmbeddings
 from spatialcpav25_gen.model.field import BBoxClampWarning, RotationContext
 from spatialcpav25_gen.model.spatialcpav25_gen import (
+    LOSS_TERMS,
     CTFFlow,
     TrainingData,
+    loss_weights,
     train_ctfflow,
 )
 
@@ -349,11 +353,46 @@ def test_invariant_and_equivariant_tables_are_disjoint_and_populated():
 
 def test_wrong_loss_is_not_in_the_registry():
     """``loss_prog_WRONG`` is a deliberate negative control and must stay out of training."""
-    assert set(SEFL_LOSSES) == set(SEFL_TERMS) == {"cross", "thick", "prog"}
+    assert set(SEFL_LOSSES) == set(SEFL_DEFAULT_TERMS) == {"cross", "thick", "prog"}
     assert loss_prog_WRONG not in SEFL_LOSSES.values()
     assert not any("wrong" in name.lower() for name in SEFL_LOSSES)
     # ...and it is still importable and callable, because T10's ablation A8 trains it.
     assert callable(loss_prog_WRONG)
+
+
+def test_wrong_loss_is_counted_as_consistency_not_reconstruction():
+    """A8's control is in ``SEFL_TERMS`` so ``consistency_ratio`` cannot mistake it for recon.
+
+    ``SEFL_TERMS`` is the set the ratio treats as consistency; ``SEFL_DEFAULT_TERMS`` is the set
+    a legitimate configuration may use. They differ by exactly A8's control, and conflating them
+    would let an A8 run report a healthy ratio while the wrong term dominated the loss.
+    """
+    assert set(SEFL_TERMS) - set(SEFL_DEFAULT_TERMS) == {"prog_wrong"}
+    ratio = consistency_ratio(
+        {"recon": torch.tensor(1.0), "prog_wrong": torch.tensor(4.0)},
+        {"recon": 1.0, "prog_wrong": 0.5},
+    )
+    assert ratio == pytest.approx(2.0)
+
+
+def test_a8_is_reachable_as_a_config_override(built: Built):
+    """``Config.w_prog_wrong`` is A8's gate: absent at 0, present and weighted above it.
+
+    T07 left ``loss_prog_WRONG`` out of every registry, which made A8 the one ablation that
+    could not be run as a config change (``specs/10`` §6, §10.1). This pins the wiring end to
+    end: the term is skipped at the shipped default, appears when the weight is raised, and the
+    trainer has a weight to multiply it by.
+    """
+    teacher = EMATeacher(built.model, built.cfg)
+    off = built.cfg.replace(w_prog_wrong=0.0)
+    assert "prog_wrong" not in sefl_terms(built.model, teacher, off, np.random.default_rng(0))
+    on = built.cfg.replace(w_prog_wrong=0.2)
+    terms = sefl_terms(built.model, teacher, on, np.random.default_rng(0))
+    assert "prog_wrong" in terms
+    assert terms["prog_wrong"].shape == ()
+    assert "diag_prog_wrong_morans" in terms
+    assert loss_weights(on)["prog_wrong"] == pytest.approx(0.2)
+    assert "prog_wrong" in LOSS_TERMS
 
 
 # --------------------------------------------------------------------------------------

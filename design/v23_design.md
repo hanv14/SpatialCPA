@@ -4,6 +4,11 @@
 agreement, embedding mixing, marker field r, marker depth r, and cell-type localization — in both
 the alternating-holdout (narrow gap) and consecutive-holdout (wide gap) regimes.*
 
+> **Amended 2026-08-20, from measured evidence.** The wide-gap half of that target is stated here as
+> a *goal*, and it must not be read anywhere in this document as an established result. The
+> prior campaign's evidence points the other way on the metrics the claim is about — see §7,
+> "Regimes". The paper is written from this document, so the distinction is load-bearing.
+
 ---
 
 ## 0. Executive summary
@@ -325,26 +330,77 @@ the "cannot regress below v20" guarantee, and it is a legitimately attractive pr
 overfitting.
 
 **Regimes.** (a) alternating holdout; (b) consecutive holdout (3 and 5 sections). Report both
-separately — the story is "ties or wins narrow, wins decisively wide."
+separately.
 
-**Baselines.** SpatialZ (`syn_mode='default'`, its published settings), v14, v18, v20, plus two
-honest ablations of your own method, plus a naive nearest-section copy (the floor) and a convex
-interpolation (the ceiling for smoothness, floor for realism).
+⚠️ **"Ties or wins narrow, wins decisively wide" was an expectation, and the evidence contradicts
+it.** Recomputed from the prior campaign's `per_section_metrics.csv` as medians (`specs/10` §13.3),
+per wide holdout and never pooled across datasets:
 
-**Statistics.** Per-section metrics pooled across datasets → paired Wilcoxon signed-rank vs.
-SpatialZ, Benjamini–Hochberg across the 6 metrics, and report **median difference with a 95%
-bootstrap CI** (this is your "clear gap in medians" requirement, stated defensibly).
+| metric | wide holdouts where SpatialZ beats v20 |
+|---|---|
+| `morans_pearson` | **6 of 7** |
+| `gearys_pearson` | **5 of 7** |
+| `celltype_localization` | 4 of 7 |
+| `marker_field_r` | **0 of 7** — v20 wins every one |
+
+On the two autocorrelation metrics — precisely the ones the correlated 3D prior (§2) and the
+z-proximity retrieval term (§3.2, ablation A5) exist to move — the published competitor beats v20
+on nearly every wide holdout it was run on. `marker_field_r` runs the other way, which is a real
+finding rather than noise and is worth understanding rather than averaging away.
+
+**And the tier-1 case has never been measured at all**: `starmap_visual_cortex / wide_3_4_5` holds
+three rows, all v19, with no competitor. So the wide regime is an **open question this project has
+not yet answered on the protocol dataset**, not a claim in hand.
+
+**Replace the story with the question.** Until a tier-1 wide head-to-head exists (`specs/10` §11.1,
+pilot criterion C2), no sentence in the paper, the abstract, a figure caption or this document
+asserts a wide-gap advantage. A result that confirms the deficit is as publishable as one that
+closes it — what is not publishable is asserting the outcome in advance.
+
+⚠️ **Two caveats on the numbers above.** They come from a results tree whose two sides were scored
+by different revisions of `evaluate_paper.py` (`specs/10` §13.1), so they are directional signals
+that must be re-measured on the pinned instrument before being quoted. And they are **medians**: an
+earlier pass using means inverted one of them (`specs/10` §4.6).
+
+**Baselines.** The **competitors** are the published methods — SpatialZ (`syn_mode='default'`, its
+published settings), FEAST and isoST. Plus a naive nearest-section copy (the floor) and a convex
+interpolation (the ceiling for smoothness, floor for realism), and two honest ablations of your own
+method.
+
+⚠️ **v14, v18 and v20 are internal development history, not comparators** (amended 2026-08-20).
+They belong in a development table, reported separately; **v20's only formal role is as the
+no-regression reference**. No headline table, figure, abstract or methods sentence is framed around
+beating an internal version — "v25 improves on v21" is a development result, "v25 improves on
+SpatialZ" is the claim. v14 and v18 are dropped entirely: both are superseded by v20 on every
+metric of the existing campaign.
+
+**Statistics.** Per-section metrics → paired Wilcoxon signed-rank vs. SpatialZ (paired **by
+section**), Benjamini–Hochberg across the 6 metrics, and **median difference with a 95% bootstrap
+CI** (this is the "clear gap in medians" requirement, stated defensibly).
+
+⚠️ **"Pooled across datasets" is struck** (amended 2026-08-20). A rank or a score is a position in
+one volume's race; averaging two volumes compares places in two different races, and the benchmark
+harness forbids it for that reason. It is not a technicality — the prior campaign's apparent
+wide-gap result is an artifact of exactly this pooling, 24 of its 33 rows being one volume. Report
+per dataset; a cross-dataset view is a labelled diagnostic, never a headline number.
+
+⚠️ **Every statistic is a MEDIAN, never a mean** (`specs/10` §4.6). The paper design holds out three
+sections, and at n = 3 one outlier section inverts a verdict: `marker_depth_r` for v20 is
+`[0.7422, 0.9704, 0.9783]`, median **0.9704** (beats SpatialZ's 0.9267), mean 0.8970 (loses to
+0.9200). This already happened once.
 
 **Ablations (each isolates one claim).**
 
 | ID | Ablation | Claim tested |
 |---|---|---|
 | A1 | iid prior instead of correlated GRF | correlated prior is what preserves Moran's/Geary's |
-| A2 | remove metric-aware LOSO losses | how much comes from metric-aware training |
+| A2 | **add** metric-aware LOSO losses (they ship at 0) | how much comes from metric-aware training — run at **two** step budgets, the ordering reverses |
 | A3 | MedCPT `e_g` → free lookup table | text channel's contribution on seen genes |
 | A4 | remove Strauss repulsion in layout | point-process realism → neighbourhood metrics |
-| A5 | remove z-proximity in retrieval | the specific SpatialZ flaw you're fixing |
+| A5 | remove z-proximity in retrieval | the specific SpatialZ flaw you're fixing — **wide-gap regime only**; at alternating it reports a false null |
 | A6 | ZINB decoder → Gaussian mean regression | sparsity/dispersion preservation |
+| A7 | **add** SEFL's `L_thick` + `L_prog` (they ship at 0) | is SEFL used at all — `L_cross` is redundant by construction |
+| A8 | `loss_prog_WRONG` (`Config.w_prog_wrong`) | **negative control** — constraining an equivariant quantity as invariant should be *worse* |
 
 **Unoptimised-metric check (reviewer defence).** Report ≥4 metrics that were *not* in the training
 objective — Sinkhorn distance on raw profiles, co-expression module preservation, neighbourhood

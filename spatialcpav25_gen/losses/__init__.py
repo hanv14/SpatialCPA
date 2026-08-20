@@ -29,6 +29,7 @@ from spatialcpav25_gen.losses.sefl import (
     loss_prog,
     loss_prog_WRONG,
     loss_thick,
+    prog_wrong_terms,
 )
 
 __all__ = [
@@ -49,6 +50,7 @@ __all__ = [
     "loss_prog_WRONG",
     "loss_thick",
     "morans_i",
+    "prog_wrong_terms",
     "soft_depth_profile",
     "soft_field_profile",
 ]

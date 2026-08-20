@@ -122,6 +122,7 @@ LOSS_TERMS: tuple[str, ...] = (
     "cross",
     "thick",
     "prog",
+    "prog_wrong",
     "autocorr",
     "profile",
     "distribution",
@@ -952,6 +953,7 @@ def loss_weights(cfg: Config) -> dict[str, float]:
         "cross": float(cfg.w_cross),
         "thick": float(cfg.w_thick),
         "prog": float(cfg.w_prog),
+        "prog_wrong": float(cfg.w_prog_wrong),
         "autocorr": float(cfg.w_autocorr),
         "profile": float(cfg.w_profile),
         "distribution": float(cfg.w_distribution),
@@ -1049,7 +1051,12 @@ def train_ctfflow(
     weights = loss_weights(cfg)
     history = TrainHistory(log_k=math.log(int(cfg.retrieval_k)))
     centre = data.vol.bbox.mean(axis=0).astype(np.float64)
-    sefl_on = max(float(cfg.w_cross), float(cfg.w_thick), float(cfg.w_prog)) > 0.0
+    # w_prog_wrong is A8's negative control and belongs in this gate: without it the SEFL
+    # teacher is never built and an A8 run would silently train with the control absent.
+    sefl_on = (
+        max(float(cfg.w_cross), float(cfg.w_thick), float(cfg.w_prog), float(cfg.w_prog_wrong))
+        > 0.0
+    )
     sefl_teacher = (EMATeacher(model, cfg) if teacher is None else teacher) if sefl_on else None
     sefl_gen = np.random.default_rng([seed, 0x5EF1])
     metric_on = max(float(cfg.w_autocorr), float(cfg.w_profile), float(cfg.w_distribution)) > 0.0

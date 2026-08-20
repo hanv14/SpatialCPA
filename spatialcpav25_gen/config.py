@@ -1116,6 +1116,23 @@ class Config:
     amended). If A7 shows a gain on the target metrics, these defaults move back; the numbers
     above are what that gain has to beat."""
 
+    w_prog_wrong: float = 0.0
+    """**Ablation A8's negative control — never raise this outside A8** (``specs/10`` §6).
+
+    Weight on :func:`~spatialcpav25_gen.losses.sefl.loss_prog_WRONG`, which forces in-plane
+    Moran's I to agree across two sampling angles — i.e. constrains a quantity from
+    ``EQUIVARIANT_QUANTITIES`` as though it were invariant. It is wrong on purpose: a tangential
+    cut through a laminar structure *has* a different in-plane autocorrelation from a
+    perpendicular one, and that difference is signal.
+
+    T07 built the loss and deliberately left it out of ``SEFL_LOSSES``, which left A8 with no
+    gate to override and made it the one ablation that could not be run as a config change. This
+    field is that gate, and nothing else: the term is absent at ``0.0`` (``sefl_terms`` skips a
+    zero-weight builder, so it costs no forward pass), and the only run that sets it is A8, whose
+    stated expectation is that the model gets **worse**. A8 is one of the project's two
+    deliberate negative controls; ``loss_prog_WRONG`` stays out of ``SEFL_LOSSES`` and out of
+    ``SEFL_DEFAULT_TERMS``, asserted by ``test_wrong_loss_is_not_in_the_registry``."""
+
     w_distill: float = 0.1
     """Text -> free-residual distillation (T02)."""
 
@@ -1795,6 +1812,7 @@ class Config:
             "w_cross": self.w_cross,
             "w_thick": self.w_thick,
             "w_prog": self.w_prog,
+            "w_prog_wrong": self.w_prog_wrong,
             "w_distill": self.w_distill,
         }
         for name, value in non_negative.items():

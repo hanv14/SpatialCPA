@@ -92,6 +92,7 @@ if TYPE_CHECKING:  # pragma: no cover - import cycle: the trainer imports this m
 __all__ = [
     "EQUIVARIANT_QUANTITIES",
     "INVARIANT_QUANTITIES",
+    "SEFL_DEFAULT_TERMS",
     "SEFL_LOSSES",
     "SEFL_TERMS",
     "BranchOutputs",
@@ -111,6 +112,7 @@ __all__ = [
     "mmd2_rbf",
     "morans_i_torch",
     "prog_terms",
+    "prog_wrong_terms",
     "sefl_active",
     "sefl_ramp",
     "sefl_terms",
@@ -168,8 +170,17 @@ V3 — not a loss.
 =============================  =======================================================
 """
 
-SEFL_TERMS: Final[tuple[str, ...]] = ("cross", "thick", "prog")
-"""The three named terms SEFL contributes to the trainer's loss dict, in ``specs/07`` order."""
+SEFL_TERMS: Final[tuple[str, ...]] = ("cross", "thick", "prog", "prog_wrong")
+"""The named terms SEFL can contribute to the trainer's loss dict, in ``specs/07`` order.
+
+``prog_wrong`` is ablation A8's deliberate negative control (``Config.w_prog_wrong``, shipped at
+0 so the term is absent). It is listed here because :func:`consistency_ratio` must count it as
+*consistency* rather than as reconstruction — an A8 run whose wrong loss silently landed in the
+denominator would report a healthy ratio while the term dominated. It is deliberately **not** in
+:data:`SEFL_LOSSES` or :data:`SEFL_DEFAULT_TERMS`."""
+
+SEFL_DEFAULT_TERMS: Final[tuple[str, ...]] = ("cross", "thick", "prog")
+"""The terms a legitimate SEFL configuration may use — :data:`SEFL_TERMS` minus A8's control."""
 
 _CROSS_TERMS: Final[tuple[str, ...]] = ("params", "h", "type", "lambda")
 _THICK_TERMS: Final[tuple[str, ...]] = ("count", "count_by_type", "state")
@@ -1198,6 +1209,27 @@ def loss_prog_WRONG(  # noqa: N802 - the shouted name is the point
     return torch.mean((i1 - i2) ** 2)
 
 
+def prog_wrong_terms(
+    model: CTFFlow,
+    model_ema: EMATeacher,
+    bbox: FloatArray,
+    cfg: Config,
+    gen: np.random.Generator,
+    *,
+    gene_pool: IntArray | None = None,
+) -> dict[str, Tensor]:
+    """A8's negative control as a named part, so the trainer can weight it. ``{"morans": ()}``.
+
+    :func:`sefl_terms` needs a :class:`TermsFn`, and :func:`loss_prog_WRONG` returns a bare
+    scalar. This is the adapter and nothing more — it adds no arithmetic, so the value the
+    trainer weights is exactly what ``loss_prog_WRONG`` computes and the A8 arm is the published
+    negative control rather than a variant of it.
+    """
+    return {
+        "morans": loss_prog_WRONG(model, model_ema, bbox, cfg, gen, gene_pool=gene_pool),
+    }
+
+
 LossFn = Callable[["CTFFlow", EMATeacher, FloatArray, Config, np.random.Generator], Tensor]
 
 
@@ -1311,7 +1343,7 @@ def sefl_terms(
     *,
     gene_pool: IntArray | None = None,
 ) -> dict[str, Tensor]:
-    """All three SEFL losses plus their parts as ``diag_`` entries. Used by the trainer.
+    """Every non-zero SEFL term plus its parts as ``diag_`` entries. Used by the trainer.
 
     Terms whose weight is zero are **absent**, not zero, so switching a term off costs nothing
     rather than costing a forward pass whose result is multiplied by zero (ablation A7 turns
@@ -1323,6 +1355,9 @@ def sefl_terms(
         ("cross", float(cfg.w_cross), cross_terms),
         ("thick", float(cfg.w_thick), thick_terms),
         ("prog", float(cfg.w_prog), prog_terms),
+        # A8's negative control. Zero by default, so the builder is skipped and the term is
+        # absent rather than a forward pass multiplied by zero (Config.w_prog_wrong).
+        ("prog_wrong", float(cfg.w_prog_wrong), prog_wrong_terms),
     )
     for name, weight, builder in builders:
         if weight <= 0.0:
