@@ -54,6 +54,10 @@ __all__ = [
 ]
 
 
+class CoincidentCoordsWarning(UserWarning):
+    """Raised once per volume that carries cells sharing a section-mate's ``(x, y)``."""
+
+
 class SchemaError(ValueError):
     """Raised when a :class:`Section` or :class:`Volume` violates the data contract."""
 
@@ -171,6 +175,18 @@ def median_nn_distance(sections: Sequence[Section]) -> float:
     return float(np.median(np.concatenate(distances)))
 
 
+def n_coincident(section: Section) -> int:
+    """Cells in ``section`` sharing their ``(x, y)`` with another. ``Section -> int``.
+
+    Counted as ``n_cells - n_unique_rows``, i.e. the number of rows that would have to be
+    removed to make the section's coordinates unique.
+    """
+    coords = np.asarray(section.coords, dtype=np.float64)
+    if coords.shape[0] == 0:
+        return 0
+    return int(coords.shape[0] - np.unique(coords, axis=0).shape[0])
+
+
 @dataclass
 class Volume:
     """A stack of sections from one specimen, plus shared metadata.
@@ -187,6 +203,15 @@ class Volume:
         Names indexed by ``Section.region``, or ``None`` when the dataset has no regions.
     specimen_id
         Identifier of the specimen this stack came from.
+    flattened_sections
+        ``True`` when every section is a **z-flattened slab** rather than a true plane: the
+        cells kept their real ``(x, y)`` and took the slab's centre ``z``. Set from the source
+        dataset, never inferred. It is the *only* thing that permits exact coordinate ties —
+        see :func:`_validate_section_arrays`.
+    n_coincident_coords
+        Derived: how many cells share their ``(x, y)`` with another cell in the same section,
+        summed over sections. Always computed, so a volume that is *allowed* ties still says
+        how many it has and no downstream code has to rediscover it.
     median_spacing
         Derived: median ``|z_{i+1} - z_i|``.
     median_nn_dist
@@ -207,9 +232,11 @@ class Volume:
     celltype_names: list[str]
     region_names: list[str] | None
     specimen_id: str
+    flattened_sections: bool = False
 
     median_spacing: float = field(init=False)
     median_nn_dist: float = field(init=False)
+    n_coincident_coords: int = field(init=False)
     bbox: npt.NDArray[np.float32] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -221,6 +248,7 @@ class Volume:
             )
         self.median_spacing = median_section_spacing(self.sections)
         self.median_nn_dist = median_nn_distance(self.sections)
+        self.n_coincident_coords = sum(n_coincident(s) for s in self.sections)
         self.bbox = self._compute_bbox()
 
     def _compute_bbox(self) -> npt.NDArray[np.float32]:
@@ -411,6 +439,19 @@ def validate_volume(vol: Volume, cfg: Config) -> None:
     _validate_labels(vol)
     _validate_thickness(vol)
 
+    if vol.flattened_sections and vol.n_coincident_coords:
+        warnings.warn(
+            f"Volume(specimen_id={vol.specimen_id!r}) is flagged as z-flattened serial "
+            f"sections and contains {vol.n_coincident_coords} cell(s) coincident with a "
+            f"section-mate ({100.0 * vol.n_coincident_coords / max(vol.n_cells, 1):.2f}% of "
+            f"{vol.n_cells}). Exact coordinate ties are permitted for this volume and the "
+            f"count is on Volume.n_coincident_coords. They are real: a slab collapsed to its "
+            f"centre z makes two cells at the same (x, y) in different planes coincident, so "
+            f"any kNN-graph quantity — Moran's I, Geary's C, the layout's neighbourhood terms "
+            f"— sees a zero-distance pair there.",
+            CoincidentCoordsWarning,
+            stacklevel=2,
+        )
 
 def _validate_sections_ordered(vol: Volume, cfg: Config) -> None:
     """Check the section count, unique ids, and strictly increasing z."""
@@ -479,12 +520,15 @@ def _validate_section_arrays(section: Section, vol: Volume, cfg: Config) -> None
             f"Config.min_cells_per_section={cfg.min_cells_per_section}"
         )
     unique_rows = np.unique(coords, axis=0)
-    if unique_rows.shape[0] != coords.shape[0]:
+    if unique_rows.shape[0] != coords.shape[0] and not vol.flattened_sections:
         n_dup = coords.shape[0] - unique_rows.shape[0]
         raise SchemaError(
             f"Section.coords for section_id={sid!r} contains {n_dup} duplicate coordinate "
             f"row(s) (Config.coord_key={cfg.coord_key!r}); coincident cells corrupt every "
-            "kNN-graph metric downstream"
+            "kNN-graph metric downstream. If these are z-flattened serial sections — a slab "
+            "collapsed to its centre z, so two cells at the same (x, y) in different planes "
+            "become coincident — set Volume.flattened_sections, which permits exact ties and "
+            "records the count in Volume.n_coincident_coords"
         )
     n = section.n_cells
     if section.counts.shape[0] != n:

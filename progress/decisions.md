@@ -23,3 +23,34 @@ Two `Config` fields are **named but deliberately not added yet** —
 `retrieval_exclude_source_section` and `gate2_min_cells_per_angle` — because nothing reads them until
 T04 and the floor's value should come from T04's own measurement of how many cells each angle's slab
 holds. The spec names both as `Config` fields so Convention 1 still binds when they land.
+
+## 2026-08-20 — T10 pilot decisions
+
+**Coincident coordinates: scope T01's check, do not remove it.** bench3 flattens each multi-plane
+slab to its centre z, so two cells at the same `(x, y)` in different planes are exactly coincident —
+143 of 28 978 cells (0.49 %) on the tier-1 STARmap build, in every section, and `flattened_z` is
+true for all 18 datasets. `Volume.flattened_sections` permits exact ties, `Volume.n_coincident_coords`
+records the count, `validate_volume` warns once with it, and the flag propagates through
+`split_holdout` and `loso_folds`. An **unflattened** volume keeps the hard check. The flag is read
+from the data, never inferred — an inferred exemption would silence the check where there is a real
+problem. Rejected: wrapper-side de-duplication (changes the cells v25 trains on relative to every
+other method, breaking bench3's shared-input guarantee) and coordinate jitter (silent data
+modification).
+
+**C1 is measured per section, not pooled.** `flanking_copy` — a model-free probe — scores
+`section_2` at 0.7008 against 0.7765 / 0.7868, a **0.086 positional swing** against SpatialZ's entire
+**0.061** tier-1 lead over v20. A pooled localization number is therefore dominated by how a method
+handles one held-out position and cannot settle the criterion. C1 reports each held-out section
+against both measured referents (`oracle` ceiling, `flanking_copy` floor), with the pooled median
+beside them as a summary.
+
+**E1 is blocked, not descoped.** `deep_starmap` is absent from the repository. Case folding is
+measured as mandatory and sufficient on the testable symbols (0/6 exact, 6/6 folded). What unblocks
+it: the 1017 panel symbols alone answer the coverage question — the long pole, because a shortfall
+needs `mygene` network access that is 403'd here — and a path to the source volume unblocks the
+rest.
+
+**Owed fix, found by the pilot:** `specs/09`'s selector must clamp `Config.expr_pca_dim` to the
+panel width. STARmap has 28 genes against a default of 32, so `validate_config_against_volume`
+refuses the fit and the protocol dataset cannot be fitted at the shipped default.
+

@@ -42,6 +42,8 @@ def load_volume(
     h5ad_path: str | Path,
     cfg: Config,
     specimen_key: str | None = None,
+    *,
+    flattened_sections: bool | None = None,
 ) -> Volume | list[Volume]:
     """Load one ``.h5ad`` into a validated :class:`Volume`.
 
@@ -53,6 +55,13 @@ def load_volume(
         Supplies every key this function reads: ``coord_key``, ``z_key``,
         ``celltype_key``, ``region_key``, ``counts_layer``, ``thickness_key``,
         ``section_key``.
+    flattened_sections
+        Whether these sections are z-flattened slabs, which is the one condition permitting
+        coincident coordinates (``Config.flattened_sections_key``). ``None`` — the default —
+        reads ``adata.uns[cfg.flattened_sections_key]``, treating an absent key as ``False``.
+        Pass it explicitly when the flag lives elsewhere; it is never inferred from the
+        coordinates themselves, because an inferred exemption would silence the check on a
+        dataset that has a genuine problem.
     specimen_key
         ``adata.obs`` column separating specimens. When given, one :class:`Volume` per
         specimen is returned, in sorted specimen order; otherwise a single
@@ -73,8 +82,12 @@ def load_volume(
         raise FileNotFoundError(f"load_volume: no such file: {path}")
     adata = ad.read_h5ad(path)
 
+    if flattened_sections is None:
+        flattened_sections = bool(adata.uns.get(cfg.flattened_sections_key, False))
+
     if specimen_key is None:
-        return _build_volume(adata, cfg, specimen_id=path.stem)
+        return _build_volume(adata, cfg, specimen_id=path.stem,
+                             flattened_sections=flattened_sections)
 
     if specimen_key not in adata.obs:
         raise SchemaError(
@@ -85,11 +98,18 @@ def load_volume(
     volumes: list[Volume] = []
     for specimen in sorted({str(v) for v in labels}):
         mask = np.asarray([str(v) == specimen for v in labels])
-        volumes.append(_build_volume(adata[mask], cfg, specimen_id=specimen))
+        volumes.append(
+            _build_volume(
+                adata[mask], cfg, specimen_id=specimen,
+                flattened_sections=flattened_sections,
+            )
+        )
     return volumes
 
 
-def _build_volume(adata: Any, cfg: Config, specimen_id: str) -> Volume:
+def _build_volume(
+    adata: Any, cfg: Config, specimen_id: str, *, flattened_sections: bool = False
+) -> Volume:
     """Assemble and validate one :class:`Volume` from an AnnData (or a view of one)."""
     xy, z_per_cell = _read_coords(adata, cfg)
     cell_type, celltype_names = _read_codes(adata, cfg.celltype_key, "celltype_key")
@@ -132,6 +152,7 @@ def _build_volume(adata: Any, cfg: Config, specimen_id: str) -> Volume:
         celltype_names=celltype_names,
         region_names=region_names,
         specimen_id=specimen_id,
+        flattened_sections=flattened_sections,
     )
     _apply_assumed_thickness(vol, cfg)
     validate_volume(vol, cfg)
@@ -392,6 +413,7 @@ def split_holdout(
         celltype_names=list(vol.celltype_names),
         region_names=None if vol.region_names is None else list(vol.region_names),
         specimen_id=vol.specimen_id,
+        flattened_sections=vol.flattened_sections,
     )
     heldout = HeldOutSections(
         sections=[vol.sections[i] for i in held_idx],
@@ -435,6 +457,7 @@ def loso_folds(vol: TrainingVolume) -> Iterator[tuple[TrainingVolume, Section]]:
                 celltype_names=list(vol.celltype_names),
                 region_names=None if vol.region_names is None else list(vol.region_names),
                 specimen_id=vol.specimen_id,
+                flattened_sections=vol.flattened_sections,
             ),
             vol.sections[i],
         )

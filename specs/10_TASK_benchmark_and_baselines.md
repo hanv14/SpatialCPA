@@ -47,6 +47,43 @@ a preprocessor for the derived datasets the extension claims need, and the exper
   root per (tier, arm, seed). `build_input` caches under `INPUTS_CACHE/<dataset>/<holdout_id>/`,
   so a new holdout id creates a new cache directory and touches no existing one.
 
+### Two data-contract facts the pilot established about every bench3 dataset
+
+**1. Coincident coordinates are normal here, and permitted narrowly.** bench3 collapses each
+multi-plane slab to its centre z, so two cells at the same `(x, y)` in different planes become
+exactly coincident. Measured on the tier-1 build: **143 of 28 978 cells (0.49 %)**, in every
+section; `flattened_z` is true for **all 18** datasets, so the mechanism is universal.
+
+T01's duplicate-coordinate check is therefore **scoped, not removed**: `Volume.flattened_sections`
+permits exact ties, `Volume.n_coincident_coords` records the count for any downstream code, and
+`validate_volume` warns once per volume with the count. **An unflattened volume keeps the hard
+check** (`test_duplicate_coords_are_permitted_only_for_flattened_sections`), and the flag propagates
+through `split_holdout` and `loso_folds` so it cannot lapse on the volume the model actually trains
+on. The flag is read from the data, never inferred from the coordinates — an inferred exemption
+would silence the check on a dataset with a genuine problem. bench3 records it at
+`uns['paper_protocol']['flattened_z']`, which the wrapper passes explicitly.
+
+Wrapper-side de-duplication and coordinate jitter were both rejected: the first would change the
+cells v25 trains on relative to every other method, breaking the shared-input guarantee; the second
+is silent data modification.
+
+⚠️ **Report it as a metric caveat.** A zero-distance pair is real for any kNN-graph quantity —
+Moran's I, Geary's C, the layout's neighbourhood terms — and `evaluate_paper` has the same exposure
+without checking for it. Quote `n_coincident_coords` in the methods.
+
+**2. STARmap's panel is narrower and denser than any default assumed.** 28 genes, and a median
+per-gene detection rate of **0.9999** in the training sections — a curated panel with almost no
+zeros, unlike the 200-gene synthetic fixture every default was tuned on. Two consequences the pilot
+hit directly:
+
+* `Config.expr_pca_dim = 32` **exceeds the panel width** and `validate_config_against_volume`
+  refuses the fit. This is a hard constraint, not a preference: **`specs/09`'s selector must clamp
+  `expr_pca_dim` to the panel width**, or the protocol dataset can never be fitted. Recorded as an
+  owed fix; the pilot worked around it with an explicit value.
+* `assert_detection_rate`'s band is measured against ~1.0 here, so the guard is unusually tight on
+  tier 1. It fired correctly on an under-trained model (0.529 against 0.9999) — treat a detection
+  failure on STARmap as a signal about the budget before suspecting the decoder.
+
 ### ⚠️ `summary_by_method.csv` averages across holdout ids — never read it
 
 `aggregate_results.summarize` groups by `(dataset, method)` and **means every metric across
@@ -793,7 +830,7 @@ def exp_throughput(...)            # E4
 def exp_intersection_agreement(...)# E5
 ```
 
-### E1 — zero-shot genes. Home: `deep_starmap`, not STARmap
+### E1 — zero-shot genes. **BLOCKED, not descoped.** Home: `deep_starmap`, not STARmap
 
 **STARmap's 28-gene panel cannot measure E1.** 20% of 28 is 5–6 genes. Per-gene Moran's and Geary's
 correlations over 5 genes are noise, and `MARKER_GENES = ("Flt1", "Pcp4", "Cux2")` are 3 of the 28,
@@ -814,16 +851,35 @@ makes `paper_marker_*` unavailable on that arm. **Run two gene splits** — mark
 markers-seen — so the marker family is reportable either way, and say which split each number is
 from.
 
-⚠️ **Blocker, measured: the existing gene table does not cover `deep_starmap`.**
+⛔ **E1 is BLOCKED on data, and the block is on the input side, not the design.** `deep_starmap`
+is **not in this repository** — no raw, no processed, nothing under any name (verified by a tree-wide
+search at the pilot, `reports/pilot.md` §2). Every other part of E1 is specified and ready: the gene
+split, the two summary arms, the two distillation arms, and the scoring mechanism (which is free —
+see below). E1 stays **in scope and unmeasured**; it is not descoped and its rows stay in the
+definition of done as outstanding.
+
+**What unblocks it, in order of preference:**
+
+| supplied | unblocks | why it is enough |
+|---|---|---|
+| **1. A path to `deep_starmap`'s source** (`$BENCH_V3_RAW_DEEP_STARMAP`, or v1's processed `data.h5ad`) | **all of E1** | bench3's `DATASET_SPECS` entry already exists — expression + spatial CSVs, or v1's processed file. `prepare_dataset --dataset deep_starmap` then builds it, and the design is `paper_2_4_6`, the same as tier 1 |
+| **2. The 1017 panel symbols alone**, as a plain text file | **the coverage question only** — the measurement that decides whether a gene-table rebuild is needed, which is the long-pole dependency | Coverage is a set operation against `resources/gene_meta.parquet`; it needs no expression data. If coverage is short, the rebuild needs `mygene` network access (403'd in this container, C14), so knowing *early* is what keeps it off the critical path |
+
+**Option 2 is the more useful one to supply first**, because it is a one-file answer to the question
+that could still require network access, and it can be answered before the volume is located.
+
+⚠️ **What is already measured about the table.**
 `resources/gene_meta.parquet` is exactly `zhuang_abca2_panel_symbols.txt` (1 122) ∪
 `starmap_panel_symbols.txt` (28) = **1 138 symbols**, verified by set arithmetic — no other panel is
 in it. It is mouse-cased: **3** of its 1 138 symbols are all-uppercase. `deep_starmap`'s symbols are
 **uppercase** despite being mouse (`FLT1`, `PCP4`, `CUX2` in its own marker list), so on an exact
 match **every one of its 1 017 symbols misses**. Two things follow:
 
-1. **Case normalisation is mandatory** in `load_gene_meta` lookup — fold to the table's casing
-   before matching, and report how many symbols resolved only after folding.
-2. **Even after folding, coverage is unmeasured** and probably partial: the table was built for
+1. **Case normalisation is mandatory, and on the testable symbols it is sufficient.** Measured at
+   the pilot against `deep_starmap`'s known uppercase marker and layer genes: **0 of 6** match
+   exactly, **6 of 6** after folding. Fold to the table's casing before matching, and report how
+   many symbols resolved only after folding.
+2. **Coverage over the full 1017 remains unmeasured** and is probably partial: the table was built for
    Zhuang-ABCA-2 + STARmap, not for a 1 017-gene Deep-STARmap panel. **Measure the overlap before
    running E1**, and if it is short, a new table build is required — which needs `mygene` network
    access that `progress/t02_text_embeddings.md` records as **403'd in this container**
@@ -1228,11 +1284,38 @@ cross-instrument, see the warning there): SpatialZ **0.8372**, best internal ver
 v20 **0.7760**. It is SpatialZ's **only** tier-1 win, against every SpatialCPA version.
 
 > **The question C1 answers:** does v25 close the localization gap to SpatialZ on STARmap under
-> `paper_2_4_6`, at 3 seeds, with the gap read against the across-seed envelope?
+> `paper_2_4_6`, **per held-out section**, at 3 seeds, with each section's gap read against the
+> across-seed envelope *and* against the `flanking_copy`→`oracle` interval measured for it?
 
-Report it **per held-out section** as well as pooled — §1's boundary caveat gives two readings of
-the same pooled gap (boundary robustness vs layout quality) and only the per-section split separates
-them. Report it **per cell type as well as pooled** (§2's rule 5): the metric normalises by the divergence
+#### C1's primary form is per section, against both referents
+
+**A pooled localization number cannot settle C1, and the pilot measured why.** `flanking_copy` —
+bench3's own probe, which copies the nearest training slice and has no model at all — scores
+`section_2` at **0.7008** against `section_4`'s **0.7765** and `section_6`'s **0.7868**. That is a
+**0.086 positional swing**, produced by geometry alone. SpatialZ's entire tier-1 lead over v20 is
+**0.061**. A pooled score is therefore dominated by how a method handles one held-out position, and
+two methods with identical layout quality can differ by more than the gap being claimed.
+
+**So C1 is defined per section, against both referents, and the pooled number is reported only
+beside them:**
+
+| | `section_2` | `section_4` | `section_6` |
+|---|---|---|---|
+| `oracle` (ceiling, measured) | 0.9765 | 0.9888 | 0.9808 |
+| **v25** | — | — | — |
+| `flanking_copy` (floor, measured) | **0.7008** | 0.7765 | 0.7868 |
+
+Both referents come from `selftest.make_probe` on the pinned instrument (measured, `reports/pilot.md`
+§3), so a v25 row drops straight in. Report, for each section: the raw score, the **fraction of the
+`flanking_copy`→`oracle` interval** it covers, and the gap to SpatialZ. Then the pooled median,
+labelled as a summary of the three rather than as the result.
+
+The per-section split is what distinguishes the two readings §1 sets out — a gap concentrated in
+`section_2` is boundary robustness, a uniform gap is layout quality — and after the pilot this is no
+longer a hypothesis: a model-free probe already shows the positional effect is **larger than the
+method effect**. A C1 conclusion drawn from a pooled number is not supportable.
+
+Report it **per cell type as well as pooled** (§2's rule 5): the metric normalises by the divergence
 to a within-tissue null, and that null collapses for an abundant tissue-wide type, so a pooled move
 can come entirely from types with no headroom. Report `paper_rare_celltype_localization` beside it —
 rare-niche placement is the half of the claim the layout head most directly addresses.

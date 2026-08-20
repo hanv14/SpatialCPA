@@ -213,10 +213,17 @@ def load_training_volume(adata, args, cfg=None):
     cfg = cfg or Config(seed=args.seed)
     cfg = cfg.replace(section_key="section", coord_key="spatial", celltype_key="cell_type",
                       region_key=None)
+    # bench3 records the flattening under its own key, so pass it explicitly rather than
+    # letting load_volume look for Config.flattened_sections_key: every v3 dataset collapses
+    # a multi-plane slab to its centre z, which makes two cells at the same (x, y) in
+    # different planes exactly coincident. That is real geometry and the only condition
+    # under which the schema permits coordinate ties.
+    protocol = dict(adata.uns.get("paper_protocol") or {})
+    flattened = bool(protocol.get("flattened_z", False))
     tmp = Path(args.input).with_suffix(".v25input.h5ad")
     adata.write_h5ad(tmp)
     try:
-        volume = load_volume(tmp, cfg)
+        volume = load_volume(tmp, cfg, flattened_sections=flattened)
     finally:
         tmp.unlink(missing_ok=True)
     return TrainingVolume(
@@ -225,7 +232,7 @@ def load_training_volume(adata, args, cfg=None):
         gene_names=volume.gene_names,
         celltype_names=volume.celltype_names,
         region_names=volume.region_names,
-        thickness_is_assumed=volume.thickness_is_assumed,
+        flattened_sections=volume.flattened_sections,
     )
 
 
@@ -256,8 +263,7 @@ def build_embeddings(cfg, volume):
 # ── run ───────────────────────────────────────────────────────────────────────
 
 def run_method(adata, targets, args, cfg, volume):
-    from spatialcpav25_gen.infer.generate import generate_section
-    from spatialcpav25_gen.infer.planes import Plane
+    from spatialcpav25_gen.infer.generate import generate_section, plane_at_z
     from spatialcpav25_gen.model.layout import fit_repulsion
     from spatialcpav25_gen.model.spatialcpav25_gen import CTFFlow, TrainingData, train_ctfflow
 
@@ -271,7 +277,7 @@ def run_method(adata, targets, args, cfg, volume):
 
     results = {}
     for sec, z in targets:
-        plane = Plane.axis_aligned(float(z), thickness=float(volume.sections[0].thickness))
+        plane = plane_at_z(volume, float(z), cfg)
         print(f"  {sec}: field query at z={float(z):.2f} ...")
         emitted = generate_section(model, plane, volume, cfg, seed=args.seed)
         n = int(emitted.n_obs)

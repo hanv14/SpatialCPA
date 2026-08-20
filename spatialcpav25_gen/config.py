@@ -115,6 +115,18 @@ class Config:
     min_cells_per_section: int = 50
     """Sections with fewer cells than this are rejected by ``validate_volume``."""
 
+    flattened_sections_key: str = "flattened_sections"
+    """``adata.uns`` key holding a bool: are these sections z-flattened slabs?
+
+    A flattened section keeps each cell's real ``(x, y)`` and gives every cell the slab's
+    centre ``z``, so two cells at the same ``(x, y)`` in different planes become exactly
+    coincident. That is the **only** condition under which ``validate_volume`` permits
+    duplicate coordinates, and it is read from the data rather than inferred — an inferred
+    exemption would silence the check on a dataset that has a real problem. ``load_volume``
+    also takes ``flattened_sections=`` explicitly, which is what a harness whose own flag
+    lives under a different key (bench3 writes ``uns['paper_protocol']['flattened_z']``)
+    should pass."""
+
     thickness_key: str = "section_thickness"
     """Key for the physical slab thickness in micrometres, looked up in ``adata.uns``
     (scalar or per-section mapping) and then ``adata.obs`` (per-cell column). Absent =>

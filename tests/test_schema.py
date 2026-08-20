@@ -14,6 +14,7 @@ from spatialcpav25_gen.config import ConfigError
 from spatialcpav25_gen.data.loaders import load_volume, loso_folds, split_holdout
 from spatialcpav25_gen.data.schema import (
     AssumedThicknessWarning,
+    CoincidentCoordsWarning,
     HeldOutSections,
     NonIntegerCountsWarning,
     OverlappingSlabsWarning,
@@ -118,6 +119,52 @@ def test_schema_rejects_unsorted_or_duplicate(volume, cfg):
     duped = [copy_section(volume.sections[0], coords=duped_coords), *volume.sections[1:]]
     with pytest.raises(SchemaError, match=r"Section\.coords.*duplicate"):
         validate_volume(rebuild_volume(volume, duped), cfg)
+
+
+def test_duplicate_coords_are_permitted_only_for_flattened_sections(volume, cfg):
+    """The exemption is narrow: only a volume flagged as z-flattened slabs may tie.
+
+    bench3 collapses each multi-plane slab to its centre z, so two cells at the same
+    ``(x, y)`` in different planes become exactly coincident — 0.49% of the STARmap protocol
+    build. That is real geometry, not corruption, so ``flattened_sections`` permits it. Every
+    other volume keeps the hard check, because for a true plane a coincident pair is a bug and
+    it silently corrupts every kNN-graph metric downstream.
+    """
+    duped_coords = volume.sections[0].coords.copy()
+    duped_coords[3] = duped_coords[0]
+    duped_coords[7] = duped_coords[1]
+    sections = [copy_section(volume.sections[0], coords=duped_coords), *volume.sections[1:]]
+
+    # UNflattened: still rejected. This is the half that must not regress.
+    strict = rebuild_volume(volume, sections, flattened_sections=False)
+    assert strict.n_coincident_coords == 2
+    with pytest.raises(SchemaError, match=r"Section\.coords.*duplicate"):
+        validate_volume(strict, cfg)
+
+    # Flattened: permitted, counted, and warned about exactly once with the count.
+    flat = rebuild_volume(volume, sections, flattened_sections=True)
+    assert flat.n_coincident_coords == 2
+    with pytest.warns(CoincidentCoordsWarning, match="2 cell"):
+        validate_volume(flat, cfg)
+
+    # A flattened volume with no ties is silent — the warning reports a fact, not a mode.
+    clean = rebuild_volume(volume, list(volume.sections), flattened_sections=True)
+    assert clean.n_coincident_coords == 0
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", CoincidentCoordsWarning)
+        validate_volume(clean, cfg)
+
+
+def test_flattened_flag_propagates_to_every_derived_volume(volume, cfg):
+    """A split or a LOSO fold of a flattened volume is still flattened.
+
+    Otherwise the exemption would hold for the loaded volume and vanish the moment
+    ``split_holdout`` produced the ``TrainingVolume`` the model actually trains on.
+    """
+    flat = rebuild_volume(volume, list(volume.sections), flattened_sections=True)
+    training, _held = split_holdout(flat, "alternating", 0, cfg)
+    assert training.flattened_sections
+    assert all(fold.flattened_sections for fold, _section in loso_folds(training))
 
 
 def test_schema_rejects_bad_fields(volume, cfg):

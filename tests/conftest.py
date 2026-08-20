@@ -80,7 +80,9 @@ def copy_section(section: Section, **overrides: object) -> Section:
     return Section(**values)  # type: ignore[arg-type]
 
 
-def rebuild_volume(vol: Volume, sections: list[Section]) -> Volume:
+def rebuild_volume(
+    vol: Volume, sections: list[Section], *, flattened_sections: bool | None = None
+) -> Volume:
     """Build a new volume with the same metadata and different sections."""
     return Volume(
         sections=sections,
@@ -88,6 +90,9 @@ def rebuild_volume(vol: Volume, sections: list[Section]) -> Volume:
         celltype_names=list(vol.celltype_names),
         region_names=None if vol.region_names is None else list(vol.region_names),
         specimen_id=vol.specimen_id,
+        flattened_sections=(
+            vol.flattened_sections if flattened_sections is None else flattened_sections
+        ),
     )
 
 
