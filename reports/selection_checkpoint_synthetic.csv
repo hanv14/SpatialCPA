@@ -6,3 +6,4 @@ e2870bd54fa1b4a0:2400,"{'train_steps': 2400, 'w_autocorr': 0.0, 'w_profile': 0.0
 e12aeeb87e8b0403:2400,"layout_mode=field, prior_mode=correlated, expr_mode=cross-mix",2400,0.833889,0.746070,0.682915,-0.047221,0.002353,-0.059102
 9930c75628a07182:2400,"layout_mode=field, prior_mode=correlated, expr_mode=auto-blend",2400,0.944793,0.905012,0.925097,-0.045474,0.035068,-0.059102
 95ccb2ee49aa069c:2400,"layout_mode=field, prior_mode=iid, expr_mode=zinb-flow",2400,0.921048,0.863499,0.867707,-0.045569,0.070227,-0.045332
+fe49ea9f8ad54bb2:2400,"layout_mode=field, prior_mode=iid, expr_mode=cross-mix",2400,0.823790,0.744636,0.679891,-0.053664,0.019406,-0.045332
