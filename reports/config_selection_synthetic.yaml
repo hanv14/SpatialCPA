@@ -82,7 +82,7 @@ niche_scale_factor: 2.0
 section_dropout_max_sections: 1
 expr_pca_dim: 16
 gate2_min_cells_per_angle: 500
-layout_mode: field
+layout_mode: resample
 potts_beta: 0.5
 potts_iters: 2
 layout_n_mc: 512
@@ -110,9 +110,9 @@ potts_rare_prevalence: 0.05
 potts_rare_retention: 0.5
 swd_n_projections: 32
 swd_polish_step: 0.5
-prior_mode: iid
-expr_mode: cross-mix
-text_emb_mode: medcpt
+prior_mode: correlated
+expr_mode: zinb-flow
+text_emb_mode: lookup
 decoder: zinb
 repulsion: true
 ceiling_n_draws: 8

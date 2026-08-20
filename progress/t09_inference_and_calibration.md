@@ -431,3 +431,77 @@ one (a stochastic embedding inside a selector that must be reproducible from a s
 something to add). The substitution is printed in every report the selector writes, and T10
 re-scores the selected config with the vendored code — `Scorer` is a protocol, so the swap is one
 line. SPEC_QUESTIONS **C26**.
+
+#### 11. R8 resolved — the training-free-option rule, and a new selected config
+
+`specs/09` §3 now carries the **rule**, not the patch: *a gate with a training-free option cannot
+be scored at a reduced budget.* If an option reaches its final behaviour without training — because
+it copies real data rather than generating it — it is at full strength at any budget while its
+rivals are not, so a reduced-budget comparison measures the budget. Qualifying gates are scored at
+the selected budget, and **jointly** when more than one qualifies, because their errors compound
+through coordinate descent's ordering.
+
+The rule is enforced, not just written: `TRAINING_FREE_OPTIONS` classifies every gate and
+`_check_gate_classification` raises at import for a gate that is unclassified or that names an
+option it does not have. An empty tuple is the positive statement "all options train". The two gate
+sets are **derived** from that classification rather than hand-maintained, so they cannot drift
+apart from the rule. On the current table it merges `layout_mode` x `prior_mode` x `expr_mode` into
+one **18-cell** gate at full budget; `text_emb_mode` keeps coordinate descent.
+
+**The new selected configuration** — 23 fits, 21 330 s of selection:
+
+| gate | old | **new** |
+|---|---|---|
+| `layout_mode` | field | **resample** |
+| `prior_mode` | iid | **correlated** |
+| `expr_mode` | cross-mix | **zinb-flow** |
+| `text_emb_mode` | medcpt | **lookup** |
+| `train_steps` | 2400 | 2400 |
+| `w_autocorr` / `w_profile` / `w_distribution` | 0.5 | 0.5 |
+| config hash | `fe49ea9f8ad54bb2` | **`cbabb27aa44ee6e4`** |
+
+**Every one of the three merged gates changed its answer**, and the 18-cell table shows why: all
+six `cross-mix` cells occupy the **bottom six ranks** (13.0–17.0) and every non-`cross-mix` cell
+beats them. At a quarter budget `cross-mix` won this gate. The separation is total — there is no
+overlap between the two groups on any of the three distribution-level metrics.
+
+`layout_mode` earned its place in the merged gate. It was the leg of the criterion with no observed
+reversal, included because the rule is about whether a comparison is sound rather than whether it
+happened to come out wrong — and it **changed the answer**, from `field` to `resample` (ranks 3.0
+vs 7.5). Scoping the fix to the two gates that had visibly failed would have left it wrong.
+
+The winner ties with `resample + correlated + auto-blend` at rank 3.0, and the tie is not
+arbitrary: on this fixture the fitted `w(v)` is 0 at every knot, so `auto-blend` passes the flow's
+draw through unblended and the two cells are **bit-identical**. `min()` takes the first, which is
+`zinb-flow`; either label denotes the same model.
+
+**Definition of done, on the new config** — and `reports/config_selection_synthetic.md`'s previous
+numbers are **superseded**, not merely updated:
+
+| arm | morans | gearys | umap_mixing | field_r | depth_r | ct_loc |
+|---|---|---|---|---|---|---|
+| **method (new)** | **0.9517** | **0.9142** | **0.9730** | −0.0425 | **0.0519** | −0.0660 |
+| resample (v20 fallback) | 0.8278 | 0.7683 | 0.6844 | −0.0374 | 0.0195 | −0.0660 |
+| independent donor | 0.8716 | 0.8273 | 0.7388 | −0.0404 | 0.0405 | −0.0660 |
+
+The method beats `resample` on 4 of 6, ties `celltype_localization` and loses `marker_field_r`; and
+it beats the **independent-donor sampler on 4 of 6** with the same tie and the same single loss.
+The old config managed **2 of 6** against the donor bar. The three distribution-level statistics it
+used to lose are now won by 0.08, 0.09 and 0.23. **The definition of done goes from half met to met
+on four of six against both fallbacks**, and it is the selector's own choice that did it.
+
+`ell_xy` still calibrates to **86.4 um, `converged`** on the selected config, and `ell_z` is still
+`target_unreachable` at the bracket's top — R1 is unchanged by the new config, as expected, since
+its obstacle is the target rather than the gates.
+
+**A residual the run surfaced, not covered by the rule as written.** `text_emb_mode` passes the
+rule — both options train — but it is scored at 600 steps *under a `zinb-flow` incumbent*, where
+the flow is far from converged (morans 0.5997 / 0.6523 against 0.96 at full budget), and its winner
+changed from `medcpt` to `lookup`. Both options are handicapped equally, so this is not the R8
+defect; but the gate is being decided on a model that behaves nothing like the shipped one. Whether
+the rule should be widened from "has a training-free option" to "is scored at a budget where the
+incumbent is unconverged" is a spec question, recorded rather than answered here.
+
+**T10 benchmarks the new config** (`cbabb27aa44ee6e4`, persisted as
+`reports/config_selection_synthetic.yaml`), not the old one. Every headline number T10 reports —
+and every arm of its A2 ablation — must be produced under it.

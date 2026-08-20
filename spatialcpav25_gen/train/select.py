@@ -814,7 +814,7 @@ def run_selection(
                 label=label,
                 overrides=overrides,
                 steps=int(overrides["train_steps"]),
-                scores=score(overrides, int(overrides["train_steps"])),
+                scores=score(overrides, int(overrides["train_steps"]), label),
             )
             for label, overrides in joint_gate_cells(base_cfg)
         ]
@@ -1160,7 +1160,7 @@ def write_selection_report(
                     f"{c.rank:.1f}",
                 ]
                 for c in result.candidates
-                if c.gate != "joint"
+                if c.gate not in ("joint", "full_budget")
             ],
             ["gate", "candidate", "steps", *METRIC_NAMES, "median rank"],
         ),
