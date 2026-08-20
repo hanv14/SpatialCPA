@@ -239,6 +239,47 @@ report says so on its first line.
   regeneration.
 - Resumable: skip completed cells; a benchmark that cannot resume will not survive a 3-day run.
 
+### Repeated seeds, and exactly which measurements pay for them (added at T09)
+
+`specs/09` §3's **repeated-seed rule**: any measurement that reaches a paper claim runs at least
+`Config.claim_min_seeds` (**3**) seeds and reports the spread, not a point estimate. T09 measured
+why — refitting one configuration at the same seed in a different process moved its scores by up
+to **0.0120**, while the gap between the two `text_emb_mode` options was **0.0110**, so "wins" and
+"wins by less than the run-to-run variation" were indistinguishable. A benchmark whose purpose is
+claiming wins cannot leave them that way.
+
+**Scoped, because three seeds on everything is not what the rule is for.** The rule attaches to
+*claims*, not to measurements. **T10 must provide `CLAIM_BEARING` in `eval/benchmark.py`** — the
+machine-readable form of the table below — and a `_check_claim_coverage` that refuses to emit a
+headline table containing a measurement classified neither way. This is the same derived
+enforcement `TRAINING_FREE_OPTIONS` and `CAPABILITY_CLAIM` carry in `train/select.py`, and for the
+same reason: the classification is made when a measurement is added, not rediscovered after a
+reviewer asks how many seeds it ran.
+
+| measurement | claim-bearing? | seeds |
+|---|---|---|
+| headline six-metric table, per regime | **yes** — this *is* the claim | **3** |
+| ablation arms that carry a claim (A2 weights-on vs off, A7 SEFL net contribution, A8 `loss_prog_WRONG`) | **yes** — each is stated as an effect | **3** |
+| capability experiments E1–E5 | **yes** — each is a claim of a capability | **3** |
+| boundary stratification of the headline metrics | **yes** — reported as a gap | **3** |
+| achievable-ceiling measurements | no — a bound on interpretation, not a claim of superiority | 1 |
+| diagnostics (per-module Moran's agreement, detection MAD, `w(v)`, retrieval-window derivation) | no — they inform, they do not claim | 1 |
+| calibration statuses and their achieved-vs-target numbers | no — reported as statuses, not compared against a baseline | 1 |
+| config selection itself | no — `specs/09` §3's rules govern it, and its own margins are checked against the envelope | 1 |
+
+**The bill, before it is incurred.** On the synthetic fixture one full-budget fit costs ~29 min, and
+the headline table needs one fit per (dataset, regime, method, fold). Three seeds multiplies only
+the claim-bearing rows above: the headline table and the boundary stratification share their fits
+(the stratification is a groupby of the same generations, not a re-run), the ablation arms that
+carry a claim are **3** of A2/A7/A8's arms, and E1–E5 are cheap relative to a fit. So the campaign's
+cost is **3x the headline table and the claiming ablation arms**, and **1x** everything else —
+roughly a **2.4x** multiple on a single-seed campaign rather than 3x, because the diagnostics,
+ceilings and calibration are the long tail and stay at one seed.
+
+Report the spread as **min–max across seeds** beside every claim-bearing median, and state the
+campaign's own envelope (the largest across-seed spread observed) in the methods section. A claim
+whose effect is smaller than that envelope is **not a claim**: report it as a tie, with the numbers.
+
 **Statistics** (`benchmark.py` or `stats.py`):
 - Paired Wilcoxon signed-rank vs. the competing method, per metric, paired by section.
 - Benjamini–Hochberg across the six metrics.

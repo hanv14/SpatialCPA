@@ -458,7 +458,7 @@ one **18-cell** gate at full budget; `text_emb_mode` keeps coordinate descent.
 | `text_emb_mode` | medcpt | **lookup** |
 | `train_steps` | 2400 | 2400 |
 | `w_autocorr` / `w_profile` / `w_distribution` | 0.5 | 0.5 |
-| config hash | `fe49ea9f8ad54bb2` | **`2ce15bbaf5cf2bc1`** |
+| config hash | `fe49ea9f8ad54bb2` | **`00ef4a19a2f576b8`** |
 
 **Every one of the three merged gates changed its answer**, and the 18-cell table shows why: all
 six `cross-mix` cells occupy the **bottom six ranks** (13.0–17.0) and every non-`cross-mix` cell
@@ -502,7 +502,7 @@ defect; but the gate is being decided on a model that behaves nothing like the s
 the rule should be widened from "has a training-free option" to "is scored at a budget where the
 incumbent is unconverged" is a spec question, recorded rather than answered here.
 
-**T10 benchmarks the new config** (`2ce15bbaf5cf2bc1`, persisted as
+**T10 benchmarks the new config** (`00ef4a19a2f576b8`, persisted as
 `reports/config_selection_synthetic.yaml`), not the old one. Every headline number T10 reports —
 and every arm of its A2 ablation — must be produced under it.
 
@@ -549,6 +549,62 @@ proposals go to the spec's owner rather than being taken here: a **tie-break rul
 capability-preserving option when the separation is below the reproducibility envelope, and
 **repeated seeds** for any gate that reaches a headline claim.
 
-The selected config's **hash moves to `2ce15bbaf5cf2bc1`** — the gate choices are unchanged, but
+The selected config's **hash moves to `00ef4a19a2f576b8`** — the gate choices are unchanged, but
 `Config` gained the two fields condition (2) needs, and the hash covers every field. `T10 benchmarks
-`2ce15bbaf5cf2bc1`.
+`00ef4a19a2f576b8`.
+
+
+#### 13. R10 settled — the envelope measured, and two gate choices were inside it
+
+Both remedies are in, as rules rather than as fixes for the gates that exposed them.
+
+**The repeated-seed rule** (`specs/09` §3, scoped in `specs/10` §3): any measurement reaching a
+paper claim runs `Config.claim_min_seeds` (3) seeds and reports the spread. Scoped so it attaches to
+*claims*, not measurements — the headline table, the claim-bearing ablation arms, E1–E5 and the
+boundary stratification pay for three seeds; ceilings, diagnostics, calibration statuses and the
+selection itself stay at one. `specs/10` now requires T10 to carry `CLAIM_BEARING` and a
+`_check_claim_coverage` that refuses a headline table containing an unclassified measurement — the
+same derived enforcement the budget rule has. **Estimated bill: ~2.4x a single-seed campaign**, not
+3x, because the diagnostics and ceilings are the long tail and stay at one seed.
+
+**The capability tie-break** needs a claim *level*, not a flag, because "prefer the capability"
+pulls in opposite directions in the two cases measured. `CAPABILITY_CLAIM` gives every option an
+integer, and `capability_tie_break` applies two rules: an exactly-identical rival proves a higher
+claim is **inert** and drops it, then among what survives the highest claim wins. `lookup` (0) vs
+`medcpt` (1) differ but are inside the envelope, so `medcpt` wins; `auto-blend` (2) is *identical*
+to `zinb-flow` (1), so it is dropped and `zinb-flow` is the honest label. One bug worth recording:
+the first implementation returned early when the rank winner was capable, which credited
+`auto-blend` whenever it happened to sort first — equal ranks make the order arbitrary, and the
+test now asserts both orderings.
+
+**The envelope, measured** (`reports/envelope_synthetic.md`): 3 cells x 3 seeds, 9 fits, 3.4 h.
+Largest across-seed spread **0.0335** — **nearly 3x the 0.0120 that two fits had suggested**. It is
+**not score-dependent** (0.0299 / 0.0335 / 0.0270 at score levels 0.95 / 0.94 / 0.83, which is what
+the far arm was for) but it is strongly **metric-dependent**: `celltype_localization` reproduces to
+0.0068 while `gearys_pearson` moves 0.0335 — a 5x range. `claim_tie_break_envelope` is set to
+**0.04**, rounded up, because a maximum over nine samples is a lower bound on the true spread.
+
+**And the re-check found a gate nobody suspected.** Against 0.04:
+
+| gate | selected | closest rival | margin | verdict |
+|---|---|---|---|---|
+| `layout_mode` | resample | **hybrid** | **0.0344** | **inside** |
+| `prior_mode` | correlated | iid | 0.0731 | safe (1.8x) |
+| `expr_mode` | zinb-flow | cross-mix | 0.2900 | safe (7.3x) |
+| `text_emb_mode` | lookup | **medcpt** | **0.0110** | **inside** |
+
+**`layout_mode` was decided inside the noise** — 0.0344 against an envelope of 0.0335, a margin
+1.03x the noise floor. The tie-break selects **`hybrid`**, because `resample` reuses real cell
+positions and is the v20 fallback, so shipping it switches the learned continuous layout off. This
+is borderline and is flagged as such in the report: at the raw 0.0335 the margin clears by 3 %, and
+only the rounding puts it inside. The rounding is justified in the unsafe direction — 0.0335 is a
+maximum over nine fits, and the same statistic at two fits read 0.0120.
+
+**Shipped after both tie-breaks:** `hybrid` + `correlated` + `zinb-flow` + `medcpt`, 2400 steps,
+weights 0.5 — hash **`00ef4a19a2f576b8`**. Two of the four gates are now decided by capability
+rather than by measurement, and the report says so per gate, which is the point of the rule.
+
+**What this leaves T10.** The definition-of-done arms are superseded twice over — wrong config, and
+one seed. A single-seed replacement would not be admissible under the rule this task just wrote, so
+they are **not** re-run here: T10 produces them under `00ef4a19a2f576b8` at three seeds, reports
+min–max beside every median, and treats any effect below the campaign's envelope as a tie.

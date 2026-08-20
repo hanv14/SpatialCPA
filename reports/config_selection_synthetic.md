@@ -6,16 +6,23 @@ Selected by internal LOSO over **training sections only**, seed 20260819. Folds:
 
 | gate | selected |
 |---|---|
-| `layout_mode` | resample |
+| `layout_mode` | **hybrid** (tie-broken; rank winner `resample`) |
 | `prior_mode` | correlated |
 | `expr_mode` | zinb-flow |
-| `text_emb_mode` | lookup |
+| `text_emb_mode` | **medcpt** (tie-broken; rank winner `lookup`) |
 | `train_steps` | 2400 |
 | `w_autocorr` | 0.5 |
 | `w_profile` | 0.5 |
 | `w_distribution` | 0.5 |
-| config hash | `2ce15bbaf5cf2bc1` |
+| config hash | `00ef4a19a2f576b8` |
 | persisted at | `config_selection_synthetic.yaml` |
+
+Two gates are decided by `specs/09` §3's **capability tie-break** rather than by rank: their
+margins — 0.0344 for `layout_mode` and 0.0110 for `text_emb_mode` — are inside the measured
+reproducibility envelope of 0.0335 (`reports/envelope_synthetic.md`), where the rank ordering is
+not evidence. `prior_mode` (1.8x the envelope) and `expr_mode` against `cross-mix` (7.3x) stand on
+measurement. The definition-of-done arms below were measured under the **previous** config at one
+seed and are superseded; T10 re-runs them under this config at `claim_min_seeds` seeds.
 
 ## The joint gate: `train_steps` x metric-aware weights
 

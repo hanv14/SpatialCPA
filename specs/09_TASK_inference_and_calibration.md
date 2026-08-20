@@ -269,6 +269,48 @@ six** at the budget it was actually trained at. The two gates also compounded: f
 `prior_mode="iid"` first dropped `zinb-flow` from rank 2.5 to 3.0 *before* the `expr_mode` gate was
 scored, which is why qualifying gates are scored jointly rather than one after another.
 
+### The repeated-seed rule (added at T09, from a measured envelope)
+
+> **Any measurement that reaches a paper claim runs at least
+> `Config.claim_min_seeds` seeds and reports the spread, not a point estimate.** A single-seed
+> number cannot distinguish "wins" from "wins by less than the run-to-run variation", and a
+> benchmark whose purpose is claiming wins cannot leave those two indistinguishable.
+
+*Why it exists, measured.* Fitting one configuration twice — same config, same seed, different
+process — moved its scores by up to **0.0120** (`umap_mixing`), while the largest difference
+between the two `text_emb_mode` options at the selected budget was **0.0110**. Re-running the
+identical configuration moved the score as much as changing the gate did. That gate was therefore
+undecidable at one seed at any budget, which no amount of extra training would have revealed.
+
+This belongs in the paper's methods as a **strength**, not a caveat: the campaign states its own
+reproducibility envelope and reports every claim against it, which is strictly more than a
+single-seed table can support.
+
+### The capability tie-break (added at T09)
+
+> **When two options are separated by less than the reproducibility envelope, prefer the option
+> whose headline capability is *exercised on this dataset*.** A capability that is present but
+> **inert** does not count, and neither does the nominal rank winner: below the envelope the rank
+> ordering is not evidence.
+
+Two worked examples, both from the fixture, and the second is the reason for the word *exercised*:
+
+* `text_emb_mode`. `lookup` outranks `medcpt` (1.2 against 1.8) on margins of at most 0.011 —
+  inside the envelope. `lookup` **disables the MedCPT channel**, which is the open-vocabulary
+  claim; `medcpt` exercises it, since the text embeddings are live on every gene. The tie-break
+  selects **`medcpt`**. Shipping `lookup` here would switch off a headline capability on a margin
+  smaller than the noise floor.
+* `expr_mode`, and the trap. `auto-blend` and `zinb-flow` scored **identically** — max difference
+  0.0000 — so the tie-break applies. `auto-blend` is nominally the richer capability (T09's
+  uncertainty-gated anchoring). But on this fixture the fitted `w(v)` is **0 at every knot**, so
+  the blend passes the flow's draw through unmixed and the two cells are the *same model* under
+  two labels. The capability is present and does nothing, so it does not count, and the tie-break
+  selects **`zinb-flow`** — the honest label for what the model actually is. Preferring
+  `auto-blend` would ship a feature claim that no emitted count depends on.
+
+A gate resolved by the tie-break is **reported as tie-broken**, with both scores and the envelope,
+so a reader can see the choice was made on capability rather than on measurement.
+
 *Applying the rule to the current table:*
 
 | Gate | Training-free option | Budget |

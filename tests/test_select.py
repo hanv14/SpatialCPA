@@ -33,13 +33,16 @@ from spatialcpav25_gen.data.schema import HeldOutSections, TrainingVolume
 from spatialcpav25_gen.model.field import BBoxClampWarning
 from spatialcpav25_gen.train.select import (
     ALL_GATES,
+    CAPABILITY_CLAIM,
     FULL_BUDGET_GATES,
     GATES,
     METRIC_NAMES,
     TRAINING_FREE_OPTIONS,
     V20_CONFIG,
+    Candidate,
     ScoreCache,
     SelectionError,
+    capability_tie_break,
     incumbent_is_unconverged,
     joint_gate_cells,
     run_selection,
@@ -475,3 +478,81 @@ def test_convergence_predicate_counts_only_shortfalls():
     fired_one, metrics_one = incumbent_is_unconverged(full, one, cfg)
     assert not fired_one
     assert metrics_one == ("morans_pearson",), "the metric is still reported, just not enough"
+
+
+def _cand(gate: str, option: str, values: list[float], rank: float) -> Candidate:
+    """One scored candidate of ``gate``, for the tie-break tests."""
+    return Candidate(
+        gate=gate,
+        label=f"{gate}={option}",
+        overrides={gate: option},
+        steps=2400,
+        scores=dict(zip(METRIC_NAMES, values, strict=True)),
+        rank=rank,
+    )
+
+
+def test_every_option_has_a_capability_claim_level():
+    """The tie-break's classification is forced when a gate is added, like the budget rule's."""
+    for gate, options in ALL_GATES:
+        assert gate in CAPABILITY_CLAIM, f"{gate} has no claim levels"
+        assert set(CAPABILITY_CLAIM[gate]) == set(options), f"{gate} is partly classified"
+        assert min(CAPABILITY_CLAIM[gate].values()) == 0, (
+            f"{gate} needs a level-0 option — the one that claims nothing beyond reusing "
+            "real data — or 'prefer the capability' has no floor to prefer against"
+        )
+
+
+def test_tie_break_prefers_the_exercised_capability_below_the_envelope():
+    """`lookup` outranks `medcpt` by less than the envelope, and disables the text channel.
+
+    R10's measured case. The margin is at most 0.011 against a reproducibility envelope of
+    0.02, so the rank ordering is not evidence; `medcpt` keeps the MedCPT channel live, which
+    is the open-vocabulary claim, so it wins.
+    """
+    cfg = t09_cfg()
+    lookup = _cand(
+        "text_emb_mode", "lookup", [0.9511, 0.9334, 0.9688, -0.0425, 0.0460, -0.0660], 1.2
+    )
+    medcpt = _cand(
+        "text_emb_mode", "medcpt", [0.9535, 0.9288, 0.9624, -0.0469, 0.0570, -0.0660], 1.8
+    )
+    winner, reason = capability_tie_break([lookup, medcpt], "text_emb_mode", cfg)
+    assert winner.overrides["text_emb_mode"] == "medcpt"
+    assert "tie-broken on capability" in reason
+
+
+def test_tie_break_refuses_to_credit_an_inert_capability():
+    """An exactly-identical rival proves the extra claim does nothing, whatever the ordering.
+
+    The fixture's `auto-blend`: `w(v)` is 0 at every knot, so the blend passes the flow's draw
+    through and the cell is bit-identical to `zinb-flow`. Shipping the richer label would claim
+    a mechanism no emitted count depends on. Asserted in both candidate orderings, because
+    equal ranks make the ordering arbitrary and an early return on the first element was
+    exactly the bug this pins.
+    """
+    cfg = t09_cfg()
+    same = [0.9606, 0.9308, 0.9744, -0.0437, 0.0491, -0.0660]
+    for order in (("auto-blend", "zinb-flow"), ("zinb-flow", "auto-blend")):
+        cands = [_cand("expr_mode", opt, same, 3.0) for opt in order]
+        winner, _ = capability_tie_break(cands, "expr_mode", cfg)
+        assert winner.overrides["expr_mode"] == "zinb-flow", (
+            f"ordering {order} credited an inert claim"
+        )
+
+    # ...but a capability that *does* something is credited.
+    live = _cand("expr_mode", "auto-blend", [0.97, 0.94, 0.98, -0.040, 0.052, -0.065], 1.0)
+    winner, _ = capability_tie_break(
+        [_cand("expr_mode", "zinb-flow", same, 2.0), live], "expr_mode", cfg
+    )
+    assert winner.overrides["expr_mode"] == "auto-blend"
+
+
+def test_tie_break_leaves_a_clear_margin_alone():
+    """Outside the envelope the measurement decides and capability is not consulted."""
+    cfg = t09_cfg()
+    best = _cand("expr_mode", "zinb-flow", [0.9606, 0.9308, 0.9744, -0.0437, 0.0491, -0.0660], 1.0)
+    far = _cand("expr_mode", "cross-mix", [0.60, 0.60, 0.60, -0.05, 0.01, -0.07], 2.0)
+    winner, reason = capability_tie_break([best, far], "expr_mode", cfg)
+    assert winner is best
+    assert "no rival within the envelope" in reason

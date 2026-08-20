@@ -82,7 +82,7 @@ niche_scale_factor: 2.0
 section_dropout_max_sections: 1
 expr_pca_dim: 16
 gate2_min_cells_per_angle: 500
-layout_mode: resample
+layout_mode: hybrid
 potts_beta: 0.5
 potts_iters: 2
 layout_n_mc: 512
@@ -112,7 +112,7 @@ swd_n_projections: 32
 swd_polish_step: 0.5
 prior_mode: correlated
 expr_mode: zinb-flow
-text_emb_mode: lookup
+text_emb_mode: medcpt
 decoder: zinb
 repulsion: true
 ceiling_n_draws: 8
@@ -207,6 +207,8 @@ anchor_weight_grid_size: 5
 generation_empty_pool_tol: 0.01
 boundary_margin_spacings: 0.5
 selection_reduced_epoch_frac: 0.25
+claim_min_seeds: 3
+claim_tie_break_envelope: 0.04
 selection_convergence_tol: 0.05
 selection_convergence_min_metrics: 2
 selection_passes: 2

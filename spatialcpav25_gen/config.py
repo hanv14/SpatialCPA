@@ -1372,6 +1372,32 @@ class Config:
     :func:`~spatialcpav25_gen.train.select.select_config` fits the joint gate's cells at the
     budget each one names."""
 
+    claim_min_seeds: int = 3
+    """Seeds any measurement that reaches a paper claim must run (``specs/09`` §3's
+    repeated-seed rule, scoped in ``specs/10`` §3).
+
+    Three rather than one because a single-seed number cannot distinguish "wins" from "wins by
+    less than the run-to-run variation": T09 refitted one configuration at the same seed in a
+    different process and its scores moved by up to 0.0120, while the gap between the two
+    ``text_emb_mode`` options was 0.0110. Three rather than more because the rule is scoped to
+    claim-bearing measurements and every extra seed is a full fit."""
+
+    claim_tie_break_envelope: float = 0.04
+    """Below this separation two gate options count as **indistinguishable**, and the capability
+    tie-break decides instead of the rank ordering (``specs/09`` §3).
+
+    Set from the measured across-seed spread, not from a nominal figure:
+    ``reports/envelope_synthetic.md`` fits three representative cells at three seeds each and
+    the largest spread is **0.0335** (``gearys_pearson``). Rounded **up** to 0.04, because that
+    0.0335 is a maximum over nine fits and therefore a *lower bound* on the true spread — the
+    same measurement at two fits had said 0.0120, so more samples widened it almost threefold.
+    A threshold tighter than the evidence would let a difference the campaign cannot reproduce
+    be reported as a win.
+
+    The envelope is **not score-dependent** — 0.0299 at a score level of 0.95, 0.0335 at 0.94
+    and 0.0270 at 0.83 — so one threshold serves every cell rather than needing a per-score
+    scale."""
+
     selection_convergence_tol: float = 0.05
     """How far a metric may fall at the reduced budget before the incumbent counts as
     **unconverged** there (``specs/09`` §3's widened training-free-option rule).
@@ -1599,6 +1625,7 @@ class Config:
             "distill_hidden": self.distill_hidden,
             "text_diag_knn_k": self.text_diag_knn_k,
             "selection_convergence_min_metrics": self.selection_convergence_min_metrics,
+            "claim_min_seeds": self.claim_min_seeds,
             "text_diag_leiden_resolution": self.text_diag_leiden_resolution,
             "text_diag_leiden_iterations": self.text_diag_leiden_iterations,
             "text_diag_max_pairs": self.text_diag_max_pairs,
@@ -1733,6 +1760,7 @@ class Config:
             "anchor_weight_grid_size": self.anchor_weight_grid_size,
             "boundary_margin_spacings": self.boundary_margin_spacings,
             "selection_reduced_epoch_frac": self.selection_reduced_epoch_frac,
+            "claim_tie_break_envelope": self.claim_tie_break_envelope,
             "selection_convergence_tol": self.selection_convergence_tol,
             "selection_passes": self.selection_passes,
             "selection_budget_multiple": self.selection_budget_multiple,
@@ -1790,6 +1818,7 @@ class Config:
             "generation_empty_pool_tol": self.generation_empty_pool_tol,
             "selection_reduced_epoch_frac": self.selection_reduced_epoch_frac,
             "selection_convergence_tol": self.selection_convergence_tol,
+            "claim_tie_break_envelope": self.claim_tie_break_envelope,
             "potts_rare_prevalence": self.potts_rare_prevalence,
             "potts_rare_retention": self.potts_rare_retention,
         }

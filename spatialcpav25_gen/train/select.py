@@ -85,6 +85,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 __all__ = [
     "ALL_GATES",
+    "CAPABILITY_CLAIM",
     "FULL_BUDGET_GATES",
     "GATES",
     "METRIC_NAMES",
@@ -95,6 +96,7 @@ __all__ = [
     "SelectionError",
     "SelectionResult",
     "calibration_chunks",
+    "capability_tie_break",
     "full_budget_gate_cells",
     "incumbent_is_unconverged",
     "joint_gate_cells",
@@ -162,21 +164,138 @@ From 600 to 2400 steps ``morans_pearson`` gains **+0.3432** for ``zinb-flow`` an
 for ``cross-mix``."""
 
 
-def _check_gate_classification() -> None:
-    """Refuse a gate in :data:`ALL_GATES` that :data:`TRAINING_FREE_OPTIONS` does not classify.
+CAPABILITY_CLAIM: Final[dict[str, dict[str, int]]] = {
+    "layout_mode": {"resample": 0, "field": 1, "hybrid": 1},
+    "prior_mode": {"iid": 0, "correlated": 1},
+    "expr_mode": {"cross-mix": 0, "zinb-flow": 1, "auto-blend": 2},
+    "text_emb_mode": {"lookup": 0, "medcpt": 1},
+}
+"""How much each option **claims**, for ``specs/09`` §3's capability tie-break.
 
-    The rule is only a rule if adding a gate forces the question. Raised at import time so a
-    gate added without a classification fails immediately rather than being scored at whatever
-    budget the code happens to default to.
+``0`` is the option that claims nothing beyond reusing real data; higher numbers add a
+mechanism the paper takes credit for. ``resample`` reuses real positions while ``field`` and
+``hybrid`` generate them; ``iid`` ignores the GRF and ``correlated`` uses it; ``cross-mix``
+copies donor counts, ``zinb-flow`` generates them, and ``auto-blend`` adds T09's
+uncertainty-gated anchoring on top of the flow — hence ``2``; ``lookup`` disables the text
+channel and ``medcpt`` keeps it live, which is the open-vocabulary claim.
+
+Every gate and every one of its options must appear, and
+:func:`_check_gate_classification` refuses a gate that was added without a full classification.
+
+The levels exist because "prefer the capability" pulls in **opposite directions** in the two
+cases T09 measured, and only the claim level separates them — see
+:func:`capability_tie_break`."""
+
+
+def capability_tie_break(
+    candidates: Sequence[Candidate], gate: str, cfg: Config
+) -> tuple[Candidate, str]:
+    """Choose between candidates separated by less than the reproducibility envelope.
+
+    ``specs/09`` §3's tie-break. Returns ``(winner, reason)``; the reason is written into the
+    report so a reader can see the choice was made on capability rather than on measurement.
+
+    Below ``Config.claim_tie_break_envelope`` the rank ordering **is not evidence** — T09
+    measured a run-to-run envelope as wide as the gap it was being asked to resolve — so
+    capability decides instead. Two rules, and they pull in opposite directions, which is why
+    :data:`CAPABILITY_CLAIM` is a level rather than a flag:
+
+    1. **An exactly-identical rival proves the extra claim is inert.** Among tied candidates
+       whose scores are equal to the last decimal, only the **lowest** claim level survives:
+       the higher-claiming ones are the same model under a richer label, and shipping that
+       label would claim a mechanism no emitted value depends on.
+    2. **Among what survives, the highest claim level wins.** Options that differ *within* the
+       envelope differ for some reason; the rank ordering cannot say which is better, so the
+       option that exercises the capability is preferred to the one that disables it.
+
+    The fixture supplies one case of each. ``auto-blend`` (claim 2) scored **bit-identically**
+    to ``zinb-flow`` (claim 1) because the fitted ``w(v)`` is 0 at every knot, so rule 1 drops
+    it and ``zinb-flow`` is the honest label. ``lookup`` (claim 0) outranked ``medcpt``
+    (claim 1) by at most 0.011 — inside the envelope but *not* identical — so rule 2 selects
+    ``medcpt`` and the open-vocabulary channel is not switched off on sub-noise evidence.
+
+    When no rival is inside the envelope the ordinary rank winner is returned unchanged.
     """
-    missing = [gate for gate, _ in ALL_GATES if gate not in TRAINING_FREE_OPTIONS]
-    if missing:
-        raise SelectionError(
-            f"TRAINING_FREE_OPTIONS does not classify {missing}. specs/09 §3's "
-            "training-free-option rule requires every gate to declare which of its options "
-            "reach final behaviour without training (an empty tuple means 'all options "
-            "train'), because that decides whether the gate may be scored at a reduced budget."
+    ranked = sorted(candidates, key=lambda c: c.rank)
+    best = ranked[0]
+    envelope = float(cfg.claim_tie_break_envelope)
+    claims = CAPABILITY_CLAIM[gate]
+
+    def separation(a: Candidate, b: Candidate) -> float:
+        return max(
+            abs(float(a.scores.get(m, 0.0)) - float(b.scores.get(m, 0.0))) for m in METRIC_NAMES
         )
+
+    def claim(c: Candidate) -> int:
+        return claims[str(c.overrides.get(gate))]
+
+    tied = [c for c in ranked if separation(c, best) < envelope]
+    if len(tied) < 2:
+        return best, "decided on rank; no rival within the envelope"
+
+    # Rule 1: an exactly-identical rival with a lower claim proves the extra claim is inert.
+    live = [
+        c
+        for c in tied
+        if not any(separation(c, other) == 0.0 and claim(other) < claim(c) for other in tied)
+    ]
+    # Rule 2: among what survives, prefer the highest claim level, then rank.
+    winner = min(live, key=lambda c: (-claim(c), c.rank))
+    if winner is best:
+        return best, "the rank winner already exercises the highest live capability"
+    if claim(winner) < claim(best):
+        return winner, (
+            f"within the {envelope:g} envelope, and {best.overrides.get(gate)}'s extra claim is "
+            f"**inert** here — scores identical to {winner.overrides.get(gate)} — so the honest "
+            "label wins rather than the richer one"
+        )
+    return winner, (
+        f"tie-broken on capability: separated from the rank winner ({best.label}) by "
+        f"{separation(winner, best):.4f} < the {envelope:g} envelope, and "
+        f"{winner.overrides.get(gate)} exercises a headline capability the rank winner disables"
+    )
+
+
+def _check_gate_classification() -> None:
+    """Refuse a gate that :data:`TRAINING_FREE_OPTIONS` or :data:`CAPABILITY_CLAIM` misses.
+
+    The rules are only rules if adding a gate forces both questions — which budget may score
+    it, and how a sub-envelope tie between its options is broken. Raised at import time so a
+    gate added without a classification fails immediately rather than being scored at whatever
+    budget the code happens to default to and tie-broken by whatever rank noise produced.
+    """
+
+    def _require_gates(name: str, classified: Sequence[str]) -> None:
+        absent = [gate for gate, _ in ALL_GATES if gate not in classified]
+        if absent:
+            raise SelectionError(
+                f"{name} does not classify {absent}. specs/09 §3 requires every gate to be "
+                "classified when it is added, because the classification decides the gate's "
+                "budget and how a sub-envelope tie is broken."
+            )
+
+    _require_gates("TRAINING_FREE_OPTIONS", list(TRAINING_FREE_OPTIONS))
+    _require_gates("CAPABILITY_CLAIM", list(CAPABILITY_CLAIM))
+    for gate, options in ALL_GATES:
+        stray = set(TRAINING_FREE_OPTIONS[gate]) - set(options)
+        if stray:
+            raise SelectionError(
+                f"TRAINING_FREE_OPTIONS[{gate!r}] names {sorted(stray)}, which are not options "
+                f"of that gate ({list(options)})."
+            )
+        unclassified = set(options) - set(CAPABILITY_CLAIM[gate])
+        if unclassified:
+            raise SelectionError(
+                f"CAPABILITY_CLAIM[{gate!r}] does not give a claim level to "
+                f"{sorted(unclassified)}. Every option needs one: the level is what separates "
+                "'prefer the capability' from 'do not credit an inert one'."
+            )
+        extra = set(CAPABILITY_CLAIM[gate]) - set(options)
+        if extra:
+            raise SelectionError(
+                f"CAPABILITY_CLAIM[{gate!r}] names {sorted(extra)}, which are not options of "
+                f"that gate ({list(options)})."
+            )
     for gate, options in ALL_GATES:
         unknown = set(TRAINING_FREE_OPTIONS[gate]) - set(options)
         if unknown:
