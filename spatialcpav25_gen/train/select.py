@@ -49,8 +49,10 @@ either gate.
 
 from __future__ import annotations
 
+import csv
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from itertools import product
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
@@ -82,13 +84,18 @@ if TYPE_CHECKING:  # pragma: no cover
     from spatialcpav25_gen.model.spatialcpav25_gen import CTFFlow
 
 __all__ = [
+    "ALL_GATES",
+    "FULL_BUDGET_GATES",
     "GATES",
     "METRIC_NAMES",
+    "TRAINING_FREE_OPTIONS",
     "V20_CONFIG",
     "Candidate",
+    "ScoreCache",
     "SelectionError",
     "SelectionResult",
     "calibration_chunks",
+    "full_budget_gate_cells",
     "joint_gate_cells",
     "module_morans_agreement",
     "run_selection",
@@ -113,18 +120,85 @@ METRIC_NAMES: Final[tuple[str, ...]] = (
 """The six target metrics, by ``specs/10``'s names. Higher is better for every one of them,
 which is what lets the score be a median **rank**."""
 
-GATES: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
+ALL_GATES: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
     ("layout_mode", ("field", "hybrid", "resample")),
     ("prior_mode", ("correlated", "iid")),
     ("expr_mode", ("zinb-flow", "cross-mix", "auto-blend")),
     ("text_emb_mode", ("medcpt", "lookup")),
 )
-"""The coordinate-descended gates and their options (``specs/09`` §3's table).
+"""Every gate and its options (``specs/09`` §3's table).
 
 ``text_emb`` / ``medcpt+residual`` / ``lookup-only`` are the design document's spellings of
 ``text_emb_mode`` / ``medcpt`` / ``lookup`` (SPEC_QUESTIONS C7: the ``Config`` spelling wins).
 The budget and the metric-aware weights are **not** here — they are one joint gate, scored by
-:func:`joint_gate_cells`, for the reason in the module docstring."""
+:func:`joint_gate_cells`. Which of these are coordinate-descended and which are scored jointly
+at full budget is decided by :data:`TRAINING_FREE_OPTIONS`, not fixed here."""
+
+TRAINING_FREE_OPTIONS: Final[dict[str, tuple[str, ...]]] = {
+    "layout_mode": ("resample",),
+    "prior_mode": ("iid",),
+    "expr_mode": ("cross-mix",),
+    "text_emb_mode": (),
+}
+"""The **training-free-option rule** (``specs/09`` §3), in machine-readable form.
+
+An option is *training-free* when it reaches its final behaviour without training, because it
+copies real data instead of generating it: ``resample`` reuses real cell positions, ``iid``
+never queries the fitted field, ``cross-mix`` emits donor counts verbatim. Such an option is
+already at full strength at any budget while its rivals are not, so a reduced-budget
+comparison of that gate measures the budget rather than the gate.
+
+**Every gate must appear here**, including gates with no training-free option — an empty tuple
+is the classification "all options train", not a missing entry, and
+:func:`_check_gate_classification` refuses a gate that was added to :data:`ALL_GATES` without
+one. That is the point of the rule: a future gate is classified when it is added, rather than
+being discovered by a reversal months later.
+
+Measured (``reports/r8_budget_grid.md``, open risk R8): at 25 % of the budget ``cross-mix`` won
+the ``expr_mode`` gate under both priors and at full budget it came **last** under both, and
+``iid`` won ``prior_mode`` at 25 % on exactly the two expression paths where the prior can act.
+From 600 to 2400 steps ``morans_pearson`` gains **+0.3432** for ``zinb-flow`` and **-0.0180**
+for ``cross-mix``."""
+
+
+def _check_gate_classification() -> None:
+    """Refuse a gate in :data:`ALL_GATES` that :data:`TRAINING_FREE_OPTIONS` does not classify.
+
+    The rule is only a rule if adding a gate forces the question. Raised at import time so a
+    gate added without a classification fails immediately rather than being scored at whatever
+    budget the code happens to default to.
+    """
+    missing = [gate for gate, _ in ALL_GATES if gate not in TRAINING_FREE_OPTIONS]
+    if missing:
+        raise SelectionError(
+            f"TRAINING_FREE_OPTIONS does not classify {missing}. specs/09 §3's "
+            "training-free-option rule requires every gate to declare which of its options "
+            "reach final behaviour without training (an empty tuple means 'all options "
+            "train'), because that decides whether the gate may be scored at a reduced budget."
+        )
+    for gate, options in ALL_GATES:
+        unknown = set(TRAINING_FREE_OPTIONS[gate]) - set(options)
+        if unknown:
+            raise SelectionError(
+                f"TRAINING_FREE_OPTIONS[{gate!r}] names {sorted(unknown)}, which are not "
+                f"options of that gate ({list(options)})."
+            )
+
+
+FULL_BUDGET_GATES: Final[tuple[tuple[str, tuple[str, ...]], ...]] = tuple(
+    (gate, options) for gate, options in ALL_GATES if TRAINING_FREE_OPTIONS[gate]
+)
+"""The gates the rule disqualifies from reduced-budget scoring, scored **jointly** at the
+selected budget by :func:`full_budget_gate_cells`. Jointly rather than one after another
+because their errors compound through coordinate descent's ordering: on the fixture, fixing
+``prior_mode="iid"`` first dropped ``zinb-flow`` from rank 2.5 to 3.0 *before* the ``expr_mode``
+gate was scored."""
+
+GATES: Final[tuple[tuple[str, tuple[str, ...]], ...]] = tuple(
+    (gate, options) for gate, options in ALL_GATES if not TRAINING_FREE_OPTIONS[gate]
+)
+"""The gates that keep coordinate descent at ``Config.selection_reduced_epoch_frac`` — every
+option trains, so a reduced fit compares like with like."""
 
 V20_CONFIG: Final[dict[str, str]] = {"layout_mode": "resample", "expr_mode": "cross-mix"}
 """The previous version's behaviour, and the no-regression guarantee: this combination is
@@ -193,6 +267,10 @@ class SelectionResult:
         The four cells of the ``{1x, 2x} x {off, spec weights}`` gate, all of them, scored
         together. Reported in full — the winner alone hides the interaction that makes this
         one gate.
+    full_budget
+        Every cell of the merged ``layout_mode`` x ``prior_mode`` x ``expr_mode`` gate, all
+        scored at the selected budget under ``specs/09`` §3's training-free-option rule.
+        Reported in full for the same reason as ``joint``.
     candidates
         Every candidate scored, in the order they were scored.
     fits
@@ -212,6 +290,7 @@ class SelectionResult:
     dataset: str
     seed: int
     section_ids: tuple[str, ...] = ()
+    full_budget: list[Candidate] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------------------
@@ -511,6 +590,90 @@ class FitScorer:
 # --------------------------------------------------------------------------------------
 
 
+def full_budget_gate_cells(base_cfg: Config) -> list[tuple[str, dict[str, Any]]]:
+    """Return every cell of the merged full-budget gate, as ``(label, overrides)``.
+
+    The cartesian product of :data:`FULL_BUDGET_GATES` — on the current table
+    ``layout_mode`` x ``prior_mode`` x ``expr_mode``, 3 x 2 x 3 = **18 cells**. Merged rather
+    than descended one gate at a time because ``specs/09`` §3's training-free-option rule
+    disqualifies all three from reduced-budget scoring *and* because their errors compound
+    through the ordering: a wrong choice on an earlier gate biases every gate scored after it.
+
+    ``base_cfg`` is unused except to keep the signature parallel to :func:`joint_gate_cells`;
+    the cells are a property of the gate table, not of the config.
+    """
+    del base_cfg
+    cells: list[tuple[str, dict[str, Any]]] = []
+    names = [gate for gate, _ in FULL_BUDGET_GATES]
+    for combo in product(*[options for _, options in FULL_BUDGET_GATES]):
+        overrides = dict(zip(names, combo, strict=True))
+        cells.append((", ".join(f"{k}={v}" for k, v in overrides.items()), overrides))
+    return cells
+
+
+class ScoreCache:
+    """Per-cell checkpoint for a selection run, so an interrupted one resumes.
+
+    The full-budget gate is 18 fits at the selected budget — hours of compute — and a run that
+    loses all of it to an interrupted session is not usable. Every scored cell is appended to a
+    CSV **immediately and flushed**, keyed by the candidate config's
+    :meth:`~spatialcpav25_gen.config.Config.content_hash` and its budget, and a re-run of the
+    same selection skips what is already recorded.
+
+    Keying on the full config hash rather than on the overrides is deliberate: a cell is only
+    reusable if *every* field that could affect the score matches, so changing an unrelated
+    ``Config`` field correctly invalidates the cache instead of silently reusing a stale score.
+
+    Parameters
+    ----------
+    path
+        The CSV. Created with a header if absent.
+    on_write
+        Optional callback run after each row is flushed, given the row's label. The report
+        script uses it to commit the checkpoint, which is what makes the run survive losing
+        the machine rather than merely the process.
+    """
+
+    def __init__(self, path: str | Path, on_write: Callable[[str], None] | None = None) -> None:
+        """Load any existing rows from ``path``; create it with a header if it is absent."""
+        self.path = Path(path)
+        self.on_write = on_write
+        self._rows: dict[str, dict[str, float]] = {}
+        if self.path.exists():
+            with self.path.open(newline="", encoding="utf-8") as handle:
+                for row in csv.DictReader(handle):
+                    self._rows[row["key"]] = {name: float(row[name]) for name in METRIC_NAMES}
+        else:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("w", newline="", encoding="utf-8") as handle:
+                csv.writer(handle).writerow(["key", "label", "steps", *METRIC_NAMES])
+
+    @staticmethod
+    def key(cfg: Config, steps: int) -> str:
+        """Return the cache key: the config's content hash and the budget it is fitted at."""
+        return f"{cfg.content_hash()}:{int(steps)}"
+
+    def get(self, cfg: Config, steps: int) -> dict[str, float] | None:
+        """Return the recorded scores for this cell, or ``None`` if it has not been run."""
+        return self._rows.get(self.key(cfg, steps))
+
+    def put(self, cfg: Config, steps: int, label: str, scores: dict[str, float]) -> None:
+        """Append one scored cell and flush it, then run ``on_write``."""
+        key = self.key(cfg, steps)
+        self._rows[key] = dict(scores)
+        with self.path.open("a", newline="", encoding="utf-8") as handle:
+            csv.writer(handle).writerow(
+                [key, label, int(steps), *[f"{scores[name]:.6f}" for name in METRIC_NAMES]]
+            )
+            handle.flush()
+        if self.on_write is not None:
+            self.on_write(label)
+
+    def __len__(self) -> int:
+        """Return the number of cells already recorded."""
+        return len(self._rows)
+
+
 def joint_gate_cells(base_cfg: Config) -> list[tuple[str, dict[str, Any]]]:
     """Return the four cells of the ``{1x, 2x} x {weights off, spec weights}`` gate.
 
@@ -588,6 +751,7 @@ def run_selection(
     embeddings: Callable[[Config], EntityEmbeddings] | None = None,
     dataset: str = "synthetic",
     report_path: str | Path | None = None,
+    checkpoint: ScoreCache | None = None,
 ) -> SelectionResult:
     """Run the whole selection and return everything it measured. See :class:`SelectionResult`.
 
@@ -595,13 +759,24 @@ def run_selection(
 
     1. **the joint gate first** — all four cells of ``{1x, 2x} x {off, spec weights}``, each
        fitted at the budget it names (``specs/09`` §3's second and third requirements);
-    2. then ``Config.selection_passes`` coordinate-descent passes over :data:`GATES`, each
-       candidate fitted at ``Config.selection_reduced_epoch_frac`` of the *selected* budget,
-       which is the cost control the spec allows for gates whose effect is visible early.
+    2. **then the merged full-budget gate** — every cell of :func:`full_budget_gate_cells`,
+       all at the *selected* budget, because ``specs/09`` §3's training-free-option rule
+       disqualifies those gates from reduced-budget scoring and their errors compound if they
+       are visited one at a time;
+    3. then ``Config.selection_passes`` coordinate-descent passes over the gates that remain
+       (:data:`GATES` — every option trains), each candidate fitted at
+       ``Config.selection_reduced_epoch_frac`` of the selected budget.
 
     Every fit is recorded in :attr:`SelectionResult.fits`, and identical ``(overrides,
     steps)`` pairs are scored once and reused — coordinate descent revisits the incumbent on
     every pass and refitting it would be pure cost.
+
+    Parameters
+    ----------
+    checkpoint
+        Optional :class:`ScoreCache`. Step 2 is 18 fits at full budget, so a run that loses
+        them to an interrupted session is not usable; with a checkpoint each scored cell is
+        flushed to disk as it completes and a re-run skips what is already there.
     """
     require_training_volume(vol, "run_selection")
     if scorer is None and embeddings is None:
@@ -617,11 +792,18 @@ def run_selection(
     fits: list[tuple[dict[str, Any], int]] = []
     cache: dict[tuple[tuple[str, Any], ...], dict[str, float]] = {}
 
-    def score(overrides: dict[str, Any], steps: int) -> dict[str, float]:
+    def score(overrides: dict[str, Any], steps: int, label: str = "") -> dict[str, float]:
         key = (*sorted(overrides.items()), ("__steps__", steps))
         if key not in cache:
-            fits.append((dict(overrides), int(steps)))
-            cache[key] = score_fn(base_cfg.replace(**overrides), steps=int(steps), seed=run_seed)
+            cfg = base_cfg.replace(**overrides)
+            recorded = None if checkpoint is None else checkpoint.get(cfg, int(steps))
+            if recorded is not None:
+                cache[key] = recorded  # resumed from a previous run; no fit issued
+            else:
+                fits.append((dict(overrides), int(steps)))
+                cache[key] = score_fn(cfg, steps=int(steps), seed=run_seed)
+                if checkpoint is not None:
+                    checkpoint.put(cfg, int(steps), label or str(overrides), cache[key])
         return cache[key]
 
     # 1. the joint gate, all four cells, each at its own budget.
@@ -641,7 +823,24 @@ def run_selection(
     incumbent: dict[str, Any] = dict(best_joint.overrides)
     candidates: list[Candidate] = list(joint)
 
-    # 2. coordinate descent over the remaining gates, at a reduced budget.
+    # 2. the merged full-budget gate: every cell, all at the selected budget.
+    selected_steps = int(incumbent["train_steps"])
+    full_budget = _ranked(
+        [
+            Candidate(
+                gate="full_budget",
+                label=label,
+                overrides={**incumbent, **overrides},
+                steps=selected_steps,
+                scores=score({**incumbent, **overrides}, selected_steps, label),
+            )
+            for label, overrides in full_budget_gate_cells(base_cfg)
+        ]
+    )
+    candidates.extend(full_budget)
+    incumbent = dict(min(full_budget, key=lambda c: c.rank).overrides)
+
+    # 3. coordinate descent over the gates every option of which trains, at a reduced budget.
     reduced = max(
         1, round(float(base_cfg.selection_reduced_epoch_frac) * int(incumbent["train_steps"]))
     )
@@ -656,7 +855,7 @@ def run_selection(
                         label=f"{gate}={option}",
                         overrides=overrides,
                         steps=reduced,
-                        scores=score(overrides, reduced),
+                        scores=score(overrides, reduced, f"{gate}={option}"),
                     )
                 )
             group = _ranked(group)
@@ -666,6 +865,7 @@ def run_selection(
     result = SelectionResult(
         config=base_cfg.replace(**incumbent),
         joint=joint,
+        full_budget=full_budget,
         candidates=candidates,
         fits=fits,
         dataset=dataset,
@@ -925,7 +1125,30 @@ def write_selection_report(
             ["cell", "steps", *METRIC_NAMES, "median rank"],
         ),
         "",
-        "## Coordinate descent",
+        "## The merged full-budget gate: `layout_mode` x `prior_mode` x `expr_mode`",
+        "",
+        "All 18 cells, every one fitted at the **selected** budget. These three gates are "
+        "disqualified from reduced-budget scoring by `specs/09` §3's training-free-option "
+        "rule — each has an option that reaches its final behaviour without training "
+        "(`resample`, `iid`, `cross-mix`) and is therefore at full strength at any budget "
+        "while its rivals are not. They are scored jointly rather than one after another "
+        "because their errors compound through coordinate descent's ordering (open risk R8, "
+        "`reports/r8_budget_grid.md`).",
+        "",
+        _table(
+            [
+                [
+                    c.label,
+                    str(c.steps),
+                    *[f"{c.scores.get(name, float('nan')):.4f}" for name in METRIC_NAMES],
+                    f"{c.rank:.1f}",
+                ]
+                for c in sorted(result.full_budget, key=lambda c: c.rank)
+            ],
+            ["cell", "steps", *METRIC_NAMES, "median rank"],
+        ),
+        "",
+        "## Coordinate descent (the gates every option of which trains)",
         "",
         _table(
             [

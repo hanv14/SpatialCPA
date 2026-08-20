@@ -216,10 +216,57 @@ reconstructions of training sections**:
 | **`train_steps` × metric weights** | **one joint gate, four cells** — see below |
 
 - Fit a **reduced-epoch** model (25% of `cfg.epochs`) per candidate — **except for the budget
-  gate, which is scored at its own budget** (see below).
+  gate, which is scored at its own budget** (see below), and except for any gate the
+  **training-free-option rule** below disqualifies.
 - Score = median rank across the six metrics over LOSO folds.
-- Coordinate descent, 2 passes → ~10 fits, not 36.
+- Coordinate descent, 2 passes, over the gates the rule leaves eligible.
 - Persist the chosen config and the full score table to `reports/config_selection_{dataset}.md`.
+
+### The training-free-option rule (added at T09, from a measured failure)
+
+> **A gate with a training-free option cannot be scored at a reduced budget.** If any option of a
+> gate reaches its final behaviour without training — because it copies real data rather than
+> generating it — then that option is already at full strength at any budget while its rivals are
+> not, and a reduced-budget comparison measures the budget rather than the gate. Such a gate is
+> scored at the **selected** budget, and if more than one gate qualifies they are scored
+> **jointly**, because their errors compound through coordinate descent's ordering.
+
+This is a rule for every future gate, not a patch for the three that failed. **When a gate is added
+to the table above, classify each of its options as training-free or trained and record the
+classification** — in `train/select.py`'s `TRAINING_FREE_OPTIONS`, which is the machine-readable
+form of this rule and what the selector reads to decide a gate's budget. A gate whose options are
+all trained keeps the reduced budget; one training-free option is enough to disqualify it.
+
+*The measurement behind the rule* (`reports/r8_budget_grid.md`, open risk **R8**): at 25% of the
+budget `expr_mode="cross-mix"` won under both priors and at full budget it came **last** under
+both; `prior_mode="iid"` won at 25% on exactly the two expression paths where the prior can act and
+lost on both at full budget. The cause is visible in one column — from 600 to 2400 steps
+`morans_pearson` gains **+0.3432** for `zinb-flow` and **−0.0180** for `cross-mix`, because
+`cross-mix` copies donor counts and needs no training. The shipped configuration ranked **fifth of
+six** at the budget it was actually trained at. The two gates also compounded: fixing
+`prior_mode="iid"` first dropped `zinb-flow` from rank 2.5 to 3.0 *before* the `expr_mode` gate was
+scored, which is why qualifying gates are scored jointly rather than one after another.
+
+*Applying the rule to the current table:*
+
+| Gate | Training-free option | Budget |
+|---|---|---|
+| `layout_mode` | `resample` — reuses real cell positions | **selected** |
+| `prior_mode` | `iid` — never queries the fitted field | **selected** |
+| `expr_mode` | `cross-mix` — emits donor counts verbatim | **selected** |
+| `text_emb` | none; both options train | reduced (25%) |
+
+The first three form **one joint gate of 3 × 2 × 3 = 18 cells** at the selected budget. `text_emb`
+stays on coordinate descent at the reduced budget. Note that `layout_mode` did *not* reverse at the
+reduced budget on the fixture — it qualifies by the rule regardless, because the rule is about
+whether the comparison is sound, not about whether it happened to come out wrong this time.
+
+*Cost, and why it is accepted.* 18 full-budget fits replace 8 reduced-budget ones — on the
+synthetic fixture roughly 8.75 h against 40 min. Selection runs once per dataset and decides what
+T10 benchmarks, so a selection that is cheap and wrong is worth less than one that is expensive and
+right. Because the run is long, the scorer is **checkpointed per cell**: every scored cell is
+appended to a CSV keyed by the candidate's config hash and budget, and a re-run skips what is
+already there, so an interrupted selection resumes rather than restarting.
 
 ### The training budget and the metric-aware weights are gates, and they must be selected *together* (added at T08)
 

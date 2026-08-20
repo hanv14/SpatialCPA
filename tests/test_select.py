@@ -32,9 +32,13 @@ from spatialcpav25_gen.data.loaders import split_holdout
 from spatialcpav25_gen.data.schema import HeldOutSections, TrainingVolume
 from spatialcpav25_gen.model.field import BBoxClampWarning
 from spatialcpav25_gen.train.select import (
+    ALL_GATES,
+    FULL_BUDGET_GATES,
     GATES,
     METRIC_NAMES,
+    TRAINING_FREE_OPTIONS,
     V20_CONFIG,
+    ScoreCache,
     SelectionError,
     joint_gate_cells,
     run_selection,
@@ -174,7 +178,7 @@ def test_selector_can_recover_v20_config(split):
     assert chosen.layout_mode == "resample"
     assert chosen.expr_mode == "cross-mix"
     # ...and it is reachable, i.e. both options really are on the gate grid.
-    options = dict(GATES)
+    options = dict(ALL_GATES)
     assert "resample" in options["layout_mode"]
     assert "cross-mix" in options["expr_mode"]
 
@@ -297,3 +301,109 @@ def test_selector_runs_and_persists(split, tmp_path: Path):
     assert all(np.isfinite(v) for c in result.candidates for v in c.scores.values())
     assert result.config.train_steps in {3, round(base.selection_budget_multiple * 3)}
     assert len(result.joint) == 4
+
+
+def test_every_gate_is_classified_by_the_training_free_rule():
+    """``specs/09`` §3's rule is only a rule if adding a gate forces the classification.
+
+    Each gate must appear in ``TRAINING_FREE_OPTIONS`` — an empty tuple being the positive
+    statement "all options train", not a missing entry — and may only name options it actually
+    has. ``_check_gate_classification`` runs at import; this asserts it rejects both mistakes.
+    """
+    for gate, _ in ALL_GATES:
+        assert gate in TRAINING_FREE_OPTIONS, f"{gate} is unclassified"
+    for gate, options in ALL_GATES:
+        assert set(TRAINING_FREE_OPTIONS[gate]) <= set(options)
+    # The two gate sets partition the table on exactly that classification.
+    assert dict(FULL_BUDGET_GATES).keys() | dict(GATES).keys() == dict(ALL_GATES).keys()
+    assert not dict(FULL_BUDGET_GATES).keys() & dict(GATES).keys()
+    for gate, _ in FULL_BUDGET_GATES:
+        assert TRAINING_FREE_OPTIONS[gate], f"{gate} is full-budget but has no training-free option"
+    for gate, _ in GATES:
+        assert not TRAINING_FREE_OPTIONS[gate], f"{gate} is reduced-budget but has one"
+
+
+def test_gates_with_a_training_free_option_are_scored_at_the_selected_budget(split):
+    """The R8 fix: no cell of the merged gate is fitted at the reduced budget.
+
+    Measured cause (``reports/r8_budget_grid.md``): ``cross-mix`` copies donor counts and is
+    flat in budget (+0.0088 morans from 600 to 2400) while ``zinb-flow`` gains +0.3432, so a
+    quarter-budget comparison of that gate measures the budget. Every option of every
+    disqualified gate must therefore be fitted at the budget the joint gate selected.
+    """
+    _, training, _ = split
+    base = t09_cfg(train_steps=50)
+    scorer = RecordingScorer({"expr_mode": "zinb-flow"}, interaction=False)
+    result = run_selection(training, base, seed=SEED, scorer=scorer)
+
+    assert len(result.full_budget) == 18, "3 layout x 2 prior x 3 expr"
+    selected_steps = int(result.config.train_steps)
+    assert {c.steps for c in result.full_budget} == {selected_steps}
+
+    # Every option of every disqualified gate is *compared* only inside the merged gate, and
+    # the merged gate is entirely at full budget. A gate's selected value still tags along as
+    # part of the incumbent while a later gate is scored, which is not the same as scoring it.
+    reduced = round(float(base.selection_reduced_epoch_frac) * selected_steps)
+    assert reduced != selected_steps, "the fixture must distinguish the two budgets"
+    for gate, options in FULL_BUDGET_GATES:
+        assert not [c for c in result.candidates if c.gate == gate], (
+            f"{gate} is still coordinate-descended; the rule says it must be merged"
+        )
+        compared = {c.overrides[gate] for c in result.full_budget}
+        assert compared == set(options), f"{gate} did not compare every option"
+    assert {c.steps for c in result.candidates if c.gate == "full_budget"} == {selected_steps}
+    # ...and the gates the rule leaves eligible do keep the reduced budget.
+    for gate, _ in GATES:
+        assert {c.steps for c in result.candidates if c.gate == gate} == {reduced}
+
+
+def test_the_merged_gate_beats_coordinate_descent_on_a_compounding_interaction(split):
+    """A scorer where the right answer is only reachable if the three gates are scored together.
+
+    The fixture's failure in miniature: the payoff needs ``correlated`` **and** ``zinb-flow``
+    together, and each is worse than its alternative on its own. Coordinate descent from a
+    ``cross-mix`` incumbent rejects ``correlated``, then never revisits it; the merged gate
+    enumerates the cell and finds it.
+    """
+    _, training, _ = split
+    base = t09_cfg(train_steps=50, prior_mode="iid", expr_mode="cross-mix")
+    scorer = RecordingScorer(
+        {"prior_mode": "correlated", "expr_mode": "zinb-flow"}, interaction=True
+    )
+    chosen = select_config(training, base, seed=SEED, scorer=scorer)
+    assert chosen.prior_mode == "correlated"
+    assert chosen.expr_mode == "zinb-flow"
+
+
+def test_score_cache_checkpoints_each_cell_and_resumes(split, tmp_path):
+    """An interrupted selection resumes instead of restarting: 18 full-budget fits demand it.
+
+    The cache is keyed on the candidate's full config hash and its budget, so a resumed run
+    reuses a cell only when every field that could affect the score matches.
+    """
+    _, training, _ = split
+    base = t09_cfg(train_steps=50)
+    path = tmp_path / "checkpoint.csv"
+
+    first = RecordingScorer({"expr_mode": "zinb-flow"}, interaction=False)
+    result = run_selection(training, base, seed=SEED, scorer=first, checkpoint=ScoreCache(path))
+    assert len(first.calls) == len(result.fits) > 0
+    assert path.exists()
+
+    # A second run over the same cells issues no fits at all, and decides the same thing.
+    second = RecordingScorer({"expr_mode": "zinb-flow"}, interaction=False)
+    resumed = run_selection(training, base, seed=SEED, scorer=second, checkpoint=ScoreCache(path))
+    assert second.calls == [], "a resumed run must not refit a recorded cell"
+    assert resumed.fits == []
+    assert resumed.config.content_hash() == result.config.content_hash()
+
+    # An unrelated Config change invalidates the cache rather than reusing a stale score.
+    third = RecordingScorer({"expr_mode": "zinb-flow"}, interaction=False)
+    run_selection(
+        training,
+        base.replace(metric_knn_k=int(base.metric_knn_k) + 1),
+        seed=SEED,
+        scorer=third,
+        checkpoint=ScoreCache(path),
+    )
+    assert third.calls, "a different config must not hit the cache"

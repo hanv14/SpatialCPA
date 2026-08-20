@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import time
 import warnings
 from pathlib import Path
@@ -57,7 +58,9 @@ from spatialcpav25_gen.model.layout import fit_repulsion
 from spatialcpav25_gen.model.spatialcpav25_gen import CTFFlow, TrainingData, train_ctfflow
 from spatialcpav25_gen.train.select import (
     METRIC_NAMES,
+    ScoreCache,
     calibration_chunks,
+    full_budget_gate_cells,
     module_morans_agreement,
     run_selection,
     section_scores,
@@ -194,6 +197,29 @@ def main() -> None:
     parser.add_argument("--passes", type=int, default=2)
     parser.add_argument("--out", default="reports/config_selection_synthetic.md")
     parser.add_argument(
+        "--checkpoint",
+        default="reports/selection_checkpoint_synthetic.csv",
+        help=(
+            "Per-cell checkpoint CSV. The merged full-budget gate is 18 fits at the selected "
+            "budget, so a run that loses them to an interrupted session is not usable: each "
+            "scored cell is flushed here as it completes and a re-run skips what is already "
+            "recorded. Re-run the identical command to resume."
+        ),
+    )
+    parser.add_argument(
+        "--commit-checkpoint",
+        action="store_true",
+        help=(
+            "Commit and push the checkpoint after every scored cell, so the run survives "
+            "losing the machine rather than merely the process."
+        ),
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List the cells still to run and exit without fitting anything.",
+    )
+    parser.add_argument(
         "--expr-mode",
         default="zinb-flow",
         help=(
@@ -221,6 +247,35 @@ def main() -> None:
     )
     training, _ = split_holdout(volume, "alternating", 0, base)
 
+    def commit_checkpoint(label: str) -> None:
+        """Commit and push the checkpoint CSV after a cell, so a lost container costs one cell."""
+        path = str(args.checkpoint)
+        subprocess.run(["git", "add", path], check=False)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", f"T09: selection checkpoint — {label}"], check=False
+        )
+        subprocess.run(
+            ["git", "push", "-q", "origin", "claude/task-t09-implementation-5zgrb7"], check=False
+        )
+
+    checkpoint = ScoreCache(
+        args.checkpoint, on_write=commit_checkpoint if args.commit_checkpoint else None
+    )
+    print(f"checkpoint {args.checkpoint}: {len(checkpoint)} cell(s) already recorded", flush=True)
+
+    if args.dry_run:
+        cells = full_budget_gate_cells(base)
+        steps = round(float(base.selection_budget_multiple) * int(base.train_steps))
+        remaining = [
+            label
+            for label, overrides in cells
+            if checkpoint.get(base.replace(**overrides, train_steps=steps), steps) is None
+        ]
+        print(f"{len(remaining)} of {len(cells)} full-budget cells remain (at {steps} steps):")
+        for label in remaining:
+            print(f"  {label}")
+        return
+
     result = None
     if args.config is None:
         started = time.time()
@@ -230,6 +285,7 @@ def main() -> None:
             seed=SEED,
             embeddings=lambda cfg: build_embeddings(cfg, volume),
             dataset="synthetic",
+            checkpoint=checkpoint,
         )
         print(f"selection finished in {time.time() - started:.0f} s", flush=True)
         for candidate in result.joint:
