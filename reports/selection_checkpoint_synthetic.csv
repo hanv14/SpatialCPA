@@ -15,3 +15,4 @@ a0b14526fa565628:2400,"layout_mode=hybrid, prior_mode=iid, expr_mode=zinb-flow",
 34de4bb531a0c460:2400,"layout_mode=hybrid, prior_mode=iid, expr_mode=cross-mix",2400,0.836474,0.759117,0.705627,-0.051228,0.023087,-0.056751
 c5a69c280500fede:2400,"layout_mode=hybrid, prior_mode=iid, expr_mode=auto-blend",2400,0.932679,0.892431,0.874767,-0.044833,0.067382,-0.056751
 c71813ceb308a1e1:2400,"layout_mode=resample, prior_mode=correlated, expr_mode=zinb-flow",2400,0.960578,0.930819,0.974386,-0.043742,0.049075,-0.065979
+ded7095f320da917:2400,"layout_mode=resample, prior_mode=correlated, expr_mode=cross-mix",2400,0.827834,0.768258,0.684364,-0.037353,0.019473,-0.065979
