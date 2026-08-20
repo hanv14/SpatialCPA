@@ -1,3 +1,4 @@
 key,label,steps,morans_pearson,gearys_pearson,umap_mixing,marker_field_r,marker_depth_r,celltype_localization
 71ed46791167961e:1200,"{'train_steps': 1200, 'w_autocorr': 0.0, 'w_profile': 0.0, 'w_distribution': 0.0}",1200,0.919726,0.870991,0.850077,-0.052714,0.038214,-0.059483
 e10a997ec76a0c42:1200,"{'train_steps': 1200, 'w_autocorr': 0.5, 'w_profile': 0.5, 'w_distribution': 0.5}",1200,0.884122,0.856865,0.640189,-0.036907,0.060979,-0.039146
+e2870bd54fa1b4a0:2400,"{'train_steps': 2400, 'w_autocorr': 0.0, 'w_profile': 0.0, 'w_distribution': 0.0}",2400,0.931552,0.902194,0.914525,-0.051937,0.019502,-0.050239
