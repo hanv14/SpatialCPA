@@ -1372,6 +1372,27 @@ class Config:
     :func:`~spatialcpav25_gen.train.select.select_config` fits the joint gate's cells at the
     budget each one names."""
 
+    selection_convergence_tol: float = 0.05
+    """How far a metric may fall at the reduced budget before the incumbent counts as
+    **unconverged** there (``specs/09`` §3's widened training-free-option rule).
+
+    All six target metrics are correlations or scores on a comparable ``[-1, 1]`` scale, so an
+    absolute tolerance is meaningful across them. Measured on the fixture, and the reason the
+    exact value is not load-bearing: with a ``zinb-flow`` incumbent the reduced budget costs
+    0.36 / 0.41 / 0.81 on the three distribution-level metrics, while with a ``cross-mix``
+    incumbent it costs at most 0.04 and one metric *improves*. The two regimes separate by an
+    order of magnitude, so any threshold between them classifies both correctly."""
+
+    selection_convergence_min_metrics: int = 2
+    """How many metrics must fall by more than :attr:`selection_convergence_tol` before the
+    incumbent is declared unconverged at the reduced budget.
+
+    Two of six rather than one, so a single noisy metric cannot escalate a whole selection to
+    full budget, and rather than a majority, so a gate is not scored on an unconverged
+    incumbent merely because the damage is concentrated in the statistics that matter most.
+    On the fixture the ``zinb-flow`` incumbent fails three and the ``cross-mix`` incumbent
+    fails none."""
+
     selection_passes: int = 2
     """Coordinate-descent passes over the non-joint gates. ``specs/09`` 3: "2 passes ->
     ~10 fits, not 36"."""
@@ -1577,6 +1598,7 @@ class Config:
             "text_max_length": self.text_max_length,
             "distill_hidden": self.distill_hidden,
             "text_diag_knn_k": self.text_diag_knn_k,
+            "selection_convergence_min_metrics": self.selection_convergence_min_metrics,
             "text_diag_leiden_resolution": self.text_diag_leiden_resolution,
             "text_diag_leiden_iterations": self.text_diag_leiden_iterations,
             "text_diag_max_pairs": self.text_diag_max_pairs,
@@ -1711,6 +1733,7 @@ class Config:
             "anchor_weight_grid_size": self.anchor_weight_grid_size,
             "boundary_margin_spacings": self.boundary_margin_spacings,
             "selection_reduced_epoch_frac": self.selection_reduced_epoch_frac,
+            "selection_convergence_tol": self.selection_convergence_tol,
             "selection_passes": self.selection_passes,
             "selection_budget_multiple": self.selection_budget_multiple,
             "selection_metric_weight": self.selection_metric_weight,
@@ -1766,6 +1789,7 @@ class Config:
             "calibration_morans_tol": self.calibration_morans_tol,
             "generation_empty_pool_tol": self.generation_empty_pool_tol,
             "selection_reduced_epoch_frac": self.selection_reduced_epoch_frac,
+            "selection_convergence_tol": self.selection_convergence_tol,
             "potts_rare_prevalence": self.potts_rare_prevalence,
             "potts_rare_retention": self.potts_rare_retention,
         }

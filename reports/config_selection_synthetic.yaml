@@ -207,6 +207,8 @@ anchor_weight_grid_size: 5
 generation_empty_pool_tol: 0.01
 boundary_margin_spacings: 0.5
 selection_reduced_epoch_frac: 0.25
+selection_convergence_tol: 0.05
+selection_convergence_min_metrics: 2
 selection_passes: 2
 selection_budget_multiple: 2.0
 selection_metric_weight: 0.5

@@ -458,7 +458,7 @@ one **18-cell** gate at full budget; `text_emb_mode` keeps coordinate descent.
 | `text_emb_mode` | medcpt | **lookup** |
 | `train_steps` | 2400 | 2400 |
 | `w_autocorr` / `w_profile` / `w_distribution` | 0.5 | 0.5 |
-| config hash | `fe49ea9f8ad54bb2` | **`cbabb27aa44ee6e4`** |
+| config hash | `fe49ea9f8ad54bb2` | **`2ce15bbaf5cf2bc1`** |
 
 **Every one of the three merged gates changed its answer**, and the 18-cell table shows why: all
 six `cross-mix` cells occupy the **bottom six ranks** (13.0–17.0) and every non-`cross-mix` cell
@@ -502,6 +502,53 @@ defect; but the gate is being decided on a model that behaves nothing like the s
 the rule should be widened from "has a training-free option" to "is scored at a budget where the
 incumbent is unconverged" is a spec question, recorded rather than answered here.
 
-**T10 benchmarks the new config** (`cbabb27aa44ee6e4`, persisted as
+**T10 benchmarks the new config** (`2ce15bbaf5cf2bc1`, persisted as
 `reports/config_selection_synthetic.yaml`), not the old one. Every headline number T10 reports —
 and every arm of its A2 ablation — must be produced under it.
+
+
+#### 12. R9 closed — the rule widened, and a gate that turns out to be undecidable
+
+`specs/09` §3's rule now has **two conditions**, and a gate is scored at the selected budget when
+either holds: (1) it has a training-free option, or (2) **the incumbent is unconverged at the
+reduced budget**. Condition (2) cannot be declared in advance — it depends on the incumbent the
+search arrives at — so it is *measured*: `incumbent_is_unconverged` compares the incumbent's own
+score at the two budgets and escalates every remaining gate when at least
+`selection_convergence_min_metrics` (2) of the six fall by more than `selection_convergence_tol`
+(0.05). The report says which rule escalated what, and two tests pin both directions — a
+budget-sensitive incumbent escalates, a flat one keeps the cheap descent, or the reduced budget
+would be dead code.
+
+**It fires on this run's own numbers**, no new fitting required: the incumbent scores 0.9606 /
+0.9308 / 0.9744 at 2400 and 0.5997 / 0.5048 / 0.1649 at 600 — shortfalls of 0.36, 0.43 and 0.81
+against a 0.05 tolerance.
+
+**Re-scored at 2400, `lookup` still wins — 1.2 against 1.8 — so the winner does not flip back.**
+But the gate stops being decidable in the process. At 600 steps `lookup` led by 0.053 on
+`morans_pearson`; at 2400 the two split the metrics 3–2 with one tie, and no metric separates them
+by more than 0.011:
+
+| text_emb_mode | morans | gearys | umap_mixing | field_r | depth_r | ct_loc | rank |
+|---|---|---|---|---|---|---|---|
+| medcpt | 0.9535 | 0.9288 | 0.9624 | −0.0469 | **0.0570** | −0.0660 | 1.8 |
+| **lookup** | 0.9511 | **0.9334** | **0.9688** | **−0.0425** | 0.0460 | −0.0660 | **1.2** |
+
+**And the margin is inside the reproducibility envelope — the finding that matters most here.**
+`medcpt` at 2400 was fitted twice, same config, same seed, different process, and moved by up to
+**0.0120** (`umap_mixing`). The largest difference between the two *options* is **0.0110**. Re-running
+the identical configuration moves the score by as much as changing the gate does. So this gate is
+not resolved at one seed at any budget: the reduced budget made it look decided in the wrong
+direction, and the selected budget makes it visibly undecided. The cause is **not established** —
+both fits take explicit seeds, and nondeterministic float reduction under different thread
+scheduling is the obvious suspect but was not confirmed. Recorded as **R10**, and it is not local to
+this gate: every number T10 reports inherits the same envelope.
+
+`text_emb_mode = "lookup"` therefore stands as selected, on rank, with nothing in the measurement
+overturning it — while disabling the MedCPT channel on a margin smaller than the noise floor. Two
+proposals go to the spec's owner rather than being taken here: a **tie-break rule** preferring the
+capability-preserving option when the separation is below the reproducibility envelope, and
+**repeated seeds** for any gate that reaches a headline claim.
+
+The selected config's **hash moves to `2ce15bbaf5cf2bc1`** — the gate choices are unchanged, but
+`Config` gained the two fields condition (2) needs, and the hash covers every field. `T10 benchmarks
+`2ce15bbaf5cf2bc1`.

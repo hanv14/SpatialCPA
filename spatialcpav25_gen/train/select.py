@@ -50,7 +50,7 @@ either gate.
 from __future__ import annotations
 
 import csv
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import product
 from pathlib import Path
@@ -96,6 +96,7 @@ __all__ = [
     "SelectionResult",
     "calibration_chunks",
     "full_budget_gate_cells",
+    "incumbent_is_unconverged",
     "joint_gate_cells",
     "module_morans_agreement",
     "run_selection",
@@ -271,6 +272,10 @@ class SelectionResult:
         Every cell of the merged ``layout_mode`` x ``prior_mode`` x ``expr_mode`` gate, all
         scored at the selected budget under ``specs/09`` §3's training-free-option rule.
         Reported in full for the same reason as ``joint``.
+    reduced_budget_escalated, escalating_metrics
+        Whether condition (2) of ``specs/09`` §3's rule fired — the incumbent being unconverged
+        at the reduced budget, so every remaining gate was scored at the selected one — and
+        which metrics fired it.
     candidates
         Every candidate scored, in the order they were scored.
     fits
@@ -291,6 +296,8 @@ class SelectionResult:
     seed: int
     section_ids: tuple[str, ...] = ()
     full_budget: list[Candidate] = field(default_factory=list)
+    reduced_budget_escalated: bool = False
+    escalating_metrics: tuple[str, ...] = ()
 
 
 # --------------------------------------------------------------------------------------
@@ -611,6 +618,34 @@ def full_budget_gate_cells(base_cfg: Config) -> list[tuple[str, dict[str, Any]]]
     return cells
 
 
+def incumbent_is_unconverged(
+    full: Mapping[str, float], reduced: Mapping[str, float], cfg: Config
+) -> tuple[bool, tuple[str, ...]]:
+    """Condition (2) of ``specs/09`` §3's rule, measured. Returns ``(fired, metrics)``.
+
+    The same config scored at the selected budget and at the reduced one. When the reduced fit
+    falls short by more than ``Config.selection_convergence_tol`` on at least
+    ``Config.selection_convergence_min_metrics`` of the six, the reduced budget is not a usable
+    proxy for **any** remaining gate: a gate decided there is decided on a model that behaves
+    nothing like the shipped one, however fair the comparison between its options.
+
+    Unlike :data:`TRAINING_FREE_OPTIONS` this cannot be declared in advance — it depends on the
+    incumbent the search arrived at — so it is measured once per run, for one extra reduced
+    fit, and the metrics that fired are returned so the report can name them.
+
+    Only shortfalls count. A reduced fit that scores *higher* is not evidence of convergence
+    either way, but it is not evidence that the proxy is broken, and on the fixture the
+    training-free paths do exactly that on individual metrics.
+    """
+    fired = tuple(
+        name
+        for name in METRIC_NAMES
+        if float(full.get(name, 0.0)) - float(reduced.get(name, 0.0))
+        > float(cfg.selection_convergence_tol)
+    )
+    return len(fired) >= int(cfg.selection_convergence_min_metrics), fired
+
+
 class ScoreCache:
     """Per-cell checkpoint for a selection run, so an interrupted one resumes.
 
@@ -840,10 +875,23 @@ def run_selection(
     candidates.extend(full_budget)
     incumbent = dict(min(full_budget, key=lambda c: c.rank).overrides)
 
-    # 3. coordinate descent over the gates every option of which trains, at a reduced budget.
+    # 3. condition (2) of the rule, measured: is the reduced budget a usable proxy at all?
+    # One extra fit of the incumbent at the reduced budget, against the selected-budget score
+    # the search already has for it.
     reduced = max(
         1, round(float(base_cfg.selection_reduced_epoch_frac) * int(incumbent["train_steps"]))
     )
+    escalated = False
+    escalating_metrics: tuple[str, ...] = ()
+    if GATES and reduced != selected_steps:
+        escalated, escalating_metrics = incumbent_is_unconverged(
+            score(incumbent, selected_steps, "incumbent @ selected"),
+            score(incumbent, reduced, "incumbent @ reduced"),
+            base_cfg,
+        )
+    descent_steps = selected_steps if escalated else reduced
+
+    # 4. coordinate descent over the gates every option of which trains.
     for _ in range(int(base_cfg.selection_passes)):
         for gate, options in GATES:
             group = []
@@ -854,8 +902,8 @@ def run_selection(
                         gate=gate,
                         label=f"{gate}={option}",
                         overrides=overrides,
-                        steps=reduced,
-                        scores=score(overrides, reduced, f"{gate}={option}"),
+                        steps=descent_steps,
+                        scores=score(overrides, descent_steps, f"{gate}={option}"),
                     )
                 )
             group = _ranked(group)
@@ -865,12 +913,14 @@ def run_selection(
     result = SelectionResult(
         config=base_cfg.replace(**incumbent),
         joint=joint,
-        full_budget=full_budget,
         candidates=candidates,
         fits=fits,
         dataset=dataset,
         seed=run_seed,
         section_ids=tuple(s.section_id for s in selection_folds(vol, base_cfg)),
+        full_budget=full_budget,
+        reduced_budget_escalated=escalated,
+        escalating_metrics=tuple(escalating_metrics),
     )
     if report_path is not None:
         write_selection_report(result, report_path)
@@ -1149,6 +1199,21 @@ def write_selection_report(
         ),
         "",
         "## Coordinate descent (the gates every option of which trains)",
+        "",
+        (
+            "**Condition (2) of the training-free-option rule fired**: the incumbent scored "
+            f"more than `selection_convergence_tol` worse at the reduced budget on "
+            f"{len(result.escalating_metrics)} metric(s) — "
+            f"{', '.join(f'`{m}`' for m in result.escalating_metrics)} — so the reduced budget "
+            "is not a usable proxy for any remaining gate and these were scored at the "
+            "**selected** budget too."
+            if result.reduced_budget_escalated
+            else (
+                "Condition (2) of the rule did not fire: the incumbent scores within "
+                "`selection_convergence_tol` at the reduced budget, so it is a usable proxy "
+                "and these gates keep it."
+            )
+        ),
         "",
         _table(
             [

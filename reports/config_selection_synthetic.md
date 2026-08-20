@@ -14,7 +14,7 @@ Selected by internal LOSO over **training sections only**, seed 20260819. Folds:
 | `w_autocorr` | 0.5 |
 | `w_profile` | 0.5 |
 | `w_distribution` | 0.5 |
-| config hash | `cbabb27aa44ee6e4` |
+| config hash | `2ce15bbaf5cf2bc1` |
 | persisted at | `config_selection_synthetic.yaml` |
 
 ## The joint gate: `train_steps` x metric-aware weights
@@ -65,6 +65,69 @@ Two passes are run; the second re-scored the same two candidates and reached the
 Fits issued: 23 (1200 steps, 1200 steps, 2400 steps, 2400 steps, 2400 steps, 2400 steps, 2400 steps, 2400 steps, 2400 steps, 2400 steps, 2400 steps, 2400 steps, 2400 steps, 2400 steps, 2400 steps, 2400 steps, 2400 steps, 2400 steps, 2400 steps, 2400 steps, 2400 steps, 600 steps, 600 steps).
 
 The six metrics are computed with T08's kernels rather than `bench3`'s vendored implementations — `eval/metrics.py` is T10's module. The names match, and T10 re-scores the selected config with the vendored code.
+
+## R9 — `text_emb_mode` re-scored at the selected budget
+
+`specs/09` §3's rule was widened after this run: a gate is scored at the selected budget when it
+has a training-free option **or when the incumbent is unconverged at the reduced budget**. The
+second condition fires here, on this run's own numbers — the incumbent (`resample` + `correlated` +
+`zinb-flow`) scored at both budgets:
+
+| metric | @2400 (selected) | @600 (reduced) | shortfall |
+|---|---|---|---|
+| morans_pearson | 0.9606 | 0.5997 | **+0.3609** |
+| gearys_pearson | 0.9308 | 0.5048 | **+0.4260** |
+| umap_mixing | 0.9744 | 0.1649 | **+0.8095** |
+| marker_field_r | −0.0437 | +0.0066 | −0.0503 |
+| marker_depth_r | +0.0491 | +0.0868 | −0.0377 |
+| celltype_localization | −0.0660 | −0.0660 | 0.0000 |
+
+Three metrics exceed `selection_convergence_tol = 0.05`, against a minimum of two, so the reduced
+budget is not a usable proxy and `text_emb_mode` is escalated. Re-scored at 2400 steps with every
+other gate at its selected value:
+
+| text_emb_mode | morans | gearys | umap_mixing | field_r | depth_r | ct_loc | median rank |
+|---|---|---|---|---|---|---|---|
+| medcpt | 0.9535 | 0.9288 | 0.9624 | −0.0469 | **0.0570** | −0.0660 | 1.8 |
+| **lookup** | 0.9511 | **0.9334** | **0.9688** | **−0.0425** | 0.0460 | −0.0660 | **1.2** |
+
+**The winner does not flip back — but the gate stops being decidable.** At 600 steps `lookup` led
+`medcpt` by 0.053 on `morans_pearson`; at 2400 the two split the metrics 3–2 with one tie and no
+metric separates them by more than 0.011. `lookup` keeps a nominal rank advantage, 1.2 against 1.8.
+
+### The margin is inside the reproducibility envelope
+
+`medcpt` at 2400 was fitted twice — once inside the selection run and once for this table, same
+config, same seed, different process:
+
+| metric | run 1 | run 2 | same-config drift | medcpt−lookup gap |
+|---|---|---|---|---|
+| morans_pearson | 0.9606 | 0.9535 | 0.0071 | 0.0024 |
+| gearys_pearson | 0.9308 | 0.9288 | 0.0020 | 0.0046 |
+| umap_mixing | 0.9744 | 0.9624 | **0.0120** | 0.0064 |
+| marker_field_r | −0.0437 | −0.0469 | 0.0032 | 0.0044 |
+| marker_depth_r | 0.0491 | 0.0570 | 0.0079 | 0.0110 |
+| celltype_localization | −0.0660 | −0.0660 | 0.0000 | 0.0000 |
+
+**The largest same-config drift (0.0120) exceeds the largest difference between the two options
+(0.0110).** Re-running the identical configuration moves the scores by as much as changing the gate
+does, so at one seed this gate is not resolved at any budget — the reduced budget made it look
+decided in the wrong direction, and the selected budget makes it visibly undecided. The cause of
+the drift is **not established** (both fits take the same explicit seeds; nondeterministic float
+reduction under different thread scheduling is the obvious suspect but was not confirmed), and it
+is recorded as **R10** because every number T10 reports inherits it.
+
+### What this means for the shipped config
+
+`text_emb_mode = "lookup"` stands as selected — it wins on rank, and nothing in the measurement
+overturns it. But `lookup` **disables the MedCPT channel**, which is the paper's open-vocabulary
+claim, and it now does so on a margin smaller than the noise floor. Two things follow, both for the
+spec's owner rather than for this task to decide:
+
+* a **tie-break rule** — when a gate's options are separated by less than the reproducibility
+  envelope, prefer the option that preserves a headline capability rather than the nominal winner;
+* **repeated seeds** for any gate that survives to a headline claim, so "wins by 0.002" can be
+  distinguished from "wins".
 
 ## Calibration (leakage-free, flanking training sections only)
 

@@ -224,18 +224,40 @@ reconstructions of training sections**:
 
 ### The training-free-option rule (added at T09, from a measured failure)
 
-> **A gate with a training-free option cannot be scored at a reduced budget.** If any option of a
-> gate reaches its final behaviour without training — because it copies real data rather than
-> generating it — then that option is already at full strength at any budget while its rivals are
-> not, and a reduced-budget comparison measures the budget rather than the gate. Such a gate is
-> scored at the **selected** budget, and if more than one gate qualifies they are scored
-> **jointly**, because their errors compound through coordinate descent's ordering.
+> **A gate is scored at the selected budget when either of two conditions holds.**
+>
+> 1. **It has a training-free option.** If any option of a gate reaches its final behaviour
+>    without training — because it copies real data rather than generating it — then that option
+>    is already at full strength at any budget while its rivals are not, and a reduced-budget
+>    comparison measures the budget rather than the gate.
+> 2. **The incumbent is unconverged at the reduced budget.** Even when every option trains, a
+>    gate decided on a model that behaves nothing like the shipped one is not decided. If the
+>    incumbent's own score at the reduced budget falls short of its score at the selected budget
+>    by more than `Config.selection_convergence_tol` on at least
+>    `Config.selection_convergence_min_metrics` of the six metrics, the reduced budget is not a
+>    usable proxy for *any* remaining gate and all of them are escalated.
+>
+> Gates qualifying under (1) are scored **jointly**, because their errors compound through
+> coordinate descent's ordering. Condition (2) is a property of the run, not of a gate, so it is
+> **measured** each time: the incumbent is scored once at the reduced budget and compared with
+> the selected-budget score the search already has for it.
 
-This is a rule for every future gate, not a patch for the three that failed. **When a gate is added
+This is a rule for every future gate, not a patch for the ones that failed. **When a gate is added
 to the table above, classify each of its options as training-free or trained and record the
 classification** — in `train/select.py`'s `TRAINING_FREE_OPTIONS`, which is the machine-readable
-form of this rule and what the selector reads to decide a gate's budget. A gate whose options are
-all trained keeps the reduced budget; one training-free option is enough to disqualify it.
+form of condition (1) and what the selector reads to decide a gate's budget. A gate whose options
+are all trained keeps the reduced budget *unless condition (2) fires*, which no static declaration
+can predict: `incumbent_is_unconverged` measures it at run time and the report says which rule
+escalated which gate.
+
+*The measurement behind condition (2)* (open risk **R9**): with the rule at condition (1) alone,
+`text_emb_mode` kept the reduced budget — both its options train — and was decided at 600 steps
+under a `zinb-flow` incumbent scoring **0.5997 / 0.6523** on `morans_pearson` against **0.96** at
+the selected budget. Its winner changed from `medcpt` to `lookup`, and `lookup` **disables the
+MedCPT channel**, which is the paper's open-vocabulary claim. A gate that can switch off a headline
+capability, decided on a model six-tenths of the way to the shipped one's behaviour, is not
+decided. Both options are handicapped equally, so this is not condition (1)'s bias — it is the
+separate failure that the proxy itself is invalid.
 
 *The measurement behind the rule* (`reports/r8_budget_grid.md`, open risk **R8**): at 25% of the
 budget `expr_mode="cross-mix"` won under both priors and at full budget it came **last** under
@@ -254,7 +276,7 @@ scored, which is why qualifying gates are scored jointly rather than one after a
 | `layout_mode` | `resample` — reuses real cell positions | **selected** |
 | `prior_mode` | `iid` — never queries the fitted field | **selected** |
 | `expr_mode` | `cross-mix` — emits donor counts verbatim | **selected** |
-| `text_emb` | none; both options train | reduced (25%) |
+| `text_emb` | none; both options train | reduced (25%) **unless condition (2) fires** |
 
 The first three form **one joint gate of 3 × 2 × 3 = 18 cells** at the selected budget. `text_emb`
 stays on coordinate descent at the reduced budget. Note that `layout_mode` did *not* reverse at the

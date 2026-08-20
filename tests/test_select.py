@@ -40,6 +40,7 @@ from spatialcpav25_gen.train.select import (
     V20_CONFIG,
     ScoreCache,
     SelectionError,
+    incumbent_is_unconverged,
     joint_gate_cells,
     run_selection,
     select_config,
@@ -407,3 +408,70 @@ def test_score_cache_checkpoints_each_cell_and_resumes(split, tmp_path):
         checkpoint=ScoreCache(path),
     )
     assert third.calls, "a different config must not hit the cache"
+
+
+def test_incumbent_unconverged_escalates_every_remaining_gate(split):
+    """Condition (2): a gate is not decided on a model unlike the shipped one (R9).
+
+    ``text_emb_mode`` passes condition (1) — both its options train — but on the fixture it was
+    decided at 600 steps under a ``zinb-flow`` incumbent scoring 0.5997 / 0.6523 on
+    ``morans_pearson`` against 0.96 at the selected budget, and its winner flipped to
+    ``lookup``, which disables the MedCPT channel the open-vocabulary claim rests on. When the
+    incumbent's own reduced-budget score falls that far short, no remaining gate may use it.
+    """
+    _, training, _ = split
+    base = t09_cfg(train_steps=50)
+
+    class BudgetSensitiveScorer(RecordingScorer):
+        """Scores rise steeply with budget, so the incumbent is unconverged when reduced."""
+
+        def __call__(self, cfg: Config, *, steps: int, seed: int) -> dict[str, float]:
+            scores = super().__call__(cfg, steps=steps, seed=seed)
+            floor = 0.2 if steps < int(base.train_steps) * base.selection_budget_multiple else 1.0
+            return {name: value * floor for name, value in scores.items()}
+
+    scorer = BudgetSensitiveScorer({"text_emb_mode": "medcpt"}, interaction=False)
+    result = run_selection(training, base, seed=SEED, scorer=scorer)
+    assert result.reduced_budget_escalated
+    assert len(result.escalating_metrics) >= int(base.selection_convergence_min_metrics)
+    selected_steps = int(result.config.train_steps)
+    for gate, _ in GATES:
+        assert {c.steps for c in result.candidates if c.gate == gate} == {selected_steps}, (
+            f"{gate} was scored at the reduced budget despite an unconverged incumbent"
+        )
+
+
+def test_a_converged_incumbent_keeps_the_reduced_budget(split):
+    """Condition (2) must not fire on every run, or the reduced budget is dead.
+
+    The counterpart the fixture supplies: with a ``cross-mix`` incumbent the reduced budget
+    costs at most 0.04 and one metric *improves*, so it stays a usable proxy and the cheap
+    descent survives for gates that deserve it.
+    """
+    _, training, _ = split
+    base = t09_cfg(train_steps=50)
+    scorer = RecordingScorer({"text_emb_mode": "medcpt"}, interaction=False)
+    result = run_selection(training, base, seed=SEED, scorer=scorer)
+    assert not result.reduced_budget_escalated
+    assert result.escalating_metrics == ()
+    reduced = round(float(base.selection_reduced_epoch_frac) * int(result.config.train_steps))
+    for gate, _ in GATES:
+        assert {c.steps for c in result.candidates if c.gate == gate} == {reduced}
+
+
+def test_convergence_predicate_counts_only_shortfalls():
+    """A reduced fit that scores *higher* is not evidence the proxy is broken."""
+    cfg = t09_cfg()
+    full = dict.fromkeys(METRIC_NAMES, 0.9)
+    better = dict.fromkeys(METRIC_NAMES, 0.99)
+    assert incumbent_is_unconverged(full, better, cfg) == (False, ())
+    worse = {**full, "morans_pearson": 0.1, "gearys_pearson": 0.1}
+    fired, metrics = incumbent_is_unconverged(full, worse, cfg)
+    assert fired
+    assert set(metrics) == {"morans_pearson", "gearys_pearson"}
+    # One failing metric is short of the default minimum of two, so it does not escalate.
+    assert int(cfg.selection_convergence_min_metrics) == 2
+    one = {**full, "morans_pearson": 0.1}
+    fired_one, metrics_one = incumbent_is_unconverged(full, one, cfg)
+    assert not fired_one
+    assert metrics_one == ("morans_pearson",), "the metric is still reported, just not enough"
