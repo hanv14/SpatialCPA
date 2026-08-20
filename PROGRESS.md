@@ -42,7 +42,7 @@ Full table and the R1 / R3 / R4 narratives: **[progress/risks.md](progress/risks
 | R5 | C14 blocks the open-vocabulary claim — **open**, needs one networked run |
 | R6 | `L_cross` vacuous in v25 and harmful when trained — **open**, `w_cross` ships at 0 |
 | R7 | SEFL's net contribution unverified — **open**, decided by T10's A7 |
-| R8 | **New at T09: the 25 % reduced-budget heuristic is unsafe for `prior_mode`.** At 600 steps `iid` outranks `correlated` (1.0 vs 2.0) and the selector applies that choice to a 2400-step model, where the joint gate's own `correlated` cells reach morans_pearson 0.9368 against the `iid` winner's 0.6494. `specs/09` §3 exempts only the *budget* gate from the reduction; the prior needs the same exemption or a place in the joint gate. **Open — a design change for the spec's owner**, recorded not patched |
+| R8 | **New at T09: the 25 % reduced-budget heuristic is unsafe for `prior_mode`.** At 600 steps `iid` outranks `correlated` (1.0 vs 2.0) and the selector applies that choice to a 2400-step model, where the joint gate's own `correlated` cells reach morans_pearson 0.9368 against the `iid` winner's 0.6494. **Measured at both budgets** (`reports/r8_budget_grid.md`): `expr_mode` reverses as well — `cross-mix` ranks 1.5 at 600 under both priors and 3.0 at 2400 under both — because it is **flat in budget** (morans −0.0180 from 600→2400) while `zinb-flow` gains **+0.3432**. The gates compound, since descent fixes the prior before scoring expression. At full budget the shipped config ranks **fifth of six**, and the winner (`correlated`+`zinb-flow`) leads it on **all six** metrics. **Open — a design change for the spec's owner**, recorded not patched; proposal is a merged `prior_mode` x `expr_mode` gate at full budget |
 
 ## Numbers the paper needs
 
@@ -64,6 +64,7 @@ deviation from the spec with its reason.
 | T06 | [progress/t06_expression_head.md](progress/t06_expression_head.md) — includes the covariance demotion and C14's escalation |
 | T07 | [progress/t07_sefl_losses.md](progress/t07_sefl_losses.md) |
 | T08 | [progress/t08_metric_aware.md](progress/t08_metric_aware.md) |
+| R8 | [reports/r8_budget_grid.md](reports/r8_budget_grid.md) — the 2 x 3 x 2 budget grid, the rank reversals, and the gap on record |
 | T09 | [progress/t09_inference_and_calibration.md](progress/t09_inference_and_calibration.md) — the joint gate's four cells, the calibration statuses, R1/R3, and the two negative results |
 | — | [progress/decisions.md](progress/decisions.md) — spec decisions settled with no code change |
 
