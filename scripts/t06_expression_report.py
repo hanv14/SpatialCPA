@@ -173,10 +173,13 @@ def main() -> int:
                 "detection_r": float(np.corrcoef(rate, detection_rate(real))[0, 1]),
                 "detection_mad": float(np.abs(rate - detection_rate(real)).mean()),
                 "mv_slope": mean_variance_slope(counts),
-                # T06's DECIDING statistic for the mu link: softplus 0.802 vs exp 0.576 on this
-                # fixture is what kept softplus the default until T10. The report did not emit
-                # it, so the fixture comparison could not be re-checked without re-deriving it
-                # (T10). Pearson r between per-gene mean expression, generated vs real.
+                # T06's DECIDING statistic for the mu link. Pearson r between per-gene mean
+                # expression, generated vs real, over the FULL panel (not `keep`). NOTE: the
+                # 0.802 / 0.576 pair quoted for softplus / exp during T10's candidate-1 work
+                # was measured ad hoc and does NOT reproduce here -- this path gives 0.9835 vs
+                # 0.9816, a gap of 0.002. The protocols differ somewhere (gene subset, section,
+                # or linear vs log means) and that has to be pinned down before either pair is
+                # used to justify anything. See progress/t06_expression_head.md.
                 "gene_mean_r": float(np.corrcoef(counts.mean(axis=0), real.mean(axis=0))[0, 1]),
             }
         )
