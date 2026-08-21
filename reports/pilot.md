@@ -325,3 +325,58 @@ genuine expression-path defect, and both are investigations rather than campaign
 `expr_pca_dim=16`, 1200 steps, no T09 calibration beyond the arm under test). They attribute a
 failure; they are **not** v25's performance, and none may be quoted as such.
 
+---
+
+## 7. The budget: RULED OUT (2026-08-21)
+
+Arm C is arm A with one factor changed — 2400 steps instead of 1200, the budget T09's joint gate
+selected on the fixture. **2312.7 s of training (38.5 min), 2331.7 s wall, 1722 MB peak.**
+
+Reported as the magnitude, not the ranking metric (§6.1: `paper_morans_pearson` is uninformative
+once the predicted values are squashed):
+
+| | `morans_median_pred` | as a fraction of GT | `gearys_median_pred` |
+|---|---|---|---|
+| A — 1200 steps, field layout | 0.0577 | **14.1 %** | 0.9432 |
+| B — 1200 steps, resample layout | 0.0904 | **22.1 %** | 0.9089 |
+| **C — 2400 steps, field layout** | **0.0753** | **18.4 %** | 0.9225 |
+| ground truth | **0.4102** | 100 % | **0.5884** |
+
+**Doubling the budget buys 4.3 percentage points against an ~82-point gap.** That is not a budget
+effect. `morans_mae` barely moves (0.3495 → 0.3344), and Geary's C confirms it from the other
+direction: 0.92 against the tissue's 0.588, where 1.0 is the no-autocorrelation value. **The emitted
+field is close to spatially random however long it trains.**
+
+Two further observations from arm C, both against the longer budget being a fix:
+
+* `celltype_localization` improves (0.4252 → 0.5822) but stays well below the `flanking_copy` floor
+  of 0.7765 — consistent with §6.3: the layout is a separate, real defect.
+* **The layout gets less stable, not more.** Arm C emitted **146 cells for `section_4` against
+  4 102 in the ground truth**, and 11 168 for `section_2` against 4 187. Per-section
+  `morans_median_pred` scatters accordingly (0.1297 / 0.0157 / 0.0753). A longer fit is making the
+  intensity field's cell-count integral worse.
+
+### Where that leaves it
+
+Ruled out by direct experiment, each with one factor changed and a full fit:
+
+| factor | verdict |
+|---|---|
+| length-scale calibration (§6.2) | **ruled out** — fitted `ell` is 0.86x/0.76x of default; no movement |
+| the layout head (§6.3) | **ruled out as the cause of the collapse** — 22 % even at real positions. A separate, first-class defect (`specs/10` §4.5b, R11) |
+| **the step budget (§7)** | **ruled out** — 14.1 % → 18.4 % at 2x |
+| `expr_pca_dim` | not a free variable — 32 exceeds the 28-gene panel |
+
+**So the collapse is not a budget effect, and the fixture is not representative of this regime.**
+GATE 1 measured the correlated prior surviving the fixture's generative map at r = 0.92 and T09
+measured the calibration objective live under `zinb-flow`; neither holds up here, on real tissue,
+without the pipeline losing ~80 % of the structure somewhere between the prior and the counts.
+
+**Next, and running: `scripts/t10_chain_diagnostic.py --steps 2400`** — the same chain measured
+stage by stage (GRF prior at the generated positions → latent after the flow → decoded `mu` →
+sampled counts, against the real section's counts and the latent the encoder makes of them), one
+estimator throughout. That localises the loss to the prior, the flow or the decoder instead of
+leaving it as a whole-pipeline number. **`text_emb_mode="medcpt"` is not blamed until the chain has
+been read** — it is the last untested factor, but it is a gene-embedding channel and the collapse is
+spatial, so it is not the first suspect.
+
