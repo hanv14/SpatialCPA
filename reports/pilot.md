@@ -220,3 +220,108 @@ critical path for any quality number**, not an optimisation to defer.
 - **`deep_starmap` panel coverage.** Blocked by §2.
 - **Comparator numbers on the pinned instrument.** Blocked by §1 — though §3 supplies the floor and
   ceiling without them.
+
+---
+
+## 6. Attribution of the autocorrelation failure (2026-08-21)
+
+The smoke run's headline failure — Moran's and Geary's correlations **negative**, below the `random`
+probe — was attributed by direct experiment. **My calibration hypothesis was wrong**, and the cause
+is now localised.
+
+### 6.0 The requested selection run cannot run in this container
+
+Per-dataset selection and a shipped-config fit are **campaign-machine work**. `Config`'s default is
+`text_emb_mode="medcpt"`, and the MedCPT encoder is unreachable here (`huggingface.co` → 403 through
+the proxy, verified). `text_emb_mode` is also one of selection's gates, so a local selection cannot
+score the `medcpt` arm and **cannot return the shipped configuration**. Running it here would have
+cost ~11 h and produced a config that is A3 by construction.
+
+So the question — *"attribute the failure; the smoke config differed from shipped in four ways at
+once"* — was answered by varying the factors **one at a time** instead, which is both sharper and
+~20x cheaper. Three of the four are testable locally.
+
+### 6.1 The failure is a magnitude collapse, not an inversion
+
+Per-gene Moran's I on `section_2`, 28 genes:
+
+| | min | median | max | sd |
+|---|---|---|---|---|
+| ground truth | +0.1995 | **+0.4635** | +0.7755 | 0.1405 |
+| v25 (smoke) | +0.0210 | **+0.0703** | +0.1706 | 0.0365 |
+
+The emitted field carries **15 % of the tissue's autocorrelation**, and the residual spread is small
+enough that the correlation over 28 genes is noise about zero — which lands at −0.12 by chance.
+**The negative sign is not an inversion and should not be read as one.** `paper_morans_pearson` is a
+*ranking* metric and it is uninformative once the predicted values are squashed into a narrow band;
+the interpretable quantity is `morans_median_pred` against `morans_median_gt`.
+
+### 6.2 Calibration: RULED OUT
+
+The fitted length-scale on this volume is **ell = (116.3, 116.3, 132.0) µm** against the default
+(100, 100, 100) — only **0.86x / 0.76x** off, not the order of magnitude a 7x collapse would need.
+Tested directly anyway (arm A, one full fit):
+
+| | `morans_median_pred` | `morans_pearson` |
+|---|---|---|
+| default `ell` | 0.0649 | −0.1999 |
+| **calibrated `ell`** | **0.0577** | −0.0998 |
+| ground truth | 0.4102 | — |
+
+Calibration moves nothing, and moves the median slightly the *wrong* way. **My stated hypothesis is
+refuted.**
+
+### 6.3 The layout head: a large part of the localization failure, NOT of the collapse
+
+Arm B swaps `layout_mode="field"` for `"resample"`, which places cells at real flanking-section
+positions. One factor changed, one full fit.
+
+| metric | A: field layout | **B: resample layout** | `flanking_copy` | GT |
+|---|---|---|---|---|
+| `celltype_localization` | 0.4252 | **0.7008** | 0.7765 | — |
+| `cell_count_ratio` | 0.8283 | **0.9875** | — | 1.0 |
+| `marker_field_r` | 0.1244 | 0.1781 | 0.8857 | — |
+| **`morans_median_pred`** | 0.0577 | **0.0904** | — | **0.4102** |
+| `morans_pearson` | −0.0998 | −0.1202 | 0.9836 | — |
+
+**Two findings, and they point in different directions.**
+
+* **Localization and cell count are largely the layout head.** Given real positions, localization
+  goes 0.425 → 0.701 and lands *on* the `flanking_copy` floor per section (B: 0.7008 / 0.7760 /
+  0.6808 against the floor's 0.7008 / 0.7765 / 0.7868). The intensity-field layout is producing
+  positions materially worse than copying a neighbouring slice, and `cell_count_ratio` recovers to
+  0.99.
+* **The autocorrelation collapse is NOT the layout.** With *correct real positions*, the emitted
+  expression still carries only **22 %** of the tissue's Moran's I (0.0904 vs 0.4102), and the
+  correlation stays negative.
+
+### 6.4 Where that leaves the cause
+
+Ruled out by direct experiment: **length-scale calibration** (6.2) and **the layout head** (6.3) —
+the latter matters a great deal for C1 but does not explain the collapse. `expr_pca_dim` is not a
+free variable: 32 exceeds the 28-gene panel, so every run must use ≤ 28.
+
+**The collapse is in the expression path** — the flow/decoder emits values that are close to
+spatially unstructured even when placed at correct positions. Two candidates remain, and they split
+by machine:
+
+| candidate | testable locally? |
+|---|---|
+| **budget** — 1200 steps, where T09's gate chose 2400 on the fixture, and STARmap is larger | ✅ one 57-min fit |
+| **`text_emb_mode="medcpt"`** — every local run is forced to `lookup`, i.e. ablation A3 | ❌ **server only** |
+
+### 6.5 Recommendation: the campaign waits
+
+By the standard set for this run — *"if the numbers recover, the campaign is a cost question; if
+they do not, we have a real-data problem the fixture never showed and the campaign waits"* — **the
+numbers did not recover.** A 200+ hour campaign against a method emitting 15–22 % of the tissue's
+spatial autocorrelation would measure the defect at scale.
+
+**The cheap next step is the 2400-step arm** (one fit, ~57 min, local): it closes the last locally
+testable factor. If the collapse survives it, the remaining explanation is the text channel or a
+genuine expression-path defect, and both are investigations rather than campaign runs.
+
+⚠️ **All numbers in §6 come from a non-shipped configuration** (`text_emb_mode=lookup`,
+`expr_pca_dim=16`, 1200 steps, no T09 calibration beyond the arm under test). They attribute a
+failure; they are **not** v25's performance, and none may be quoted as such.
+
