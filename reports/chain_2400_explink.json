@@ -1,0 +1,58 @@
+[
+  {
+    "stage": "1. prior h0 = GRF at generated xyz",
+    "median_I": 0.9927642476283287,
+    "p25": 0.9914717406579037,
+    "p75": 0.9935554534595228,
+    "n_channels": 64
+  },
+  {
+    "stage": "2. latent h after the flow",
+    "median_I": 0.8677130880131037,
+    "p25": 0.8261485090757779,
+    "p75": 0.9056850163109316,
+    "n_channels": 64
+  },
+  {
+    "stage": "3. decoded mu (before sampling)",
+    "median_I": 0.9007704830921841,
+    "p25": 0.8577151968548955,
+    "p75": 0.9238877358599765,
+    "n_channels": 28
+  },
+  {
+    "stage": "4. sampled counts (rank-normalised)",
+    "median_I": 0.5252982109459825,
+    "p25": 0.3948860528119293,
+    "p75": 0.6623568432269993,
+    "n_channels": 28
+  },
+  {
+    "stage": "3c. decoded mu, CALIBRATED",
+    "median_I": 0.9007704830921841,
+    "p25": 0.8577151968548955,
+    "p75": 0.9238877358599765,
+    "n_channels": 28
+  },
+  {
+    "stage": "4c. sampled counts, CALIBRATED (rank-norm)",
+    "median_I": 0.5294572896371402,
+    "p25": 0.35026747144987525,
+    "p75": 0.6432295099078867,
+    "n_channels": 28
+  },
+  {
+    "stage": "REF real counts (rank-normalised)",
+    "median_I": 0.46354214508679603,
+    "p25": 0.3587300399630059,
+    "p75": 0.563708078989729,
+    "n_channels": 28
+  },
+  {
+    "stage": "REF real latent h1 = encoder(real counts)",
+    "median_I": 0.5811767188605139,
+    "p25": 0.47707060056535977,
+    "p75": 0.6891671424306144,
+    "n_channels": 64
+  }
+]

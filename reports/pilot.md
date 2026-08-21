@@ -567,7 +567,7 @@ story — `mu` lacking amplitude — but neither implies the other. The model's 
 
 ---
 
-## 11. Candidate 1 — the `mu` link function (running)
+## 11. Candidate 1 — the `mu` link function. **This is the fix.**
 
 `Config.decoder_mu_link` ships as **`softplus`**, and softplus compresses dynamic range at large
 pre-activations — at a median 226 580 counts per cell and per-gene means in the thousands, that is
@@ -585,4 +585,95 @@ retention, the mean-variance slope and the `Var(shape)` / `Var(log s)` split, so
 are answered by one fit. It also **saves the fitted model** (`--save-model`), so any further
 analysis of this configuration costs no refit — four 2 400-step fits have been spent re-deriving
 the same model.
+
+### Result
+
+`--steps 2400 --calibrate --decoder-mu-link exp`, one fit (model saved to
+`runs/pilot/model_exp_2400.pt`). Against the shipped `softplus` arm:
+
+| | `softplus` (shipped) | **`exp`** | real tissue |
+|---|---|---|---|
+| counts I | +0.1297 | **+0.5253** | +0.4635 |
+| `mu` I | +0.8607 | +0.9008 | — |
+| **structured share** `I(counts)/I(mu)` | **15.1 %** | **58.3 %** | ~62 % |
+| mean-variance slope | 2.121 | **1.807** | 1.738 |
+
+**Changing one line takes the structured share from 15 % to 58 %.**
+
+### The density confound — tested, and the result survives
+
+The `exp` arm emitted **48 343 cells for a section whose ground truth has 4 187** — 11.5x. Denser
+sampling puts kNN neighbours closer together and inflates Moran's I mechanically, so the gain had to
+be separated from the fix. Re-measured on random subsamples of the *same* generated section, from
+the saved model (no refit):
+
+| n cells | density vs GT | counts I | `mu` I | structured share |
+|---|---|---|---|---|
+| 48 343 | 11.5x | +0.5253 | +0.9008 | 58.3 % |
+| 16 748 | 4.0x | +0.5192 | +0.8756 | 59.3 % |
+| 8 374 | 2.0x | +0.4967 | +0.8386 | 59.2 % |
+| **4 187** | **1.0x — GT-matched** | **+0.4782** | +0.7792 | **61.4 %** |
+| *real tissue* | *1.0x* | *+0.4635* | — | *~62 %* |
+
+**At GT-matched density the model reaches +0.4782 against the tissue's +0.4635 — 1.03x — and a
+structured share of 61.4 % against ~62 %.** Density accounts for about 0.05 of the 0.40 gain; the
+structured share is nearly flat across densities (58-61 %), which is the correct behaviour for a
+ratio. **The fix is real.**
+
+### Candidate 2 — ruled out
+
+| quantity | value |
+|---|---|
+| `Var(shape)` — latent-driven | 0.60376 |
+| `Var(log s)` — size factor | 0.00123 |
+| **share of `Var(log mu)` from the latent** | **100.1 %** |
+| **share from the size factor** | **0.2 %** |
+
+`mu`'s dynamic range is **not** the size factor — the latent supplies essentially all of it. The
+hypothesis was reasonable given `mu = link(MLP_mu(u)) * size_factor`, and it is wrong.
+
+### Four things to carry, and one of them is a caution
+
+1. **The cell count is badly wrong in this arm** — 48 343 against 4 187. That is the layout head
+   (R11) and is *independent* of the emission fix; the two defects need separating before any
+   headline number. It also means the `exp` arm's raw scored metrics are not usable as-is.
+2. **Amplitude is improved, not matched.** `sd(log mu)` = 0.7767 against the tissue's
+   `sd(log(count+1))` = 1.2127 (§10). The *share* is recovered; the absolute spread is still below
+   real. Whether that matters is a T06 question.
+3. **Calibration is now unnecessary and mildly harmful here.** It takes the slope 1.807 → 1.611
+   against the tissue's 1.738 — it *overshoots*, because it was correcting a defect the `exp` link
+   removes. If the link changes, T09's calibrator should be re-evaluated, not inherited.
+4. ⚠️ **Retention is not comparable across arms.** Its denominator is the *real latent*, which is
+   produced by that arm's own encoder: 0.7449 in the `softplus` fit, 0.5812 in the `exp` fit, which
+   moves the real-tissue retention row from 62.2 % to 79.8 % without anything about the tissue
+   changing. **Cross-arm, use counts I and the within-arm structured share.** The retention rows in
+   §9 and the `exp` report are each valid within their own fit and must not be lined up.
+
+### This does not close R4
+
+The `exp` link changes the **link function**, not the objective. R4's other instances are untouched:
+the layout head's Poisson NLL falling three nats below the truth's, the 1200 → 2400 likelihood/
+fidelity divergence, and the gene-gene covariance loss. What this result *adds* to R4 is that the
+inversion can be very sensitive to a parameterisation choice — softplus compressing dynamic range at
+means in the thousands gave the NLL an easy way to buy likelihood with dispersion, and removing that
+compression took back three quarters of the gap without touching the objective at all.
+
+⚠️ **And it sharpens the docstring discrepancy in §11 into a real question**: `ZINBDecoder`'s
+docstring says `exp` is the default and `Config` ships `softplus`. On this evidence the docstring
+describes the better configuration. **T06 should establish which was intended and why the default
+is what it is** — this may be a defaulting error rather than a design choice, and it cost the
+emission path three quarters of its spatial structure on real data.
+
+---
+
+## 12. Where this leaves the campaign
+
+**Stopping here, as agreed.** Candidate 1 recovered the structured share, so the emission collapse
+has a one-line candidate fix that is validated on real data at GT-matched density. What remains is
+**not** more pilot iteration:
+
+* **A T06 design decision** on the `mu` link default and the docstring discrepancy, with R4's four
+  instances as context.
+* **The layout head (R11)** — independently broken, and now the dominant defect in the `exp` arm.
+* Only then a re-costed campaign, since the corrected cost model (§7, ~2.3x) still stands.
 
