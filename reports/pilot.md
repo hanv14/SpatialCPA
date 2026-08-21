@@ -444,3 +444,87 @@ loss happening *after* the decoder's mean, and the gene-embedding channel feeds 
 measured healthy at 0.861. Whatever the text channel contributes, it is not where the structure is
 going.
 
+---
+
+## 9. The calibration arm: the calibrator works, and it does not fix the collapse (2026-08-21)
+
+`scripts/t10_chain_diagnostic.py --steps 2400 --calibrate`. One fit (2423.3 s), then T09 §2's
+`calibrate_detection` fitted in **7.4 s** on the four training sections, and the emission stages
+re-measured from the *same* latent — so the only thing that changes between the two rows is the
+calibration.
+
+| | `morans_median_pred` (counts I) | latent I | **retention** | mean-variance slope | rel. error vs tissue's 1.738 |
+|---|---|---|---|---|---|
+| **real tissue** | +0.4635 | +0.7449 | **62.2 %** | 1.738 | — |
+| uncalibrated | +0.1297 | +0.9015 | **14.4 %** | 2.121 | **22.0 %** |
+| **calibrated** | +0.1317 | +0.9015 | **14.6 %** | **1.840** | **5.9 %** |
+
+**The calibrator does exactly what it was built to do.** The mean-variance slope goes 2.121 → 1.840
+against the tissue's 1.738 — a relative error of **22.0 % → 5.9 %**, which **passes T06's < 15 %
+criterion** where the uncalibrated arm failed it. The quantity §8 measured wrong is now right, and
+it cost 7.4 seconds. `calibrate_detection` is validated on real data, and its "no headroom on the
+fixture" default (C28) is confirmed as a fixture artifact.
+
+**And the collapse does not move: retention 14.4 % → 14.6 %, against the tissue's 62.2 %.**
+`mu` is untouched (0.8607 both arms, as expected — the calibration corrects `pi` and `theta`, not
+the mean).
+
+### This is the design branch, not the tuning branch
+
+By the standard set for this run — *"if it does not, the emission model itself is wrong for
+near-dense panels and that is a design finding, not a tuning one"* — **it is a design finding.**
+
+The measurements support a specific statement of it. The count draw is spatially uncorrelated by
+construction, so the ratio `I(counts) / I(mu)` is the share of the emitted between-cell variance
+that lives in the *structured mean* rather than in the draw:
+
+| | structured share of between-cell variance |
+|---|---|
+| model, uncalibrated | **15.1 %** |
+| model, calibrated | **15.3 %** |
+| **real tissue** | **62.2 %** |
+
+**The decoder puts ~15 % of its output variance into `mu` and ~85 % into the sampling
+distribution. Real tissue is roughly 62/38.** Real cells genuinely differ from one another by a
+lot, and those differences are spatially organised; the model reproduces the *pattern* of that
+variation almost perfectly (`mu` at I = 0.861, higher than the tissue's own latent at 0.745) but at
+a fraction of its *amplitude*, and then fills the gap with dispersion.
+
+**That is why calibrating `theta` cannot help.** The calibrator matches the *marginal* mean-variance
+relation, and it does — but matching a marginal only reallocates variance within the same
+mean/dispersion decomposition. It has no term that moves variance *from* the dispersion *into* `mu`,
+which is what would be needed. The defect is in the decomposition, not its parameters.
+
+⚠️ **One assumption is load-bearing and should be stated wherever this is quoted**: that the ZINB
+draw contributes no spatial autocorrelation, so `I(counts)/I(mu)` reads as a variance share. That is
+true by construction here — the draw is i.i.d. per cell given `mu`.
+
+### What this does and does not implicate
+
+* **Not the prior, the flow, or the budget** — all three measured healthy or ruled out (§6, §7, §8).
+* **Not the layout** — 22 % retention even at real positions (§6.3). Still a separate real defect
+  (R11).
+* **Not calibration** — now measured, works, insufficient.
+* **Not `text_emb_mode`** — the loss is downstream of `mu`, which is healthy.
+* **The emission model's variance decomposition**, on a panel where per-gene means are in the
+  thousands and detection is 0.9999. `progress/fixture_limitations.md` §1 records why no fixture
+  measurement could have caught it.
+
+### Recommendation
+
+**The campaign stays on hold, and the next step is a T06 design question rather than another
+pilot run.** The question to put to it: *what makes `mu` carry only 15 % of between-cell variance
+when its spatial pattern is correct?* Candidates worth checking before any new fit —
+
+1. **The size-factor path.** At a median 5 120 counts per cell, if `mu` is largely set by the size
+   factor and the latent modulates it only weakly, that is exactly this signature.
+2. **`Config.decoder_mu_link`.** T06 kept softplus as the default with `exp` selectable and
+   measured; a softplus link compresses dynamic range at large means, which is the regime here and
+   is not the regime the fixture tested.
+3. **The reconstruction loss's own optimum.** A ZINB NLL at these means can be reduced by widening
+   dispersion rather than sharpening `mu`, and nothing in the objective penalises that trade — which
+   would also connect to R4's likelihood/fidelity divergence and to T06's unresolved gene-gene
+   covariance loss.
+
+Item 2 is a one-line config change and is the cheapest of the three to test.
+

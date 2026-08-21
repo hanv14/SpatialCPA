@@ -40,11 +40,15 @@ test — the test measures what it says and passes on the data it was given. It 
 **inference** that a criterion passing on the fixture will pass on real data *in the emission
 regime*. Three specific consequences:
 
-* **T09's `calibrate_detection` has never been exercised where it has headroom.** It ships fitted
-  but **not applied** because on the fixture the model error (0.0217) was below the real
-  between-section variation (0.0397) — no headroom (SPEC_QUESTIONS C28). On real STARmap the same
-  quantity has 22 % of headroom. A calibrator's default was set from a dataset that could not test
-  it.
+* **T09's `calibrate_detection` had never been exercised where it has headroom — now it has been,
+  and it works.** It ships fitted but **not applied** because on the fixture the model error
+  (0.0217) was below the real between-section variation (0.0397) — no headroom (SPEC_QUESTIONS
+  C28). On real STARmap it fits in 7.4 s and takes the mean-variance slope from 2.121 to **1.840**
+  against the tissue's 1.738, i.e. a 22.0 % relative error to **5.9 %**, passing T06's own criterion
+  (`reports/pilot.md` §9). **So the "no headroom" default is confirmed as a fixture artifact**, and
+  a calibrator's shipped default was set from the one dataset that could not test it. It does not
+  fix the spatial collapse — that is a separate, deeper finding — but it is validated on real data
+  and should not stay off by default on the strength of a fixture measurement.
 * **T06's detection-rate band is unusually tight here.** `assert_detection_rate` compares against a
   reference of ~1.0 on this panel, so a failure on STARmap says more about the training budget than
   about the decoder.
