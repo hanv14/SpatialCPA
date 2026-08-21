@@ -658,11 +658,14 @@ inversion can be very sensitive to a parameterisation choice — softplus compre
 means in the thousands gave the NLL an easy way to buy likelihood with dispersion, and removing that
 compression took back three quarters of the gap without touching the objective at all.
 
-⚠️ **And it sharpens the docstring discrepancy in §11 into a real question**: `ZINBDecoder`'s
-docstring says `exp` is the default and `Config` ships `softplus`. On this evidence the docstring
-describes the better configuration. **T06 should establish which was intended and why the default
-is what it is** — this may be a defaulting error rather than a design choice, and it cost the
-emission path three quarters of its spatial structure on real data.
+**Resolved since this was written.** §11's docstring discrepancy — `ZINBDecoder` saying `exp`,
+`Config` shipping `softplus` — was investigated and is **not** a defaulting error. `softplus` was
+chosen deliberately at T06, on the fixture, where it won T06's deciding statistic (per-gene
+mean-expression correlation), and T06 pre-specified the condition on which to revisit it. STARmap
+meets that condition. `Config.decoder_mu_link` now defaults to `exp` with `softplus` still
+selectable, and the field's own docstring carries both measurements so the comparison is not a
+cross-reference to a file. Recorded in `specs/06` and `progress/t06_expression_head.md` as T06's
+own condition being met by T10, not as a bug fix. Only the docstring's *stale* half was wrong.
 
 ---
 

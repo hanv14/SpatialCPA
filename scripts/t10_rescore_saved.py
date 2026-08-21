@@ -47,6 +47,16 @@ from t10_chain_diagnostic import build_embeddings, load_training_volume
 SEED = 1
 GROUND_TRUTH = "benchmark-pbya-v3/data/processed/starmap_visual_cortex/data.h5ad"
 TARGETS = (("section_2", 30.0), ("section_4", 52.0), ("section_6", 74.0))
+# Emitted/ground-truth cell counts from the generation pass, so ``--score-only`` reproduces the
+# same note without regenerating. ``hybrid`` equals ``field`` by construction: ``sample_layout``
+# draws ``n_target ~ Poisson(n_expected)`` before ``hybrid``'s sliced-Wasserstein polish touches
+# the positions (``layout.py:889``), so with one seed the count draw is bit-identical.
+COUNTS_ON_DISK = {
+    "field": "section_2=48343/4187, section_4=92/4102, section_6=3719/4162",
+    "hybrid": "section_2=48343/4187, section_4=92/4102, section_6=3719/4162",
+    "resample": "section_2=4073/4187, section_4=4169/4102, section_6=4110/4162",
+}
+
 METRICS = (
     "paper_morans_pearson",
     "paper_gearys_pearson",
@@ -54,6 +64,7 @@ METRICS = (
     "paper_marker_field_r",
     "paper_marker_depth_r",
     "paper_celltype_localization",
+    "paper_gene_mean_spearman",
 )
 
 
@@ -102,6 +113,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--model", default="runs/pilot/model_exp_2400.pt")
     ap.add_argument("--modes", nargs="+", default=["field", "hybrid", "resample"])
     ap.add_argument("--out", default="reports/t10_rescore_exp.md")
+    ap.add_argument(
+        "--score-only",
+        action="store_true",
+        help="Re-score the runs/pilot/rescore_*.h5 predictions already on disk instead of "
+        "regenerating them. Use this after adding a metric to METRICS: generation of the "
+        "field arm's 52k cells costs ~10 min and the predictions do not change.",
+    )
     args = ap.parse_args(argv)
 
     checkpoint = torch.load(args.model, map_location="cpu")
@@ -124,6 +142,28 @@ def main(argv: list[str] | None = None) -> int:
     rng = np.random.default_rng(0)
     rows = []
     for mode in args.modes:
+        out_raw = f"runs/pilot/rescore_{mode}_raw.h5"
+        out_matched = f"runs/pilot/rescore_{mode}_matched.h5"
+        if args.score_only:
+            counts_note = [COUNTS_ON_DISK[mode]]
+            r_raw, r_matched = score(out_raw), score(out_matched)
+            rows.append(
+                {
+                    "mode": mode,
+                    "counts": COUNTS_ON_DISK[mode],
+                    "cell_count_ratio_raw": median_of(r_raw, "paper_cell_count_ratio"),
+                    "raw": {m: median_of(r_raw, m) for m in METRICS},
+                    "matched": {m: median_of(r_matched, m) for m in METRICS},
+                }
+            )
+            print(f"  {mode}: counts {rows[-1]['counts']}", flush=True)
+            for m in METRICS:
+                print(
+                    f"    {m:<32} raw {rows[-1]['raw'][m]:+.4f}   "
+                    f"matched {rows[-1]['matched'][m]:+.4f}",
+                    flush=True,
+                )
+            continue
         cfg = base.replace(layout_mode=mode)
         raw: dict = {}
         matched: dict = {}
@@ -149,8 +189,6 @@ def main(argv: list[str] | None = None) -> int:
                     "cell_type": ct[keep],
                 }
         genes = list(volume.gene_names)
-        out_raw = f"runs/pilot/rescore_{mode}_raw.h5"
-        out_matched = f"runs/pilot/rescore_{mode}_matched.h5"
         Path("runs/pilot").mkdir(parents=True, exist_ok=True)
         write_prediction(raw, genes, out_raw)
         write_prediction(matched, genes, out_matched)

@@ -15,7 +15,7 @@ Part of [PROGRESS.md](../PROGRESS.md).
 | R2 | ~~GATE 2's attention is near-uniform (0.987 × log K)~~ — **CLOSED at T06.** With the flow-matching head trained the entropy falls to **0.8563 × log K** (a fall of 0.132, required 0.05) and stays above the 0.5 collapse line. The query is what changed: T04's probe queried with the field feature alone, T06's with `[F(p), fourier(p), type_emb, region_emb, z_embed]`, and a query that knows its own cell type can prefer a donor that shares it. | T04 | T06 | **closed 2026-08-16** |
 | R5 | **C14 blocks the paper's headline novelty.** *(Sharpened: the table also has to be *built correctly* — see B19, four defects in `build_gene_meta` that produced four species' genes for a one-species request, all fixed and replayed, but the live mouse-only summary coverage is still unmeasured here.)* Open-vocabulary decoding has no positive evidence: zero-shot is r = −0.368 on the fixture (B18) because arbitrary gene names carry no text signal, and `resources/gene_meta.parquet` cannot be built here — every gene-annotation host is 403'd by the network policy. Needs one command on a networked machine (see C14). | T02, T06 | T10 (E1) | **before the first real run** |
 | R4 | **Likelihood/fidelity divergence — one pathology, two heads.** *(T08 ran: the cure is **built and measured**, it is **not** enabled by default, and R4 stays **OPEN**. The covariance criterion is missed on both regimes — 11.02 vs 7.73 and 13.39 vs 11.38 — so the covariance claim is downgraded; but at 2400 steps the arm **with** the terms improves its covariance while the arm without it degrades, which is the first direct evidence that anything in this project can arrest the divergence. Decision owed to T09 §3's joint selection gate and reported by T10's A2, at two budgets.)* Fitting by likelihood alone makes the likelihood better and the *generated section* worse. On the **layout intensity** head (SPEC_QUESTIONS B10, T05): recovered intensity correlation 0.97 → 0.28 over 300 → 1200 steps while the Poisson NLL keeps falling. On the **expression** head (T06): 1200 → 2400 steps lowers the ZINB NLL 1.589 → 1.578 nats/pair while Frobenius covariance error goes 17.7 → 21.3 and detection MAD 0.056 → 0.069. Neither head has a term that could stop it. **`TRAIN_STEPS = 1200` is early stopping fitted to this fixture and will not transfer to real data.** | T05 (B10), T06 | ~~T08~~, T09, T10 (A2) | **T08 ran and did not close it**; the criterion is a strict xfail carrying 11.02 / 13.39, and the enable/disable decision moves to **T09 §3's joint selection gate** (`train_steps` × the metric weights, scored per dataset on internal LOSO), reported by **T10's A2** at both budgets. The 0 is a starting point, not a shipped decision |
-| R11 | **The intensity-field layout is worse than copying, on real data.** Holding everything else fixed on tier-1 STARmap and swapping only `layout_mode`: `celltype_localization` **0.4252** for `field` against **0.7008** for `resample`, where the model-free `flanking_copy` floor is **0.7765** and the `oracle` ceiling **0.9808** — the learned layout scores *below the floor* on the metric it exists to win, by ~29x the across-seed envelope. `cell_count_ratio` 0.83 -> 0.99 in the same swap, and the count error is large and erratic: 4332/1372/3866 at 1200 steps against a ground truth of 4187/4102/4162, 11168/146/3788 at 2400, and **48 343 against 4 187** in the `exp`-link arm. It agrees with the fixture, where `resample` was the **rank winner** (3.0), `hybrid` followed (4.2) and **`field`'s best cell ranked 7.0, winning nothing** — `hybrid` ships only on a tie-break whose margin (0.0344) sat inside R10's 0.0335 envelope. The fixture signal was **underpowered, not wrong**. ⚠️ It does **not** explain R12: with real positions the emitted expression still carried only 22 % of the tissue's Moran's I. Coupling to the decoder is **indirect** — `IntensityHead` takes only coordinates and field features, but `_layout_term` reads the **shared** triplane and `forward_train` backpropagates `recon` and `layout` together | T05, T09 | T10, then T05/T09 | **open** — `specs/05`'s headline layout claim is in question and the `hybrid` tie-break is flagged in `progress/t09_inference_and_calibration.md` as a decision to revisit; the question is whether the gate may be **inherited** from the fixture at all, given `specs/09` §3 selects per dataset |
+| R11 | **The intensity-field layout is worse than copying, on real data.** Holding everything else fixed on tier-1 STARmap and swapping only `layout_mode`: `celltype_localization` at ground-truth-matched density is **0.6136** for `field` and **0.6572** for the shipped `hybrid` against **0.7601** for `resample`, where the model-free `flanking_copy` floor is **0.7765** and the `oracle` ceiling **0.9808** — both field-based modes score *below the floor* on the metric the layout head exists to win, by **4.9x and 3.6x** R10's across-seed envelope, while `resample` lands on the floor to within 0.0164 (inside it). `cell_count_ratio` 0.894 -> 0.988 in the same swap, and `hybrid` cannot help: its count draw precedes the sliced-Wasserstein polish (`layout.py:889`) and is bit-identical to `field`'s. and the count error is large and erratic: 4332/1372/3866 at 1200 steps against a ground truth of 4187/4102/4162, 11168/146/3788 at 2400, and **48 343 against 4 187** in the `exp`-link arm. It agrees with the fixture, where `resample` was the **rank winner** (3.0), `hybrid` followed (4.2) and **`field`'s best cell ranked 7.0, winning nothing** — `hybrid` ships only on a tie-break whose margin (0.0344) sat inside R10's 0.0335 envelope. The fixture signal was **underpowered, not wrong**. ⚠️ It does **not** explain R12: with real positions the emitted expression still carried only 22 % of the tissue's Moran's I. Coupling to the decoder is **indirect** — `IntensityHead` takes only coordinates and field features, but `_layout_term` reads the **shared** triplane and `forward_train` backpropagates `recon` and `layout` together | T05, T09 | T10, then T05/T09 | **open** — `specs/05`'s headline layout claim is in question and the `hybrid` tie-break is flagged in `progress/t09_inference_and_calibration.md` as a decision to revisit; the question is whether the gate may be **inherited** from the fixture at all, given `specs/09` §3 selects per dataset |
 | R3 | **The stack's ends reconstruct far worse than its interior.** Per-section R² was **0.2912** at the first section and **0.3642** at the last, against an interior mean of **0.4474** — a 20–35 % deficit. One-sided evidence at the volume boundary. | T04 | T09, T10 | **at T09** |
 
 ### R11 — the layout head, on one page
@@ -27,13 +27,49 @@ to win. **Every number is a median over held-out sections** (`specs/10` §4.6).
 measured on the pinned instrument (`reports/pilot.md` §3) and model-free, so they bracket what is
 achievable.
 
+All three `layout_mode` arms below come from **one set of weights**
+(`runs/pilot/model_exp_2400.pt`, `decoder_mu_link=exp`, 2400 steps): `layout_mode` is a
+generation-time gate that `check_generation_cfg` permits to differ, so no refit was needed and
+nothing but the layout varies between the rows. `celltype_localization` is scored at
+**ground-truth-matched density** — each section subsampled to its own true cell count, because a
+denser point set puts kNN neighbours closer and inflates every graph-based metric, and `field`
+overshoots by 11x on one section. `cell_count_ratio` is from the raw pass, where it means
+something. Full six-metric table in `reports/t10_rescore_exp.md`.
+
 | arm | `celltype_localization` | `cell_count_ratio` |
 |---|---|---|
 | `oracle` — ceiling | **0.9808** | 1.000 |
 | `flanking_copy` — copy floor | **0.7765** | — |
-| `layout_mode="resample"` | **0.7008** | 0.9875 |
-| `layout_mode="hybrid"` | *see the re-scored table* | *see the re-scored table* |
-| `layout_mode="field"` (was shipped) | **0.4252** | 0.8283 |
+| `layout_mode="resample"` | **0.7601** | 0.988 |
+| `layout_mode="hybrid"` (shipped) | **0.6572** | 0.894 |
+| `layout_mode="field"` | **0.6136** | 0.894 |
+
+**Three things this table says that the ordering alone does not.**
+
+1. **`resample` is the copy floor, and lands on it.** `_resample_layout` reuses the nearest flanking
+   section's coordinates and types unchanged, so `resample` and `flanking_copy` are the same layout;
+   they differ only in that v25 replaces the expression. The 0.0164 between them is *inside* R10's
+   0.0335 envelope, which is the consistency check this table needed. The two field-based modes are
+   then **0.1629** (`field`) and **0.1193** (`hybrid`) below that floor — **4.9x and 3.6x** the
+   envelope.
+
+2. **`hybrid` cannot fix the count, by construction.** `sample_layout` draws
+   `n_target ~ Poisson(n_expected)` from the slab integral and only *then*, at `layout.py:889`,
+   applies `hybrid`'s sliced-Wasserstein polish to the positions. With the same seed the count draw
+   is bit-identical, so `hybrid`'s emitted counts equal `field`'s exactly —
+   `48343/4187, 92/4102, 3719/4162` for both. The docstring already says it: `resample` is "the one
+   mode whose count does not come from the intensity". Whatever `hybrid` buys (+0.0436 here) it buys
+   with positions alone, on top of the same broken count.
+
+3. **The median `cell_count_ratio` of 0.894 is not reassuring, it is hiding the failure.** The three
+   per-section ratios are **11.5x, 0.022x, 0.894x**. The median picks the only sane one. `specs/10`
+   §4.6 mandates the median for headline statistics and that mandate stands — but `cell_count_ratio`
+   spans 500x across three sections here, and any report of it must carry the per-section spread
+   beside it or it misdescribes the layout entirely.
+
+*(An earlier arm, before the `decoder_mu_link` switch and without the density control, put `field`
+at 0.4252 and `resample` at 0.7008. Same ordering, wider gap. The numbers above supersede it: they
+are one config, one instrument, all three arms.)*
 
 **Synthetic fixture (T09's merged 18-cell gate, at the selected budget).** The gate ranks whole
 cells, so the column is the best cell each `layout_mode` appears in:

@@ -1,0 +1,65 @@
+[
+  {
+    "mode": "field",
+    "counts": "section_2=48343/4187, section_4=92/4102, section_6=3719/4162",
+    "cell_count_ratio_raw": 0.8935607880826526,
+    "raw": {
+      "paper_morans_pearson": 0.5386306065725361,
+      "paper_gearys_pearson": 0.5378760536236772,
+      "paper_umap_mixing": 0.9055523796719548,
+      "paper_marker_field_r": 0.6073027100837355,
+      "paper_marker_depth_r": 0.7428760822975521,
+      "paper_celltype_localization": 0.6135727141501308
+    },
+    "matched": {
+      "paper_morans_pearson": 0.5823383625120989,
+      "paper_gearys_pearson": 0.588091438205299,
+      "paper_umap_mixing": 0.9168687104166666,
+      "paper_marker_field_r": 0.5762853638569543,
+      "paper_marker_depth_r": 0.591913191772822,
+      "paper_celltype_localization": 0.6135727141501308
+    }
+  },
+  {
+    "mode": "hybrid",
+    "counts": "section_2=48343/4187, section_4=92/4102, section_6=3719/4162",
+    "cell_count_ratio_raw": 0.8935607880826526,
+    "raw": {
+      "paper_morans_pearson": 0.548140186228612,
+      "paper_gearys_pearson": 0.546866945407096,
+      "paper_umap_mixing": 0.9224513458333332,
+      "paper_marker_field_r": 0.6502900478761131,
+      "paper_marker_depth_r": 0.7477656040554921,
+      "paper_celltype_localization": 0.6572317450239952
+    },
+    "matched": {
+      "paper_morans_pearson": 0.5749302845503702,
+      "paper_gearys_pearson": 0.5715828890938194,
+      "paper_umap_mixing": 0.9151689229166666,
+      "paper_marker_field_r": 0.6384284517779554,
+      "paper_marker_depth_r": 0.7477656040554921,
+      "paper_celltype_localization": 0.6572317450239952
+    }
+  },
+  {
+    "mode": "resample",
+    "counts": "section_2=4073/4187, section_4=4169/4102, section_6=4110/4162",
+    "cell_count_ratio_raw": 0.9875060067275349,
+    "raw": {
+      "paper_morans_pearson": 0.5622776863305411,
+      "paper_gearys_pearson": 0.5622202300082763,
+      "paper_umap_mixing": 0.9183851874999999,
+      "paper_marker_field_r": 0.6527901609714527,
+      "paper_marker_depth_r": 0.8284076367598153,
+      "paper_celltype_localization": 0.765937271589663
+    },
+    "matched": {
+      "paper_morans_pearson": 0.5622776863305411,
+      "paper_gearys_pearson": 0.563219389243331,
+      "paper_umap_mixing": 0.9216681104166665,
+      "paper_marker_field_r": 0.6691591953827429,
+      "paper_marker_depth_r": 0.8284076367598153,
+      "paper_celltype_localization": 0.7600569362104759
+    }
+  }
+]
