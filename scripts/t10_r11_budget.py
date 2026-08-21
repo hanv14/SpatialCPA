@@ -56,7 +56,19 @@ def main() -> int:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             model.repulsion = fit_repulsion(vol, cfg, seed=SEED + 1)
+        rep = model.repulsion
         for name, z in TARGETS:
+            # Ablation A4: the same layout with the Strauss interaction switched off. The
+            # envelope is unchanged by it, so whatever the two arms differ by is the
+            # interaction's thinning and nothing else. This is the experiment that separates
+            # the two candidate causes of a starved sampler.
+            cfg_off = cfg.replace(repulsion=False)
+            with warnings.catch_warnings(record=True) as caught_off:
+                warnings.simplefilter("always")
+                warnings.simplefilter("ignore", BBoxClampWarning)
+                layout_off = _layout_on(model, plane_at_z(vol, z, cfg_off), vol, cfg_off, SEED)
+            n_off = int(layout_off.coords_xyz.shape[0])
+            starved_off = any(issubclass(w.category, ProposalBudgetWarning) for w in caught_off)
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
                 warnings.simplefilter("ignore", BBoxClampWarning)
@@ -83,6 +95,11 @@ def main() -> int:
                     "starved": bool(budget),
                     "dynamic_range": dyn,
                     "bound": 1.0 / (dyn * float(cfg.layout_envelope_slack)),
+                    "n_drawn_norep": n_off,
+                    "starved_norep": starved_off,
+                    "r0": float(rep.r0),
+                    "R": float(rep.R),
+                    "gamma": float(rep.gamma),
                     "msg": str(budget[0].message).split("\n")[0] if budget else "",
                 }
             )
@@ -93,7 +110,10 @@ def main() -> int:
                 f"integral={r['n_expected'] / r['n_gt']:6.2f}x "
                 f"placed={r['n_drawn'] / max(r['n_expected'], 1e-9):6.1%} "
                 f"budget_starved={r['starved']} "
-                f"max/mean={r['dynamic_range']:8.1f} accept_bound={r['bound']:.4%}",
+                f"max/mean={r['dynamic_range']:8.1f} accept_bound={r['bound']:.4%} "
+                f"| no_repulsion drawn={r['n_drawn_norep']:6d} "
+                f"placed={r['n_drawn_norep'] / max(r['n_expected'], 1e-9):6.1%} "
+                f"starved={r['starved_norep']}",
                 flush=True,
             )
             if budget:
@@ -110,18 +130,34 @@ def main() -> int:
         "`placed` is `drawn / n_expected`: how much of what it asked for the rejection sampler",
         "managed to place. They are independent failures and `cell_count_ratio` conflates them.",
         "",
-        "| link | section | `n_expected` | drawn | GT | integral | placed | starved "
-        "| mid-plane max/mean | acceptance bound |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| link | section | `n_expected` | GT | integral | max/mean | bound | drawn | placed "
+        "| drawn, no repulsion | placed | starved on/off |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         lines.append(
-            f"| `{r['link']}` | {r['section']} | {r['n_expected']:.1f} | {r['n_drawn']} | "
-            f"{r['n_gt']} | **{r['n_expected'] / r['n_gt']:.2f}x** | "
-            f"**{r['n_drawn'] / max(r['n_expected'], 1e-9):.1%}** | "
-            f"{'**yes**' if r['starved'] else 'no'} | {r['dynamic_range']:.1f} | "
-            f"**{r['bound']:.3%}** |"
+            f"| `{r['link']}` | {r['section']} | {r['n_expected']:.1f} | {r['n_gt']} | "
+            f"**{r['n_expected'] / r['n_gt']:.2f}x** | {r['dynamic_range']:.1f} | "
+            f"{r['bound']:.3%} | {r['n_drawn']} | "
+            f"**{r['n_drawn'] / max(r['n_expected'], 1e-9):.1%}** | {r['n_drawn_norep']} | "
+            f"**{r['n_drawn_norep'] / max(r['n_expected'], 1e-9):.1%}** | "
+            f"{'yes' if r['starved'] else 'no'} / "
+            f"{'yes' if r['starved_norep'] else 'no'} |"
         )
+    rep0 = rows[0]
+    lines += [
+        "",
+        "## The fitted Strauss interaction, which the warning does not print",
+        "",
+        f"`r0` **{rep0['r0']:.3f} um**, `R` **{rep0['R']:.3f} um**, "
+        f"`gamma` **{rep0['gamma']:.4f}**. `gamma = 1` is no soft repulsion at all.",
+        "",
+        "`ProposalBudgetWarning` names `r0` alone. `r0` is the hard core; `R` and `gamma` are the",
+        "soft part, and they are what a rejection sampler actually spends its budget on. The",
+        "`no repulsion` columns above are ablation A4 on the same weights and the same seed: the",
+        "envelope is identical between the two arms, so the difference between them is the",
+        "interaction's thinning and nothing else.",
+    ]
     out.write_text("\n".join(lines) + "\n")
     print(f"\nwrote {out}")
     return 0

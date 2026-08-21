@@ -193,6 +193,34 @@ rather than only their detection rates. The two are not substitutes: `pi` moves 
 within 15%) is the property this protects at inference. `DetectionCalibration` carries both
 corrections and records which sections it was fitted on.
 
+#### How the `theta` correction is tested: on the premise, not on a tolerance (added at T10)
+
+`test_detection_calibration_matches_the_fold_it_was_fitted_on` originally asserted, without
+condition, that applying the correction moves the mean-variance slope *towards* the real section's.
+That assertion has a premise — **that there is an error to correct** — and the premise stopped
+holding when `decoder_mu_link` became `exp` at T10: on the synthetic fixture the decoded slope is
+then within **0.005** of real, and the correction, solving for detection, moves it by 0.031 and the
+test goes red. Relaxing the threshold would have hidden both halves of the question. State them
+separately instead.
+
+1. **No headroom -> do no harm.** Measure the estimator's own draw-to-draw spread first — repeated
+   `sample_counts` from *one* `(mu, theta, pi)` — and compare the uncalibrated error against it.
+   When the error is at or below that floor there is nothing to correct, and the requirement is
+   only that the calibrated slope stays inside the same floor. Nothing may be asserted below the
+   noise of the estimator doing the asserting; this is the device already used for the covariance
+   ceiling (B16) and the oblique-correlation ceiling.
+
+2. **Headroom -> take it.** The fixture cannot supply this arm under `exp`, so **construct** the
+   condition real STARmap showed — a decoded slope of **2.121** against a real **1.738**, the
+   decoder putting variance in the count draw rather than in `mu`. Shrinking `theta` is what
+   over-dispersion is in a ZINB, so the arm is built by shrinking it, and the requirement is that
+   the solver removes **at least half** the constructed headroom. The test first asserts the
+   construction actually created headroom above the floor, so it cannot silently degenerate.
+
+Arm 2 needs no model and no fit: `calibrate.solve_detection_shifts(mu, theta, pi, real, cfg)` is
+the array half of `_fold_statistics`, split out at T10 for exactly this. Keep it that way — a
+solver assertion that costs a training run gets run rarely and therefore protects little.
+
 ```python
 def calibrate_anchor_weight(model, vol, cfg) -> IsotonicRegressor
 ```

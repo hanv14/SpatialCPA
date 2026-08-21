@@ -46,7 +46,9 @@ from spatialcpav25_gen.infer.calibrate import (
     calibrate_retrieval_window,
     mean_morans_i,
     observed_z_decay,
+    solve_detection_shifts,
 )
+from spatialcpav25_gen.model.expression import sample_counts
 from spatialcpav25_gen.model.field import BBoxClampWarning
 from spatialcpav25_gen.model.noise import GaussianRandomField
 
@@ -594,6 +596,23 @@ def _mv_slope(counts: np.ndarray) -> float:
     return float(np.polyfit(np.log(mean[ok]), np.log(variance[ok]), 1)[0])
 
 
+def _mv_slope_draw_spread(mu, theta, pi, n_draws: int = 8) -> float:
+    """Spread of ``_mv_slope`` under repeated count draws from ONE ``(mu, theta, pi)``.
+
+    The estimator's own noise floor, measured rather than assumed — the same device this
+    project uses for the covariance ceiling (B16) and the oblique-correlation ceiling. Nothing
+    about a calibrator can be asserted below this, because two draws of the *identical*
+    distribution differ by this much. Cheap: no fit, only resampling.
+    """
+    from spatialcpav25_gen.model.expression import sample_counts
+
+    slopes = [
+        _mv_slope(sample_counts(mu, theta, pi, np.random.default_rng(1000 + s)).numpy())
+        for s in range(n_draws)
+    ]
+    return float(np.ptp(slopes))
+
+
 @pytest.mark.slow
 def test_detection_calibration_matches_the_fold_it_was_fitted_on(trained_for_calibration):
     """The solver hits its target: fitted on a fold and applied there, detection error falls.
@@ -642,10 +661,105 @@ def test_detection_calibration_matches_the_fold_it_was_fitted_on(trained_for_cal
     real_slope = _mv_slope(fold.real)
     plain = _mv_slope(sample_counts(fold.mu, fold.theta, fold.pi, np.random.default_rng(0)).numpy())
     calibrated = _mv_slope(sample_counts(mu, theta, pi, np.random.default_rng(0)).numpy())
-    assert abs(calibrated - real_slope) <= abs(plain - real_slope) + 1e-9, (
-        f"mean-variance slope: real {real_slope:.3f}, uncalibrated {plain:.3f}, "
-        f"calibrated {calibrated:.3f}"
+
+    # Whether "the correction improves the slope" is even a well-posed claim depends on there
+    # being an error to correct. Under `decoder_mu_link="exp"` (the default since T10) this
+    # fixture's uncalibrated slope is already at the estimator's noise floor, so the premise
+    # fails and the old unconditional assertion measured noise. Branch on the measured
+    # headroom instead of relaxing the threshold; `specs/09` §5 states both arms.
+    floor = _mv_slope_draw_spread(fold.mu, fold.theta, fold.pi)
+    headroom = abs(plain - real_slope)
+    detail = (
+        f"real {real_slope:.4f}, uncalibrated {plain:.4f}, calibrated {calibrated:.4f}, "
+        f"headroom {headroom:.4f}, draw-to-draw floor {floor:.4f}"
     )
+    if headroom <= floor:
+        # NO HEADROOM: do no harm. The calibrator's target here is the detection rate, which
+        # the assertions above show it hits; the slope must not be pushed out of the band that
+        # two draws of the same distribution already span.
+        assert abs(calibrated - plain) <= floor, f"no headroom, but the slope moved: {detail}"
+    else:
+        # HEADROOM: correct it.
+        assert abs(calibrated - real_slope) <= headroom + 1e-9, (
+            f"headroom existed and was not taken: {detail}"
+        )
+
+
+def test_detection_calibration_takes_the_headroom_when_there_is_headroom():
+    """The other half of the premise: given a real mean-variance error, the solver removes it.
+
+    ``test_detection_calibration_matches_the_fold_it_was_fitted_on`` can only assert *do no
+    harm*, because under ``decoder_mu_link="exp"`` this fixture's decoded slope already sits at
+    the estimator's own draw-to-draw noise floor — there is nothing to correct, so "the
+    correction improves it" is not a well-posed claim there (``specs/09`` 5).
+
+    The condition the fixture cannot supply is real STARmap's: T10 measured a decoded slope of
+    **2.121** against a real **1.738**, i.e. the decoder putting variance in the count draw
+    rather than in ``mu``. Construct exactly that here — shrink ``theta``, which is what
+    over-dispersion *is* in a ZINB (``Var = mu + mu^2 / theta``) — and require the solver to
+    take most of it back. No model and no fit: ``solve_detection_shifts`` is the array half.
+    """
+    rng = np.random.default_rng(20260821)
+    n_cells, n_genes = 800, 48
+    # A panel spanning four orders of magnitude, which is the regime the mu link argument and
+    # this correction are both about.
+    gene_mean = np.exp(rng.uniform(np.log(0.2), np.log(2000.0), size=n_genes))
+    mu = np.clip(
+        gene_mean[None, :] * np.exp(rng.normal(0.0, 0.6, size=(n_cells, n_genes))), 1e-3, None
+    )
+    theta_true = np.full((n_cells, n_genes), 8.0)
+    pi = np.full((n_cells, n_genes), 0.05)
+
+    # "Real" counts drawn from the TRUE dispersion, so the target relation is the true one.
+    real = sample_counts(
+        torch.from_numpy(mu),
+        torch.from_numpy(theta_true),
+        torch.from_numpy(pi),
+        np.random.default_rng(7),
+    ).numpy()
+
+    # The model's theta is wrong by 8x downward: over-dispersed, the real-STARmap direction.
+    theta_bad = theta_true / 8.0
+    cfg = Config()
+    before = _mv_slope(
+        sample_counts(
+            torch.from_numpy(mu),
+            torch.from_numpy(theta_bad),
+            torch.from_numpy(pi),
+            np.random.default_rng(0),
+        ).numpy()
+    )
+    target = _mv_slope(real)
+    floor = _mv_slope_draw_spread(
+        torch.from_numpy(mu), torch.from_numpy(theta_true), torch.from_numpy(pi)
+    )
+    headroom = abs(before - target)
+    assert headroom > floor, (
+        f"the construction failed to create headroom: slope {before:.4f} vs target "
+        f"{target:.4f}, floor {floor:.4f} — nothing is being tested"
+    )
+
+    stats = solve_detection_shifts(mu, theta_bad, pi, real, cfg)
+    calibration = DetectionCalibration(
+        pi_scale=1.0,
+        pi_shift=stats["pi_shift"],
+        theta_scale=1.0,
+        theta_shift=stats["theta_shift"],
+        section_ids=("constructed",),
+        detection_gen=stats["rate_gen"],
+        detection_real=stats["rate_real"],
+    )
+    mu_c, theta_c, pi_c = calibration.apply(
+        torch.from_numpy(mu), torch.from_numpy(theta_bad), torch.from_numpy(pi), cfg
+    )
+    after = _mv_slope(sample_counts(mu_c, theta_c, pi_c, np.random.default_rng(0)).numpy())
+    detail = (
+        f"target {target:.4f}, uncalibrated {before:.4f}, calibrated {after:.4f}, "
+        f"headroom {headroom:.4f}, floor {floor:.4f}"
+    )
+    assert abs(after - target) < headroom, f"the correction did not take the headroom: {detail}"
+    # And it takes most of it, not a token amount.
+    assert abs(after - target) <= 0.5 * headroom, f"less than half the headroom taken: {detail}"
 
 
 @pytest.mark.slow

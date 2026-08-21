@@ -1015,22 +1015,60 @@ def _fold_statistics(
     the coupled solution within a thousandth of the target.
     """
     fold = _decode_hidden(model, hidden, cfg, seed=seed)
-    mu = fold.mu.numpy().astype(np.float64)
-    theta = fold.theta.numpy().astype(np.float64)
-    pi = fold.pi.numpy().astype(np.float64)
+    return solve_detection_shifts(
+        fold.mu.numpy().astype(np.float64),
+        fold.theta.numpy().astype(np.float64),
+        fold.pi.numpy().astype(np.float64),
+        fold.real,
+        cfg,
+    )
+
+
+def solve_detection_shifts(
+    mu: FloatArray,
+    theta: FloatArray,
+    pi: FloatArray,
+    real: FloatArray,
+    cfg: Config,
+) -> dict[str, FloatArray]:
+    """Solve both per-gene shifts from arrays alone, with no model and no decode.
+
+    Split out at T10 so the solver can be exercised on constructed inputs. The model path is
+    the only way to get a *real* fold, but "does the correction take the headroom when there
+    is headroom" is a question about the solve, not about the decode, and answering it needed
+    a fit for no reason — and could not be asked at all on a fixture that happens to have no
+    headroom (``tests/test_calibrate.py``, ``specs/09`` 5).
+
+    Parameters
+    ----------
+    mu, theta, pi
+        The decoder's ZINB parameters for one section, each ``(N, G)`` float64.
+    real
+        That section's real counts, ``(N_real, G)``. Only its per-gene detection rate, mean
+        and variance are read, so ``N_real`` need not equal ``N``.
+    cfg
+        Supplies the bracket (``calibration_logit_max``), the bisection budget and the
+        ``zinb_theta_*`` clamps.
+
+    Returns
+    -------
+    dict
+        ``pi_shift`` ``(G,)``, ``theta_shift`` ``(G,)``, ``n_detected`` ``(G,)``,
+        ``rate_gen`` ``(G,)``, ``rate_real`` ``(G,)``.
+    """
     pi_logit = _logit(np.clip(pi, _EPS, 1.0 - _EPS))
     log_theta = np.log(np.clip(theta, float(cfg.zinb_theta_min), float(cfg.zinb_theta_max)))
     limit = float(cfg.calibration_logit_max)
     iterations = int(cfg.bisection_max_iter) * 8
 
-    rate_real = (fold.real > 0).mean(axis=0)
-    mean_real = fold.real.mean(axis=0)
+    rate_real = (real > 0).mean(axis=0)
+    mean_real = real.mean(axis=0)
     # Method-of-moments overdispersion of the real section, ``phi = (Var - mean) / mean^2``:
     # the *shape* of its mean-variance relation, free of the mean's own scale. Floored at zero
     # because a gene measured as under-dispersed asks for an infinite ``theta``, and the
     # decoder's guard already caps that.
     dispersion_real = np.maximum(
-        (fold.real.var(axis=0) - mean_real) / np.maximum(mean_real**2, _EPS), 0.0
+        (real.var(axis=0) - mean_real) / np.maximum(mean_real**2, _EPS), 0.0
     )
     rate_gen = _zinb_detection(mu, theta, pi).mean(axis=0)
 
@@ -1077,7 +1115,7 @@ def _fold_statistics(
     return {
         "pi_shift": pi_shift,
         "theta_shift": theta_shift,
-        "n_detected": rate_real * float(fold.real.shape[0]),
+        "n_detected": rate_real * float(real.shape[0]),
         "rate_gen": rate_gen,
         "rate_real": rate_real,
     }
