@@ -124,10 +124,19 @@ def main() -> int:
     parser.add_argument("--steps", type=int, default=TRAIN_STEPS)
     parser.add_argument("--holdout", default="alternating", choices=["alternating", "consecutive"])
     parser.add_argument("--out", default="reports/benchmark.md")
+    parser.add_argument(
+        "--decoder-mu-link",
+        default=None,
+        choices=["softplus", "exp"],
+        help="Override Config.decoder_mu_link so both arms of T10's link decision are "
+        "reproducible from this script. Default: whatever Config ships (exp since T10).",
+    )
     args = parser.parse_args()
 
     warnings.simplefilter("ignore", BBoxClampWarning)
     cfg = Config().replace(**TEST_MODEL_CFG).replace(epochs=args.steps, holdout_consecutive_k=3)
+    if args.decoder_mu_link is not None:
+        cfg = cfg.replace(decoder_mu_link=args.decoder_mu_link)
     model, training, section, (history, elapsed, gt, _vol) = build(cfg, args.holdout)
 
     real = np.asarray(section.counts.todense(), dtype=np.float64)
