@@ -25,7 +25,7 @@ gate set (`MU_LINKS`); no constant outside `Config`.
 | `test_per_gene_independence_destroys_covariance` | the amended key test: copy retains ≥ 0.95, per-gene draw costs ≥ 0.05 more, monotone in donors | **0.978 / 0.920 / 0.897 / 0.844** at 1/2/3/10 donors (default holdout) and **0.955 / 0.818 / 0.783 / 0.714** at `consecutive-3` |
 | `test_shared_latent_frobenius_beats_donor_baseline` | the spec's **original** statistic | **strict xfail at ratio 1.20** (9.316 vs 7.783) — below the ceiling, unpassable; see B16 |
 | `test_sparsity_preserved` | detection rate r > 0.95, MAD < 0.05 | **r = 0.9955**, MAD **0.0191** (baseline control r = 0.9976) |
-| `test_mean_variance_relation` | log-log slope within 15 % | **0.84 %** (1.7556 vs 1.7410) |
+| `test_mean_variance_relation` | log-log slope within 15 % | **0.84 %** (1.7556 vs 1.7410) — ⚠️ **fixture-only. The same criterion fails on real STARmap at 22.0 %** (2.120 vs 1.738), and that failure is where T10's spatial-structure collapse happens. See `progress/fixture_limitations.md` §1: a 28-gene panel with median detection 0.9999 is an emission regime the fixture cannot represent |
 | `test_zero_shot_gene_decoding` | 20 % of genes never trained on, per-gene mean r > 0.4 | **passes**; the 40 unseen genes' free residual `r_g` never leaves its zeros init, so the text channel plus `psi` is all that decodes them |
 | `test_never_returns_means` | integer-valued, non-zero variance, seed-dependent | integer, 46 % zeros, two seeds differ, same seed bitwise identical |
 | `test_cross_mix_matches_v20` | **bit-for-bit** on fixed inputs and a fixed seed | `np.array_equal` — exact, no fallback to the donor-frequency check §4b allows |

@@ -593,6 +593,25 @@ the far arm was for) but it is strongly **metric-dependent**: `celltype_localiza
 | `expr_mode` | zinb-flow | cross-mix | 0.2900 | safe (7.3x) |
 | `text_emb_mode` | lookup | **medcpt** | **0.0110** | **inside** |
 
+> ⚠️ **REVISIT — flagged by T10's pilot (2026-08-21), open risk R11.** This tie-break shipped
+> `hybrid` on a within-noise margin, and real-data evidence now exists that points the other way and
+> is **not** inside any envelope. On tier-1 STARmap, holding everything else fixed and swapping only
+> `layout_mode`: `celltype_localization` **0.4252** for `field` against **0.7008** for `resample`,
+> where the model-free `flanking_copy` floor is **0.7765** — the learned layout scores *below the
+> floor* on the metric it exists to win, by ~29x the across-seed envelope. `cell_count_ratio` moves
+> 0.83 -> 0.99 in the same swap, and at 2400 steps the field layout gets *less* stable, emitting 146
+> cells for a section whose ground truth has 4 102.
+>
+> Read against the table below, the fixture and the real data agree in direction: **`resample` was
+> the rank winner here too (3.0), `hybrid` followed (4.2), and `field`'s best cell ranked 7.0 — it
+> won nothing.** The fixture result was underpowered, not wrong.
+>
+> **The decision to revisit is not "which of the three ships" but "should this gate be inherited at
+> all".** `specs/09` §3 selects per dataset; this tie-break was made on the fixture and then carried
+> forward. It should be re-selected on each dataset with real-data evidence rather than inherited,
+> and `specs/05`'s headline layout claim re-examined (`specs/10` §4.5b). T10 measures; it does not
+> retune the layout head.
+
 **`layout_mode` was decided inside the noise** — 0.0344 against an envelope of 0.0335, a margin
 1.03x the noise floor. The tie-break selects **`hybrid`**, because `resample` reuses real cell
 positions and is the v20 fallback, so shipping it switches the learned continuous layout off. This

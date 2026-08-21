@@ -154,12 +154,69 @@ def real_section_reference(cfg: Config, model: CTFFlow, section_id: str, k: int)
     return rows
 
 
+def mean_variance_slope(counts: np.ndarray) -> float:
+    """Log-log slope of per-gene variance against per-gene mean. The tissue's is ~1.74."""
+    m = np.asarray(counts, dtype=np.float64).mean(axis=0)
+    v = np.asarray(counts, dtype=np.float64).var(axis=0)
+    return float(np.polyfit(np.log(m + 1e-9), np.log(v + 1e-9), 1)[0])
+
+
+def _verdict(rows: list[dict], emitted: dict, cfg: Config, args) -> list[str]:
+    """The three numbers the decision turns on: retention, slope, and the counts' own Moran's I."""
+    import anndata as ad
+    import scipy.sparse as sp
+
+    by = {r["stage"]: r["median_I"] for r in rows}
+    gt = ad.read_h5ad(GROUND_TRUTH)
+    mask = gt.obs["section"].values.astype(str) == args.section
+    real = gt.X[mask]
+    real = np.asarray(real.toarray() if sp.issparse(real) else real, dtype=np.float64)
+
+    real_latent = by.get("REF real latent h1 = encoder(real counts)", float("nan"))
+    real_counts = by.get("REF real counts (rank-normalised)", float("nan"))
+    real_retention = real_counts / real_latent if real_latent else float("nan")
+    latent = by.get("2. latent h after the flow", float("nan"))
+
+    out = [
+        "",
+        "## The three numbers",
+        "",
+        "**Retention across the latent -> counts step** — what the emission costs, against what",
+        "the tissue's own sampling noise costs.",
+        "",
+        "| arm | counts I | latent I | retention | slope | tissue slope |",
+        "|---|---|---|---|---|---|",
+    ]
+    real_slope = mean_variance_slope(real)
+    out.append(
+        f"| **real tissue** | {real_counts:+.4f} | {real_latent:+.4f} | "
+        f"**{real_retention:.1%}** | {real_slope:.3f} | — |"
+    )
+    for label, stage in (
+        ("uncalibrated", "4. sampled counts (rank-normalised)"),
+        ("calibrated", "4c. sampled counts, CALIBRATED (rank-norm)"),
+    ):
+        if label not in emitted:
+            continue
+        ci = by.get(stage, float("nan"))
+        out.append(
+            f"| {label} | {ci:+.4f} | {latent:+.4f} | **{ci / latent:.1%}** | "
+            f"{mean_variance_slope(emitted[label]):.3f} | {real_slope:.3f} |"
+        )
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--steps", type=int, default=1200)
     ap.add_argument("--section", default="section_2")
     ap.add_argument("--target-z", type=float, default=30.0)
     ap.add_argument("--out", default="reports/chain_diagnostic.md")
+    ap.add_argument(
+        "--calibrate",
+        action="store_true",
+        help="also fit T09 §2's pi / log-theta calibration and re-measure the emission stages",
+    )
     args = ap.parse_args(argv)
 
     cfg = Config(
@@ -186,6 +243,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # --- the generated chain, reproducing infer/generate.py::_expression step by step ---
     from spatialcpav25_gen.infer.generate import _decode, _default_exclusions, _layout_on
+    from spatialcpav25_gen.model.expression import sample_counts
 
     plane = plane_at_z(vol, float(args.target_z), cfg)
     rows: list[dict] = []
@@ -205,8 +263,6 @@ def main(argv: list[str] | None = None) -> int:
             h0 = model.prior_latent(xyz, seed=SEED)
             h = model.flow.sample(h0, cond, int(cfg.ode_steps))
             mu, theta, pi = _decode(model, h, cfg, None)
-            from spatialcpav25_gen.model.expression import sample_counts
-
             counts = sample_counts(mu, theta, pi, np.random.default_rng(SEED))
 
     rows.append(summarise("1. prior h0 = GRF at generated xyz", xy, h0.numpy(), k))
@@ -215,6 +271,33 @@ def main(argv: list[str] | None = None) -> int:
     rows.append(
         summarise("4. sampled counts (rank-normalised)", xy, rank_normalize(counts.numpy()), k)
     )
+    emitted = {"uncalibrated": counts.numpy()}
+
+    if args.calibrate:
+        # T09 §2's calibrator solves log theta per gene against the mean-variance relation at the
+        # model's own mean — the quantity the pilot measured wrong on real data (slope 2.120
+        # against the tissue's 1.738). It ships unapplied because the fixture gave it no headroom.
+        from spatialcpav25_gen.infer.calibrate import calibrate_detection
+
+        t1 = time.time()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            calibration = calibrate_detection(model, vol, cfg, seed=SEED)
+            with torch.no_grad():
+                mu_c, theta_c, pi_c = _decode(model, h, cfg, calibration)
+                counts_c = sample_counts(mu_c, theta_c, pi_c, np.random.default_rng(SEED))
+        print(f"  calibration fitted in {time.time() - t1:.1f}s on {list(calibration.section_ids)}")
+        rows.append(summarise("3c. decoded mu, CALIBRATED", xy, mu_c.numpy(), k))
+        rows.append(
+            summarise(
+                "4c. sampled counts, CALIBRATED (rank-norm)",
+                xy,
+                rank_normalize(counts_c.numpy()),
+                k,
+            )
+        )
+        emitted["calibrated"] = counts_c.numpy()
+
     for r in rows:  # print the generated chain before anything else can fail
         print(f"  {r['stage']:<48s} median I = {r['median_I']:+.4f}  (n={r['n_channels']})")
     try:
@@ -242,6 +325,7 @@ def main(argv: list[str] | None = None) -> int:
             f"| {r['stage']:<{width}} | **{r['median_I']:+.4f}** | {r['p25']:+.4f} "
             f"| {r['p75']:+.4f} | {r['n_channels']} |"
         )
+    lines.extend(_verdict(rows, emitted, cfg, args))
     text = "\n".join(lines)
     print()
     print(text)
