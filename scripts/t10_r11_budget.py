@@ -19,6 +19,7 @@ import sys
 import warnings
 from pathlib import Path
 
+import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -28,7 +29,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from spatialcpav25_gen.config import Config
 from spatialcpav25_gen.infer.generate import _layout_on, plane_at_z
 from spatialcpav25_gen.model.field import BBoxClampWarning
-from spatialcpav25_gen.model.layout import ProposalBudgetWarning, fit_repulsion
+from spatialcpav25_gen.model.layout import (
+    ProposalBudgetWarning,
+    fit_repulsion,
+    intensity_fn_from_head,
+    uniform_plane_points,
+)
 from spatialcpav25_gen.model.spatialcpav25_gen import CTFFlow, TrainingData
 from t10_chain_diagnostic import build_embeddings, load_training_volume
 from t10_r11_coupling import SEED, TARGETS, gt_counts
@@ -57,6 +63,16 @@ def main() -> int:
                 layout = _layout_on(model, plane_at_z(vol, z, cfg), vol, cfg, SEED)
             budget = [w for w in caught if issubclass(w.category, ProposalBudgetWarning)]
             n_drawn = int(layout.coords_xyz.shape[0])
+            # The rejection sampler accepts with probability lam(x) / (max(lam) * slack) on the
+            # mid-plane, so its acceptance rate is bounded by the field's own dynamic range there.
+            # Measure it: this is what decides whether a starved sampler is the envelope's fault
+            # or the repulsion's, and the warning blames the repulsion.
+            plane = plane_at_z(vol, z, cfg)
+            gen_mc = np.random.default_rng(SEED)
+            fn = intensity_fn_from_head(model.intensity, model.field)
+            uv = uniform_plane_points(plane, int(cfg.layout_n_mc), gen_mc)
+            lam_tot = np.asarray(fn(plane.to_xyz(uv))).sum(axis=1)
+            dyn = float(lam_tot.max() / max(lam_tot.mean(), 1e-12))
             rows.append(
                 {
                     "link": link,
@@ -65,6 +81,8 @@ def main() -> int:
                     "n_drawn": n_drawn,
                     "n_gt": truth[name],
                     "starved": bool(budget),
+                    "dynamic_range": dyn,
+                    "bound": 1.0 / (dyn * float(cfg.layout_envelope_slack)),
                     "msg": str(budget[0].message).split("\n")[0] if budget else "",
                 }
             )
@@ -74,7 +92,8 @@ def main() -> int:
                 f"drawn={r['n_drawn']:6d} gt={r['n_gt']:5d} "
                 f"integral={r['n_expected'] / r['n_gt']:6.2f}x "
                 f"placed={r['n_drawn'] / max(r['n_expected'], 1e-9):6.1%} "
-                f"budget_starved={r['starved']}",
+                f"budget_starved={r['starved']} "
+                f"max/mean={r['dynamic_range']:8.1f} accept_bound={r['bound']:.4%}",
                 flush=True,
             )
             if budget:
@@ -91,15 +110,17 @@ def main() -> int:
         "`placed` is `drawn / n_expected`: how much of what it asked for the rejection sampler",
         "managed to place. They are independent failures and `cell_count_ratio` conflates them.",
         "",
-        "| link | section | `n_expected` | drawn | GT | integral | placed | budget starved |",
-        "|---|---|---|---|---|---|---|---|",
+        "| link | section | `n_expected` | drawn | GT | integral | placed | starved "
+        "| mid-plane max/mean | acceptance bound |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         lines.append(
             f"| `{r['link']}` | {r['section']} | {r['n_expected']:.1f} | {r['n_drawn']} | "
             f"{r['n_gt']} | **{r['n_expected'] / r['n_gt']:.2f}x** | "
             f"**{r['n_drawn'] / max(r['n_expected'], 1e-9):.1%}** | "
-            f"{'**yes**' if r['starved'] else 'no'} |"
+            f"{'**yes**' if r['starved'] else 'no'} | {r['dynamic_range']:.1f} | "
+            f"**{r['bound']:.3%}** |"
         )
     out.write_text("\n".join(lines) + "\n")
     print(f"\nwrote {out}")
