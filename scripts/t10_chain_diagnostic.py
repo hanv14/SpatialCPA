@@ -147,7 +147,7 @@ def real_section_reference(cfg: Config, model: CTFFlow, section_id: str, k: int)
     gene_idx = torch.arange(counts.shape[1], dtype=torch.long)
     with torch.no_grad():
         gene_emb = model.embeddings.gene(gene_idx)
-        totals = torch.from_numpy(counts.sum(axis=1, keepdims=True))
+        totals = torch.from_numpy(counts.sum(axis=1))  # (N,), not (N, 1)
         size_factor = totals / max(float(model.stats.median_total), 1.0)
         h1 = model.encoder(torch.from_numpy(counts), gene_emb, size_factor)
     rows.append(summarise("REF real latent h1 = encoder(real counts)", xy, h1.numpy(), k))
@@ -215,7 +215,16 @@ def main(argv: list[str] | None = None) -> int:
     rows.append(
         summarise("4. sampled counts (rank-normalised)", xy, rank_normalize(counts.numpy()), k)
     )
-    rows.extend(real_section_reference(cfg, model, args.section, k))
+    for r in rows:  # print the generated chain before anything else can fail
+        print(f"  {r['stage']:<48s} median I = {r['median_I']:+.4f}  (n={r['n_channels']})")
+    try:
+        rows.extend(real_section_reference(cfg, model, args.section, k))
+    except Exception as exc:  # a reference failure must not discard the chain above
+        print(
+            f"  !! reference stage failed ({type(exc).__name__}: {exc}); "
+            f"the generated chain above still stands",
+            file=sys.stderr,
+        )
 
     width = max(len(r["stage"]) for r in rows)
     lines = [

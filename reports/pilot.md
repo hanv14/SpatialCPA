@@ -380,3 +380,67 @@ leaving it as a whole-pipeline number. **`text_emb_mode="medcpt"` is not blamed 
 been read** — it is the last untested factor, but it is a gene-embedding channel and the collapse is
 spatial, so it is not the first suspect.
 
+---
+
+## 8. The chain: the structure is destroyed at the count-sampling step (2026-08-21)
+
+`scripts/t10_chain_diagnostic.py --steps 2400`, `section_2`, 11 168 generated cells. One estimator
+throughout — row-standardised kNN Moran's I at k = 10 — median over channels.
+
+| stage | median I | p25 | p75 | channels |
+|---|---|---|---|---|
+| 1. prior `h0` = GRF at the generated positions | **+0.9714** | +0.9661 | +0.9742 | 64 |
+| 2. latent `h` after the flow | **+0.9015** | +0.8856 | +0.9162 | 64 |
+| 3. decoded `mu`, before sampling | **+0.8607** | +0.8508 | +0.8722 | 28 |
+| 4. **sampled counts** | **+0.1297** | +0.0791 | +0.1779 | 28 |
+| REF — real counts | +0.4635 | +0.3587 | +0.5637 | 28 |
+| REF — real latent, `encoder(real counts)` | +0.7449 | +0.6752 | +0.7912 | 64 |
+
+**The prior, the flow and the decoder's mean are all fine. The count draw destroys it.**
+
+* Stages 1 → 3 lose **0.11** in total. The correlated GRF delivers at the generated positions
+  (0.971), the flow preserves it (0.902), and `mu` is still strongly structured (0.861) — *more*
+  structured than the real tissue's own latent (0.745).
+* Stage 3 → 4 loses **0.73 in one operation.**
+* And the real data shows what that step *should* cost. Real tissue also loses structure from latent
+  to counts — that is Poisson noise, and it is why real counts sit at 0.464 rather than 0.745. But
+  it **retains 62 %** across that step. The model retains **14 %**. The generated draw is throwing
+  away **4.4x more structure than the tissue's own sampling noise does.**
+
+### What the counts look like
+
+Per-gene, `section_2`, raw counts:
+
+| | median mean | median variance | median var/mean | log-log slope |
+|---|---|---|---|---|
+| real | 5835.0 | 2.88e8 | 12 951 | **1.738** |
+| generated | 5119.7 | 4.67e7 | 7 429 | **2.120** |
+
+Zero fraction is right (0.0075 against 0.0068) and the mean is close (0.89x). **The output is not
+globally over-dispersed** — its variance is 0.57x the real, *below* it. So the collapse is not "too
+much noise" in aggregate.
+
+It is the **shape**: the mean-variance slope is **2.120 against the tissue's 1.738**, a 22 %
+relative error against T06's own < 0.15 criterion. Read with stage 3 → 4, that says `mu` is
+spatially smooth but **too flat in amplitude across cells** — its between-cell variation is small
+relative to the per-cell draw, so sampling buries it.
+
+### The next experiment, and it is cheap
+
+**T09's mean-variance calibration is built, fitted, and not applied by default.** `specs/09` §2
+solves `log theta` per gene against **the mean-variance relation at the model's own mean**, jointly
+with `pi` — which is precisely the quantity measured wrong above. It ships unapplied because on the
+synthetic fixture it had **no headroom** (model error 0.0217 against a real between-section
+variation of 0.0397, SPEC_QUESTIONS C28). On real STARmap it has 22 % of headroom.
+
+So: **fit and apply `calibrate_detection` on tier-1 STARmap and re-measure stage 4.** One fit plus a
+calibration, and it tests the one part of T09's machinery that has never run against data with room
+for it. If stage 4 recovers toward the tissue's 62 % retention, the collapse is a calibration gap
+that the fixture could not have shown. If it does not, the ZINB decoder's dispersion parameterisation
+is the defect, and that is a T06 question.
+
+⚠️ **`text_emb_mode="medcpt"` is now a weak suspect and should not be blamed.** The chain shows the
+loss happening *after* the decoder's mean, and the gene-embedding channel feeds `mu` — which is
+measured healthy at 0.861. Whatever the text channel contributes, it is not where the structure is
+going.
+
