@@ -16,6 +16,7 @@ from the raw pass instead.
 | `paper_marker_field_r` | +0.5763 | +0.6384 | +0.6692 |
 | `paper_marker_depth_r` | +0.5919 | +0.7478 | +0.8284 |
 | `paper_celltype_localization` | +0.6136 | +0.6572 | +0.7601 |
+| `paper_gene_mean_spearman` | +0.9710 | +0.9830 | +0.9880 |
 | `paper_cell_count_ratio` (raw pass) | 0.894 | 0.894 | 0.988 |
 
 As emitted, without the density control:
@@ -28,6 +29,7 @@ As emitted, without the density control:
 | `paper_marker_field_r` | +0.6073 | +0.6503 | +0.6528 |
 | `paper_marker_depth_r` | +0.7429 | +0.7478 | +0.8284 |
 | `paper_celltype_localization` | +0.6136 | +0.6572 | +0.7659 |
+| `paper_gene_mean_spearman` | +0.9672 | +0.9830 | +0.9880 |
 
 Emitted cell counts (generated/ground truth):
 

@@ -188,7 +188,10 @@ Scored on the pinned evaluator, medians over the three held-out sections:
 | `gene_mean_spearman` | 0.8002 | 0.8227 | 0.8248 | **0.8227** | −0.013 | 0.9863 |
 | `cell_count_ratio` | 1.0346 | **0.3345** | 0.9289 | 0.9289 | — | — |
 
-**These numbers are a smoke result and must not be quoted as v25's performance.** The run used a
+**These numbers are a smoke result and must not be quoted as v25's performance. They are
+superseded by §13**, which re-measures the same six metrics on the same instrument after the
+`decoder_mu_link` fix, at 2400 steps and at ground-truth-matched density. They are kept here
+because §6-§11's attribution chain starts from them. The run used a
 **hand-written stand-in configuration**, because per-dataset selection never ran:
 
 * `text_emb_mode = "lookup"`, not the shipped `medcpt` — the encoder needs `transformers` and
@@ -680,3 +683,73 @@ has a one-line candidate fix that is validated on real data at GT-matched densit
 * **The layout head (R11)** — independently broken, and now the dominant defect in the `exp` arm.
 * Only then a re-costed campaign, since the corrected cost model (§7, ~2.3x) still stands.
 
+---
+
+## 13. The current numbers, replacing §5's smoke table (2026-08-21)
+
+§5's table was a smoke result from a hand-written stand-in configuration and is now three findings
+out of date. This section supersedes it. Same pinned instrument
+(`evaluate_paper.py` @ `7362669200bb…8992`), same three held-out sections, **medians over sections**
+(`specs/10` §4.6, never a mean), one seed.
+
+**What changed between §5 and here, and nothing else did:**
+
+| | §5 smoke | here |
+|---|---|---|
+| `decoder_mu_link` | `softplus` | **`exp`** (§11 — the fix) |
+| `train_steps` | 1200 | **2400** (T09's selected budget on the fixture) |
+| density | as emitted | **ground-truth-matched** (§11's control) |
+| `layout_mode` | shipped `hybrid` | all three arms measured |
+
+**What did *not* change, and is why this is still not a v25 result:** `text_emb_mode` is still
+`lookup`, not the shipped `medcpt` — the encoder is 403'd in this container, so every column below
+is still effectively **ablation A3**; `expr_pca_dim` is still forced to 16 by the 28-gene panel; and
+**T09's per-dataset selection and calibration still have not run.** One seed, so every difference
+below 0.0335 (R10's envelope) is not a difference.
+
+### The six metrics, with their referents
+
+`random`, `flanking_copy` and `oracle` are bench3's own model-free probes (§3). `hybrid` is the
+`layout_mode` that currently ships.
+
+| metric | §5 smoke | `field` | **`hybrid`** | `resample` | `random` | `flanking_copy` | `oracle` |
+|---|---|---|---|---|---|---|---|
+| `celltype_localization` | 0.4111 | 0.6136 | **0.6572** | 0.7601 | 0.065 | 0.7765 | 0.9808 |
+| `marker_field_r` | 0.1611 | 0.5763 | **0.6384** | 0.6692 | 0.058 | 0.8857 | 0.9997 |
+| `marker_depth_r` | 0.3503 | 0.5919 | **0.7478** | 0.8284 | 0.163 | 0.9794 | 1.0000 |
+| `morans_pearson` | −0.1999 | 0.5823 | **0.5749** | 0.5623 | −0.062 | 0.9836 | 1.0000 |
+| `gearys_pearson` | −0.2054 | 0.5881 | **0.5716** | 0.5632 | −0.058 | 0.9840 | 1.0000 |
+| `gene_mean_spearman` | 0.8227 | 0.9710 | **0.9830** | 0.9880 | −0.013 | 0.9863 | 1.0000 |
+| `cell_count_ratio` (raw) | 0.9289 | 0.894 | **0.894** | 0.988 | — | — | 1.000 |
+
+Full table including `umap_mixing` and the un-matched pass in `reports/t10_rescore_exp.md`;
+regenerate with `python scripts/t10_rescore_saved.py --score-only`.
+
+### Four readings
+
+1. **The sign flip is gone and is not a density artefact.** Moran's and Geary's were *below the
+   `random` probe* in §5 — the pilot's headline failure. They are now +0.57 to +0.59, and the
+   attribution in §6–§11 says why: the structure was being destroyed at the count draw, and the
+   `exp` link took it back. This is the single largest movement in the table.
+
+2. **`marker_field_r` is the standing weakness, and now on a fourth independent occasion.** At
+   0.6384 shipped (0.6692 at best) it is **0.247 below a model-free copy of the flanking section**
+   — the largest shortfall against `flanking_copy` of any metric here, and **7.4x** R10's
+   envelope. It
+   was v20's and v21's pooled loss against SpatialZ, it was v25's single loss on the fixture at T09,
+   it was 0.1611 in §5, and it is the worst of the six now. Four appearances is not noise. Whatever
+   `marker_field_r` measures that the other five do not is the thing this method does not yet do.
+
+3. **The six metrics are not moving together, and that localises the remaining defect.**
+   `gene_mean_spearman` is at 0.9830 against a 0.9863 floor — **inside R10's envelope of the copy**,
+   i.e. per-gene magnitude is solved. `marker_field_r` and `celltype_localization` are the two far
+   from their floors. The remaining gap is **spatial arrangement**, not expression magnitude, which
+   is consistent with R11 (layout) and R12 (residual autocorrelation) being what is left.
+
+4. **Every arm is still below the copy floor on at least five of six metrics** — `field` and
+   `hybrid` on all six, `resample` on all but `gene_mean_spearman`, where it clears the floor by
+   0.0017 (inside the envelope, so a tie). The honest headline from this pilot is unchanged in
+   kind, only in degree: v25 as configured here does not yet beat copying the
+   adjacent section. It is no longer *below `random`*, which it was in §5. Selection, calibration and
+   `medcpt` have still never run on this dataset, and §12's order — T06's link decision, then R11,
+   then a re-costed campaign — is what the numbers still support.
