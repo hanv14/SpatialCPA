@@ -154,6 +154,50 @@ def real_section_reference(cfg: Config, model: CTFFlow, section_id: str, k: int)
     return rows
 
 
+def mu_variance_decomposition(model, h, cfg: Config) -> dict[str, float]:
+    """Split ``Var(log mu)`` into its size-factor and latent-driven parts. T10 candidate 2.
+
+    The decoder builds ``mu = link(MLP_mu(u)) * size_factor`` (``model/expression.py``), so in
+    logs the split is exact and additive::
+
+        log mu = shape + log s,   shape = log link(MLP_mu(u)),   s = size_factor
+
+    and ``Var(log mu) = Var(shape) + Var(log s) + 2 Cov(shape, log s)``. If ``Var(log s)``
+    dominates, ``mu``'s between-cell dynamic range is the size factor and the latent is only
+    modulating it weakly — which is the shape T10's structured-share finding would have if the
+    decoder were mostly reproducing library size.
+
+    Both terms are per (cell, gene); the shares are computed per gene and reported as medians.
+    """
+    with torch.no_grad():
+        gene_idx = torch.arange(len(model.data.vol.gene_names), dtype=torch.long)
+        gene_emb = model.embeddings.gene(gene_idx)
+        size_factor = model.size_head(h)
+        features = model.decoder.trunk(h, gene_emb)
+        raw = model.decoder.head_mu(features).squeeze(-1)
+        if cfg.decoder_mu_link == "exp":
+            shape = torch.clamp(raw, min=model.decoder._log_mu_min, max=model.decoder._log_mu_max)
+        else:
+            shape = torch.log(torch.nn.functional.softplus(raw) + float(cfg.zinb_eps))
+        log_s = torch.log(torch.clamp(size_factor, min=float(cfg.zinb_eps)))[:, None]
+
+    sh = shape.numpy()
+    ls = np.broadcast_to(log_s.numpy(), sh.shape)
+    v_shape = sh.var(axis=0)
+    v_size = ls.var(axis=0)
+    cov = np.array([np.cov(sh[:, g], ls[:, g])[0, 1] for g in range(sh.shape[1])])
+    total = v_shape + v_size + 2.0 * cov
+    ok = total > 0
+    return {
+        "var_shape": float(np.median(v_shape)),
+        "var_logsize": float(np.median(v_size)),
+        "cov": float(np.median(cov)),
+        "share_shape": float(np.median(v_shape[ok] / total[ok])),
+        "share_logsize": float(np.median(v_size[ok] / total[ok])),
+        "sd_log_mu": float(np.median(np.sqrt(np.maximum(total, 0.0)))),
+    }
+
+
 def mean_variance_slope(counts: np.ndarray) -> float:
     """Log-log slope of per-gene variance against per-gene mean. The tissue's is ~1.74."""
     m = np.asarray(counts, dtype=np.float64).mean(axis=0)
@@ -217,6 +261,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="also fit T09 §2's pi / log-theta calibration and re-measure the emission stages",
     )
+    ap.add_argument(
+        "--decoder-mu-link",
+        default=None,
+        choices=["softplus", "exp"],
+        help="override Config.decoder_mu_link (T10 candidate 1: softplus compresses dynamic "
+        "range at means in the thousands, which is STARmap's regime and not the fixture's)",
+    )
+    ap.add_argument(
+        "--save-model",
+        default=None,
+        help="torch.save the fitted model here, so a later analysis needs no refit",
+    )
     args = ap.parse_args(argv)
 
     cfg = Config(
@@ -227,6 +283,9 @@ def main(argv: list[str] | None = None) -> int:
         ell_xy=116.3,
         ell_z=132.0,
     ).replace(section_key="section", coord_key="spatial", celltype_key="cell_type", region_key=None)
+    if args.decoder_mu_link is not None:
+        cfg = cfg.replace(decoder_mu_link=args.decoder_mu_link)
+    print(f"  decoder_mu_link = {cfg.decoder_mu_link}")
     k = int(cfg.metric_knn_k)
 
     print(f"chain diagnostic: {args.steps} steps, {args.section} at z={args.target_z}")
@@ -272,6 +331,11 @@ def main(argv: list[str] | None = None) -> int:
         summarise("4. sampled counts (rank-normalised)", xy, rank_normalize(counts.numpy()), k)
     )
     emitted = {"uncalibrated": counts.numpy()}
+    decomposition = mu_variance_decomposition(model, h, cfg)
+    if args.save_model:
+        Path(args.save_model).parent.mkdir(parents=True, exist_ok=True)
+        torch.save({"state_dict": model.state_dict(), "config": cfg.to_dict()}, args.save_model)
+        print(f"  model saved to {args.save_model}")
 
     if args.calibrate:
         # T09 §2's calibrator solves log theta per gene against the mean-variance relation at the
@@ -326,6 +390,25 @@ def main(argv: list[str] | None = None) -> int:
             f"| {r['p75']:+.4f} | {r['n_channels']} |"
         )
     lines.extend(_verdict(rows, emitted, cfg, args))
+    lines.extend(
+        [
+            "",
+            "## Candidate 2 — is `mu`'s dynamic range the size factor?",
+            "",
+            "`mu = link(MLP_mu(u)) * size_factor`, so `log mu = shape + log s` and the",
+            "variance splits exactly. Per gene, medians over genes.",
+            "",
+            "| quantity | value |",
+            "|---|---|",
+            f"| `Var(shape)` — the latent-driven part | {decomposition['var_shape']:.5f} |",
+            f"| `Var(log s)` — the size-factor part | {decomposition['var_logsize']:.5f} |",
+            f"| `2 Cov` | {2 * decomposition['cov']:+.5f} |",
+            "| **share of `Var(log mu)` from the latent** | "
+            f"**{decomposition['share_shape']:.1%}** |",
+            f"| **share from the size factor** | **{decomposition['share_logsize']:.1%}** |",
+            f"| `sd(log mu)` across cells | {decomposition['sd_log_mu']:.4f} |",
+        ]
+    )
     text = "\n".join(lines)
     print()
     print(text)

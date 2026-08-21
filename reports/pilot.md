@@ -528,3 +528,61 @@ when its spatial pattern is correct?* Candidates worth checking before any new f
 
 Item 2 is a one-line config change and is the cheapest of the three to test.
 
+---
+
+## 10. Candidate 2 — the size-factor path, and what real tissue requires (2026-08-21)
+
+**The structural half needs no fit.** The decoder builds
+
+```
+mu = link(MLP_mu(u)) * size_factor          # model/expression.py::ZINBDecoder.forward
+```
+
+so `mu` is **multiplicative in the size factor by construction**, and in logs the split is exact:
+`log mu = shape + log s`, `Var(log mu) = Var(shape) + Var(log s) + 2 Cov`. `scripts/t10_chain_diagnostic.py`
+now reports those shares (`mu_variance_decomposition`), so the model's own split comes with every
+run rather than needing its own experiment.
+
+**The real-data half is measurable now, and it sets the bar.** On `section_2`, regressing each
+gene's `log(count + 1)` on the cell's `log(total)`:
+
+| | value |
+|---|---|
+| median library size | 226 580 counts |
+| `sd(log total)` across cells | 0.4725 |
+| `sd(log(count + 1))` per gene, median | **1.2127** |
+| **share of per-gene between-cell variance explained by library size alone** | **21.8 %** (p25 12.9 %, p75 32.3 %) |
+| **share the latent must therefore supply** | **78.2 %** |
+
+**Real cells differ from each other by a great deal — `sd(log(count+1))` of 1.21 is a factor of
+~3.4 in each direction — and only about a fifth of that is library size.** A decoder whose `mu`
+tracks the size factor and modulates it weakly can reproduce at most ~22 % of what the tissue does,
+which is the same order as the 15.3 % structured share measured in §9.
+
+⚠️ **The two numbers are not the same quantity and must not be quoted as if they were.** 21.8 % is
+a decomposition of the *real* data (how much a decoder cannot get from library size); 15.3 % is the
+share of the *model's emitted* variance that is spatially structured. They are consistent with one
+story — `mu` lacking amplitude — but neither implies the other. The model's own `Var(shape)` vs
+`Var(log s)` split, which *is* the directly comparable quantity, comes from the run in §11.
+
+---
+
+## 11. Candidate 1 — the `mu` link function (running)
+
+`Config.decoder_mu_link` ships as **`softplus`**, and softplus compresses dynamic range at large
+pre-activations — at a median 226 580 counts per cell and per-gene means in the thousands, that is
+exactly this regime, and it is not the regime the fixture tested. `exp` is selectable and is the
+one-line change.
+
+⚠️ **Discrepancy found while reading it, worth a fix either way**: `ZINBDecoder`'s docstring says
+*"``link`` is ``Config.decoder_mu_link``: ``exp`` by default and ``softplus`` — the spec's own
+choice — selectable"*, but `Config.decoder_mu_link: str = "softplus"`. **The docstring and the
+default disagree**, so a reader of the decoder believes the opposite of what ships. One of the two
+is wrong and T06 should say which.
+
+The arm runs `--steps 2400 --calibrate --decoder-mu-link exp` and reports the structured share, the
+retention, the mean-variance slope and the `Var(shape)` / `Var(log s)` split, so candidates 1 and 2
+are answered by one fit. It also **saves the fitted model** (`--save-model`), so any further
+analysis of this configuration costs no refit — four 2 400-step fits have been spent re-deriving
+the same model.
+
