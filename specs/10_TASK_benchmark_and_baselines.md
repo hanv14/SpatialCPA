@@ -509,6 +509,49 @@ owns it entirely, reading `all_metrics.csv` and `per_section_metrics.csv` from o
 - **Forest plot** per metric: median difference ± CI, one row per dataset. This is paper Figure 2.
 - `assert_tier_purity` (§1) runs before any table is emitted.
 
+### 4.5b ⚠️ RESULT — the intensity-field layout is currently worse than copying
+
+**This is a first-class finding, not a diagnostic aside, and it bears directly on the layout head's
+headline claim.** Two independent measurements, on different data, point the same way.
+
+**Signal 1 — real data, tier 1 (T10 pilot, `reports/pilot.md` §6.3).** Holding everything else
+fixed and swapping only `layout_mode`:
+
+| `celltype_localization` | section_2 | section_4 | section_6 | median |
+|---|---|---|---|---|
+| `layout_mode="field"` (shipped) | 0.5068 | 0.1490 | 0.4252 | **0.4252** |
+| `layout_mode="resample"` (v20 fallback: real flanking positions) | 0.7008 | 0.7760 | 0.6808 | **0.7008** |
+| `flanking_copy` — the model-free floor | 0.7008 | 0.7765 | 0.7868 | 0.7765 |
+
+`cell_count_ratio` moves 0.8283 → 0.9875 in the same swap. **The learned continuous layout scores
+0.4252 where copying a neighbouring slice scores 0.7765** — it is below the floor on the metric it
+exists to win, by 0.35, which is ~29x the 0.0120 across-seed envelope.
+
+**Signal 2 — the synthetic fixture (T09's merged 18-cell gate).** The rank winner was
+**`resample`** (median rank 3.0); `hybrid` followed at 4.2; **`field`'s best cell ranked 7.0 and it
+won nothing.** `hybrid` ships only because it *won a tie-break* — `resample` reuses real positions
+and is the v20 fallback, so shipping it switches the learned layout off. And the margin, 0.0344
+against a 0.0335 envelope, was **decided inside the noise** (R10).
+
+**Why the pair matters.** On the fixture the preference against `field` was real but undecidable —
+inside the reproducibility envelope, which is why `hybrid` shipped at all. On real data the same
+preference is **far outside** it. The fixture result was not wrong; it was underpowered, and the
+real-data measurement resolves it in the same direction.
+
+**Consequences for T10.**
+
+* **A4** (repulsion off) and any layout claim must be read against this: the question is no longer
+  only "does repulsion buy realism" but "does the intensity-field layout beat copying at all".
+* **C1 cannot be attributed to the expression path** until the layout is fixed or `resample` is
+  used as the layout for the C1 measurement — most of the localization gap is positional.
+* **`specs/05`'s headline claim is in question**, and `specs/09`'s `layout_mode` selection should be
+  re-run per dataset rather than inherited from a fixture tie-break. Flagged to T05/T09 rather than
+  resolved here: T10 measures, it does not retune the layout head.
+
+⚠️ **This does not explain the autocorrelation collapse.** With real positions the emitted
+expression still carries only 22 % of the tissue's Moran's I (`reports/pilot.md` §6.3). The two are
+separate failures and must not be conflated.
+
 ### 4.6 The estimator is the MEDIAN. Stated once, used everywhere.
 
 **Every statistic over sections is a median with a bootstrap CI. Never a mean.** This is the
