@@ -464,9 +464,12 @@ class ZINBDecoder(nn.Module):
         ``pi = sigmoid(MLP_pi(u))``, with the guards T06 §3 requires: ``theta`` clamped to
         ``[zinb_theta_min, zinb_theta_max]``, ``mu`` to ``[zinb_mu_min, zinb_mu_max]``.
 
-        ``link`` is ``Config.decoder_mu_link``: ``exp`` by default and ``softplus`` — the spec's
-        own choice — selectable. See that field for the measurement behind the default. ``theta``
-        keeps softplus because a dispersion spans one order of magnitude, not four.
+        ``link`` is ``Config.decoder_mu_link``: **``exp`` by default since T10**, with
+        ``softplus`` — ``specs/06`` §3's own choice, and the default up to T10 — selectable.
+        **That field's docstring carries both measurements**: T06's on the synthetic fixture,
+        where ``softplus`` won, and T10's on real STARmap, where ``exp`` takes the structured
+        share of between-cell variance from 15.1 % to 61.4 %. ``theta`` keeps softplus because a
+        dispersion spans one order of magnitude, not four.
 
         ``theta`` and ``pi`` are per *(cell, gene)*, not per gene. A per-gene dispersion cannot
         express that the same gene is over-dispersed in one region and not in another, and T09

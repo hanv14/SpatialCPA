@@ -53,10 +53,46 @@ class ZINBDecoder(nn.Module):
 
 ```
 u_ig = [ h_i , e_g , h_i * (A e_g) ]            # bilinear/FiLM interaction
-mu    = softplus(MLP_mu(u))  * size_factor      # (N, G')
+mu    = link(MLP_mu(u))      * size_factor      # (N, G'); link = Config.decoder_mu_link
 theta = softplus(MLP_theta(u)) + eps            # dispersion, per (cell, gene)
 pi    = sigmoid(MLP_pi(u))                      # zero-inflation
 ```
+
+### The ``mu`` link: ``exp`` since T10, and why the spec's ``softplus`` moved
+
+**This is T06's own revisit condition being met, not a correction.** The formula above was
+written as ``softplus`` and T06 kept it, having measured ``exp`` losing on the synthetic
+fixture — and having written down, in the same breath, what would justify re-taking the
+decision: *"the argument is still right for a panel with a wider dynamic range than this
+fixture's; changing the default needs that measurement, not this one"*
+(``progress/t06_expression_head.md`` §2).
+
+T10 supplied that measurement. **Both stand, and they are different regimes:**
+
+| | fixture (200 genes, sparse+dense classes) | real STARmap (28 genes, median library 226 580) |
+|---|---|---|
+| reconstruction NLL | 1.649 -> **1.636** under ``exp`` | — |
+| gene-gene Frobenius | 18.02 -> **17.05** under ``exp`` | — |
+| per-gene mean-expression r | **0.802 -> 0.576** under ``exp`` (worse) | — |
+| counts Moran's I | — | +0.1297 -> **+0.4782** (real tissue +0.4635) |
+| structured share of between-cell variance | — | 15.1 % -> **61.4 %** (real ~62 %) |
+| mean-variance slope | — | 2.121 -> **1.807** (real 1.738) |
+| **verdict** | ``softplus`` wins | **``exp`` wins** |
+
+``softplus`` stays selectable and is the right choice in the fixture's regime. The full
+rationale, the failure mode T06 diagnosed (the pre-exponential clamp hiding the gradient, which
+is **not fixed, only outweighed**) and both measurement tables live in
+``Config.decoder_mu_link``'s own docstring, so the cross-reference is to code rather than to a
+progress file.
+
+⚠️ **What this invalidates.** T06's decoder-path acceptance numbers were all measured under
+``softplus`` and are re-measured under ``exp`` (see ``progress/t06_expression_head.md``).
+**Neither gate is affected** — ``tests/gate1_criteria.py`` and ``tests/gate2_criteria.py``
+contain no reference to ``CTFFlow`` or the decoder: GATE 1 pushes latents through the fixture's
+own generative map and GATE 2 uses a linear probe over field + retrieval. **T09's selection must
+re-run per dataset**, because ``decoder_mu_link`` is not one of ``ALL_GATES`` — it is base
+config, so it changes every cell, and ``ScoreCache`` keys on the full config hash and therefore
+invalidates automatically.
 
 The gene enters only through `e_g`, so a single decoder serves an arbitrary gene set — this is what
 makes zero-shot genes and cross-panel transfer possible. **Gene subsampling:** each training step

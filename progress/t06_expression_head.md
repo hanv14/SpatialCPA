@@ -116,6 +116,74 @@ starts from.
    target moving the wrong way. The field is kept and kept selectable, because the argument is still
    right for a panel with a wider dynamic range than this fixture's; changing the default needs that
    measurement, not this one.
+
+   > ### ✅ 2026-08-21 — that measurement arrived, and the default is now `exp`
+   >
+   > **This is the condition above being met, not a correction to it.** T06 named what would
+   > justify re-taking the decision — *"a panel with a wider dynamic range than this fixture's"* —
+   > and T10 measured exactly that on real STARmap: 28 curated genes, median library **226 580**
+   > counts, per-gene means in the thousands, real `sd(log(count + 1))` = **1.21**.
+   >
+   > | | fixture (this measurement) | real STARmap (T10) |
+   > |---|---|---|
+   > | reconstruction NLL | 1.649 → 1.636 (`exp` better) | — |
+   > | gene–gene Frobenius | 18.02 → 17.05 (`exp` better) | — |
+   > | per-gene mean-expression r | **0.802 → 0.576** (`exp` worse) | — |
+   > | counts Moran's I | — | +0.1297 → **+0.4782** (real +0.4635) |
+   > | structured share of between-cell variance | — | 15.1 % → **61.4 %** (real ~62 %) |
+   > | mean–variance slope | — | 2.121 → **1.807** (real 1.738) |
+   > | **verdict** | `softplus` | **`exp`** |
+   >
+   > Density-controlled: the `exp` arm over-produced cells 11.5×, and subsampling back to the
+   > ground-truth count leaves the structured share at 58–61 % throughout (`reports/pilot.md` §11).
+   > `softplus` stays selectable and remains right in this fixture's regime. Both tables now live in
+   > `Config.decoder_mu_link`'s docstring, so the cross-reference is to code rather than to this
+   > file.
+   >
+   > ⚠️ **T06's diagnosed failure mode is not fixed, only outweighed.** The loss above was
+   > attributed to an exponential link letting an early large pre-activation produce an enormous
+   > `mu` while the clamp hides the gradient — and `ZINBDecoder.forward` still clamps `raw` before
+   > exponentiating. T10's win was measured with that clamp in place. If `exp` under-performs on
+   > some future panel, the clamp interaction is the first thing to check, not the link.
+   >
+   > ⚠️ **And one observation worth carrying**: on the fixture `exp` *lowered* the NLL while
+   > *degrading* per-gene mean correlation. That is open risk **R4**'s signature — likelihood
+   > improving while distributional fidelity degrades — appearing in the link choice itself.
+   >
+   > ### The acceptance numbers re-measured under `exp` (fixture, 1200 steps, one run)
+   >
+   > Re-run with this task's own instrument, `scripts/t06_expression_report.py`, which reads
+   > `Config()` and so picked the new default up unchanged. **No criterion flips.**
+   >
+   > | quantity | `softplus` (T06) | `exp` (2026-08-21) | criterion | verdict |
+   > |---|---|---|---|---|
+   > | **covariance ceiling** | 5.601 | **5.601** | — | **unchanged**, as it must be: model-free (the fixture's true `mu`, only a fresh count draw) |
+   > | model Frobenius | 9.316 | **9.001** | — | better |
+   > | independent-donor baseline | 7.783 | **7.576** | — | also better (regenerated in the same run) |
+   > | ratio model / baseline | 1.20 | **1.19** | < 0.50 | **still a loss**, unchanged in kind — the strict xfail stays red |
+   > | detection r | 0.9955 | **0.9969** | > 0.95 | pass, better |
+   > | detection MAD | 0.0191 | **0.0162** | < 0.05 | pass, better |
+   > | mean–variance slope | 1.7556 (0.84 %) | **1.7844 (2.49 %)** | < 15 % | pass, **slightly worse** — this is `exp` losing a little on the fixture, exactly as T06 measured, and it is expected rather than a regression |
+   > | chimerism retained at D = 3 | 0.897 | **0.8972** | — | unchanged |
+   > | attention entropy, start → final | 0.9879 → 0.8563 | 0.9879 → **0.8658** | fall ≥ 0.05 log K | pass |
+   >
+   > **Test suite**: `pytest tests/test_expression.py` (fast **and** slow) — **37 passed, 2 xfailed,
+   > 1 failed**. Both xfails are the pre-existing strict ones and both still xfail correctly
+   > (`test_shared_latent_frobenius_beats_donor_baseline`, `test_zero_shot_gene_decoding`).
+   >
+   > ⚠️ **The one failure is pre-existing and link-independent**, and is a real defect worth its own
+   > fix: `test_generation_paths_agree_on_shape_and_counts` asserts
+   > `pytest.raises(ExpressionError, match="auto-blend")`, but `generate_section` raises
+   > **`GenerationError`**, which is not a subclass of `ExpressionError`. The check runs before any
+   > decoding, so it cannot depend on the link. It is `@pytest.mark.slow`, so `make test`
+   > (`-m "not slow"`) never runs it — which is why it went unnoticed.
+   >
+   > ⚠️ **Two caveats on the table.** It is **one run at one seed**; the baseline moved too
+   > (7.783 → 7.576), so part of every delta is run-to-run variation rather than the link, and
+   > nothing here is a three-seed measurement. And T06's original `exp` measurement reported
+   > **per-gene mean-expression correlation 0.802 → 0.576** — the statistic that decided it — which
+   > `t06_expression_report.py` does **not** emit, so that specific regression is *not* re-confirmed
+   > here either way.
 3. **The two output-path samplers take a `numpy.random.Generator`**, not a `torch.Generator`. Torch
    has no seedable Gamma sampler (`torch._standard_gamma` ignores generators) and `cross_mix_counts`
    has to reproduce a numpy draw bit for bit. The rest of the package already passes numpy generators

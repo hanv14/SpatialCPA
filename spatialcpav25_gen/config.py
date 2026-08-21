@@ -886,26 +886,69 @@ class Config:
     zinb_mu_max: float = 1e8
     """Upper clamp on the ZINB mean (T06 §3)."""
 
-    decoder_mu_link: str = "softplus"
-    """One of ``MU_LINKS``: how the decoder turns its ``mu`` head into a positive mean.
+    decoder_mu_link: str = "exp"
+    """One of ``MU_LINKS``: how the decoder turns its ``mu`` head into a positive mean —
+    ``mu = link(MLP_mu(u)) * size_factor``.
 
-    ``"softplus"`` is T06 §3's own ``mu = softplus(MLP_mu(u)) * size_factor`` and it is the
-    default. ``"exp"`` exists because there was a good *a priori* reason to expect it to win —
-    a real panel's per-gene mean spans four orders of magnitude, ``softplus(x) ~ x`` for
-    ``x >> 0``, so a gene with mean 0.004 needs a pre-activation of -5.5 while one with mean 40
-    needs +40, and one shared trunk whose inputs are O(1) is then asked for outputs spanning 45
-    units with a gradient dominated by the handful of dense genes. Under ``"exp"`` the
-    pre-activation *is* log-expression, which is the scale the quantity lives on.
+    **Changed from ``softplus`` to ``exp`` at T10 (2026-08-21). This is T06's own revisit
+    condition being met, not a bug fix.** ``specs/06`` §56 writes the head as ``softplus`` and
+    T06 kept it, having measured ``exp`` losing on the synthetic fixture — but T06 wrote down
+    the condition under which the decision should be re-taken, and T10 supplied exactly that
+    measurement. Both are recorded here so the cross-reference is to this docstring rather
+    than to a progress file:
 
-    **Measured, that reasoning does not pay off, so the spec's choice stands.** On the synthetic
-    fixture at 1200 steps (wide-gap holdout, whole panel per step): reconstruction NLL 1.649
-    nats/pair under softplus against 1.636 under exp, gene-gene Frobenius error 18.02 against
-    17.05, and per-gene mean expression correlation **0.802 under softplus against 0.576 under
-    exp** — the argument's own target, moving the wrong way, because an exponential link lets an
-    early large pre-activation produce an enormous ``mu`` and the clamp then hides the gradient.
-    The field is kept, and kept selectable, because the argument is still the right one to make
-    on a panel with a wider dynamic range than this fixture's; changing the default needs that
-    measurement, not this one. Both arms are in ``PROGRESS.md``."""
+    **T06, synthetic fixture** (200 genes, deliberate sparse and dense classes). ``softplus``
+    kept. Moving to ``exp``: reconstruction NLL 1.649 -> 1.636 and gene-gene Frobenius
+    18.02 -> 17.05, both *better*, but **per-gene mean-expression correlation 0.802 -> 0.576**,
+    the a-priori argument's own target moving the wrong way. T06's verdict: *"the argument is
+    still right for a panel with a wider dynamic range than this fixture's; changing the
+    default needs that measurement, not this one."*
+
+    **T10, real STARmap** (28 curated genes, median library 226 580 counts, per-gene means in
+    the thousands, real ``sd(log(count + 1))`` = 1.21 — the wider dynamic range T06 named).
+    Moving to ``exp``, at ground-truth-matched cell density:
+
+    | quantity | ``softplus`` | ``exp`` | real tissue |
+    |---|---|---|---|
+    | counts Moran's I | +0.1297 | **+0.4782** | +0.4635 |
+    | structured share of between-cell variance | 15.1 % | **61.4 %** | ~62 % |
+    | mean-variance slope | 2.121 | **1.807** | 1.738 |
+
+    Density-controlled: the ``exp`` arm over-produced cells 11.5x, and subsampling it back to
+    the ground truth's count leaves the structured share at 58-61 % throughout, so the gain is
+    not an artifact of denser kNN graphs (``reports/pilot.md`` §11).
+
+    **Why the two measurements disagree, and why both stand.** ``softplus(x) ~ x`` for
+    ``x >> 0``, so a softplus link is nearly *linear* in its pre-activation at large means and
+    compresses the dynamic range the head can express; ``exp`` is multiplicative in log space
+    and does not. The fixture's genes have modest means and real zeros, where that compression
+    costs little and the extra freedom mostly buys noise. STARmap's do not. Neither
+    measurement supersedes the other — they are different regimes, and ``softplus`` stays
+    selectable for the fixture-like one.
+
+    ⚠️ **Note for whoever revisits this**: on the fixture, ``exp`` *lowered* the NLL while
+    *degrading* per-gene mean correlation. That is open risk **R4**'s signature — likelihood
+    improving while distributional fidelity degrades — appearing in the link choice itself,
+    which is worth remembering when reading either measurement.
+
+    **The a-priori argument for ``exp``, and its failure mode.** A real panel's per-gene mean
+    spans four orders of magnitude and ``softplus(x) ~ x`` for ``x >> 0``, so a gene with mean
+    0.004 needs a pre-activation of -5.5 while one with mean 40 needs +40, and one shared trunk
+    whose inputs are O(1) is then asked for outputs spanning 45 units with a gradient dominated
+    by the handful of dense genes. Under ``exp`` the pre-activation *is* log-expression, which
+    is the scale the quantity lives on. T06 attributed the fixture loss to the other side of
+    that: an exponential link lets an early large pre-activation produce an enormous ``mu``, and
+    the clamp then hides the gradient — ``forward`` clamps ``raw`` to
+    ``[log(zinb_mu_min), log(zinb_mu_max)]`` *before* exponentiating, so an excursion is flat
+    rather than infinite.
+
+    ⚠️ **That failure mode is not fixed, only outweighed.** The clamp is still there and
+    still zeroes the gradient outside its range; T10's win was measured with it in place. If
+    ``exp`` now under-performs on some panel, the clamp interaction is the first thing to
+    check, not the link.
+
+    ``softplus`` remains selectable and is the right choice for a fixture-like panel — modest
+    means, real zeros — where the compression costs little and the extra freedom buys noise."""
 
     latent_encoder_hidden: int = 256
     """Hidden width of the expression encoder producing the data-side latent ``h1``."""
