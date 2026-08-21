@@ -225,14 +225,14 @@ def test_offline_survives_a_failed_lookup(monkeypatch, cache_cfg):
     assert list(table["symbol"]) == ["Gad1"]
 
 
-def test_gene_meta_table_is_reused(cache_cfg):
-    """``merge=True`` reuses a cached row and keeps other symbols — the accumulate path.
+def test_gene_meta_table_accumulates_offline(cache_cfg):
+    """Offline, a cached row survives a later build of a different symbol.
 
-    It is no longer the default. See ``test_build_replaces_by_default``: reusing cached rows is what
-    made a corrected ``--species`` re-run issue no queries at all.
+    The cache is a *fallback* for a symbol the lookup could not reach — which offline is all of
+    them — so an offline re-run keeps good rows rather than degrading them to symbol-only ones.
     """
     with pytest.warns(GeneMetaUnavailableWarning):
-        build_gene_meta(["Gad1"], cache_cfg, merge=True)
+        build_gene_meta(["Gad1"], cache_cfg)
 
     import pandas as pd
 
@@ -241,7 +241,7 @@ def test_gene_meta_table_is_reused(cache_cfg):
     table.to_parquet(cache_cfg.gene_meta_path, index=False)
 
     with pytest.warns(GeneMetaUnavailableWarning):
-        out = build_gene_meta(["Slc17a7"], cache_cfg, merge=True)
+        out = build_gene_meta(["Slc17a7"], cache_cfg)
     assert list(out["symbol"]) == ["Slc17a7"]
 
     meta = load_gene_meta(cache_cfg.gene_meta_path)
@@ -583,29 +583,39 @@ def test_query_raises_when_nothing_is_the_requested_species(monkeypatch, cache_c
     assert not Path(online.gene_meta_path).exists()
 
 
-def test_build_replaces_by_default(monkeypatch, cache_cfg):
-    """The table on disk is exactly the requested symbols, and every one is re-queried.
+def test_build_merges_but_always_requeries(monkeypatch, cache_cfg):
+    """The default keeps other panels' rows AND re-queries every requested symbol.
 
-    The two halves of the reported "the species argument is not filtering": stale rows survived a
-    smaller request, and a symbol already cached was never looked up again — so a corrected
-    ``--species`` run issued zero queries and reported success.
+    Three failures have to be avoided at once, and this pins all three:
+
+    * building one panel must not destroy another's rows — the second occurrence of that loss
+      wiped the STARmap and Zhuang panels during a ``deep_starmap`` build;
+    * a corrected ``--species`` re-run must still issue its queries, which is what the old
+      accumulate-and-reuse merge broke (SPEC_QUESTIONS B19a);
+    * ``--overwrite`` must still be able to say "this table is exactly this panel".
     """
     client = install_fake_mygene(monkeypatch, FakeMyGene(mouse_only=True))
     online = cache_cfg.replace(text_allow_network=True, mygene_species="mouse")
     build_gene_meta(["Gad1", "Slc17a7", "Pvalb"], online)
     assert gene_meta_summary(online.gene_meta_path)["rows"] == 3
 
-    # A smaller request replaces: no stale rows, and it queried all two again.
+    # A smaller request KEEPS the other panel's row — and re-queries the two it asked for, so a
+    # corrected re-run is a real re-run rather than a cache hit reported as success.
     before = len(client.calls)
     build_gene_meta(["Gad1", "Slc17a7"], online)
     summary = gene_meta_summary(online.gene_meta_path)
-    assert summary["rows"] == 2
-    assert set(load_gene_meta(online.gene_meta_path)) == {"Gad1", "Slc17a7"}
+    assert summary["rows"] == 3, "a merge must not drop the unrequested row"
+    assert set(load_gene_meta(online.gene_meta_path)) == {"Gad1", "Slc17a7", "Pvalb"}
     assert client.calls[before]["n"] == 2, "a re-run must re-query, not short-circuit on the cache"
 
-    # merge=True keeps the extras, which is the only behaviour that should ever accumulate.
-    build_gene_meta(["Pvalb"], online, merge=True)
-    assert gene_meta_summary(online.gene_meta_path)["rows"] == 3
+    # A disjoint panel accumulates rather than replacing — the deep_starmap case.
+    build_gene_meta(["Sox10"], online)
+    assert set(load_gene_meta(online.gene_meta_path)) == {"Gad1", "Slc17a7", "Pvalb", "Sox10"}
+
+    # overwrite=True is the explicit way to make the table exactly one panel.
+    build_gene_meta(["Gad1"], online, overwrite=True)
+    assert gene_meta_summary(online.gene_meta_path)["rows"] == 1
+    assert set(load_gene_meta(online.gene_meta_path)) == {"Gad1"}
 
 
 def test_gene_meta_summary_describes_the_file(monkeypatch, cache_cfg):
@@ -677,7 +687,7 @@ def test_merge_refuses_to_mix_organisms(monkeypatch, cache_cfg):
     online = cache_cfg.replace(text_allow_network=True, mygene_species="mouse")
     build_gene_meta(["Gad1"], online)
     with pytest.raises(GeneMetaError, match="One organism per table"):
-        build_gene_meta(["GAD1"], online.replace(mygene_species="human"), merge=True)
+        build_gene_meta(["GAD1"], online.replace(mygene_species="human"))
 
 
 def test_committed_gene_meta_tables_are_species_checkable():

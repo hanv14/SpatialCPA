@@ -85,12 +85,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--merge",
+        "--overwrite",
         action="store_true",
         help=(
-            "keep rows already in the table and reuse cached rows for the requested symbols. "
-            "OFF by default: merging is what made a corrected --species re-run a no-op, because "
-            "every symbol was already cached and no query was issued"
+            "REPLACE the table with exactly these symbols, discarding every other panel's rows. "
+            "OFF by default: building one panel alone used to wipe the others, which silently "
+            "destroyed the STARmap and Zhuang rows — including the tier-1 dataset's — during a "
+            "deep_starmap build. Merging never reuses a cached row for a REQUESTED symbol, so a "
+            "corrected --species re-run still issues every query (SPEC_QUESTIONS B19a)"
         ),
     )
     return parser.parse_args(argv)
@@ -165,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         gene_summary_fallback="none" if args.native_summaries_only else "ortholog",
         **({} if args.out is None else {"gene_meta_path": str(args.out)}),
     )
-    build_gene_meta(symbols, cfg, merge=args.merge)
+    build_gene_meta(symbols, cfg, overwrite=args.overwrite)
 
     # Report the file that now exists, not the request. The previous version printed how many
     # *requested* symbols carried a full name ("1122/1122") while the file held 1138 rows of
@@ -185,13 +187,25 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  with ensembl_id     {summary['with_ensembl_id']}/{summary['rows']}")
     print(f"  ensembl prefixes    {summary['ensembl_prefixes']}")
     print(f"  expected prefix     {summary['expected_ensembl_prefix']}")
-    if summary["rows"] != len(symbols) and not args.merge:
+    # The two counts are printed side by side above because their DIFFERENCE is the diagnostic:
+    # "1017 rows for 1017 requested" after a deep_starmap build is what a destroyed table looks
+    # like, and it reads as success unless the prior row count is in view.
+    if args.overwrite and summary["rows"] != len(symbols):
         print(
-            f"  !! {summary['rows']} rows for {len(symbols)} requested symbols without --merge; "
-            "that should not happen",
+            f"  !! --overwrite wrote {summary['rows']} rows for {len(symbols)} requested "
+            "symbols; the table should hold exactly the request",
             file=sys.stderr,
         )
         return 1
+    if not args.overwrite and summary["rows"] < len(symbols):
+        print(
+            f"  !! {summary['rows']} rows on disk for {len(symbols)} requested symbols; a merge "
+            "can only grow the table, so rows were lost",
+            file=sys.stderr,
+        )
+        return 1
+    if not args.overwrite and summary["rows"] > len(symbols):
+        print(f"  merged: kept {summary['rows'] - len(symbols)} row(s) from other panels")
 
     meta = load_gene_meta(cfg.gene_meta_path, species=None if args.offline else args.species)
     for symbol in symbols[:3]:

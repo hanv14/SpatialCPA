@@ -324,6 +324,36 @@ bench3 already pins the invocation in `METHODS`, so quote that entry rather than
 calling it** or subsequent baselines silently receive corrupted data. bench3 isolates each method in
 its own subprocess so this cannot bite there; it bites in `eval/baselines.py`, which does not.
 
+### Where each step can run — two machines, and it is not symmetric
+
+This task spans two environments and the split decides what can be built versus measured. **Where a
+step needs the server, build it to run there rather than working around it.**
+
+| | development container | campaign server |
+|---|---|---|
+| package, tests, synthetic fixture | ✅ | ✅ |
+| tier-1 STARmap volume | ✅ | ✅ |
+| **`deep_starmap` and the other real volumes** | ❌ | ✅ |
+| **conda / the four `bench_*` envs** | ❌ | ✅ |
+| **MedCPT encoder** (`huggingface.co`, 403 via proxy) | ❌ | ✅ presumed |
+| `mygene` network | ❌ | — no longer needed (§7) |
+
+**Three consequences that are structural, not temporary.**
+
+1. **The comparator re-runs are server-only** — every wrapper is invoked as `conda run -n <env>`.
+2. **E1 is server-only** (§7), because `deep_starmap` lives there.
+3. ⚠️ **A shipped-config run is server-only too, and this one is easy to miss.** `Config`'s default
+   is `text_emb_mode="medcpt"`, which needs the MedCPT encoder. In the container that encoder is
+   unreachable, so **any local run is forced to `text_emb_mode="lookup"` — which is ablation A3, not
+   the shipped method.** Per-dataset selection is affected the same way: `text_emb_mode` is one of
+   its gates, so a local selection cannot score the `medcpt` arm and cannot return the shipped
+   configuration. **Selection and any headline fit are campaign-machine work.**
+
+What the container *can* do is everything that is not a measurement: build the code, run the tests,
+exercise every path on the synthetic fixture, and run **attribution experiments** on tier-1 STARmap
+under an explicitly non-shipped configuration — provided every number from those is labelled with
+the configuration that produced it.
+
 ### ⚠️ The existing v20/v22 numbers are NOT in this repository
 
 Verified 2026-08-20: `benchmark-pbya-v3/results/`, `benchmark-pbya-v2/results/` and
@@ -851,40 +881,56 @@ makes `paper_marker_*` unavailable on that arm. **Run two gene splits** — mark
 markers-seen — so the marker family is reportable either way, and say which split each number is
 from.
 
-⛔ **E1 is BLOCKED on data, and the block is on the input side, not the design.** `deep_starmap`
-is **not in this repository** — no raw, no processed, nothing under any name (verified by a tree-wide
-search at the pilot, `reports/pilot.md` §2). Every other part of E1 is specified and ready: the gene
-split, the two summary arms, the two distillation arms, and the scoring mechanism (which is free —
-see below). E1 stays **in scope and unmeasured**; it is not descoped and its rows stay in the
-definition of done as outstanding.
+### E1 runs on the campaign machine only
 
-**What unblocks it, in order of preference:**
+**The gene-metadata half is unblocked** (2026-08-20). `resources/gene_meta.parquet` was rebuilt from
+the union of all three mouse panels: **2 155 symbols, 2 010 with summaries (309 native, 1 701 human
+orthologue, 145 none), all ENSMUSG**, covering STARmap, Zhuang and `deep_starmap`. Verified in this
+container: 2 155 rows, **1 020 all-uppercase symbols resolving without folding**, sources
+`{native: 309, ortholog: 1 701}`. So the case-folding workaround the pilot identified is no longer
+needed — the table carries `deep_starmap`'s spelling natively — and no `mygene` network access is
+required to run E1.
 
-| supplied | unblocks | why it is enough |
-|---|---|---|
-| **1. A path to `deep_starmap`'s source** (`$BENCH_V3_RAW_DEEP_STARMAP`, or v1's processed `data.h5ad`) | **all of E1** | bench3's `DATASET_SPECS` entry already exists — expression + spatial CSVs, or v1's processed file. `prepare_dataset --dataset deep_starmap` then builds it, and the design is `paper_2_4_6`, the same as tier 1 |
-| **2. The 1017 panel symbols alone**, as a plain text file | **the coverage question only** — the measurement that decides whether a gene-table rebuild is needed, which is the long-pole dependency | Coverage is a set operation against `resources/gene_meta.parquet`; it needs no expression data. If coverage is short, the rebuild needs `mygene` network access (403'd in this container, C14), so knowing *early* is what keeps it off the critical path |
+**The data half is a campaign-machine dependency, permanently.** `deep_starmap` lives at
 
-**Option 2 is the more useful one to supply first**, because it is a one-file answer to the question
-that could still require network access, and it can be answered before the volume is located.
+```
+/data/han/projects/Spatial3D/benchmark-pbya-v3/data/processed/deep_starmap/data.h5ad
+```
 
-⚠️ **What is already measured about the table.**
+on the campaign server, and is **not reachable from the development container**. This is not a
+blocker to route around: **write E1 to run on the server and treat it as unrunnable locally**, the
+same way the comparator re-runs are (§3). Concretely:
+
+* `eval/experiments.py::exp_zero_shot_genes` takes the dataset **by path** and resolves it at run
+  time. It never assumes a local file, and it fails with the path it looked for rather than
+  silently substituting the fixture.
+* Its unit tests run on the **synthetic fixture** — gene-split construction, the two summary arms,
+  the two distillation arms, and the scoring adapter are all exercisable without `deep_starmap`.
+  What cannot run locally is the measurement, not the code.
+* The E1 row in the definition of done stays outstanding until the server produces it.
+
+**Gene-subset scoring is still free**, which is what keeps E1 cheap once it can run: emit a
+prediction whose `gene_names` is only the held-out 20 % and `evaluate_paper`'s gene intersection
+does the rest, on the pinned instrument, with no bench3 change.
+
+⚠️ **What was measured about the older table**, retained because it is the reason the rebuild was
+needed.
 `resources/gene_meta.parquet` is exactly `zhuang_abca2_panel_symbols.txt` (1 122) ∪
 `starmap_panel_symbols.txt` (28) = **1 138 symbols**, verified by set arithmetic — no other panel is
 in it. It is mouse-cased: **3** of its 1 138 symbols are all-uppercase. `deep_starmap`'s symbols are
 **uppercase** despite being mouse (`FLT1`, `PCP4`, `CUX2` in its own marker list), so on an exact
 match **every one of its 1 017 symbols misses**. Two things follow:
 
-1. **Case normalisation is mandatory, and on the testable symbols it is sufficient.** Measured at
-   the pilot against `deep_starmap`'s known uppercase marker and layer genes: **0 of 6** match
-   exactly, **6 of 6** after folding. Fold to the table's casing before matching, and report how
-   many symbols resolved only after folding.
-2. **Coverage over the full 1017 remains unmeasured** and is probably partial: the table was built for
-   Zhuang-ABCA-2 + STARmap, not for a 1 017-gene Deep-STARmap panel. **Measure the overlap before
-   running E1**, and if it is short, a new table build is required — which needs `mygene` network
-   access that `progress/t02_text_embeddings.md` records as **403'd in this container**
-   (SPEC_QUESTIONS C14). **E1 is blocked on either network access or a supplied table.** Surface
-   this at the pilot; do not discover it mid-campaign.
+1. **Case normalisation was mandatory against the old table** — measured at the pilot against
+   `deep_starmap`'s uppercase marker and layer genes: **0 of 6** exact, **6 of 6** folded.
+   **Superseded by the rebuild**, which carries the uppercase spellings natively. Keep the folding
+   test as a regression guard, not as a required step.
+2. **Coverage over the full 1017 was the open question, and the rebuild answers it.** The old table
+   was 1 138 symbols built for Zhuang-ABCA-2 + STARmap only, so a `deep_starmap` build against it
+   would have required a `mygene` rebuild — network access that `progress/t02_text_embeddings.md`
+   records as 403'd in this container (SPEC_QUESTIONS C14), and therefore the long pole. The
+   2 155-symbol union table removes that dependency: **E1 no longer needs the network**, only the
+   server's copy of the volume.
 
 **E1 reports both distillation arms** (settled; `design/v23_design.md` §2.2 / §7). A held-out gene
 has no learned residual `r_g`, so the table shows *both* `forward_zero_shot(use_distill=False)` —

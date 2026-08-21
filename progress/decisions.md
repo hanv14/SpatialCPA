@@ -54,3 +54,16 @@ rest.
 panel width. STARmap has 28 genes against a default of 32, so `validate_config_against_volume`
 refuses the fit and the protocol dataset cannot be fitted at the shipped default.
 
+**`build_gene_meta` merges by default; `--overwrite` is explicit.** Second occurrence of the same
+data loss: building one panel replaced the whole table, so a `deep_starmap` build destroyed the
+STARmap and Zhuang rows including tier-1's. But replace-by-default was **itself** a fix (B19a) —
+the original merge reused cached rows for requested symbols, so a corrected `--species` re-run
+issued no queries and reported success. The new behaviour avoids all three failures rather than
+trading one for another: **unrequested rows are kept** (fixes the loss), **every requested symbol is
+re-queried regardless of cache** (keeps B19a fixed), and kept rows are still species-checked (stops
+organism mixing). The cache is a fallback only for a symbol the lookup could not reach, which is
+what lets an offline re-run keep good rows. `--overwrite` says "this table is exactly this panel",
+and the builder prints requested count beside on-disk row count — the pair whose *difference* is
+the diagnostic, since "1017 rows for 1017 requested" reads as success unless the prior count is in
+view.
+

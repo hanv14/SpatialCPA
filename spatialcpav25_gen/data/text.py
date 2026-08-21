@@ -356,7 +356,7 @@ def descriptor_key(model_name: str, descriptor: str) -> str:
 
 
 def build_gene_meta(
-    symbols: Sequence[str], cfg: Config | None = None, *, merge: bool = False
+    symbols: Sequence[str], cfg: Config | None = None, *, overwrite: bool = False
 ) -> pd.DataFrame:
     """Assemble the gene-metadata table for ``symbols``, caching it at ``cfg.gene_meta_path``.
 
@@ -372,34 +372,39 @@ def build_gene_meta(
         Supplies ``gene_meta_path``, ``text_allow_network``, ``mygene_species`` and
         ``gene_summary_fallback``. Defaults to ``Config()``. (Additive keyword: the spec writes
         ``build_gene_meta(symbols)``, which has nowhere to read those from.)
-    merge
-        Keep rows already in the table that this call did not ask for, and reuse cached rows for
-        symbols it did. **Off by default, and that is a bug fix rather than a preference.**
+    overwrite
+        Replace the table with exactly the requested symbols, discarding any row this call did
+        not ask for. **Off by default**: the default merges, because a build of one panel must
+        not destroy another's rows (see below).
 
     Returns
     -------
     pandas.DataFrame
         One row per requested symbol, columns :data:`GENE_META_COLUMNS`, in the order the
-        symbols were given. The table written to disk holds exactly these rows unless ``merge``.
+        symbols were given. The table written to disk also keeps any other panel's rows, unless
+        ``overwrite``.
 
-    Replace, do not merge
-    ---------------------
-    The first version did the opposite, and it made ``Config.mygene_species`` unusable. It computed
-    ``missing = [s for s in symbols if s not in cached]`` and concatenated only the new rows, so:
+    Merge by default, but always re-query — the three bugs this has to avoid at once
+    -------------------------------------------------------------------------------
+    This function has now caused data loss in one direction and silent staleness in the other, so
+    the current behaviour is written to avoid **all three** failures rather than trading one for
+    another.
 
-    * a **corrected re-run issued no queries at all.** After one bad build every symbol was cached,
-      so re-running with the right species against a table full of ground squirrel genes changed
-      nothing and reported success. The species parameter was never sent, because no request was
-      made. This is most of why the species argument looked like it was not filtering.
-    * **stale rows were never removed.** A 1122-symbol request against a table built from 1138
-      symbols left the 16 extras in place, of unknown provenance and unknown organism.
+    1. **Destroying another panel's rows** (the reason for the current default). Building one panel
+       alone replaced the whole table, so a `deep_starmap` build silently destroyed the STARmap and
+       Zhuang rows — including the tier-1 dataset's. Second occurrence of the same class of loss.
+       *Fix:* rows for symbols this call did not request are **kept**.
+    2. **A corrected re-run issuing no queries** (SPEC_QUESTIONS B19a). The original merge computed
+       ``missing = [s for s in symbols if s not in cached]``, so after one bad build every symbol
+       was cached and re-running with the right species changed nothing while reporting success —
+       the species parameter was never sent, because no request was made.
+       *Fix:* **every requested symbol is looked up afresh**, cached or not. Merging governs which
+       rows survive, never which are fetched, so a re-run is always a real re-run.
+    3. **Mixing organisms in one symbol-keyed table.** Kept rows are still checked against the
+       requested species, because a symbol means different genes in different organisms.
 
-    So by default this **replaces** the table with exactly the requested symbols, every one looked
-    up
-    afresh. ``merge=True`` restores accumulate-and-reuse for the case it was meant for — extending a
-    table with another panel of the same organism — and then the existing rows' species is checked
-    against the request, because merging two organisms into one symbol-keyed table is the other half
-    of the same bug.
+    So: requested symbols are re-fetched and replace their rows; unrequested rows survive;
+    ``overwrite=True`` is the explicit way to say "this table is exactly this panel".
     """
     cfg = Config() if cfg is None else cfg
     wanted = list(dict.fromkeys(str(s) for s in symbols))
@@ -410,13 +415,15 @@ def build_gene_meta(
     requested_name = resolve_species(cfg.mygene_species)[0] if cfg.text_allow_network else None
     cached: pd.DataFrame = _empty_gene_meta_table()
     known: dict[str, dict[str, Any]] = {}
-    if merge and path.exists():
+    if not overwrite and path.exists():
         cached = _read_gene_meta_table(path)
         known = {str(row["symbol"]): row for row in _records(cached)}
         if requested_name is not None:
             _check_table_species(known.values(), requested_name, path)
 
-    missing = [s for s in wanted if s not in known]
+    # Every requested symbol is fetched afresh, cached or not — see bug 2 in the docstring. The
+    # cache decides which OTHER rows survive, never which of these are looked up.
+    missing = list(wanted)
     fetched: dict[str, dict[str, Any]] = {}
     if missing and cfg.text_allow_network:
         try:
@@ -436,7 +443,9 @@ def build_gene_meta(
     rows: list[dict[str, Any]] = []
     degraded: list[str] = []
     for symbol in wanted:
-        record = known.get(symbol) or fetched.get(symbol)
+        # A fresh answer wins over a cached one; the cache is only a fallback for a symbol the
+        # lookup could not reach, which keeps an offline re-run from throwing away good rows.
+        record = fetched.get(symbol) or known.get(symbol)
         if record is None:
             record = _symbol_only_row(symbol, requested_name)
             degraded.append(symbol)
@@ -458,7 +467,7 @@ def build_gene_meta(
 
     table = pd.DataFrame(rows, columns=list(GENE_META_COLUMNS)).reset_index(drop=True)
     written = table
-    if merge and not cached.empty:
+    if not overwrite and not cached.empty:
         extra = cached[~cached["symbol"].astype(str).isin(set(wanted))]
         written = pd.concat([table, extra], ignore_index=True)
     _write_gene_meta_table(written, path)
