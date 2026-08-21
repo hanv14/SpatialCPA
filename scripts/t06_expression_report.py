@@ -164,6 +164,11 @@ def main() -> int:
                 "detection_r": float(np.corrcoef(rate, detection_rate(real))[0, 1]),
                 "detection_mad": float(np.abs(rate - detection_rate(real)).mean()),
                 "mv_slope": mean_variance_slope(counts),
+                # T06's DECIDING statistic for the mu link: softplus 0.802 vs exp 0.576 on this
+                # fixture is what kept softplus the default until T10. The report did not emit
+                # it, so the fixture comparison could not be re-checked without re-deriving it
+                # (T10). Pearson r between per-gene mean expression, generated vs real.
+                "gene_mean_r": float(np.corrcoef(counts.mean(axis=0), real.mean(axis=0))[0, 1]),
             }
         )
     table = chimerism_table(training, section, cfg, keep, target)
@@ -223,15 +228,23 @@ def main() -> int:
         "",
         "## Sparsity and mean-variance",
         "",
-        "| arm | detection r | detection MAD | mean-variance slope |",
-        "|---|---|---|---|",
+        "| arm | detection r | detection MAD | mean-variance slope | per-gene mean-expression r |",
+        "|---|---|---|---|---|",
     ]
     lines += [
         f"| {row['arm']} | {row['detection_r']:.4f} | {row['detection_mad']:.4f} | "
-        f"{row['mv_slope']:.4f} |"
+        f"{row['mv_slope']:.4f} | {row['gene_mean_r']:.4f} |"
         for row in rows
     ]
-    lines.append(f"| real section | 1.0 | 0.0 | {mean_variance_slope(real):.4f} |")
+    lines.append(f"| real section | 1.0 | 0.0 | {mean_variance_slope(real):.4f} | 1.0 |")
+    lines.append("")
+    lines.append(
+        f"**Per-gene mean-expression r is the statistic T06 acted on** when it kept `softplus`: "
+        f"it measured **0.802 under softplus against 0.576 under exp** on this fixture, the "
+        f"a-priori argument's own target moving the wrong way. It was not emitted by this script "
+        f"until T10 added it, which is why the fixture comparison could not be re-checked when the "
+        f"default changed. Current run: `decoder_mu_link={cfg.decoder_mu_link}`."
+    )
     lines.append("")
 
     text = "\n".join(lines)

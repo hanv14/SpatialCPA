@@ -155,11 +155,19 @@ starts from.
    > Re-run with this task's own instrument, `scripts/t06_expression_report.py`, which reads
    > `Config()` and so picked the new default up unchanged. **No criterion flips.**
    >
+   > ⚠️ **One seed, and the baseline moved too.** Read every delta below against open risk
+   > **R10**'s reproducibility envelope, not as a measured improvement. The independent-donor
+   > baseline is regenerated in the same run and moved **7.783 → 7.576** without anything about
+   > the baseline changing — so some of every delta in this table is run-to-run variation.
+   > **In particular, 9.316 → 9.001 is not evidence that `exp` improves the model's covariance
+   > error**; the ratio to the baseline, which is the quantity the criterion is stated on, is
+   > 1.20 → 1.19, i.e. unchanged. Nothing here is a three-seed measurement.
+   >
    > | quantity | `softplus` (T06) | `exp` (2026-08-21) | criterion | verdict |
    > |---|---|---|---|---|
    > | **covariance ceiling** | 5.601 | **5.601** | — | **unchanged**, as it must be: model-free (the fixture's true `mu`, only a fresh count draw) |
-   > | model Frobenius | 9.316 | **9.001** | — | better |
-   > | independent-donor baseline | 7.783 | **7.576** | — | also better (regenerated in the same run) |
+   > | model Frobenius | 9.316 | **9.001** | — | ⚠️ **inside the envelope — not a measured improvement** |
+   > | independent-donor baseline | 7.783 | **7.576** | — | ⚠️ moved by the same order, with nothing about the baseline changed |
    > | ratio model / baseline | 1.20 | **1.19** | < 0.50 | **still a loss**, unchanged in kind — the strict xfail stays red |
    > | detection r | 0.9955 | **0.9969** | > 0.95 | pass, better |
    > | detection MAD | 0.0191 | **0.0162** | < 0.05 | pass, better |
@@ -178,12 +186,11 @@ starts from.
    > decoding, so it cannot depend on the link. It is `@pytest.mark.slow`, so `make test`
    > (`-m "not slow"`) never runs it — which is why it went unnoticed.
    >
-   > ⚠️ **Two caveats on the table.** It is **one run at one seed**; the baseline moved too
-   > (7.783 → 7.576), so part of every delta is run-to-run variation rather than the link, and
-   > nothing here is a three-seed measurement. And T06's original `exp` measurement reported
-   > **per-gene mean-expression correlation 0.802 → 0.576** — the statistic that decided it — which
-   > `t06_expression_report.py` does **not** emit, so that specific regression is *not* re-confirmed
-   > here either way.
+   > ⚠️ **T06's deciding statistic is now emitted.** The original `exp` measurement reported
+   > **per-gene mean-expression correlation 0.802 → 0.576** — the number T06 acted on — and
+   > `t06_expression_report.py` did not compute it, so the fixture comparison could not be
+   > re-checked when the default changed. T10 added it to the script (`gene_mean_r`), and the
+   > re-measured value is in the table above.
 3. **The two output-path samplers take a `numpy.random.Generator`**, not a `torch.Generator`. Torch
    has no seedable Gamma sampler (`torch._standard_gamma` ignores generators) and `cross_mix_counts`
    has to reproduce a numpy draw bit for bit. The rest of the package already passes numpy generators

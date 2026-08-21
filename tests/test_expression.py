@@ -43,6 +43,7 @@ from spatialcpav25_gen.eval.baselines import (
     IndependentDonorBaseline,
     independent_donor_counts,
 )
+from spatialcpav25_gen.infer.generate import GenerationError
 from spatialcpav25_gen.infer.planes import section_plane
 from spatialcpav25_gen.losses.reconstruction import (
     size_factor_loss,
@@ -1178,7 +1179,12 @@ def test_generation_paths_agree_on_shape_and_counts(trained: Trained):
     assert mix_counts.shape == flow_counts.shape
     assert np.array_equal(mix_counts, np.round(mix_counts))
     assert not np.array_equal(mix_counts, flow_counts)
-    with pytest.raises(ExpressionError, match="auto-blend"):
+    # auto-blend's missing-w(v) precondition is a *generation-path* failure and raises
+    # GenerationError; the architecture check below belongs to the model and raises
+    # ExpressionError. The two are unrelated types (neither subclasses the other), and this
+    # test asserted ExpressionError for both — so it could never pass. It is slow-marked, so
+    # `make test` (-m "not slow") never ran it and the breakage went unseen (T10).
+    with pytest.raises(GenerationError, match="auto-blend"):
         generate_counts(trained, seed=SEED + 5, cfg=cfg.replace(expr_mode="auto-blend"))
     with pytest.raises(ExpressionError, match="architecture"):
         generate_counts(trained, seed=SEED + 5, cfg=cfg.replace(latent_dim=8))
