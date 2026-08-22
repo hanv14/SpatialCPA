@@ -15,6 +15,7 @@ No fit — both models are on disk::
 
 from __future__ import annotations
 
+import argparse
 import sys
 import warnings
 from pathlib import Path
@@ -40,13 +41,22 @@ from t10_chain_diagnostic import build_embeddings, load_training_volume
 from t10_r11_coupling import SEED, TARGETS, gt_counts
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--models",
+        nargs="+",
+        default=["runs/pilot/model_r11_softplus_2400.pt", "runs/pilot/model_r11_exp_2400.pt"],
+        help="Checkpoints to measure. Each supplies its own decoder_mu_link, so the arm label "
+        "is read from the config rather than assumed. Default: the two R11 coupling fits.",
+    )
+    args = ap.parse_args(argv)
     truth = gt_counts()
     rows = []
-    for link in ("softplus", "exp"):
-        path = f"runs/pilot/model_r11_{link}_2400.pt"
+    for path in args.models:
         ckpt = torch.load(path, map_location="cpu")
         cfg = Config(**ckpt["config"])
+        link = str(cfg.decoder_mu_link)
         vol = load_training_volume(cfg)
         model = CTFFlow(
             cfg, TrainingData.build(vol, cfg), build_embeddings(cfg, vol), grf_seed=SEED
