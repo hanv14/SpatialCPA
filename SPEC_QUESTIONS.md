@@ -1457,6 +1457,52 @@ in-plane result that converged is not made worthless by a stack too short to con
 silently. Three acceptance tests pin it, including the round trip through to the field the
 generator builds.
 
+### C31. `specs/05` says "rejection sampling", and rejection sampling as specified is biased — **RESOLVED 2026-08-24 (grid-multinomial default; the rejection sampler retained and asserted wrong)** (raised at T10, fixed here)
+
+`specs/05` and `design/v23_design.md` both name **rejection sampling** as how the layout's positions
+are drawn from `sum_c lambda_c`, and neither says how the envelope is obtained. What was built takes
+the maximum of the total intensity over a `Config.layout_n_mc` uniform sample of the mid-plane, times
+`Config.layout_envelope_slack`, and tests `u < lambda / envelope` **without clamping the ratio**.
+
+Both halves of that are wrong, and `reports/r11_envelope.md` measured them:
+
+* The envelope is a **sampled maximum**, not a bound — 140-853x spread across sections on the pilot
+  checkpoint, and reproducible with no fit at all (`test_the_envelope_is_a_sampled_maximum` rebuilds
+  it at eight seeds on a closed-form intensity and gets a 9.3x spread, with the smallest below half
+  the true supremum).
+* Because the ratio is unclamped, every point where `lambda > envelope` is accepted with certainty,
+  so the realised draw is from **`min(lambda, envelope)`**. The peaks are flattened: the pattern is
+  wrong in *shape*, not merely short of points.
+
+The obvious repair — an analytic envelope from the head's own parameterisation — was **costed and
+rejected on measurement** (`reports/r11_fix_options.md` option A). An MLP has no closed-form
+supremum, so the only analytic route is a Lipschitz bound; the trunk's spectral norms give
+`L = 74.69`, a bound 7-82x above the true supremum, and a 7-82x looser envelope is 7-82x worse
+acceptance applied to a section already accepting 0.12 %. That option converts a bias into universal
+starvation.
+
+*Resolution (option D, implemented):* the positions are drawn by a **grid-multinomial** sampler.
+`sum_c lambda_c` is evaluated once per cell of a grid over the mid-plane window
+(`Config.layout_grid_cells`), a cell is drawn with probability proportional to it, and the point is
+jittered uniformly inside the cell. There is no envelope, no acceptance ratio and no proposal budget
+on the intensity; the only approximation is the grid's own resolution, which is a midpoint rule with
+an `O(h^2)` error and a convergence check rather than a sampled maximum, and which gives every cell a
+**closed-form expected count**. The interaction (Strauss thinning) rides on the same sequential test
+and the same `layout_max_proposal_factor` budget as before, so `ProposalBudgetWarning` now means what
+it always claimed: the intensity and `r0` describe incompatible tissue.
+
+`Config.layout_sampler` selects between `"grid"` (the new default) and `"rejection"`. The rejection
+sampler is **kept**, so the two can be compared on one fit and so the biased numbers stay
+reproducible, and it is asserted *wrong* in `tests/test_layout_sampler.py` as the negative control.
+
+Two consequences that are not resolved by this and are owed elsewhere. **T05's acceptance tests and
+T09's `layout_mode` gate were computed on the biased sampler**; T05's are re-measured in
+`progress/t05_layout_head.md` and still pass, T09's are not. And a correct sampler removes a bias, it
+does not supply a better intensity field, so **R11's finding stands** until the three modes are
+re-measured on tier-1 STARmap.
+
+---
+
 ---
 
 ## E. Recorded, no action needed

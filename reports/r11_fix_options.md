@@ -5,6 +5,18 @@ envelope is a sampled maximum, acceptance is unclamped, so the draw comes from `
 envelope)` — is the one that decides whether `layout_mode` can be chosen on a correct sampler at
 all. This costs the four available fixes. **Nothing is implemented; this is the decision input.**
 
+> **Outcome (2026-08-24): option D is implemented and is the default.** `Config.layout_sampler`
+> selects `"grid"` (option D) or `"rejection"` (the original, retained for comparison and asserted
+> *wrong* as a negative control). Validated exactly as "validation is cheap" below predicted —
+> against a closed-form Gaussian-bump intensity at max/mean **235**, with **no fit and no data**,
+> checking the total density, the per-bin density against exact rectangle integrals, the per-type
+> mix, and the `O(h^2)` convergence of the grid's own quadrature (`tests/test_layout_sampler.py`,
+> 16 tests). Option C was **not** implemented: the rejection sampler still truncates silently, which
+> is acceptable only because it is no longer the default and is now covered by tests that assert its
+> failure. Option A stays rejected on the measurement below. The invalidation this section costs
+> was paid for T05 (re-measured, still passing — `progress/t05_layout_head.md`) and is **still owed
+> for T09's `layout_mode` gate** and for R11's STARmap comparison.
+
 ## What any fix must preserve
 
 `sample_layout` produces `uv` and everything downstream is independent of how: `xyz = plane.to_xyz(uv)`,

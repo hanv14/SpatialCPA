@@ -39,6 +39,7 @@ import math
 import warnings
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -970,6 +971,8 @@ def train_ctfflow(
     ema: EMA | None = None,
     teacher: EMATeacher | None = None,
     loso: LOSOScheduler | None = None,
+    checkpoint: str | Path | None = None,
+    resume: bool = True,
 ) -> TrainHistory:
     """Fit ``model`` for ``steps`` optimiser steps. Returns the recorded :class:`TrainHistory`.
 
@@ -1004,6 +1007,30 @@ def train_ctfflow(
         T08's :class:`~spatialcpav25_gen.train.loso.LOSOScheduler`, or ``None`` to build one
         over the model's own training volume when any metric-aware weight is non-zero. Passing
         one in is how a caller fixes the fold order across two arms of an ablation.
+    checkpoint
+        Where to write a resume point every ``Config.checkpoint_every_n_steps`` steps, and
+        where to look for one to resume from. ``None`` — the default — checkpoints nothing and
+        the loop behaves exactly as it did before this argument existed.
+    resume
+        Whether an existing file at ``checkpoint`` is continued (the default) or overwritten.
+        ``False`` starts the fit over and the first write replaces the file, which is how a
+        caller deliberately discards a stale resume point. Ignored when ``checkpoint`` is
+        ``None``.
+
+    Checkpointing
+    -------------
+    See :mod:`spatialcpav25_gen.train.checkpoint`. The contract is stronger than "it resumes":
+    a run interrupted at step ``k`` and resumed is **bitwise identical** to an uninterrupted
+    one, which is the only assertion that keeps Convention 3 true across a rebuilt container.
+    Everything the loop carries across a step boundary is in the payload — the optimiser, the
+    cosine schedule, the EMA shadow, T07's teacher, T07's in-place ``numpy`` generator and the
+    history — while everything derived inside a step from ``(seed, step)`` is not, because it
+    is regenerated identically. The write happens **after** the step's ``optimiser.step()``,
+    EMA update and history record, so the payload holds whole steps and never half of one.
+
+    A checkpoint is a resume point, not a portable model: it does not carry the ``Config``, the
+    volume or the embeddings, and resuming into a fit with a different ``content_hash``,
+    ``seed`` or ``steps`` raises rather than continuing (Convention 6).
 
     SEFL
     ----
@@ -1032,6 +1059,12 @@ def train_ctfflow(
     # no *type* from here (they annotate `CTFFlow` under `TYPE_CHECKING`), and this module needs
     # them only inside the loop, so one deferred import breaks the cycle in the right place.
     from spatialcpav25_gen.losses.sefl import EMATeacher, sefl_active, sefl_ramp, sefl_terms
+    from spatialcpav25_gen.train.checkpoint import (
+        capture,
+        load_checkpoint,
+        load_into,
+        save_checkpoint,
+    )
     from spatialcpav25_gen.train.loso import (
         LOSOScheduler,
         check_metric_dominance,
@@ -1067,8 +1100,49 @@ def train_ctfflow(
     default_schedule = LOSOScheduler(data.vol, cfg, seed=seed) if metric_on else None
     schedule = loso if loso is not None else default_schedule
 
+    # Resume before the loop and before `model.train()`: `load_into` writes into the objects
+    # built above, so they have to exist first, and every one of them is rebuilt identically
+    # by the lines above whether or not there is a file to read.
+    checkpoint_path = None if checkpoint is None else Path(checkpoint)
+    start_step = 0
+    if checkpoint_path is not None and resume and checkpoint_path.is_file():
+        saved = load_checkpoint(checkpoint_path)
+        saved.require_compatible(steps=steps, seed=seed, config_hash=cfg.content_hash())
+        load_into(
+            saved,
+            model=model,
+            optimiser=optimiser,
+            scheduler=scheduler,
+            average=average,
+            teacher=sefl_teacher,
+            sefl_gen=sefl_gen,
+        )
+        history = TrainHistory(**saved.history)
+        start_step = saved.step
+
+    def write_checkpoint(next_step: int) -> None:
+        """Save the loop's cross-step state, with ``next_step`` as the step to resume at."""
+        if checkpoint_path is None:
+            return
+        save_checkpoint(
+            checkpoint_path,
+            capture(
+                step=next_step,
+                steps=steps,
+                seed=seed,
+                config_hash=cfg.content_hash(),
+                model=model,
+                optimiser=optimiser,
+                scheduler=scheduler,
+                average=average,
+                teacher=sefl_teacher,
+                sefl_gen=sefl_gen,
+                history=history,
+            ),
+        )
+
     model.train()
-    for step in range(steps):
+    for step in range(start_step, steps):
         model.embeddings.set_progress(step / max(steps - 1, 1))
         hidden = None if schedule is None else schedule.hidden_section(step)
         batch = data.sample_batch(
@@ -1160,7 +1234,17 @@ def train_ctfflow(
                     and step >= int(cfg.sefl_collapse_min_steps)
                 ),
             )
+        if (step + 1) % int(cfg.checkpoint_every_n_steps) == 0:
+            write_checkpoint(step + 1)
     model.eval()
+    # The final write is what makes a re-run of a finished fit a no-op rather than a repeat:
+    # `start_step == steps` leaves the loop empty and returns the restored history.
+    write_checkpoint(steps)
+    if not history.total:  # pragma: no cover - only reachable on a zero-length resume
+        raise ValueError(
+            f"train_ctfflow: resumed at step {start_step} of {steps} with an empty history; "
+            "the checkpoint was written by a run that recorded nothing."
+        )
     if not np.isfinite(history.total[-1]):
         warnings.warn(
             f"train_ctfflow: the final total loss is {history.total[-1]}; the run diverged. "

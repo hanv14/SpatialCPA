@@ -5,9 +5,9 @@ three pieces, in the order they run:
 
 1. a per-type intensity field ``lambda_c(x, y, z)`` in cells per micrometre^3, fitted by
    the inhomogeneous-Poisson-process negative log-likelihood (:mod:`.losses.reconstruction`);
-2. positions drawn from ``sum_c lambda_c`` by rejection sampling and then thinned by a
-   hard-core / soft-repulsion interaction, so no two cells overlap and local spacing looks
-   like tissue;
+2. positions drawn from ``sum_c lambda_c`` (see "Two position samplers" below) and then
+   thinned by a hard-core / soft-repulsion interaction, so no two cells overlap and local
+   spacing looks like tissue;
 3. marks drawn from ``lambda_c(p) / sum_c lambda_c(p)`` and smoothed by a few rounds of
    Potts updates on the kNN graph, so types form patches instead of salt-and-pepper noise.
 
@@ -38,6 +38,31 @@ in-plane ``g(r)`` — sampling positions through the slab would make the generat
 ``g(r)`` a projection of a 3-D process and the fitted parameters would no longer describe
 it. Recorded in ``progress/t05_layout_head.md`` as a T05 decision.
 
+Two position samplers, and why the default changed
+--------------------------------------------------
+``Config.layout_sampler`` chooses between them; ``resample`` draws no positions and ignores
+it.
+
+``"grid"`` (the default) is ``reports/r11_fix_options.md``'s **option D**. The total
+intensity is evaluated once per cell of a grid over the mid-plane window, a cell is drawn
+with probability proportional to ``lambda * cell_area``, and the point is jittered uniformly
+inside it. There is no envelope, no acceptance ratio and no proposal budget; the only
+approximation is the grid's own resolution (``Config.layout_grid_cells``), which is a
+midpoint rule with an ``O(h^2)`` error and a convergence check, and every cell has a
+**closed-form expected count** — which is what makes the sampler testable against an
+analytic intensity with no fit and no data.
+
+``"rejection"`` is the original sampler and is kept selectable so the two can be compared on
+the same fit. It is **known to be biased**, not merely inefficient: ``reports/r11_envelope.md``
+measured its envelope — the maximum of ``sum_c lambda_c`` over a ``layout_n_mc`` sample of the
+mid-plane, times ``layout_envelope_slack`` — as a *sampled* maximum with a 140-853x spread
+across sections, while the acceptance ratio ``lambda / envelope`` is never clamped. Wherever
+the true intensity exceeds the sampled maximum the ratio passes 1 and the point is accepted
+with certainty, so the realised draw is from ``min(lambda, envelope)``: the peaks are
+flattened and the pattern is wrong in shape, not just short of points. Every ``field`` /
+``hybrid`` number measured before the grid sampler existed came from it, including T05's
+acceptance tests and T09's ``layout_mode`` gate, and all of them need re-measuring.
+
 Conditional on N (SPEC_QUESTIONS B7)
 ------------------------------------
 ``N ~ Poisson(N_expected)`` is drawn first and the interaction then thins *proposals* until
@@ -49,6 +74,13 @@ proposal budget (``Config.layout_max_proposal_factor``) exists so an inconsisten
 (:class:`ProposalBudgetWarning`) and the returned layout says so in
 ``Layout.budget_exhausted``. Under pytest the warning is an error, so no test can quietly
 measure a truncated sample.
+
+This survives the sampler change unaltered, because the budget belongs to the *interaction*
+and not to the intensity. Under ``"grid"`` with ``Config.repulsion=False`` there is nothing
+to thin, one multinomial draw of ``N`` indices places all ``N`` points, and the budget is
+never consulted; with the repulsion on, candidates are drawn from the grid in batches and
+thinned exactly as before. What disappears is the *intensity* rejection — the part that was
+biased — and with it the envelope that made acceptance 0.12% on ``section_4``.
 """
 
 from __future__ import annotations
@@ -92,6 +124,7 @@ __all__ = [
     "fourier_bands_for_lengthscale",
     "intensity_fn_from_head",
     "mean_cell_density",
+    "mid_plane_grid",
     "pair_correlation",
     "potts_beta_grid",
     "potts_smooth",
@@ -820,9 +853,10 @@ def sample_layout(
     plane
         The plane, carrying the slab thickness the count is integrated over.
     cfg
-        Supplies ``layout_mode``, ``layout_n_mc``, ``layout_envelope_slack``,
-        ``layout_max_proposal_factor``, ``layout_proposal_batch``, ``repulsion``,
-        ``potts_*``, ``swd_*`` and ``debug_shapes``.
+        Supplies ``layout_mode``, ``layout_sampler``, ``layout_n_mc``, ``layout_grid_cells``,
+        ``layout_envelope_slack``, ``layout_max_proposal_factor``, ``layout_proposal_batch``,
+        ``repulsion``, ``potts_*``, ``swd_*`` and ``debug_shapes``. ``layout_envelope_slack``
+        and ``layout_n_mc``'s second use are read only by ``layout_sampler="rejection"``.
     seed
         Every draw derives from it; two calls with the same seed are bitwise identical.
     repulsion
@@ -836,8 +870,9 @@ def sample_layout(
     Notes
     -----
     ``"field"`` draws ``N ~ Poisson(N_expected)`` from the slab integral, places the points
-    by rejection sampling against ``sum_c lambda_c`` thinned by the interaction, then draws
-    and smooths the marks. ``"hybrid"`` adds a sliced-Wasserstein polish of the positions
+    from ``sum_c lambda_c`` by ``Config.layout_sampler`` (see the module docstring's "Two
+    position samplers") thinned by the interaction, then draws and smooths the marks.
+    ``"hybrid"`` adds a sliced-Wasserstein polish of the positions
     toward the union of the flanking coordinate marginals **before** the marks are drawn, so
     every mark is drawn at the position its cell ends up at. ``"resample"`` reuses the
     nearest flanking section's coordinates and types unchanged: the previous version's
@@ -860,20 +895,26 @@ def sample_layout(
     n_expected = expected_count(lam_mc, plane.slab_volume)
     n_target = int(gen.poisson(n_expected))
 
-    envelope_uv = uniform_plane_points(plane, int(cfg.layout_n_mc), gen)
-    lam_envelope = _check_intensity(
-        intensity_fn(plane.to_xyz(envelope_uv)), envelope_uv.shape[0], "the mid-plane MC sample"
-    )
-    envelope = float(lam_envelope.sum(axis=1).max()) * float(cfg.layout_envelope_slack)
-    if not envelope > 0:
-        raise LayoutError(
-            "sample_layout: the total intensity is zero everywhere on the mid-plane MC "
-            "sample, so there is nothing to sample from."
+    if cfg.layout_sampler == "grid":
+        uv, n_proposals, exhausted = _propose_points_grid(
+            intensity_fn, plane, cfg, gen, n_target, interaction
         )
-
-    uv, n_proposals, exhausted = _propose_points(
-        intensity_fn, plane, cfg, gen, n_target, envelope, interaction
-    )
+    else:
+        envelope_uv = uniform_plane_points(plane, int(cfg.layout_n_mc), gen)
+        lam_envelope = _check_intensity(
+            intensity_fn(plane.to_xyz(envelope_uv)),
+            envelope_uv.shape[0],
+            "the mid-plane MC sample",
+        )
+        envelope = float(lam_envelope.sum(axis=1).max()) * float(cfg.layout_envelope_slack)
+        if not envelope > 0:
+            raise LayoutError(
+                "sample_layout: the total intensity is zero everywhere on the mid-plane MC "
+                "sample, so there is nothing to sample from."
+            )
+        uv, n_proposals, exhausted = _propose_points(
+            intensity_fn, plane, cfg, gen, n_target, envelope, interaction
+        )
     if exhausted:
         warnings.warn(
             f"sample_layout: placed {uv.shape[0]} of {n_target} points in "
@@ -1006,6 +1047,135 @@ def _propose_points(
                 break
 
     return accepted[:n_accepted], n_proposals, n_accepted < n_target
+
+
+def mid_plane_grid(plane: Plane, cfg: Config) -> tuple[FloatArray, FloatArray]:
+    """Return the grid sampler's cell centres and cell size.
+
+    Returns ``(centres, cell)`` with ``centres`` ``(K, 2)`` float64 in-plane micrometres and
+    ``cell`` ``(2,)`` float64 the cell's width along ``e1`` and ``e2``. The cells tile the
+    plane's window exactly: ``K = n_u * n_v`` and ``n * cell == 2 * half_extent``.
+
+    ``Config.layout_grid_cells`` fixes the count along the **longer** axis and the shorter
+    axis gets the count that keeps a cell near-square, so the resolution means the same thing
+    in micrometres in both directions. A square window therefore gets a square grid, and an
+    elongated one does not get cells stretched along its long axis — which would put the
+    midpoint rule's error somewhere the config never named.
+
+    Public because the convergence check and the closed-form per-cell expected count that
+    validate the sampler are stated in terms of this grid, and a test that rebuilt it would be
+    testing its own copy.
+    """
+    extent = np.asarray(plane.half_extent, dtype=np.float64)
+    side = 2.0 * extent
+    requested = int(cfg.layout_grid_cells)
+    counts = np.maximum(np.rint(side / float(side.max()) * requested), 1.0)
+    cell = side / counts
+    axes = [
+        -extent[axis] + (np.arange(int(counts[axis]), dtype=np.float64) + 0.5) * cell[axis]
+        for axis in (0, 1)
+    ]
+    centres = np.stack(np.meshgrid(axes[0], axes[1], indexing="ij"), axis=-1).reshape(-1, 2)
+    if cfg.debug_shapes:
+        assert centres.shape == (int(counts[0]) * int(counts[1]), 2), centres.shape
+        assert cell.shape == (2,), cell.shape
+    return np.asarray(centres, dtype=np.float64), np.asarray(cell, dtype=np.float64)
+
+
+def _propose_points_grid(
+    intensity_fn: IntensityFn,
+    plane: Plane,
+    cfg: Config,
+    gen: np.random.Generator,
+    n_target: int,
+    repulsion: RepulsionParams | None,
+) -> tuple[FloatArray, int, bool]:
+    """Place ``n_target`` points by grid-multinomial sampling, thinned by the interaction.
+
+    Returns ``(uv, n_proposals, budget_exhausted)`` with ``uv`` ``(n, 2)`` float64 and
+    ``n <= n_target``, the same contract as :func:`_propose_points`.
+
+    The method, in three lines: evaluate ``sum_c lambda_c`` once at each cell centre of
+    :func:`mid_plane_grid`; draw cell indices with probability ``lambda_k / sum_k lambda_k``
+    (the cells have equal area, so the area cancels out of the normalisation and the weights
+    are the intensities themselves); jitter uniformly inside the drawn cell. That is an exact
+    draw from the piecewise-constant intensity the midpoint rule defines, so the expected
+    number of points in cell ``k`` is exactly ``n_target * lambda_k / sum_k lambda_k`` — the
+    property :func:`_propose_points`'s envelope could never state, and the one the sampler's
+    validation test asserts against a closed-form intensity.
+
+    Why there is still a loop. With no interaction one multinomial draw of ``n_target``
+    indices places every point and the loop runs once; the batching exists only for the
+    repulsion, whose acceptance test is sequential over the candidates because whether a point
+    is accepted depends on the points accepted before it. The proposal budget is therefore the
+    interaction's, not the intensity's: it can only be exhausted by an ``r0`` inconsistent
+    with the requested density, which is exactly what :class:`ProposalBudgetWarning` says.
+    """
+    if n_target == 0:
+        return np.empty((0, 2), dtype=np.float64), 0, False
+
+    centres, cell = mid_plane_grid(plane, cfg)
+    lam_total = _check_intensity(
+        intensity_fn(plane.to_xyz(centres)), centres.shape[0], "the sampler grid"
+    ).sum(axis=1)
+    weight = float(lam_total.sum())
+    if not weight > 0:
+        raise LayoutError(
+            "sample_layout: the total intensity is zero at every cell centre of the "
+            f"{centres.shape[0]}-cell sampler grid, so there is nothing to sample from. Raise "
+            "Config.layout_grid_cells if the intensity is supported on less than one cell."
+        )
+    probability = lam_total / weight
+
+    if repulsion is None:
+        # Nothing to thin, so one draw places every point and no budget is consulted. This is
+        # the branch with the exact expected count per cell.
+        uv = _draw_from_grid(centres, cell, probability, gen, n_target)
+        return uv, n_target, False
+
+    accepted = np.empty((n_target, 2), dtype=np.float64)
+    n_accepted = 0
+    n_proposals = 0
+    budget = int(cfg.layout_max_proposal_factor) * n_target
+    batch_size = int(cfg.layout_proposal_batch)
+    while n_accepted < n_target and n_proposals < budget:
+        batch = min(batch_size, budget - n_proposals)
+        uv = _draw_from_grid(centres, cell, probability, gen, batch)
+        u_repulsion = gen.random(batch)
+        n_proposals += batch
+        for i in range(batch):
+            if n_accepted > 0:
+                distances = np.linalg.norm(accepted[:n_accepted] - uv[i][None, :], axis=1)
+                if math.log(max(float(u_repulsion[i]), 1e-300)) >= repulsion.log_acceptance(
+                    distances
+                ):
+                    continue
+            accepted[n_accepted] = uv[i]
+            n_accepted += 1
+            if n_accepted == n_target:
+                break
+
+    return accepted[:n_accepted], n_proposals, n_accepted < n_target
+
+
+def _draw_from_grid(
+    centres: FloatArray,
+    cell: FloatArray,
+    probability: FloatArray,
+    gen: np.random.Generator,
+    n: int,
+) -> FloatArray:
+    """``n`` points drawn from the discretised intensity. ``(n, 2)`` float64 in-plane um.
+
+    One cell index per point from ``probability`` (inverse-CDF, so the draw is exactly
+    multinomial), then a uniform jitter inside the drawn cell. The points come back in draw
+    order rather than grouped by cell, which matters downstream: a Poisson process's points are
+    exchangeable, and handing a spatially sorted list to the Potts smoothing's sweep would make
+    the marks depend on the grid's traversal.
+    """
+    drawn = gen.choice(centres.shape[0], size=int(n), p=probability)
+    jitter = gen.uniform(-0.5, 0.5, size=(int(n), 2)) * cell[None, :]
+    return np.asarray(centres[drawn] + jitter, dtype=np.float64)
 
 
 def _flanking_targets(

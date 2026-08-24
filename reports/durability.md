@@ -37,6 +37,15 @@ never finish inside a window never finishes at all. A 220 CPU-hour campaign cann
 
 ## Options, in the order I would do them
 
+> **Outcome (2026-08-24): option 1 is implemented.** `train_ctfflow(checkpoint=..., resume=...)`
+> plus `spatialcpav25_gen/train/checkpoint.py` and `Config.checkpoint_every_n_steps`. The acceptance
+> test is the one named below — a run interrupted at step 6 and resumed from step 4 is **bitwise
+> identical** to an uninterrupted one, asserted over every parameter, every buffer and the whole
+> history (`tests/test_checkpoint.py`). T07's in-place SEFL `numpy` generator is in the payload;
+> it is the piece a naive checkpoint omits. The bench3 wrapper writes one beside each unit's
+> `prediction.h5` (`--no-fit-checkpoint` opts out), so option 4 holds: no second resume protocol,
+> just `--skip-existing` plus this. `progress/durability_checkpointing.md`.
+
 **1. Checkpoint the fit (the missing piece).** `train_ctfflow` writes `{step, state_dict,
 optimizer_state, generator_state}` every `N` steps to a configurable path, and takes a resume path
 that reloads all four. Cost: moderate, on the order of 100 lines plus a `Config` field.

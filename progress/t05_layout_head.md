@@ -173,3 +173,97 @@ from the matrix for this task.
 
 **Both gates re-run after the change** (`pytest tests/ -m gate`): unchanged — GATE 1 and GATE 2 pass
 exactly as at T03/T04. T05 adds `Config` fields and three modules but touches no existing code path.
+
+---
+
+### T05 addendum — the grid-multinomial position sampler (2026-08-24)
+
+`reports/r11_fix_options.md`'s **option D**, implemented. The rejection sampler is kept, selectable
+at `Config.layout_sampler="rejection"`, and is no longer the default.
+
+**Why.** `reports/r11_envelope.md` established that the rejection sampler's envelope — the maximum
+of `sum_c lambda_c` over a `layout_n_mc` sample of the mid-plane, times `layout_envelope_slack` — is
+a *sampled* maximum with a 140-853x spread across sections, and that the acceptance ratio
+`lambda / envelope` is never clamped. Where the true intensity exceeds the sampled maximum the ratio
+passes 1 and the point is accepted with certainty, so the realised draw is from
+`min(lambda, envelope)`. That is a **biased** point pattern, not merely a starved one. Option A (an
+analytic Lipschitz bound) was costed and rejected on measurement: `L = 74.69` gives a bound 7-82x
+above the true supremum, which would convert the bias into universal starvation.
+
+**What was built.**
+
+| | |
+|---|---|
+| `mid_plane_grid(plane, cfg)` | the sampler's cell centres `(K, 2)` and cell size `(2,)`. Public, because the convergence check and the per-cell expected count are stated in terms of it |
+| `_propose_points_grid` | evaluate `sum_c lambda_c` once per cell centre, draw cell indices with probability proportional to it, jitter uniformly inside the drawn cell |
+| `Config.layout_sampler` | `"grid"` (new default) / `"rejection"`, in `LAYOUT_SAMPLERS` |
+| `Config.layout_grid_cells` | 128 along the window's longer axis; the shorter axis gets the count that keeps a cell near-square |
+| `tests/test_layout_sampler.py` | 16 tests, **no fit and no data** |
+
+There is no envelope, no acceptance ratio and no proposal budget on the intensity. The only
+approximation left is the grid's own resolution — a midpoint rule with an `O(h^2)` error and a
+convergence check, rather than a sampled maximum. With `Config.repulsion=False` one multinomial draw
+of `N` indices places all `N` points; with the repulsion on, candidates are drawn from the grid in
+batches and thinned by the same sequential Strauss test as before, against the same
+`layout_max_proposal_factor` budget and the same `ProposalBudgetWarning`. The interaction is the
+only thing that budget can now be exhausted by, which is what its warning always claimed.
+
+**The validation the sampler never had.** `sample_layout` takes an `intensity_fn`, not a model, so
+the whole sampler can be validated against a closed-form intensity. `tests/test_layout_sampler.py`
+hands it a sum of Gaussian bumps on a floor, whose integral over any axis-aligned rectangle is a
+product of two `erf` differences — so every expected count asserted is exact arithmetic, not a
+second Monte-Carlo estimate.
+
+| Test | Criterion | Measured |
+|---|---|---|
+| `test_the_regime_is_the_one_that_broke_the_sampler` | max/mean in the hundreds | **235** |
+| `test_grid_total_density_is_correct` | slab integral within 5 % of exact; `N` within 5σ; every point placed | **0.6 %**; within 5σ; `n_cells == n_proposals` |
+| `test_grid_spatial_density_is_correct` | every reference bin inside `0.06 * expected + 4 sqrt(expected)` | worst bin **0.28** tolerances |
+| `test_grid_per_type_mix_is_correct` | global mix within 0.01 of the exact per-type shares; per-bump composition within 0.03 | passes at 3 bumps |
+| `test_grid_converges_with_resolution` | in tolerance at 32 / 64 / 128 / 256 cells | passes at all four |
+| `test_grid_error_falls_as_h_squared` | halving `h` at least halves the quadrature error | passes; **< 1e-3** at 256 |
+
+The reference grid is 12x12 and deliberately not a divisor of `layout_grid_cells`: a reference grid
+aligned to the sampler's own would integrate over exactly the cells carrying a systematic
+within-cell error and hide it.
+
+**The negative control, because a test both samplers pass measures nothing.** Three of the file's
+tests assert the retained rejection sampler is *wrong* on the same closed-form intensity.
+
+* `test_the_envelope_is_a_sampled_maximum` — with no sampling at all, the envelope rebuilt at eight
+  seeds spans **9.3x** and its smallest value is **below half** the true supremum. `r11`'s defect 3,
+  reproduced with no fit and no data.
+* `test_rejection_sampler_starves_on_the_bump_field` — acceptance is `mean / envelope`, so at a
+  max/mean of 235 the budget of `20 N` proposals places **under 1 %** of what it draws and the
+  layout comes back truncated.
+* `test_rejection_sampler_fails_the_same_criterion` — on a needle intensity (`sigma = 3 µm`, whose
+  peaks a default `layout_n_mc = 4096` sample misses entirely) the share of points landing on the
+  bumps spans **most of the unit interval across three seeds** and misses the exact value by more
+  than 0.3, while the grid sampler holds the same quantity to **0.02** on the same three seeds.
+
+**T05's own acceptance tests, re-measured.** All still pass. The numbers move, and the recorded ones
+were the biased sampler's; both are now in the test docstrings, and the rejection column is
+reproducible today with `layout_sampler="rejection"`.
+
+| | rejection (recorded) | grid (now) |
+|---|---|---|
+| generated / ideal, mean | 0.7128 / 0.7178 = **99.4 %** | 0.7075 / 0.7235 = **97.8 %** |
+| generated / ideal, per section | 1.110 / 0.910 / 0.954 | 1.046 / 0.949 / 0.945 |
+| generated / flanking, per section | 1.654 / 1.154 / 1.246 | 1.491 / 1.514 / 1.059 |
+| generated / self, mean (the superseded criterion, strict xfail) | 0.776 | 0.769 |
+| ideal / self, mean | 0.779 | 0.785 |
+
+Both arms move because the `ideal` arm is drawn by the same sampler as the `generated` one, which is
+what keeps the comparison fair. `resample` is untouched: it reuses a flanking section's coordinates
+and never calls a position sampler.
+
+**What this does not do.** A correct sampler removes a bias; it does not supply a better intensity
+field. R11's finding stands until re-measured: on tier-1 STARmap, `field` scored 0.4252 on
+`celltype_localization` against `resample`'s 0.7008 and a model-free floor of 0.7765. **The
+`layout_mode` decision waits for the three modes to be re-measured on STARmap with this sampler**,
+and that fit does not run in this container.
+
+**Cost.** One intensity evaluation per grid cell per section — 16384 at the default, against the
+4096 the envelope alone used to spend plus up to `20 N` proposals. On the T05 fixture the whole of
+`sample_layout` goes 0.36 s (rejection) to 0.76 s (grid), because the fixture's intensity is a GRF
+lookup; on a trained `IntensityHead` the grid is one batched MLP forward.

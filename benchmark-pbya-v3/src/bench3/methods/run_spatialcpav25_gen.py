@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -262,6 +263,23 @@ def build_embeddings(cfg, volume):
 
 # ── run ───────────────────────────────────────────────────────────────────────
 
+def fit_checkpoint_path(args):
+    """Where this unit's fit checkpoint lives, or ``None`` if checkpointing is off.
+
+    Beside the unit's own ``prediction.h5``, named for the seed, so it is scoped exactly the
+    way ``run_all --skip-existing`` scopes a unit and two arms of the same dataset cannot
+    collide. ``reports/durability.md``: the campaign driver already resumes at the unit level
+    and the fit inside a unit did not, which is the whole of the gap this closes.
+
+    Never committed and never inherited: a stale file from a different config, seed or step
+    budget raises inside ``train_ctfflow`` rather than being continued.
+    """
+    if getattr(args, "no_fit_checkpoint", False):
+        return None
+    return os.path.join(os.path.dirname(os.path.abspath(args.output)) or ".",
+                        f"fit_seed{args.seed}.pt")
+
+
 def run_method(adata, targets, args, cfg, volume):
     from spatialcpav25_gen.infer.generate import generate_section, plane_at_z
     from spatialcpav25_gen.model.layout import fit_repulsion
@@ -269,8 +287,13 @@ def run_method(adata, targets, args, cfg, volume):
 
     data = TrainingData.build(volume, cfg)
     model = CTFFlow(cfg, data, build_embeddings(cfg, volume), grf_seed=args.seed)
+    checkpoint = fit_checkpoint_path(args)
+    if checkpoint is not None:
+        print(f"  fit checkpoint: {checkpoint} "
+              f"(every {int(cfg.checkpoint_every_n_steps)} steps)")
     t0 = time.time()
-    train_ctfflow(model, cfg, steps=int(cfg.train_steps), seed=args.seed)
+    train_ctfflow(model, cfg, steps=int(cfg.train_steps), seed=args.seed,
+                  checkpoint=checkpoint)
     if cfg.repulsion:
         model.repulsion = fit_repulsion(volume, cfg, seed=args.seed + 1)
     print(f"  fit: {int(cfg.train_steps)} steps in {time.time() - t0:.1f}s")
@@ -322,6 +345,9 @@ def main() -> int:
     p.add_argument("--layout-mode", default=None, choices=["field", "hybrid", "resample"])
     p.add_argument("--expr-mode", default=None, choices=["zinb-flow", "cross-mix", "auto-blend"])
     p.add_argument("--train-steps", type=int, default=None)
+    # Not a tuning flag: it selects whether the fit is resumable, never what it computes.
+    p.add_argument("--no-fit-checkpoint", action="store_true",
+                   help="do not write a resumable fit checkpoint beside the prediction")
     args = p.parse_args()
 
     if not check_environment():

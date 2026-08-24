@@ -864,13 +864,20 @@ def test_localization_within_10_percent_of_ideal(localization):
     The ``ideal`` arm samples positions and marks from the fixture's **own** generative
     composition, so it is an independent draw from the process that produced the held-out
     section — the best any intensity head could do. The layout head, running on a *smoothed*
-    stand-in intensity, reaches **99.4%** of it (0.7128 against 0.7178, averaged over the
+    stand-in intensity, reaches **97.8%** of it (0.7075 against 0.7235, averaged over the
     three held-out sections).
 
     Stated on the mean over held-out sections, not per section: the metric normalises each
     type by its divergence to a within-tissue null, and that null collapses for an abundant
     tissue-wide type, so a single section's score carries large variance (per section here:
-    1.110 / 0.910 / 0.954). See ``specs/05``, "Why the criterion is a LOSO mean".
+    1.046 / 0.949 / 0.945). See ``specs/05``, "Why the criterion is a LOSO mean".
+
+    **Re-measured on the grid sampler** (``Config.layout_sampler="grid"``, the default since
+    ``reports/r11_fix_options.md``'s option D landed). The numbers this docstring used to
+    carry — 99.4%, 0.7128 against 0.7178, per section 1.110 / 0.910 / 0.954 — were the
+    rejection sampler's, and that sampler is biased; they are reproducible today by passing
+    ``layout_sampler="rejection"``. Both arms move, because the ``ideal`` arm is drawn by the
+    same sampler as the ``generated`` one, which is what keeps the comparison fair.
     """
     generated = float(np.mean(localization["generated"]))
     ideal = float(np.mean(localization["ideal"]))
@@ -882,9 +889,10 @@ def test_localization_beats_the_real_data_baseline(localization):
 
     There is no ideal draw on real data — no known generative law — so T10 reports against
     the flanking baseline instead, which is exactly what ``layout_mode="resample"`` (the
-    previous version) produces. Measured per held-out section, generated / flanking =
-    1.654 / 1.154 / 1.246: better than the real-data alternative everywhere, rather than
-    within 10% of it.
+    previous version) produces. Measured per held-out section on the grid sampler, generated
+    / flanking = 1.491 / 1.514 / 1.059: better than the real-data alternative everywhere,
+    rather than within 10% of it. (On the biased rejection sampler the same three were
+    1.654 / 1.154 / 1.246.)
     """
     for generated, flanking in zip(
         localization["generated"], localization["flanking"], strict=True
@@ -896,13 +904,15 @@ def test_localization_beats_the_real_data_baseline(localization):
     strict=True,
     reason=(
         "T05's ORIGINAL definition of done, read as 'within 10% of the held-out section's "
-        "own score', FAILS: 0.776 of it on average (0.909 / 0.613 / 0.806 per section). An "
-        "independent draw from the fixture's true generative law reaches only 0.779, i.e. "
+        "own score', FAILS: 0.769 of it on average (0.819 / 0.804 / 0.684 per section). An "
+        "independent draw from the fixture's true generative law reaches only 0.785, i.e. "
         "the criterion asks the layout head to beat the process that produced the data, so "
         "specs/05 was amended to state it against that ideal draw instead (accepted "
         "2026-08-16, SPEC_QUESTIONS B15). Kept as a strict xfail because the shortfall "
         "against the real section is a real number about the layout head and belongs in the "
-        "record: if a later task ever closes it, this fails and the record gets updated."
+        "record: if a later task ever closes it, this fails and the record gets updated. "
+        "Re-measured on the grid sampler (2026-08-24); the rejection sampler's numbers were "
+        "0.776 (0.909 / 0.613 / 0.806) against an ideal draw of 0.779."
     ),
 )
 def test_localization_within_10_percent_of_heldout_self_score(localization):

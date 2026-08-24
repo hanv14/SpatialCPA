@@ -30,6 +30,7 @@ __all__ = [
     "GRANULARITIES",
     "HOLDOUT_MODES",
     "LAYOUT_MODES",
+    "LAYOUT_SAMPLERS",
     "METRIC_DISTRIBUTION_KINDS",
     "MU_LINKS",
     "POTTS_UPDATES",
@@ -48,6 +49,7 @@ __all__ = [
 # --------------------------------------------------------------------------------------
 
 LAYOUT_MODES: Final[frozenset[str]] = frozenset({"field", "hybrid", "resample"})
+LAYOUT_SAMPLERS: Final[frozenset[str]] = frozenset({"grid", "rejection"})
 SUMMARY_FALLBACKS: Final[frozenset[str]] = frozenset({"none", "ortholog"})
 MU_LINKS: Final[frozenset[str]] = frozenset({"exp", "softplus"})
 ROTATION_BIASES: Final[frozenset[str]] = frozenset({"uniform", "axial"})
@@ -534,6 +536,25 @@ class Config:
     """One of ``LAYOUT_MODES``. ``resample`` reuses real flanking coordinates and is the
     previous version's behaviour, kept as the no-regression fallback."""
 
+    layout_sampler: str = "grid"
+    """One of ``LAYOUT_SAMPLERS``. How ``field`` and ``hybrid`` place points; ``resample``
+    never draws positions and ignores this.
+
+    ``grid`` is ``reports/r11_fix_options.md``'s option D: discretise the total intensity
+    onto a grid over the mid-plane window, draw cell indices multinomially with probability
+    proportional to ``lambda * cell_area``, and jitter uniformly inside the chosen cell.
+    There is no envelope, no acceptance ratio and no proposal budget, so the only
+    approximation left is the grid's own resolution — a tunable with a convergence check
+    (``layout_grid_cells``) rather than a sampled maximum.
+
+    ``rejection`` is the original sampler, kept selectable so the two can be compared, and
+    **known to be biased**: ``reports/r11_envelope.md`` measured its envelope as a sampled
+    maximum over ``layout_n_mc`` points with a 140-853x spread over the true supremum's
+    neighbourhood, and acceptance is unclamped, so it draws from ``min(lambda, envelope)``
+    rather than from ``lambda``. Every ``field`` / ``hybrid`` number measured before the grid
+    sampler existed was produced by it. The default is ``grid`` because a sampler that is
+    merely cheap is not a reason to prefer a sampler that is wrong."""
+
     potts_beta: float = 0.5
     """Potts coupling for cell-type mark smoothing. Fitted by ``fit_potts_beta``; this is
     only the starting value."""
@@ -543,6 +564,16 @@ class Config:
 
     layout_n_mc: int = 4096
     """Monte Carlo points for the slab-volume intensity integral."""
+
+    layout_grid_cells: int = 128
+    """Cells along the mid-plane window's **longer** in-plane axis under
+    ``layout_sampler="grid"``; the shorter axis gets the count that keeps a cell near-square,
+    at least one. The grid is a midpoint rule for the per-cell intensity integral, so its
+    error is ``O(h^2)`` in the cell size and falls as this rises — 128 puts several cells
+    across a feature at the fitted ``ell_xy`` on the plane sizes T05 works at, and
+    ``tests/test_layout.py``'s convergence check is what says whether that is enough on a
+    given intensity. It costs one intensity evaluation per cell, once per section, which is
+    less than the ``layout_n_mc`` the envelope alone used to spend."""
 
     potts_knn_k: int = 8
     """Neighbours in the kNN graph used by the Potts smoothing."""
@@ -1579,6 +1610,14 @@ class Config:
     collapse alarm watches. Logging every step doubles the cost of a cheap step for a
     trajectory nobody reads at that resolution."""
 
+    checkpoint_every_n_steps: int = 50
+    """Optimiser steps between fit checkpoints, when ``train_ctfflow`` is given a path to
+    write one to. A checkpoint costs one serialisation of the model, the optimiser and T07's
+    teacher, so the value trades write cost against the work a rebuilt container throws away:
+    at ``reports/durability.md``'s measured fit rate this is a couple of minutes of exposure
+    on a 2400-step fit and under a second of writing. Nothing is checkpointed at all unless a
+    path is passed, so this field is inert on a run that does not ask for it."""
+
     # ----------------------------------------------------------------------------------
     # construction / serialisation
     # ----------------------------------------------------------------------------------
@@ -1667,6 +1706,7 @@ class Config:
         choices: list[tuple[str, str, frozenset[str]]] = [
             ("device", self.device, DEVICES),
             ("layout_mode", self.layout_mode, LAYOUT_MODES),
+            ("layout_sampler", self.layout_sampler, LAYOUT_SAMPLERS),
             ("prior_mode", self.prior_mode, PRIOR_MODES),
             ("expr_mode", self.expr_mode, EXPR_MODES),
             ("text_emb_mode", self.text_emb_mode, TEXT_EMB_MODES),
@@ -1742,6 +1782,7 @@ class Config:
             "potts_iters": self.potts_iters,
             "potts_knn_k": self.potts_knn_k,
             "layout_n_mc": self.layout_n_mc,
+            "layout_grid_cells": self.layout_grid_cells,
             "layout_max_proposal_factor": self.layout_max_proposal_factor,
             "swd_polish_steps": self.swd_polish_steps,
             "layout_mlp_hidden": self.layout_mlp_hidden,
@@ -1800,6 +1841,7 @@ class Config:
             "intensity_basis_ell_multiple": self.intensity_basis_ell_multiple,
             "grad_clip": self.grad_clip,
             "log_every": self.log_every,
+            "checkpoint_every_n_steps": self.checkpoint_every_n_steps,
             "profile_n_bins": self.profile_n_bins,
             "profile_grid_size": self.profile_grid_size,
             "profile_sigma_frac": self.profile_sigma_frac,

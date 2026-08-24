@@ -15,3 +15,9 @@ results_v15/
 # Pilot / campaign run artifacts: results, logs, and per-dataset selections.
 # A persisted selection is a measurement of a machine, not source.
 runs/
+
+# Fit checkpoints (`train_ctfflow(checkpoint=...)`). 49 MB each, no LFS, and Convention 3
+# makes them regenerable from the seed — `reports/durability.md`: preserve the measurement,
+# regenerate the model. `runs/` already covers the campaign's; this covers the rest.
+*.pt
+*.pt.tmp
