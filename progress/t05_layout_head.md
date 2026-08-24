@@ -267,3 +267,20 @@ and that fit does not run in this container.
 4096 the envelope alone used to spend plus up to `20 N` proposals. On the T05 fixture the whole of
 `sample_layout` goes 0.36 s (rejection) to 0.76 s (grid), because the fixture's intensity is a GRF
 lookup; on a trained `IntensityHead` the grid is one batched MLP forward.
+
+**Both gates re-run after the change.** GATE 1 **PASSES**, every criterion value identical to the
+recorded run (error ratio 0.130, r 0.917, smallest step +0.028, unimodality 0.000); only the
+timestamp and the machine-dependent throughput move. GATE 2 **PASSES**, all criteria identical to
+6 significant figures — G2.1a **0.9547**, G2.1b edge-excluded **0.9795**, z-interpolation 1.097,
+`w_z` +0.030 / +0.049 against +0.003, entropy unchanged.
+
+One **diagnostic** moved and is not this change: `G2.1h-c`, the mutation check that querying
+retrieval in the model frame perturbs the neighbour sets, reads **63.97** against the recorded
+**40.28** (threshold `> 0`; 2K = 64, so the new value says the two sets are fully disjoint — a
+stronger signal that the channel is wired, not a weaker one). It was attributed rather than
+assumed: the measurement was reproduced in isolation, without a trained probe, and gives
+**63.9697 at this commit and 63.9697 at its parent** on this machine. The recorded 40.28 was
+generated on macOS / arm / Python 3.12 and this container is Linux / x86 / Python 3.11; a symmetric
+set difference over a kNN ranking is exactly the discrete quantity a cross-platform float
+difference can move while every continuous criterion agrees to six digits. Nothing in this change
+touches `model/retrieval.py`.
