@@ -274,13 +274,51 @@ timestamp and the machine-dependent throughput move. GATE 2 **PASSES**, all crit
 6 significant figures — G2.1a **0.9547**, G2.1b edge-excluded **0.9795**, z-interpolation 1.097,
 `w_z` +0.030 / +0.049 against +0.003, entropy unchanged.
 
-One **diagnostic** moved and is not this change: `G2.1h-c`, the mutation check that querying
-retrieval in the model frame perturbs the neighbour sets, reads **63.97** against the recorded
-**40.28** (threshold `> 0`; 2K = 64, so the new value says the two sets are fully disjoint — a
-stronger signal that the channel is wired, not a weaker one). It was attributed rather than
-assumed: the measurement was reproduced in isolation, without a trained probe, and gives
-**63.9697 at this commit and 63.9697 at its parent** on this machine. The recorded 40.28 was
-generated on macOS / arm / Python 3.12 and this container is Linux / x86 / Python 3.11; a symmetric
-set difference over a kNN ranking is exactly the discrete quantity a cross-platform float
-difference can move while every continuous criterion agrees to six digits. Nothing in this change
-touches `model/retrieval.py`.
+One **diagnostic** moved, is not this change, and is **not yet attributed**: `G2.1h-c`, the
+mutation check that querying retrieval in the model frame perturbs the neighbour sets, reads
+**63.97** against the recorded **40.28**. It passes either way (threshold `> 0`), and at 2K = 64 the
+new value says the two neighbour sets are fully disjoint — a stronger signal that the channel is
+wired, not a weaker one. What is *not* established is why the recorded number is different, and the
+first explanation offered for it was wrong.
+
+**Withdrawn: it is not the host.** The 40.28 was generated on macOS / arm / Python 3.12 and this
+container is Linux / x86 / Python 3.11, so a cross-platform float difference in a discrete
+symmetric-difference count looked like the answer. The spec owner regenerated it on that same macOS
+platform and got **63.9697**, identical to this container. The platform account is false and is
+recorded here only so it is not offered again.
+
+**Not in this repository's history either.** The measurement was isolated — reproduced without a
+trained probe, with the imported module paths printed per arm so an arm that silently loaded the
+wrong tree would be visible. Comparing this commit against its parent was uninformative rather than
+reassuring: the **oldest commit in the repository** (`70076ad`) already gives **63.9697**. That
+bounds the transition outside the 52-commit history rather than inside it, which is why bisecting
+cannot locate it — `reports/gate2.md` carries a generation date of 2026-08-16 and the oldest commit
+is dated 2026-08-20, so the state that produced 40.28 was never committed.
+
+**What the diagnostic actually measures.** It is close to a pure function of how far the mutation
+moves the query points, and it saturates almost immediately. Measured on rotations about z (the
+mildest axis, since z is preserved and only the in-plane position moves):
+
+| rotation | 0° | 0.5° | 1° | 2° | 5° | 10° | 20° | 45° |
+|---|---|---|---|---|---|---|---|---|
+| `G2.1h-c` | 0.00 | 9.88 | 19.28 | 35.68 | 57.89 | 62.43 | 63.58 | 63.93 |
+
+The gate's own rotation, `random_rotation(_seed_for(seed, 50))`, is **179.68°**, so **63.97 is the
+correct value for the rotation the gate draws**, and 40.28 corresponds to an effective displacement
+of roughly 2°. The value is invariant to every knob that could plausibly reach it —
+`retrieval_z_window` over 0.05-3.0, `retrieval_z_window_gap_factor`, `retrieval_candidates_per_section`,
+`rotation_bias` and its tilt cap — and there are **no PAD slots** in either arm, because the
+per-query gap term (C1c) makes the candidate pool non-empty by construction, which closes the other
+route to a smaller symmetric difference (a truncated pool). So 40.28 is not reproducible from any
+committed state under any reachable configuration.
+
+**Left open, deliberately.** The candidates that remain both sit in pre-import code: a mutation pose
+built differently (a ~2° effective displacement rather than ~180°), or the pre-C1c retrieval window,
+which had no gap term and so *could* return a truncated pool. Neither can be tested from this
+repository. Recorded as `SPEC_QUESTIONS` C32 rather than explained away. Nothing in this change
+touches `model/retrieval.py`, and the criterion's own verdict is unaffected.
+
+A second observation the sweep makes unavoidable, recorded because it is what makes the 40 -> 64
+move consequence-free: **`G2.1h-c` saturates at 2K for any real rotation**, so as a *graded*
+diagnostic it carries almost no information. It is a binary "the channel is wired" check wearing a
+continuous number, and its value should not be read as a measurement of anything.

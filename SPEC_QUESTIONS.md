@@ -1503,6 +1503,52 @@ re-measured on tier-1 STARmap.
 
 ---
 
+### C32. GATE 2's `G2.1h-c` reads 63.97 against a recorded 40.28, and the recorded value is not reproducible — **OPEN** (raised 2026-08-25)
+
+`reports/gate2.md` records `G2.1h-c` — the mutation check that querying retrieval in the model frame
+instead of the data frame perturbs the neighbour sets — at **40.28**. Regenerating the report gives
+**63.97**. The criterion passes either way (`> 0`) and every other GATE 2 number agrees to six
+significant figures, so nothing about the gate's verdict turns on it. It is raised because a value
+that moved 40 to 64 with no identified cause should not sit in a report unexplained.
+
+Two explanations were offered and **both are refuted**:
+
+* *The host.* The recorded value came from macOS / arm / Python 3.12 and the regeneration from
+  Linux / x86 / Python 3.11, so a cross-platform float difference in a discrete count looked
+  plausible. The spec owner regenerated on the original macOS platform and got 63.9697, identical.
+  False.
+* *A change in this repository.* The measurement was isolated (reproduced without a trained probe,
+  with each arm's imported module paths printed so a mis-resolved import would show). The **oldest
+  commit in the repository**, `70076ad`, already gives 63.9697 — which bounds the transition outside
+  the 52-commit history rather than inside it, so a bisect cannot locate it. `reports/gate2.md`
+  carries a generation date of 2026-08-16; the oldest commit is dated 2026-08-20. The state that
+  produced 40.28 was never committed.
+
+**What the diagnostic is.** It is essentially a function of how far the mutation displaces the query
+points, saturating almost at once. On rotations about z: 0° -> 0.00, 0.5° -> 9.88, 1° -> 19.28,
+2° -> 35.68, 5° -> 57.89, 10° -> 62.43, 20° -> 63.58, 45° -> 63.93, against a ceiling of 2K = 64.
+The gate's own rotation is **179.68°**, so 63.97 is the correct value for the rotation the gate
+draws, and 40.28 corresponds to an effective displacement of about 2°. The value is invariant to
+`retrieval_z_window` (0.05-3.0), `retrieval_z_window_gap_factor`, `retrieval_candidates_per_section`,
+`rotation_bias` and `rotation_bias_max_tilt_deg`; and both arms return **zero PAD slots**, because
+C1c's per-query gap term makes the pool non-empty by construction — which closes the other route to
+a smaller symmetric difference.
+
+*Open, with two untestable candidates, both in pre-import code:* a mutation pose built differently
+(a ~2° effective displacement rather than ~180°), or the **pre-C1c** retrieval window, which had no
+gap term and so could return a truncated pool. Note that `PROGRESS.md` records the C1c amendment as
+leaving "gate numbers unchanged"; if that claim was made without regenerating the report, this
+diagnostic is a counter-example to it, and that is the first thing to check if the pre-amendment
+code is recoverable from outside this repository.
+
+*Separately, and independent of the discrepancy:* **`G2.1h-c` saturates at 2K for any real
+rotation**, so as a graded diagnostic it carries almost no information — it is a binary "the channel
+is wired" check wearing a continuous number. Proposed: keep the criterion (it does catch an unwired
+channel) but stop reporting its magnitude as if it measured something, or restate it at a fixed
+small probe rotation where it is actually graded.
+
+---
+
 ---
 
 ## E. Recorded, no action needed
