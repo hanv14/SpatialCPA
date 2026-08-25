@@ -1,0 +1,128 @@
+[
+  {
+    "arm": "field-grid",
+    "mode": "field",
+    "layout_sampler": "grid",
+    "model": "runs/pilot/model_exp_2400.pt",
+    "decoder_mu_link": "exp",
+    "train_steps": 2400,
+    "seed": 1,
+    "n_pred": {
+      "section_2": 267567.0,
+      "section_4": 21993.0,
+      "section_6": 3727.0
+    },
+    "n_gt": {
+      "section_2": 4187,
+      "section_4": 4102,
+      "section_6": 4162
+    },
+    "cell_count_ratio_raw": 5.36153096050707,
+    "cell_count_ratio_per_section": {
+      "section_2": 63.90422737043229,
+      "section_4": 5.36153096050707,
+      "section_6": 0.8954829408938011
+    },
+    "raw": {
+      "paper_morans_pearson": 0.644457180310837,
+      "paper_gearys_pearson": 0.6440343438956293,
+      "paper_umap_mixing": NaN,
+      "paper_marker_field_r": 0.6006447471522341,
+      "paper_marker_depth_r": 0.8240410178530423,
+      "paper_celltype_localization": 0.6267718781757126,
+      "paper_gene_mean_spearman": 0.9770114942528736
+    },
+    "matched": {
+      "paper_morans_pearson": 0.6563574321871904,
+      "paper_gearys_pearson": 0.6587764800556198,
+      "paper_umap_mixing": NaN,
+      "paper_marker_field_r": 0.6006447471522341,
+      "paper_marker_depth_r": 0.792492990913074,
+      "paper_celltype_localization": 0.6606875474360525,
+      "paper_gene_mean_spearman": 0.980295566502463
+    },
+    "matched_per_section": {
+      "paper_morans_pearson": {
+        "section_2": 0.6694365376248766,
+        "section_4": 0.6563574321871904,
+        "section_6": 0.6457566838066017
+      },
+      "paper_gearys_pearson": {
+        "section_2": 0.666991523751383,
+        "section_4": 0.6587764800556198,
+        "section_6": 0.6471774243778239
+      },
+      "paper_umap_mixing": {
+        "section_2": null,
+        "section_4": null,
+        "section_6": null
+      },
+      "paper_marker_field_r": {
+        "section_2": 0.6039742148563376,
+        "section_4": 0.44984855766589543,
+        "section_6": 0.6006447471522341
+      },
+      "paper_marker_depth_r": {
+        "section_2": 0.792492990913074,
+        "section_4": 0.6236748264784571,
+        "section_6": 0.8597867486816506
+      },
+      "paper_celltype_localization": {
+        "section_2": 0.663403761428615,
+        "section_4": 0.44365284508118813,
+        "section_6": 0.6606875474360525
+      },
+      "paper_gene_mean_spearman": {
+        "section_2": 0.9704433497536945,
+        "section_4": 0.980295566502463,
+        "section_6": 0.9863163656267103
+      }
+    },
+    "raw_per_section": {
+      "paper_morans_pearson": {
+        "section_2": 0.6319650155055504,
+        "section_4": 0.644457180310837,
+        "section_6": 0.6457566838066017
+      },
+      "paper_gearys_pearson": {
+        "section_2": 0.6323363446792902,
+        "section_4": 0.6440343438956293,
+        "section_6": 0.6471774243778239
+      },
+      "paper_umap_mixing": {
+        "section_2": null,
+        "section_4": null,
+        "section_6": null
+      },
+      "paper_marker_field_r": {
+        "section_2": 0.6132005062945803,
+        "section_4": 0.47884762271985165,
+        "section_6": 0.6006447471522341
+      },
+      "paper_marker_depth_r": {
+        "section_2": 0.8240410178530423,
+        "section_4": 0.6229400392059422,
+        "section_6": 0.8597867486816506
+      },
+      "paper_celltype_localization": {
+        "section_2": 0.6267718781757126,
+        "section_4": 0.4175319736322199,
+        "section_6": 0.6606875474360525
+      },
+      "paper_gene_mean_spearman": {
+        "section_2": 0.9666119321291735,
+        "section_4": 0.9770114942528736,
+        "section_6": 0.9863163656267103
+      }
+    },
+    "pooled_weighted_mean_matched": {
+      "paper_morans_pearson": 0.6572121345972444,
+      "paper_gearys_pearson": 0.6576617999675284,
+      "paper_umap_mixing": null,
+      "paper_marker_field_r": 0.5520843513610623,
+      "paper_marker_depth_r": 0.7593699091784356,
+      "paper_celltype_localization": 0.5900985536947632,
+      "paper_gene_mean_spearman": 0.9789950552526054
+    }
+  }
+]

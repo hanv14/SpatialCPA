@@ -1,0 +1,128 @@
+[
+  {
+    "arm": "hybrid-rejection",
+    "mode": "hybrid",
+    "layout_sampler": "rejection",
+    "model": "runs/pilot/model_exp_2400.pt",
+    "decoder_mu_link": "exp",
+    "train_steps": 2400,
+    "seed": 1,
+    "n_pred": {
+      "section_2": 179495.0,
+      "section_4": 163.0,
+      "section_6": 3727.0
+    },
+    "n_gt": {
+      "section_2": 4187,
+      "section_4": 4102,
+      "section_6": 4162
+    },
+    "cell_count_ratio_raw": 0.8954829408938011,
+    "cell_count_ratio_per_section": {
+      "section_2": 42.86959636971579,
+      "section_4": 0.03973671379814724,
+      "section_6": 0.8954829408938011
+    },
+    "raw": {
+      "paper_morans_pearson": 0.6614063973290933,
+      "paper_gearys_pearson": 0.6624279796075214,
+      "paper_umap_mixing": NaN,
+      "paper_marker_field_r": 0.6748662703654841,
+      "paper_marker_depth_r": 0.783773368552866,
+      "paper_celltype_localization": 0.6761571151342033,
+      "paper_gene_mean_spearman": 0.9879584017515052
+    },
+    "matched": {
+      "paper_morans_pearson": 0.6690002451944194,
+      "paper_gearys_pearson": 0.6670540071483207,
+      "paper_umap_mixing": NaN,
+      "paper_marker_field_r": 0.6512961259410667,
+      "paper_marker_depth_r": 0.783773368552866,
+      "paper_celltype_localization": 0.6533544846844815,
+      "paper_gene_mean_spearman": 0.9879584017515052
+    },
+    "matched_per_section": {
+      "paper_morans_pearson": {
+        "section_2": 0.6690002451944194,
+        "section_4": 0.6935754845627239,
+        "section_6": 0.6614063973290933
+      },
+      "paper_gearys_pearson": {
+        "section_2": 0.6670540071483207,
+        "section_4": 0.6736254845914679,
+        "section_6": 0.6624279796075214
+      },
+      "paper_umap_mixing": {
+        "section_2": null,
+        "section_4": null,
+        "section_6": null
+      },
+      "paper_marker_field_r": {
+        "section_2": 0.6512961259410667,
+        "section_4": 0.5122412445457797,
+        "section_6": 0.6748662703654841
+      },
+      "paper_marker_depth_r": {
+        "section_2": 0.8352661261243565,
+        "section_4": 0.783773368552866,
+        "section_6": 0.7710242101455327
+      },
+      "paper_celltype_localization": {
+        "section_2": 0.6533544846844815,
+        "section_4": 0.35811030891076107,
+        "section_6": 0.6790363603388543
+      },
+      "paper_gene_mean_spearman": {
+        "section_2": 0.9556650246305418,
+        "section_4": 0.9928845101258894,
+        "section_6": 0.9879584017515052
+      }
+    },
+    "raw_per_section": {
+      "paper_morans_pearson": {
+        "section_2": 0.6326977561896641,
+        "section_4": 0.6935754845627239,
+        "section_6": 0.6614063973290933
+      },
+      "paper_gearys_pearson": {
+        "section_2": 0.6332513265421384,
+        "section_4": 0.6736254845914679,
+        "section_6": 0.6624279796075214
+      },
+      "paper_umap_mixing": {
+        "section_2": null,
+        "section_4": null,
+        "section_6": null
+      },
+      "paper_marker_field_r": {
+        "section_2": 0.7145108036581999,
+        "section_4": 0.5122412445457797,
+        "section_6": 0.6748662703654841
+      },
+      "paper_marker_depth_r": {
+        "section_2": 0.839439679187081,
+        "section_4": 0.783773368552866,
+        "section_6": 0.7710242101455327
+      },
+      "paper_celltype_localization": {
+        "section_2": 0.6761571151342033,
+        "section_4": 0.35811030891076107,
+        "section_6": 0.6790363603388543
+      },
+      "paper_gene_mean_spearman": {
+        "section_2": 0.9545703338806788,
+        "section_4": 0.9928845101258894,
+        "section_6": 0.9879584017515052
+      }
+    },
+    "pooled_weighted_mean_matched": {
+      "paper_morans_pearson": 0.6745581953247943,
+      "paper_gearys_pearson": 0.6676726461208518,
+      "paper_umap_mixing": null,
+      "paper_marker_field_r": 0.613363093864202,
+      "paper_marker_depth_r": 0.7968275954150063,
+      "paper_celltype_localization": 0.5646705522653745,
+      "paper_gene_mean_spearman": 0.9787217562247402
+    }
+  }
+]

@@ -1,0 +1,128 @@
+[
+  {
+    "arm": "hybrid-grid",
+    "mode": "hybrid",
+    "layout_sampler": "grid",
+    "model": "runs/pilot/model_exp_2400.pt",
+    "decoder_mu_link": "exp",
+    "train_steps": 2400,
+    "seed": 1,
+    "n_pred": {
+      "section_2": 267567.0,
+      "section_4": 21993.0,
+      "section_6": 3727.0
+    },
+    "n_gt": {
+      "section_2": 4187,
+      "section_4": 4102,
+      "section_6": 4162
+    },
+    "cell_count_ratio_raw": 5.36153096050707,
+    "cell_count_ratio_per_section": {
+      "section_2": 63.90422737043229,
+      "section_4": 5.36153096050707,
+      "section_6": 0.8954829408938011
+    },
+    "raw": {
+      "paper_morans_pearson": 0.6365314286291506,
+      "paper_gearys_pearson": 0.6394746023857117,
+      "paper_umap_mixing": NaN,
+      "paper_marker_field_r": 0.7034187789933544,
+      "paper_marker_depth_r": 0.8418746850323725,
+      "paper_celltype_localization": 0.6948404602622527,
+      "paper_gene_mean_spearman": 0.9874110563765736
+    },
+    "matched": {
+      "paper_morans_pearson": 0.6523686595230302,
+      "paper_gearys_pearson": 0.6543702845791094,
+      "paper_umap_mixing": NaN,
+      "paper_marker_field_r": 0.6604899926285497,
+      "paper_marker_depth_r": 0.8208088661721668,
+      "paper_celltype_localization": 0.6692038659619997,
+      "paper_gene_mean_spearman": 0.9874110563765736
+    },
+    "matched_per_section": {
+      "paper_morans_pearson": {
+        "section_2": 0.6741059773290353,
+        "section_4": 0.644310587939173,
+        "section_6": 0.6523686595230302
+      },
+      "paper_gearys_pearson": {
+        "section_2": 0.6732442705978752,
+        "section_4": 0.6462583865676014,
+        "section_6": 0.6543702845791094
+      },
+      "paper_umap_mixing": {
+        "section_2": null,
+        "section_4": null,
+        "section_6": null
+      },
+      "paper_marker_field_r": {
+        "section_2": 0.6792040847150304,
+        "section_4": 0.6594273500291319,
+        "section_6": 0.6604899926285497
+      },
+      "paper_marker_depth_r": {
+        "section_2": 0.9003496545961153,
+        "section_4": 0.8208088661721668,
+        "section_6": 0.7602494144734248
+      },
+      "paper_celltype_localization": {
+        "section_2": 0.6692038659619997,
+        "section_4": 0.6599624723192579,
+        "section_6": 0.6948404602622527
+      },
+      "paper_gene_mean_spearman": {
+        "section_2": 0.9534756431308156,
+        "section_4": 0.9989053092501368,
+        "section_6": 0.9874110563765736
+      }
+    },
+    "raw_per_section": {
+      "paper_morans_pearson": {
+        "section_2": 0.6323186196405687,
+        "section_4": 0.6365314286291506,
+        "section_6": 0.6523686595230302
+      },
+      "paper_gearys_pearson": {
+        "section_2": 0.6327399693101913,
+        "section_4": 0.6394746023857117,
+        "section_6": 0.6543702845791094
+      },
+      "paper_umap_mixing": {
+        "section_2": null,
+        "section_4": null,
+        "section_6": null
+      },
+      "paper_marker_field_r": {
+        "section_2": 0.7034187789933544,
+        "section_4": 0.7167316012176109,
+        "section_6": 0.6604899926285497
+      },
+      "paper_marker_depth_r": {
+        "section_2": 0.8418746850323725,
+        "section_4": 0.8842897767078969,
+        "section_6": 0.7602494144734248
+      },
+      "paper_celltype_localization": {
+        "section_2": 0.6657219254969234,
+        "section_4": 0.6990595728856764,
+        "section_6": 0.6948404602622527
+      },
+      "paper_gene_mean_spearman": {
+        "section_2": 0.9545703338806788,
+        "section_4": 0.9967159277504104,
+        "section_6": 0.9874110563765736
+      }
+    },
+    "pooled_weighted_mean_matched": {
+      "paper_morans_pearson": 0.6570237024928126,
+      "paper_gearys_pearson": 0.6580447182645455,
+      "paper_umap_mixing": null,
+      "paper_marker_field_r": 0.6664330448832507,
+      "paper_marker_depth_r": 0.8273134716786247,
+      "paper_celltype_localization": 0.6747288285156199,
+      "paper_gene_mean_spearman": 0.9797861146070264
+    }
+  }
+]

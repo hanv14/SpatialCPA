@@ -21,3 +21,7 @@ runs/
 # regenerate the model. `runs/` already covers the campaign's; this covers the rest.
 *.pt
 *.pt.tmp
+
+# Campaign-machine run logs (`logs/fit_*.log`, `logs/arm_*.log`). The console record of one
+# machine's scheduling; every number in them that matters is committed under `reports/`.
+logs/
