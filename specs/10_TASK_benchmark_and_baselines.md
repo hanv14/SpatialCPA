@@ -509,13 +509,32 @@ owns it entirely, reading `all_metrics.csv` and `per_section_metrics.csv` from o
 - **Forest plot** per metric: median difference ± CI, one row per dataset. This is paper Figure 2.
 - `assert_tier_purity` (§1) runs before any table is emitted.
 
-### 4.5b ⚠️ RESULT — the intensity-field layout is currently worse than copying
+### 4.5b ⚠️ RESULT — the intensity-field layout is worse than copying. **Resolved: `resample` ships**
 
 **This is a first-class finding, not a diagnostic aside, and it bears directly on the layout head's
 headline claim.** Two independent measurements, on different data, point the same way.
 
-**Signal 1 — real data, tier 1 (T10 pilot, `reports/pilot.md` §6.3).** Holding everything else
-fixed and swapping only `layout_mode`:
+**RESOLVED 2026-08-25.** Re-measured on the corrected grid sampler with five arms off one refit
+(`reports/r11_starmap_layout_modes.md`), the ordering held and `Config.layout_mode` now defaults to
+**`resample`**. The current numbers — `celltype_localization` at ground-truth-matched density,
+median over the three held-out sections — are:
+
+| arm | median | vs the 0.7765 copy floor |
+|---|---|---|
+| `resample` (shipped) | **0.7546** | −0.0219, *inside* R10's 0.0335 envelope |
+| `hybrid` | **0.6692** | −0.1073, **3.2x** the envelope |
+| `field` | **0.6607** | −0.1158, **3.5x** the envelope |
+
+and the deciding measurement is the **count**, not localization: `field`/`hybrid` emitted 267 567,
+21 993 and 3 727 cells against ground truths of 4 187, 4 102 and 4 162, and the same configuration
+refitted swung one section 48 343 → 179 495 (3.7x) while every density-matched score moved less
+than 0.013. `specs/05` §4a carries the full statement; A4 (§6) reports `field` and `hybrid` as an
+addition experiment. **The two tables below are the pilot-era measurements that led here and are
+superseded by that report** — they are kept because the reasoning under them is unchanged and
+because the fixture half has its own re-run (`reports/t09_layout_mode_gate_grid.md`).
+
+**Signal 1 — real data, tier 1 (T10 pilot, `reports/pilot.md` §6.3), superseded.** Holding
+everything else fixed and swapping only `layout_mode`:
 
 | `celltype_localization` | section_2 | section_4 | section_6 | median |
 |---|---|---|---|---|
@@ -540,13 +559,17 @@ real-data measurement resolves it in the same direction.
 
 **Consequences for T10.**
 
-* **A4** (repulsion off) and any layout claim must be read against this: the question is no longer
-  only "does repulsion buy realism" but "does the intensity-field layout beat copying at all".
+* **A4** is restated (§6): repulsion-off alone became a no-op once `resample` shipped, so A4 is now
+  the ablation of the generative layout as a whole — `field`, `hybrid`, and repulsion-off *within*
+  `field` — and it answers "does the intensity-field layout beat copying at all" directly rather
+  than only "does repulsion buy realism".
 * **C1 cannot be attributed to the expression path** until the layout is fixed or `resample` is
   used as the layout for the C1 measurement — most of the localization gap is positional.
-* **`specs/05`'s headline claim is in question**, and `specs/09`'s `layout_mode` selection should be
-  re-run per dataset rather than inherited from a fixture tie-break. Flagged to T05/T09 rather than
-  resolved here: T10 measures, it does not retune the layout head.
+* **`specs/05`'s headline claim did not hold** and is amended there (§4a) with the numbers, as a
+  negative result rather than a defect: the generative marked point process is built, measured, and
+  loses to copying real coordinates on real tissue. `specs/09`'s `layout_mode` gate was re-run on
+  the fixture with the corrected sampler (`reports/t09_layout_mode_gate_grid.md`) so the fixture's
+  verdict sits on the record beside the real-data one.
 
 ⚠️ **This does not explain the autocorrelation collapse.** With real positions the emitted
 expression still carries only 22 % of the tissue's Moran's I (`reports/pilot.md` §6.3). The two are
@@ -717,7 +740,7 @@ results root (§4.1); nothing about the arm mechanism touches bench3.
 | A1 | `prior_mode=iid` | correlated prior preserves autocorrelation |
 | A2 | `w_autocorr=w_profile=w_distribution=0.5` (an **addition** — the terms ship off) | contribution of metric-aware training — **at two step budgets**, below |
 | A3 | `text_emb=lookup-only` | text channel's value on seen genes |
-| A4 | repulsion off (Poisson layout) | point-process realism — **`g(r)` over `[0, 3R]`**, below |
+| A4 | **the generative layout, which ships off** — `layout_mode=field`, `layout_mode=hybrid`, and repulsion off within `field` (an **addition**, restated 2026-08-25, below) | does a learned marked point process beat copying real coordinates — and, inside it, point-process realism, **`g(r)` over `[0, 3R]`** |
 | A5 | `w_z=0` in retrieval | the competing method's specific flaw — **wide-gap regime only**, below |
 | A6 | Gaussian mean decoder | sparsity/dispersion preservation |
 | A7 | `w_thick=w_prog=0.2` (an **addition** — SEFL ships off) | SEFL's contribution — **two losses, not three**; decides whether SEFL is used at all |
@@ -831,6 +854,34 @@ on), the generated per-gene variance ratio (**0.711** off against **1.04–1.33*
 the real tissue rather than undershooting it) and the three T06 statistics above. State the verdict
 in the methods whichever way it falls; if SEFL loses, that is a result about a continuous-field model
 needing less self-supervision than a point-cloud one, not an embarrassment.
+
+### A4 is an addition experiment, and repulsion-off alone became vacuous
+
+**Restated 2026-08-25, when `layout_mode` shipped as `resample`.** A4 was "repulsion off (Poisson
+layout)", an override of a shipped `field` layout. That override no longer does anything to the
+shipped configuration: `sample_layout` returns `_resample_layout` before the interaction is read,
+so under the default, `repulsion=False` changes nothing and an A4 arm defined that way would
+report a difference of exactly zero — a null that says nothing about the layout head. Left
+unamended it would have been a silent no-op arm in the ablation table.
+
+So A4 becomes the ablation of **the generative layout as a whole**, and like A2 and A7 it is an
+*addition* experiment — the thing under test ships off:
+
+| arm | override | what it answers |
+|---|---|---|
+| **A4a** | `layout_mode=field` | does sampling positions from the learned intensity beat copying the flanking section |
+| **A4b** | `layout_mode=hybrid` | does the sliced-Wasserstein polish toward the flank marginals recover the difference |
+| **A4c** | `layout_mode=field`, `repulsion=False` | the original A4, now stated *inside* a field-based mode where it is not a no-op: point-process realism via `g(r)` |
+
+A4a and A4b **report the cell count and its per-section spread beside every metric**, not the
+metrics alone. `specs/05` §4a: the count is what decided the mode, it is unstable 3.7x between
+refits of one configuration, and a density-matched score cannot see it. An A4 table that reports
+only the six metrics would show a 0.10 localization gap and hide a 60x count error.
+
+The claim A4 carries is therefore a **negative** one, and `specs/10` §2 frames it as such: v25
+implements a generative marked point process, it is available and measured, and on real tissue it
+loses to resampling real coordinates. That is a result about the method, not a gap in it — the
+mechanism is built, tested (`tests/test_layout.py`, `tests/test_layout_sampler.py`) and reported.
 
 ### A4's pair-correlation comparison must run over `[0, 3R]`
 

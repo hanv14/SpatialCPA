@@ -78,6 +78,22 @@ RARE_PREVALENCE = 0.02
 
 
 @pytest.fixture(scope="module")
+def cfg() -> Config:
+    """T05's own config: the **field** sampler, pinned rather than inherited.
+
+    This module tests the generative layout — the intensity's Poisson NLL, the count integral,
+    the hard core, the pair-correlation function, the proposal budget. All of it is
+    ``layout_mode="field"``, which used to be ``Config``'s default and, since 2026-08-25, is
+    not: the shipped default is ``resample`` (R11, ``progress/risks.md``). Pinning it here says
+    what these tests are about instead of letting them follow whatever ships — and if the
+    default moves again, they keep measuring the same thing. The mode gate's own tests
+    (``test_all_three_modes_run``, ``test_modes_refuse_missing_evidence``) still vary the mode
+    explicitly, as they always did.
+    """
+    return Config().replace(layout_mode="field")
+
+
+@pytest.fixture(scope="module")
 def split(volume: Volume, cfg: Config):
     """The fixture volume split into training sections and held-out ones."""
     return split_holdout(volume, "alternating", 0, cfg)
@@ -323,6 +339,7 @@ def test_poisson_nll_recovers_intensity():
     SPEC_QUESTIONS B10.
     """
     cfg = Config().replace(
+        layout_mode="field",  # this test builds its own config; the shipped default is resample
         repulsion=False,
         potts_iters=1,
         layout_n_mc=1024,
@@ -893,6 +910,15 @@ def test_localization_beats_the_real_data_baseline(localization):
     / flanking = 1.491 / 1.514 / 1.059: better than the real-data alternative everywhere,
     rather than within 10% of it. (On the biased rejection sampler the same three were
     1.654 / 1.154 / 1.246.)
+
+    ⚠️ **This passing test does not say the layout head beats copying. On real tissue it
+    loses, and `Config.layout_mode` ships as `"resample"` because of it** (`specs/05` §4a,
+    `reports/r11_starmap_layout_modes.md`). Both are true because the *baseline* differs, not
+    the layout head: the fixture's law decorrelates fast in z, so its flanking sections reach
+    only 0.5319 against a 0.9221 self-score, while real serial sections at 50 um reach 0.7765
+    against a 0.9808 oracle. The bar here is 58 % of ceiling; on STARmap it is 79 %. The test
+    stays because the fixture measurement is real and reproducible — but it is a statement
+    about this fixture, and `progress/fixture_limitations.md` §2 is the reading of it.
     """
     for generated, flanking in zip(
         localization["generated"], localization["flanking"], strict=True

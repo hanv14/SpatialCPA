@@ -17,6 +17,11 @@ Project-wide rules. Read this before touching anything. It is a condensation of
   thing. Do not treat them as different systems.
 - **`v20` is a different thing**: the previous released version, kept in `reference/` as a baseline
   and as the no-regression fallback (`layout_mode=resample` + `expr_mode=cross-mix`).
+  **Since 2026-08-25 `layout_mode=resample` is also v25's shipped default** (R11 — the intensity-field
+  layout loses to copying real coordinates on real tissue; `specs/05` §4a). The two configurations
+  are still different systems: v25 ships `resample` + **`zinb-flow`**, i.e. real positions with
+  generated expression, where v20's fallback copies the donor's counts as well. `field` and `hybrid`
+  remain selectable and are reported as ablation A4.
 - The system is v25 (continuous field, open-vocabulary genes, flow-matching expression head) **plus
   SEFL** (Sectioning-Equivariant Field Learning). SEFL is not optional: it makes the noise prior a
   continuous 3D field (T03), imposes rotation-equivariance on the backbone (T04), and adds three

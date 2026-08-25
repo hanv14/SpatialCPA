@@ -195,6 +195,34 @@ This is the direct attack on **cell-type localization**.
 followed by a short SWD polish toward the flank marginals (borrowing SpatialZ's one genuine
 strength). Chosen by LOSO (§6).
 
+> ⚠️ **OUTCOME, 2026-08-25 — the fallback is what ships, and this section's design is a measured
+> negative result.** The risk register below anticipated exactly this ("Field-sampled layout worse
+> than resampling real coordinates", severity Medium, mitigated by the fallback gate). It fired.
+>
+> On STARmap tier 1, with the layout sampler corrected and all arms off one set of weights,
+> `celltype_localization` at ground-truth-matched density is **0.6607** for `field` and **0.6692**
+> for `hybrid` against **0.7546** for `resample`, where a model-free copy of the flanking section
+> scores **0.7765** and the oracle **0.9808**. Both field-based modes sit 3.5x and 3.2x the
+> across-seed envelope *below a copy*; `resample` lands on that floor inside the envelope.
+>
+> **Point 2 of this section is where it fails.** "Total expected count `N = ∫ Σ_c λ_c` … gives cell
+> number *emergently* and correctly (no more `n_target` interpolation heuristic)" is the claim that
+> did not survive contact with real tissue. The integral is wrong in scale and, worse, **unstable
+> across refits of one configuration** — 48 343 then 179 495 cells for a section whose ground truth
+> is 4 187, a 3.7x swing invisible to every density-matched metric — and it is coupled to the
+> decoder's `mu` link through the shared triplane although `IntensityHead` never sees `mu`. The
+> emergent count was the design's argument against the interpolation heuristic; on this evidence
+> the heuristic was the better engineering.
+>
+> **Points 3 and 4 stand.** Given a count, the Strauss/hard-core thinning does reproduce the real
+> nearest-neighbour spacing: `g(r)` over `[0, 3R]` matches the real pair-correlation function at
+> 0.093 where pure Poisson reaches 0.994. The *geometry* of the point pattern is right; the
+> *number* of points is not, and the number is what the metrics see.
+>
+> `field` and `hybrid` remain implemented and selectable and are reported as ablation A4
+> (`specs/10` §6). Full statement and numbers: `specs/05` §4a,
+> `reports/r11_starmap_layout_modes.md`, and R11 in `progress/risks.md`.
+
 ### 3.4 Head B — expression by flow matching with a correlated prior
 
 Per-cell latent `h ∈ R^{64}`. Conditional flow matching on the straight-line path, conditioned on
@@ -430,7 +458,7 @@ is what separates "better model" from "metric gaming."
 | Generative sampling over-smooths → Moran's collapse (the v19 failure, repeated) | **High** | Correlated prior + ZINB sampling + `L_autocorr` + leakage-free ℓ calibration. Three independent defences; A1/A6 diagnose which is carrying the weight. |
 | Triplane overfits z with 4–7 sections | High | Anisotropic Fourier (B_z=2), TV_z penalty, section dropout, LOSO validation of the field itself. |
 | MedCPT text adds nothing on seen genes | Medium | Expected outcome is acceptable — reframe as capability (E1/E2) not accuracy. A3 makes this explicit rather than hidden. |
-| Field-sampled layout worse than resampling real coordinates | Medium | `layout_mode` gate with `hybrid` and `resample` fallbacks, selected by LOSO. |
+| Field-sampled layout worse than resampling real coordinates | Medium | **FIRED, 2026-08-25.** The mitigation worked as designed: the gate existed, the fallback was measured, and `resample` ships (§3.3, `specs/05` §4a). The cause is the count integral, not the point pattern. |
 | Embedding mixing — SpatialZ's chimerism is genuinely strong here | Medium | ZINB sampling from a correct conditional gives novelty *without* chimerism; `L_distribution` targets it directly. This is the metric most likely to be a tie rather than a win; be prepared to report a tie honestly. |
 | Reviewer reads metric-aware training as gaming | Medium | Prominent disclosure + the unoptimised-metric table + A2 showing wins survive without it. |
 | Compute | Low | Gene subsampling (G'=128), retrieval K=32, triplane not voxel grid. One A100-hour per dataset fit is realistic. |

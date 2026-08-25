@@ -336,13 +336,19 @@ def main() -> int:
     p.add_argument("--w-profile", type=float, default=None, help="A2")
     p.add_argument("--w-distribution", type=float, default=None, help="A2")
     p.add_argument("--text-emb-mode", default=None, choices=["medcpt", "lookup"], help="A3")
-    p.add_argument("--no-repulsion", action="store_true", help="A4")
+    p.add_argument("--no-repulsion", action="store_true",
+                   help="A4c — Poisson layout. Only meaningful together with "
+                        "--layout-mode field/hybrid: resample never draws positions, so under "
+                        "the shipped default this flag changes nothing")
     p.add_argument("--retrieval-w-z", type=float, default=None, help="A5")
     p.add_argument("--decoder", default=None, choices=["zinb", "zigamma", "gaussian"], help="A6")
     p.add_argument("--w-thick", type=float, default=None, help="A7")
     p.add_argument("--w-prog", type=float, default=None, help="A7")
     p.add_argument("--w-prog-wrong", type=float, default=None, help="A8 negative control")
-    p.add_argument("--layout-mode", default=None, choices=["field", "hybrid", "resample"])
+    p.add_argument("--layout-mode", default=None, choices=["field", "hybrid", "resample"],
+                   help="A4a/A4b — the generative layout, which ships off. The default is "
+                        "resample (specs/05 section 4a): on real tissue the intensity-field "
+                        "layout scores below a model-free copy of the flanking section")
     p.add_argument("--expr-mode", default=None, choices=["zinb-flow", "cross-mix", "auto-blend"])
     p.add_argument("--train-steps", type=int, default=None)
     # Not a tuning flag: it selects whether the fit is resumable, never what it computes.

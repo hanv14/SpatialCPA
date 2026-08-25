@@ -101,6 +101,63 @@ hand-set it. Add `fit_potts_beta(vol) -> float`.
 
 All three must be implemented and selectable; T09's LOSO selector chooses per dataset.
 
+## 4a. RESOLVED 2026-08-25 — `resample` ships, and this section's headline claim does not hold
+
+**`Config.layout_mode` defaults to `"resample"`.** `field` and `hybrid` stay implemented,
+selectable and measured; they are reported as ablation A4 in `specs/10` §6. This is a **negative
+result and is to be reported as one**: v25 implements the generative marked point process
+`design/` §3.3 describes, and on real tissue it does not beat resampling real coordinates.
+
+### The measurement
+
+STARmap tier 1 (`paper_2_4_6`), pinned evaluator, one set of weights across all arms, the
+corrected grid sampler, `celltype_localization` at ground-truth-matched density
+(`reports/r11_starmap_layout_modes.md`):
+
+| arm | `celltype_localization` | vs the copy floor | `cell_count_ratio` |
+|---|---|---|---|
+| `oracle` — ceiling | 0.9808 | — | 1.000 |
+| `flanking_copy` — model-free copy floor | **0.7765** | — | 0.988 |
+| `resample` | **0.7546** | −0.0219 — *inside* the envelope | 0.988 |
+| `hybrid` | **0.6692** | −0.1073 — **3.2x** the envelope | 5.362 |
+| `field` | **0.6607** | −0.1158 — **3.5x** the envelope | 5.362 |
+
+R10's across-seed envelope is 0.0335. Correcting the sampler's bias
+(`reports/r11_envelope.md`, `reports/r11_fix_options.md` option D) moved `field` by +0.0599 and
+`hybrid` by +0.0158, and left the ordering unchanged; it held on both samplers, and the refit
+reproduced the pilot's rejection-sampler numbers to within 0.013 on every arm.
+
+### The measured reason is the intensity integral's scale, not the point pattern
+
+`celltype_localization` is not what decides it. **The count is.** `field` and `hybrid` take
+`N ~ Poisson(∫ Σ_c λ_c)` from the intensity integral — §3 above, and the first "Do NOT" below —
+and that integral is wrong in scale and **unstable run to run**: the same configuration refitted
+on another machine emitted 48 343 and then 179 495 cells for a section whose ground truth is
+4 187, a **3.7x swing** that every density-matched score is blind to. Per section the ratio spans
+63.9x / 5.4x / 0.895x in one arm. It is also link-coupled (`reports/r11_coupling.md`): the
+`decoder_mu_link` switch moves the integral although `IntensityHead` never sees `mu`, because
+`_layout_term` reads the shared triplane and `forward_train` backpropagates `recon` and `layout`
+together. A quantity that varies 3.7x between refits of one config cannot carry a headline number
+whatever it scores.
+
+### Why the fixture said the opposite, and why that was not a mistake
+
+`test_localization_beats_the_real_data_baseline` passes at **1.35x** and is not wrong: on the
+fixture, `field` does beat the flanking section. The two results differ because **the baseline
+differs**, not because the layout head changes. The fixture's flanking sections score 0.5319
+against a 0.9221 self-score — its synthetic law decorrelates fast in z, so copying a neighbour is
+a weak strategy. Real serial sections at 50 µm score 0.7765 against a 0.9808 oracle: adjacent
+tissue is nearly as good as the tissue itself, and the bar the layout head has to clear is much
+higher than any fixture measurement suggested. **The fixture cannot rank a layout mode**, and
+`progress/fixture_limitations.md` carries this alongside the emission-model entry.
+
+### What stays true
+
+`field`'s point *pattern* is still the better one where it can be measured directly: `g(r)` over
+`[0, 3R]` matches the real pair-correlation function at 0.093 against pure Poisson's 0.994
+(A4, below), and the hard core and the Potts marks do what they were built to do. The failure is
+the *count*, and through it the density, not the geometry of the points.
+
 ## Acceptance tests
 
 - `test_poisson_nll_recovers_intensity` — on synthetic data drawn from a known `lambda`, the fitted
@@ -234,5 +291,15 @@ because an abundant tissue-wide type is where the headroom is smallest and the v
 
 - Do not force the sampled count to equal a flanking-section count. It must emerge from the
   intensity integral, or the thickness consistency in T07 becomes incoherent.
+
+  **Standing, and narrower than it reads, since §4a.** It binds `field` and `hybrid`: their count
+  must not be fudged toward a flanking section's, and it has not been. It does not bind
+  `layout_mode="resample"`, whose count *is* the flanking section's by definition — that is the
+  mode, not a fudge of another one. The consequence the rule names is real and is now on the
+  record rather than avoided: under the shipped default the emitted count carries no statement
+  from the intensity field, so T07's thickness consistency has nothing to constrain in it. SEFL
+  ships at `w_thick = 0` (R7), so nothing is incoherent today; a task that turns SEFL on must
+  read this and `specs/10` A4 together, because `L_thick` under `resample` is measuring the
+  flanking section's cell count, not the model's.
 - Do not hand-tune `beta`, `gamma`, `r0`. All are fitted from training sections.
 - Do not smooth types so hard that rare types vanish.

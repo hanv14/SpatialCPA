@@ -334,3 +334,54 @@ A second observation the sweep makes unavoidable, recorded because it is what ma
 move consequence-free: **`G2.1h-c` saturates at 2K for any real rotation**, so as a *graded*
 diagnostic it carries almost no information. It is a binary "the channel is wired" check wearing a
 continuous number, and its value should not be read as a measurement of anything.
+
+---
+
+## T05 addendum — `layout_mode` ships as `resample` (2026-08-25)
+
+**The decision is T05's headline claim not surviving real data, and it is recorded as a negative
+result rather than a defect.** `Config.layout_mode` now defaults to `"resample"`; `field` and
+`hybrid` stay implemented, tested and selectable, and are reported as ablation A4 (`specs/10` §6).
+`specs/05` §4a carries the statement, the numbers and the reason; R11 in `progress/risks.md` carries
+the decision and its evidence; `reports/r11_starmap_layout_modes.md` is the measurement.
+
+### What T05 got right, and what it did not
+
+| claim | verdict |
+|---|---|
+| Strauss/hard-core thinning reproduces real nearest-neighbour spacing | **holds** — `g(r)` over `[0, 3R]` matches at 0.093 against pure Poisson's 0.994 |
+| Potts marks reproduce neighbourhood type purity, rare types retained | **holds** — unchanged by this decision |
+| `N = ∫ Σ_c λ_c` gives the cell number *emergently and correctly* | **fails on real tissue** — 63.9x / 5.4x / 0.895x ground truth across three sections of one volume, and **3.7x unstable between refits of one configuration** (48 343 then 179 495 cells for a section whose truth is 4 187) |
+| the field layout beats copying a flanking section | **fails on real tissue** — 0.6607 against 0.7546 for `resample` and a 0.7765 model-free copy floor; holds on the fixture at 1.35x, for a reason that is about the fixture (below) |
+
+The point *pattern* is not what failed. The *number of points* is, and the metrics see the number.
+
+### Why the fixture said otherwise
+
+Not a power problem, and not a wrong measurement — an unrepresentative referent. The fixture's
+flanking sections score **0.5319** against a 0.9221 self-score (58 % of ceiling); real serial
+sections at 50 µm score **0.7765** against a 0.9808 oracle (79 %). The fixture's law decorrelates
+fast in z, so copying a neighbour is weak there and nearly anything beats it. `specs/05`'s
+`test_localization_beats_the_real_data_baseline` still passes at 1.35x and is now annotated to say
+what it does and does not mean. Recorded in `progress/fixture_limitations.md` §2.
+
+### Two things measured while deciding it, both reusable
+
+* **`layout_mode` does not affect the fitted weights.** Fitting the fixture at `field`, `hybrid` and
+  `resample` with one seed gives **bitwise identical** state dicts across all 96 parameter and
+  buffer tensors — `sample_layout` is never called in training, and `_layout_term` evaluates the
+  intensity at the *real* cells' positions. So one fit serves all three arms, which is how both the
+  STARmap re-measurement and the fixture gate re-run were done, and it means T09's merged gate
+  refits 3x more than it needs to on this axis (`specs/09` §3).
+* **The grid sampler's effect is small and does not change the ordering.** Same weights, sampler
+  swapped: `field` +0.0599 (1.8x the envelope), `hybrid` +0.0158 (inside it). The bias
+  `reports/r11_envelope.md` found was real and worth fixing; it was not what put the layout head
+  behind a copy.
+
+### What is still open, and it is T05's
+
+The intensity integral's scale. It is wrong by 1.5x-64x depending on section, unstable 3.7x across
+refits of one configuration, and coupled to `decoder_mu_link` through the shared triplane although
+`IntensityHead` never sees `mu` (`reports/r11_coupling.md`). A generative layout cannot ship until
+that is fixed, and fixing it is not a tuning exercise: a quantity that varies 3.7x between refits
+carries no headline number at any score.

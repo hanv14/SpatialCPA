@@ -237,11 +237,29 @@ reconstructions of training sections**:
 
 | Gate | Options |
 |---|---|
-| `layout_mode` | field / hybrid / resample |
+| `layout_mode` | field / hybrid / resample — **but see the note below: the fixture cannot rank this gate** |
 | `prior_mode` | correlated / iid |
 | `expr_mode` | zinb-flow / cross-mix / auto-blend |
 | `text_emb` | medcpt+residual / lookup-only |
 | **`train_steps` × metric weights** | **one joint gate, four cells** — see below |
+
+> ⚠️ **`layout_mode` is not selectable on the synthetic fixture, at any budget or seed count
+> (2026-08-25).** The gate compares a generated layout against a referent, and on the fixture that
+> referent is unrepresentative: the fixture's flanking sections score 0.5319 against a 0.9221
+> self-score (58 % of ceiling) where real serial sections at 50 µm score 0.7765 against a 0.9808
+> oracle (79 %). Its generative law decorrelates fast in z, so copying a neighbour is a weak
+> strategy there and a generative layout is systematically over-rewarded. This is not a power
+> problem — more seeds do not fix an unrepresentative referent — and it is why the fixture's
+> tie-break shipped `hybrid` while real data ships `resample` (`specs/05` §4a,
+> `progress/fixture_limitations.md` §2). A per-dataset selection run on **real** data decides this
+> gate; the fixture's verdict is recorded for comparison only
+> (`reports/t09_layout_mode_gate_grid.md`).
+>
+> **Cost note for the merged gate.** `layout_mode` is read only at generation time — fitting the
+> fixture at all three modes with one seed gives bitwise identical weights over all 96 parameter
+> and buffer tensors — so the 18-cell full-budget gate refits 3x more than it needs to: 6 fits
+> (`prior_mode` × `expr_mode`) serve all 18 cells if the `layout_mode` axis reuses one fit. The
+> scores are unchanged; the contrast is cleaner, because it carries no fit-to-fit noise.
 
 - Fit a **reduced-epoch** model (25% of `cfg.epochs`) per candidate — **except for the budget
   gate, which is scored at its own budget** (see below), and except for any gate the

@@ -69,6 +69,35 @@ The fixture signal was not wrong — it was **underpowered**, and it pointed the
 lesson is the same as §1's: a gate decided inside the envelope on the fixture is undecided, not
 decided, and it should be revisited when real-data evidence exists rather than inherited.
 
+**Sharpened 2026-08-25, and the cause is now specific: the fixture's flanking baseline is weak
+and real tissue's is strong.** `layout_mode` shipped as `resample` on the re-measurement
+(`specs/05` §4a); what makes the two datasets disagree is not the layout head, which is the same
+code scoring the same way, but *what it is being compared against*.
+
+| | flanking / copy baseline | ceiling | the bar the layout head must clear |
+|---|---|---|---|
+| synthetic fixture | 0.5319 | 0.9221 (section's own score) | **58 % of ceiling** |
+| STARmap tier 1 | 0.7765 | 0.9808 (`oracle`) | **79 % of ceiling** |
+
+The fixture's generative law decorrelates fast in z, so copying a neighbouring section is a poor
+strategy there and almost anything beats it — `field` does, at 1.35x, and
+`tests/test_layout.py::test_localization_beats_the_real_data_baseline` records that and still
+passes. Real serial sections at 50 µm spacing are nearly copies of each other, so the copy floor
+sits close to the ceiling and the room a generative layout has to win in is a fifth of what the
+fixture advertises.
+
+**So the fixture cannot rank a layout mode, at any power.** It is not a question of more seeds:
+the referent itself is unrepresentative, and a criterion stated against it (`specs/05`'s
+`test_localization_beats_the_real_data_baseline`) measures the fixture's z-decorrelation rate as
+much as the layout head. The fixture gate was re-run on the corrected sampler for the record
+(`reports/t09_layout_mode_gate_grid.md`); the decision rests on the real-data measurement.
+
+A second thing the fixture cannot show, and it is the one that decided the mode: **the count**.
+The fixture's intensity integral is stable enough to pass `test_expected_count_matches` (mean
+within 5 % of `N_expected` over 50 seeds). On real tissue the same integral emitted 63.9x, 5.4x
+and 0.895x the ground-truth count on three sections of one volume, and swung 3.7x between refits
+of one configuration. Nothing in the fixture's dynamic range produces that.
+
 ## 3. Geometry the fixture does not have (found at T10)
 
 * **Coincident coordinates.** bench3 flattens each multi-plane slab to its centre z, so 0.49 % of

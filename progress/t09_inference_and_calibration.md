@@ -611,6 +611,33 @@ the far arm was for) but it is strongly **metric-dependent**: `celltype_localiza
 > forward. It should be re-selected on each dataset with real-data evidence rather than inherited,
 > and `specs/05`'s headline layout claim re-examined (`specs/10` §4.5b). T10 measures; it does not
 > retune the layout head.
+>
+> ### ✅ CLOSED 2026-08-25 — the tie-break is overturned; `resample` ships
+>
+> Re-measured on the corrected grid sampler, five arms off one refit
+> (`reports/r11_starmap_layout_modes.md`): `field` **0.6607**, `hybrid` **0.6692**, `resample`
+> **0.7546**, copy floor **0.7765**. The capability tie-break that shipped `hybrid` is reversed —
+> not by a re-weighting but by a measurement that is 3.2x the envelope where the original was
+> 1.03x it — and `Config.layout_mode` now defaults to `"resample"`. The count is what decides it:
+> `field`/`hybrid` swing 3.7x between refits of one configuration on the section-2 integral, which
+> no density-matched score can see.
+>
+> **Both questions this note raised are answered.** *Which of the three ships*: `resample`, on real
+> data, as a recorded negative result (`specs/05` §4a). *Whether the gate may be inherited from the
+> fixture at all*: **no** — and the reason is now specific rather than statistical. The fixture's
+> flanking baseline sits at 58 % of its ceiling where real tissue's sits at 79 %, so the fixture
+> systematically over-rewards a generative layout no matter how many seeds it is given
+> (`progress/fixture_limitations.md` §2). The fixture gate was nonetheless re-run on the corrected
+> sampler so its verdict is on the record beside the real-data one:
+> `reports/t09_layout_mode_gate_grid.md`.
+>
+> One thing that re-run established about **this gate's cost**: `layout_mode` is read only at
+> generation time, and fitting the fixture at all three modes with one seed gives **bitwise
+> identical** weights across all 96 parameter and buffer tensors. The merged 18-cell gate therefore
+> refits 3x more than it needs to for this leg — 6 fits would serve 18 cells — and a future
+> selection run should reuse one fit across the `layout_mode` axis rather than refitting per cell.
+> That is a cost fix, not a correctness one: the scores are the same either way, but the contrast
+> is cleaner because it carries no fit-to-fit noise.
 
 **`layout_mode` was decided inside the noise** — 0.0344 against an envelope of 0.0335, a margin
 1.03x the noise floor. The tie-break selects **`hybrid`**, because `resample` reuses real cell

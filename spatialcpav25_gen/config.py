@@ -532,9 +532,31 @@ class Config:
     # ----------------------------------------------------------------------------------
     # layout (T05)
     # ----------------------------------------------------------------------------------
-    layout_mode: str = "field"
-    """One of ``LAYOUT_MODES``. ``resample`` reuses real flanking coordinates and is the
-    previous version's behaviour, kept as the no-regression fallback."""
+    layout_mode: str = "resample"
+    """One of ``LAYOUT_MODES``. ``resample`` reuses the nearest real flanking section's
+    coordinates and types unchanged — the previous version's behaviour, and **since 2026-08-25
+    the shipped default**.
+
+    This is a **negative result, recorded as one**. ``field`` and ``hybrid`` sample positions
+    from the learned intensity, which is the generative marked point process ``design/`` §3.3
+    proposes and the thing the layout head exists to be; on real tissue they do not beat copying
+    the adjacent section. Measured on STARmap tier 1 with the corrected grid sampler
+    (`reports/r11_starmap_layout_modes.md`), `celltype_localization` at ground-truth-matched
+    density: ``field`` 0.6607 and ``hybrid`` 0.6692 against ``resample`` 0.7546, where the
+    model-free flanking copy scores **0.7765** — both field-based modes sit 3.5x and 3.2x the
+    across-seed envelope (0.0335) *below* a copy, and ``resample`` lands on that floor to within
+    0.0219, inside it. Correcting the sampler's bias moved ``field`` 0.0599 and ``hybrid``
+    0.0158 and did not change the ordering, which held on both samplers.
+
+    The deciding measurement is not localization but the **count**. ``field`` and ``hybrid``
+    take their cell count from the intensity integral, which is wrong in scale and unstable
+    run to run: the same configuration refitted emitted 48 343 and then 179 495 cells for a
+    section whose ground truth is 4 187, a 3.7x swing that every density-matched score is blind
+    to. ``resample``'s count is the flanking section's, and is 0.988 of ground truth.
+
+    Both remain selectable and are reported as ablation A4 (``specs/10`` §6). Do not delete
+    them: what is being reported is that a generative layout is *available and measured worse*,
+    which is a claim about the method, not an absence in it."""
 
     layout_sampler: str = "grid"
     """One of ``LAYOUT_SAMPLERS``. How ``field`` and ``hybrid`` place points; ``resample``
