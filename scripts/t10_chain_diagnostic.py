@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import tempfile
 import time
 import warnings
 from pathlib import Path
@@ -54,7 +55,13 @@ from spatialcpav25_gen.model.field import BBoxClampWarning
 from spatialcpav25_gen.model.layout import fit_repulsion
 from spatialcpav25_gen.model.spatialcpav25_gen import CTFFlow, TrainingData, train_ctfflow
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _bench3_paths import add_path_args, resolve, set_torch_threads
+
 SEED = 1
+# Resolved per run by ``_bench3_paths`` (``--bench3`` and friends). They stay as module-level
+# names because ``t10_rescore_saved`` imports the two loaders below and sets them once; on a
+# machine where bench3 is this repo's own copy the defaults are what the pilot used.
 INPUT = "benchmark-pbya-v3/results/_inputs/starmap_visual_cortex/paper_2_4_6/train_registered.h5ad"
 GROUND_TRUTH = "benchmark-pbya-v3/data/processed/starmap_visual_cortex/data.h5ad"
 
@@ -100,17 +107,21 @@ def summarise(name: str, xy: np.ndarray, values: np.ndarray, k: int) -> dict[str
     }
 
 
-def load_training_volume(cfg: Config) -> TrainingVolume:
-    """bench3's training-only input as a ``TrainingVolume`` (the wrapper's own path)."""
+def load_training_volume(cfg: Config, input_path: str | Path | None = None) -> TrainingVolume:
+    """bench3's training-only input as a ``TrainingVolume`` (the wrapper's own path).
+
+    The round-trip through a temporary file goes to a **per-process** directory: the three
+    ``layout_mode`` arms are meant to run concurrently, and a shared temp name beside the input
+    would have them overwrite and unlink each other's copy.
+    """
     import anndata as ad
 
-    adata = ad.read_h5ad(INPUT)
-    tmp = Path(INPUT).with_suffix(".chain.h5ad")
-    adata.write_h5ad(tmp)
-    try:
+    src = Path(input_path or INPUT)
+    adata = ad.read_h5ad(src)
+    with tempfile.TemporaryDirectory(prefix="ctfflow_input_") as tmpdir:
+        tmp = Path(tmpdir) / "train_registered.h5ad"
+        adata.write_h5ad(tmp)
         vol = load_volume(tmp, cfg, flattened_sections=True)
-    finally:
-        tmp.unlink(missing_ok=True)
     return TrainingVolume(
         specimen_id=vol.specimen_id,
         sections=vol.sections,
@@ -130,12 +141,18 @@ def build_embeddings(cfg: Config, vol: TrainingVolume):
     return EntityEmbeddings(cfg, zeros, types, None)
 
 
-def real_section_reference(cfg: Config, model: CTFFlow, section_id: str, k: int) -> list[dict]:
+def real_section_reference(
+    cfg: Config,
+    model: CTFFlow,
+    section_id: str,
+    k: int,
+    ground_truth: str | Path | None = None,
+) -> list[dict]:
     """Moran's I of the real held-out section's counts, and of the latent the encoder makes."""
     import anndata as ad
     import scipy.sparse as sp
 
-    gt = ad.read_h5ad(GROUND_TRUTH)
+    gt = ad.read_h5ad(Path(ground_truth or GROUND_TRUTH))
     mask = gt.obs["section"].values.astype(str) == section_id
     xy = np.asarray(gt.obsm["spatial"], dtype=np.float64)[mask, :2]
     counts = gt.X[mask]
@@ -271,9 +288,38 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--save-model",
         default=None,
-        help="torch.save the fitted model here, so a later analysis needs no refit",
+        help="torch.save the fitted model here, so a later analysis needs no refit. Written "
+        "immediately after the fit, before the chain is measured: an hour of training must "
+        "not be lost to a failure in an analysis stage downstream of it.",
     )
+    ap.add_argument(
+        "--fit-checkpoint",
+        default=None,
+        help="train_ctfflow(checkpoint=...): resume an interrupted fit from here. Safe to pass "
+        "on a first run — it is written every Config.checkpoint_every_n_steps and read only if "
+        "it exists and matches this config, seed and budget.",
+    )
+    ap.add_argument(
+        "--fit-only",
+        action="store_true",
+        help="fit, save, and stop — skip the chain measurement. For producing the checkpoint "
+        "the layout-mode arms re-score.",
+    )
+    ap.add_argument(
+        "--layout-sampler",
+        default=None,
+        choices=["grid", "rejection"],
+        help="override Config.layout_sampler for the generated chain. Generation-time only: "
+        "the fit does not draw positions, so this does not change the weights.",
+    )
+    add_path_args(ap)
     args = ap.parse_args(argv)
+
+    global INPUT, GROUND_TRUTH
+    paths = resolve(args)
+    INPUT, GROUND_TRUTH = str(paths.input), str(paths.ground_truth)
+    print(paths.describe())
+    print(f"  torch threads = {set_torch_threads()}")
 
     cfg = Config(
         seed=SEED,
@@ -285,20 +331,36 @@ def main(argv: list[str] | None = None) -> int:
     ).replace(section_key="section", coord_key="spatial", celltype_key="cell_type", region_key=None)
     if args.decoder_mu_link is not None:
         cfg = cfg.replace(decoder_mu_link=args.decoder_mu_link)
+    if args.layout_sampler is not None:
+        cfg = cfg.replace(layout_sampler=args.layout_sampler)
     print(f"  decoder_mu_link = {cfg.decoder_mu_link}")
+    print(f"  layout_sampler  = {cfg.layout_sampler}, layout_mode = {cfg.layout_mode}")
     k = int(cfg.metric_knn_k)
 
     print(f"chain diagnostic: {args.steps} steps, {args.section} at z={args.target_z}")
-    vol = load_training_volume(cfg)
+    vol = load_training_volume(cfg, paths.input)
     data = TrainingData.build(vol, cfg)
     model = CTFFlow(cfg, data, build_embeddings(cfg, vol), grf_seed=SEED)
     t0 = time.time()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", BBoxClampWarning)
-        train_ctfflow(model, cfg, steps=int(cfg.train_steps), seed=SEED)
+        train_ctfflow(
+            model, cfg, steps=int(cfg.train_steps), seed=SEED, checkpoint=args.fit_checkpoint
+        )
         if cfg.repulsion:
             model.repulsion = fit_repulsion(vol, cfg, seed=SEED + 1)
-    print(f"  fit: {cfg.train_steps} steps in {time.time() - t0:.1f}s")
+    print(f"  fit: {cfg.train_steps} steps in {time.time() - t0:.1f}s", flush=True)
+
+    # Save before anything else runs. The chain stages below generate a section, and under a
+    # broken layout that is exactly where a run dies; losing the fit to it would cost the hour
+    # again for nothing.
+    if args.save_model:
+        Path(args.save_model).parent.mkdir(parents=True, exist_ok=True)
+        torch.save({"state_dict": model.state_dict(), "config": cfg.to_dict()}, args.save_model)
+        print(f"  model saved to {args.save_model}", flush=True)
+    if args.fit_only:
+        print("  --fit-only: stopping before the chain measurement")
+        return 0
 
     # --- the generated chain, reproducing infer/generate.py::_expression step by step ---
     from spatialcpav25_gen.infer.generate import _decode, _default_exclusions, _layout_on
@@ -332,10 +394,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     emitted = {"uncalibrated": counts.numpy()}
     decomposition = mu_variance_decomposition(model, h, cfg)
-    if args.save_model:
-        Path(args.save_model).parent.mkdir(parents=True, exist_ok=True)
-        torch.save({"state_dict": model.state_dict(), "config": cfg.to_dict()}, args.save_model)
-        print(f"  model saved to {args.save_model}")
 
     if args.calibrate:
         # T09 §2's calibrator solves log theta per gene against the mean-variance relation at the
@@ -365,7 +423,7 @@ def main(argv: list[str] | None = None) -> int:
     for r in rows:  # print the generated chain before anything else can fail
         print(f"  {r['stage']:<48s} median I = {r['median_I']:+.4f}  (n={r['n_channels']})")
     try:
-        rows.extend(real_section_reference(cfg, model, args.section, k))
+        rows.extend(real_section_reference(cfg, model, args.section, k, paths.ground_truth))
     except Exception as exc:  # a reference failure must not discard the chain above
         print(
             f"  !! reference stage failed ({type(exc).__name__}: {exc}); "
