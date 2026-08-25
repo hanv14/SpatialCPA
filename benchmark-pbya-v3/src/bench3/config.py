@@ -1308,8 +1308,19 @@ METHODS = {
         # that list "is never run unless it is named explicitly", so a bare ``run_all``
         # plans exactly the campaign it planned before this entry existed and no existing
         # result is affected. Run it with ``--methods spatialcpav25_gen``.
+        #
+        # The only SpatialCPA method NOT in ``bench_spatialcpa``, and the reason is a hard
+        # incompatibility rather than a preference: that environment is pinned to
+        # ``python=3.10`` (``benchmark-pbya/envs/spatialcpa.yml``, measured at 3.10.20 on the
+        # campaign machine) and v25 requires ``>=3.11,<3.13`` — pip refuses the install
+        # outright. Installing it there anyway would mean either overriding the interpreter
+        # check, which runs the method on a version nothing has been tested on, or a
+        # full-dependency install, which would rewrite the exactly-pinned numpy/torch under
+        # the thirteen other methods sharing the env. Per-method ``conda_env`` exists for
+        # exactly this: v25 gets its own (``benchmark-pbya/envs/spatialcpav25.yml``) and
+        # every other entry above is untouched.
         "wrapper": _v3_wrapper("run_spatialcpav25_gen.py"),
-        "conda_env": "bench_spatialcpa",
+        "conda_env": "bench_spatialcpav25",
         "available": True,
         "family": "spatialcpa",
         "notes": "CTF-Flow — continuous transcriptomic field with a 3D GRF prior, "

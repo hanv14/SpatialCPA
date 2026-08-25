@@ -1,0 +1,21 @@
+# The environment SpatialCPA-v25-Gen is dispatched in (bench3's METHODS entry for
+# `spatialcpav25_gen` names it). Separate from `bench_spatialcpa` because that env is
+# pinned to python=3.10 and v25 requires >=3.11,<3.13; pip refuses the install there.
+#
+# This file fixes the interpreter and nothing else. Every dependency v25 has is pinned
+# exactly in the package's own pyproject.toml — "research code whose numbers go in a paper,
+# and a silent dependency bump that shifts a metric by 0.01 is not a debuggable event" — so
+# declaring versions here as well would give the pins two sources of truth that can disagree.
+# The editable install below is what brings them in.
+#
+#   conda env create -f benchmark-pbya/envs/spatialcpav25.yml
+#   conda run -n bench_spatialcpav25 python -m pip install -e <path to the v25 repo>
+#
+# The second line is deliberately not automated into this file: the repository path differs
+# per machine, and a wrong one would install silently from somewhere unintended.
+name: bench_spatialcpav25
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip

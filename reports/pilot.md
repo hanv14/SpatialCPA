@@ -753,3 +753,47 @@ regenerate with `python scripts/t10_rescore_saved.py --score-only`.
    adjacent section. It is no longer *below `random`*, which it was in §5. Selection, calibration and
    `medcpt` have still never run on this dataset, and §12's order — T06's link decision, then R11,
    then a re-costed campaign — is what the numbers still support.
+
+---
+
+## 14. The dispatch environment — v25 cannot run in `bench_spatialcpa` (2026-08-25)
+
+§1's blocker was *no conda in this container*. On the campaign machine conda exists, and the
+install turns out to be blocked for a different and more permanent reason.
+
+`bench_spatialcpa` is the environment every SpatialCPA method is dispatched in, and it is pinned
+to **`python=3.10`** (`benchmark-pbya/envs/spatialcpa.yml`; measured at **3.10.20** on the
+machine). `spatialcpav25_gen` requires **`>=3.11,<3.13`**, so
+`pip install --no-deps -e <repo>` there fails outright:
+
+```
+ERROR: Package 'spatialcpav25-gen' requires a different Python: 3.10.20 not in '<3.13,>=3.11'
+```
+
+**A caution worth recording**, because it looks like the opposite of a failure: a subsequent
+`python -c "import spatialcpav25_gen"` run from the repository root **succeeds** in that same
+3.10 environment. `python -c` puts the working directory on `sys.path`, so it imports the source
+tree directly — no install, the 3.10 interpreter, and whatever numpy/torch that env holds. Any
+run launched from the repo root in `bench_spatialcpa` would therefore appear to work while
+executing on an interpreter this project has never tested. Check from elsewhere
+(`cd /tmp && python -c "import spatialcpav25_gen"`), not from the repo.
+
+**Decision: v25 gets its own environment, `bench_spatialcpav25`.** Per-method `conda_env` is
+exactly the mechanism for a method that needs a different interpreter, so the change is one field
+in bench3's `METHODS` entry plus `benchmark-pbya/envs/spatialcpav25.yml` (interpreter only; the
+dependency pins stay in `pyproject.toml`, which is their single source of truth). Nothing that
+currently works is touched — the other thirteen SpatialCPA entries keep `bench_spatialcpa`.
+
+The two rejected alternatives, recorded so they are not re-proposed:
+
+* **`--ignore-requires-python` into the shared env** — runs the method on an untested interpreter,
+  and a full-dependency install would rewrite the exactly-pinned numpy/torch underneath every
+  other method sharing the environment.
+* **Relaxing `requires-python` to `>=3.10`** — the pin is not decorative: 339 tests, both gates
+  and every number in this report were produced on 3.12, and nothing has been run on 3.10.
+
+**Not a blocker for R11's re-measurement.** That work re-scores one saved model rather than going
+through `conda run`, and the evaluator's whole import chain — numpy, scipy, h5py, scikit-learn,
+anndata, pandas, with `umap` imported lazily under `use_umap` — is already inside v25's own pinned
+dependencies. It runs in the v25 environment with `--no-umap`, and `bench_spatialcpav25` is owed
+before the campaign dispatches v25 through the harness, not before the table.
