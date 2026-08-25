@@ -27,6 +27,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 from spatialcpav25_gen.config import Config
 from spatialcpav25_gen.data.loaders import split_holdout
 from spatialcpav25_gen.data.schema import HeldOutSections, TrainingVolume
@@ -34,12 +35,14 @@ from spatialcpav25_gen.model.field import BBoxClampWarning
 from spatialcpav25_gen.train.select import (
     ALL_GATES,
     CAPABILITY_CLAIM,
+    FIT_INVARIANT_GATES,
     FULL_BUDGET_GATES,
     GATES,
     METRIC_NAMES,
     TRAINING_FREE_OPTIONS,
     V20_CONFIG,
     Candidate,
+    FitScorer,
     ScoreCache,
     SelectionError,
     capability_tie_break,
@@ -556,3 +559,77 @@ def test_tie_break_leaves_a_clear_margin_alone():
     winner, reason = capability_tie_break([best, far], "expr_mode", cfg)
     assert winner is best
     assert "no rival within the envelope" in reason
+
+
+# --------------------------------------------------------------------------------------
+# the fit-invariant gates, and the cache that rests on them
+# --------------------------------------------------------------------------------------
+
+
+def test_layout_mode_does_not_enter_the_fit():
+    """Two fits differing only in ``layout_mode`` are bitwise identical, every tensor.
+
+    This is the invariant :data:`FIT_INVARIANT_GATES` declares and
+    :class:`FitScorer`'s cache spends: one model serves all three ``layout_mode`` options, so
+    the merged 18-cell gate costs 6 fits rather than 18. ``sample_layout`` is never called
+    during training and ``_layout_term`` evaluates the intensity at the **real** cells'
+    positions, so nothing in the loop can see the gate — but "nothing can see it" is an
+    argument about today's code, and the saving it buys is silent if it stops being true.
+    A future change that made training read ``layout_mode`` would make the cache serve a stale
+    model to two thirds of the gate, and every score would still look plausible. This test is
+    what turns that into a failure.
+    """
+    from spatialcpav25_gen.model.spatialcpav25_gen import CTFFlow, TrainingData, train_ctfflow
+
+    assert FIT_INVARIANT_GATES == ("layout_mode",), FIT_INVARIANT_GATES
+    vol, _ = make_synthetic_volume(seed=0)
+    base = t09_cfg(train_steps=2)
+    training, _ = split_holdout(vol, "alternating", 0, base)
+
+    def fit(mode: str) -> dict[str, object]:
+        cfg = base.replace(layout_mode=mode)
+        model = CTFFlow(
+            cfg, TrainingData.build(training, cfg), build_embeddings(cfg, vol), grf_seed=11
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            train_ctfflow(model, cfg, steps=2, seed=SEED)
+        return dict(model.state_dict())
+
+    reference = fit("field")
+    assert reference, "the model has no parameters to compare"
+    for mode in ("hybrid", "resample"):
+        other = fit(mode)
+        assert set(other) == set(reference), mode
+        for name, tensor in reference.items():
+            assert torch.equal(tensor, other[name]), (mode, name)
+
+
+def test_fit_cache_keys_ignore_only_the_fit_invariant_gates():
+    """The cache key collapses ``layout_mode`` and nothing else.
+
+    A key that ignored too much would hand one model to candidates that genuinely need
+    separate fits — the failure mode this saving has to be protected against, and one that
+    would not show up as an error anywhere.
+    """
+    vol, _ = make_synthetic_volume(seed=0)
+    training, _ = split_holdout(vol, "alternating", 0, Config())
+    scorer = FitScorer(training, lambda cfg: build_embeddings(cfg, vol))
+    base = t09_cfg()
+
+    keys = {
+        mode: scorer._fit_key(base.replace(layout_mode=mode), 10, 1)
+        for mode in ("field", "hybrid", "resample")
+    }
+    assert len(set(keys.values())) == 1, keys
+
+    reference = keys["field"]
+    for gate, options in ALL_GATES:
+        if gate in FIT_INVARIANT_GATES:
+            continue
+        for option in options:
+            other = scorer._fit_key(base.replace(**{gate: option}), 10, 1)
+            if getattr(base, gate) != option:
+                assert other != reference, (gate, option)
+    assert scorer._fit_key(base, 20, 1) != reference, "the budget must be part of the key"
+    assert scorer._fit_key(base, 10, 2) != reference, "the seed must be part of the key"

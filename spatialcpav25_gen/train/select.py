@@ -86,6 +86,7 @@ if TYPE_CHECKING:  # pragma: no cover
 __all__ = [
     "ALL_GATES",
     "CAPABILITY_CLAIM",
+    "FIT_INVARIANT_GATES",
     "FULL_BUDGET_GATES",
     "GATES",
     "METRIC_NAMES",
@@ -303,6 +304,27 @@ def _check_gate_classification() -> None:
                 f"TRAINING_FREE_OPTIONS[{gate!r}] names {sorted(unknown)}, which are not "
                 f"options of that gate ({list(options)})."
             )
+
+
+FIT_INVARIANT_GATES: Final[tuple[str, ...]] = ("layout_mode",)
+"""Gates that provably do not enter the fit, so one model serves every option of them.
+
+``layout_mode`` is read only at generation time: ``sample_layout`` is never called during
+training, and ``_layout_term`` evaluates the intensity at the **real** cells' positions. Fitting
+the fixture at ``field`` / ``hybrid`` / ``resample`` with one seed gives **bitwise identical**
+weights across all 96 parameter and buffer tensors, which is what
+``tests/test_select.py::test_layout_mode_does_not_enter_the_fit`` asserts — the cache in
+:class:`FitScorer` is only sound while that test passes, so it fails loudly rather than silently
+reusing a stale model if a future change makes training read the gate.
+
+The saving is per dataset and not small: the merged full-budget gate is ``layout_mode`` x
+``prior_mode`` x ``expr_mode`` = 18 cells, and 6 fits serve all 18. It also makes the comparison
+*better* — the three ``layout_mode`` arms of a cell now differ by nothing but the layout, where
+before they were three separate fits that happened to agree.
+
+Scores are unchanged either way: identical weights produce identical scores. This is a cost fix,
+not a numerical one, and it must stay that way — anything that changed a number here would mean
+the invariant does not hold."""
 
 
 FULL_BUDGET_GATES: Final[tuple[tuple[str, tuple[str, ...]], ...]] = tuple(
@@ -691,10 +713,40 @@ class FitScorer:
 
     vol: TrainingVolume
     embeddings: Callable[[Config], EntityEmbeddings]
+    _fits: dict[str, CTFFlow] = field(default_factory=dict, repr=False)
+
+    def _fit_key(self, cfg: Config, steps: int, seed: int) -> str:
+        """Identify the *fit*: the config with :data:`FIT_INVARIANT_GATES` normalised out.
+
+        Two candidates differing only in a gate the fit never reads share a model.
+        """
+        canonical = cfg.replace(**{gate: getattr(Config(), gate) for gate in FIT_INVARIANT_GATES})
+        return f"{canonical.content_hash()}:{int(steps)}:{int(seed)}"
 
     def __call__(self, cfg: Config, *, steps: int, seed: int) -> dict[str, float]:
-        """Fit for ``steps`` optimiser steps at ``seed`` and return the six metrics."""
+        """Fit for ``steps`` optimiser steps at ``seed`` and return the six metrics.
+
+        The fit is reused across candidates that differ only in a gate the fit does not read
+        (:data:`FIT_INVARIANT_GATES`) — 6 fits serve the merged gate's 18 cells. Everything
+        downstream of the weights is still computed per candidate: the anchor calibration
+        reconstructs sections down the generation path, so it depends on ``layout_mode`` and is
+        **not** cached, and ``selection_scores`` generates with the candidate's own config.
+        """
         from spatialcpav25_gen.infer.calibrate import calibrate_anchor_weight
+
+        model = self._fits.get(self._fit_key(cfg, steps, seed))
+        if model is None:
+            model = self._fit(cfg, steps=steps, seed=seed)
+            self._fits[self._fit_key(cfg, steps, seed)] = model
+        anchor = (
+            calibrate_anchor_weight(model, self.vol, cfg, seed=seed, n_folds=1)
+            if cfg.expr_mode == "auto-blend"
+            else None
+        )
+        return selection_scores(model, self.vol, cfg, seed=seed, anchor=anchor)
+
+    def _fit(self, cfg: Config, *, steps: int, seed: int) -> CTFFlow:
+        """One fit. Separated from :meth:`__call__` so the cache has a single writer."""
         from spatialcpav25_gen.model.layout import fit_repulsion
         from spatialcpav25_gen.model.spatialcpav25_gen import CTFFlow, TrainingData, train_ctfflow
 
@@ -703,12 +755,11 @@ class FitScorer:
         train_ctfflow(model, cfg, steps=steps, seed=seed)
         if cfg.repulsion:
             model.repulsion = fit_repulsion(self.vol, cfg, seed=seed + 1)
-        anchor = (
-            calibrate_anchor_weight(model, self.vol, cfg, seed=seed, n_folds=1)
-            if cfg.expr_mode == "auto-blend"
-            else None
-        )
-        return selection_scores(model, self.vol, cfg, seed=seed, anchor=anchor)
+        return model
+
+    def release_fits(self) -> None:
+        """Drop the cached models. A fit is ~50 MB and the merged gate holds six."""
+        self._fits.clear()
 
 
 # --------------------------------------------------------------------------------------

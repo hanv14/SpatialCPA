@@ -873,6 +873,14 @@ So A4 becomes the ablation of **the generative layout as a whole**, and like A2 
 | **A4b** | `layout_mode=hybrid` | does the sliced-Wasserstein polish toward the flank marginals recover the difference |
 | **A4c** | `layout_mode=field`, `repulsion=False` | the original A4, now stated *inside* a field-based mode where it is not a no-op: point-process realism via `g(r)` |
 
+**Every arm A1-A8 must be verified to change behaviour under the *shipped* config before its
+number is quoted** — SPEC_QUESTIONS **C33**, raised by this restatement and now a rule. A4 is the
+third arm to have been inert or backwards because the thing it overrides ships off; the first two
+(A2, A7) were caught because a weight was visibly zero, and this one was not, because
+`repulsion=False` is a real change to a real field that a control-flow decision three levels away
+makes moot. The check is one generation per arm with no fit: same seed, shipped config against the
+arm's override, assert the outputs differ.
+
 A4a and A4b **report the cell count and its per-section spread beside every metric**, not the
 metrics alone. `specs/05` §4a: the count is what decided the mode, it is unstable 3.7x between
 refits of one configuration, and a density-matched score cannot see it. An A4 table that reports

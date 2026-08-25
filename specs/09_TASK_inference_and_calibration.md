@@ -255,11 +255,29 @@ reconstructions of training sections**:
 > gate; the fixture's verdict is recorded for comparison only
 > (`reports/t09_layout_mode_gate_grid.md`).
 >
-> **Cost note for the merged gate.** `layout_mode` is read only at generation time — fitting the
-> fixture at all three modes with one seed gives bitwise identical weights over all 96 parameter
-> and buffer tensors — so the 18-cell full-budget gate refits 3x more than it needs to: 6 fits
-> (`prior_mode` × `expr_mode`) serve all 18 cells if the `layout_mode` axis reuses one fit. The
-> scores are unchanged; the contrast is cleaner, because it carries no fit-to-fit noise.
+> **The merged gate costs 6 fits, not 18 — implemented 2026-08-25.** `layout_mode` is read only at
+> generation time, so one model serves all three of its options: `FitScorer` caches the fit under a
+> key with `select.FIT_INVARIANT_GATES` normalised out, and the merged `layout_mode` x `prior_mode`
+> x `expr_mode` gate fits **6** models rather than 18. On the fixture's own measured budget
+> (23 fits / 21 330 s, ~930 s per fit) that is **~3.1 hours saved per dataset**, and the saving is
+> larger on real data, where the pilot measured a 2400-step fit at ~57 minutes: the merged gate goes
+> from ~17 h to ~5.7 h per dataset.
+>
+> Three things this does **not** do, stated because a cost fix that quietly changed a number would
+> be worse than the cost. It does not change any score: identical weights produce identical scores,
+> and the arms were already fitted at the same seed. It does not change the cell order, the ranking
+> or the tie-breaks. And it does not extend to any other gate — `prior_mode` and `expr_mode` both
+> enter the fit, and the key collapses `layout_mode` and nothing else.
+>
+> What makes it sound is a test, not an argument: `tests/test_select.py`'s
+> `test_layout_mode_does_not_enter_the_fit` asserts two fits differing only in the gate are bitwise
+> identical over every parameter and buffer, and
+> `test_fit_cache_keys_ignore_only_the_fit_invariant_gates` asserts the key collapses that gate
+> alone. A future change that made training read `layout_mode` would otherwise hand a stale model to
+> two thirds of the gate and every score would still look plausible.
+>
+> The anchor calibration is **not** cached: it reconstructs sections down the generation path, so it
+> does depend on `layout_mode` and is recomputed per candidate.
 
 - Fit a **reduced-epoch** model (25% of `cfg.epochs`) per candidate — **except for the budget
   gate, which is scored at its own budget** (see below), and except for any gate the

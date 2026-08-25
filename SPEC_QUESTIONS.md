@@ -1562,6 +1562,51 @@ as a magnitude stated in its own note.
 
 ---
 
+### C33. An ablation override can be a **no-op under the shipped config**, and a no-op arm reports as a null result — **RULE, third instance** (raised 2026-08-25)
+
+**The check, stated once so it can be applied mechanically.** For every ablation arm A1-A8, before
+the arm is run and before its number is quoted: *does this override change behaviour when applied to
+the **shipped** configuration?* Being a valid value of a real `Config` field is not the same
+question, and it is the question that has been answered by accident three times.
+
+An override that is inert under the shipped config produces a difference of zero, and zero is
+indistinguishable from "the component contributes nothing" — the exact claim an ablation exists to
+test. It fails silently: the arm runs, the config validates, the wrapper flag works, the table has a
+row, and the row is a lie about the method.
+
+**Three instances, all of the same shape — the thing under test ships off:**
+
+| # | ablation | what shipping made inert | how it was caught |
+|---|---|---|---|
+| 1 | **A2** — metric-aware weights | all three weights ship at **0**, so "weights off" is the shipped config and a subtraction arm measures nothing | caught at T08 and restated in `specs/10` §6: A2 runs the terms **on**, as an *addition* |
+| 2 | **A7** — SEFL | all three SEFL weights ship at **0** after R7, same shape | caught at T07/T10, restated as an *addition*: "A7 runs SEFL *on*, because all three SEFL weights ship at 0" |
+| 3 | **A4** — repulsion off | `layout_mode` ships as **`resample`** (R11, 2026-08-25), and `sample_layout` returns `_resample_layout` *before* the interaction is read, so `repulsion=False` changes nothing at all | caught while writing the decision up, not by a test — see below |
+
+**The first two were caught because a weight was visibly zero in `Config`. The third was not**, and
+that is what makes this a rule rather than three anecdotes: `Config.repulsion` is `True` under the
+shipped config, `repulsion=False` is a real change to a real field, and the arm looks live in every
+place a reader would check. It is inert only because of a control-flow decision three call levels
+away — an early `return` in `sample_layout`. **No amount of reading `Config` would have found it.**
+
+**So the check has to be executed, not reasoned about.** The proposed form, owed to T10 before the
+ablation campaign runs: for each arm, generate one section under the shipped config and one under
+the arm's override, same seed, and assert the outputs **differ**. It is the cheapest possible test —
+one generation per arm, no fit, no data — and it is the same shape as the negative controls this
+project already runs (A8's `loss_prog_WRONG` is *built to fail*; this asserts an arm is *built to
+differ*). An arm that cannot be made to differ is either mis-specified or is telling us the shipped
+config already has the component off, in which case it must be restated as an addition experiment
+like A2 and A7.
+
+**Status.** A4 is restated in `specs/10` §6 as the ablation of the generative layout as a whole —
+A4a `layout_mode=field`, A4b `layout_mode=hybrid`, A4c repulsion-off *within* `field`, where it is
+not a no-op. The general check is **owed to T10** and is not yet implemented; this entry is the
+specification of it. The class also generalises past ablations: any experiment defined as an
+override of a config that has since moved is exposed to it, which includes the `V20_CONFIG`
+no-regression arm (`layout_mode=resample` is now shared with the shipped config, so that arm is a
+weaker contrast than it was — it now differs only in `expr_mode`, and `CLAUDE.md` says so).
+
+---
+
 ## E. Recorded, no action needed
 
 - **E1.** Convention 4 says coordinates are always `(N, 3)`; T01 stores `Section.coords` as `(N, 2)`
