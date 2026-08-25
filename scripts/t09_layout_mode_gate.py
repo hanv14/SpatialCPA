@@ -31,6 +31,7 @@ import argparse
 import json
 import time
 import warnings
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -47,6 +48,7 @@ from tests.fixtures.synthetic import make_synthetic_volume
 from tests.fixtures.text import fake_text_vecs
 
 MODES = ("field", "hybrid", "resample")
+META_KEYS = ("steps", "layout_sampler", "prior_mode", "expr_mode", "text_emb_mode")
 
 
 def build_embeddings(cfg: Config, vol: Volume) -> EntityEmbeddings:
@@ -96,7 +98,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     ap.add_argument("--steps", type=int, default=2400)
     ap.add_argument("--out", default="reports/t09_layout_mode_gate_grid.md")
+    ap.add_argument(
+        "--merge",
+        nargs="+",
+        default=None,
+        help="collect per-seed JSONs written by earlier runs instead of fitting anything. The "
+        "seeds are meant to run as one process each (they are independent and single-threaded), "
+        "which leaves each with a one-seed report; this writes the across-seed table those runs "
+        "could not compute individually.",
+    )
     args = ap.parse_args(argv)
+
+    if args.merge:
+        return merge(args.merge, Path(args.out))
 
     base = Config().replace(
         train_steps=args.steps,
@@ -125,25 +139,70 @@ def main(argv: list[str] | None = None) -> int:
             print(f"    {mode:9s} {summary}", flush=True)
         per_seed[seed] = by_arm
 
+    return render(per_seed, meta_of(base), list(args.seeds), Path(args.out))
+
+
+def meta_of(cfg: Config) -> dict[str, object]:
+    """The run's fixed configuration, carried into the report and the JSON."""
+    return {
+        "steps": int(cfg.train_steps),
+        "layout_sampler": cfg.layout_sampler,
+        "prior_mode": cfg.prior_mode,
+        "expr_mode": cfg.expr_mode,
+        "text_emb_mode": cfg.text_emb_mode,
+    }
+
+
+def merge(paths: Sequence[str], out: Path) -> int:
+    """Combine per-seed JSONs into the across-seed table, refitting nothing.
+
+    Refuses a set whose runs do not share a configuration: an across-seed spread computed over
+    two different budgets or samplers would read as seed variation and is not one.
+    """
+    per_seed: dict[int, dict[str, dict[str, float]]] = {}
+    metas: set[tuple[tuple[str, object], ...]] = set()
+    for path in paths:
+        payload = json.loads(Path(path).read_text())
+        metas.add(tuple(sorted((k, payload[k]) for k in META_KEYS)))
+        for seed, by_arm in payload["per_seed"].items():
+            if int(seed) in per_seed:
+                raise SystemExit(f"seed {seed} appears in more than one of {list(paths)}")
+            per_seed[int(seed)] = by_arm
+    if len(metas) != 1:
+        raise SystemExit(
+            f"the runs do not share a configuration ({len(metas)} distinct): {sorted(metas)}. "
+            "An across-seed spread over different budgets is not a seed effect."
+        )
+    meta = dict(next(iter(metas)))
+    print(f"merging {len(per_seed)} seeds: {sorted(per_seed)}  {meta}")
+    return render(per_seed, meta, sorted(per_seed), out)
+
+
+def render(
+    per_seed: dict[int, dict[str, dict[str, float]]],
+    meta: dict[str, object],
+    seeds: list[int],
+    out: Path,
+) -> int:
+    """Write the report and its JSON from already-scored arms."""
+    seeds = seeds
     pooled = {
-        mode: {
-            m: float(np.median([per_seed[s][mode][m] for s in args.seeds])) for m in METRIC_NAMES
-        }
+        mode: {m: float(np.median([per_seed[s][mode][m] for s in seeds])) for m in METRIC_NAMES}
         for mode in MODES
     }
     spread = {
-        mode: {m: float(np.ptp([per_seed[s][mode][m] for s in args.seeds])) for m in METRIC_NAMES}
+        mode: {m: float(np.ptp([per_seed[s][mode][m] for s in seeds])) for m in METRIC_NAMES}
         for mode in MODES
     }
     ranks_pooled = median_ranks(pooled)
-    ranks_per_seed = {s: median_ranks(per_seed[s]) for s in args.seeds}
+    ranks_per_seed = {s: median_ranks(per_seed[s]) for s in seeds}
 
     envelope = 0.0335
     lines = [
         "# T09's `layout_mode` gate, re-run on the grid sampler",
         "",
         f"Synthetic fixture, `alternating` holdout, internal LOSO over training sections, "
-        f"{base.train_steps} steps, seeds {args.seeds}, `layout_sampler=grid`.",
+        f"{meta['steps']} steps, seeds {seeds}, `layout_sampler=grid`.",
         "",
         "**One fit per seed.** `layout_mode` is read only at generation time, and fitting the",
         "fixture at all three modes with one seed gives bitwise identical weights over all 96",
@@ -185,9 +244,38 @@ def main(argv: list[str] | None = None) -> int:
         "| seed | " + " | ".join(f"`{m}`" for m in MODES) + " |",
         "|---" * (len(MODES) + 1) + "|",
     ]
-    for s in args.seeds:
+    for s in seeds:
         lines.append(f"| {s} | " + " | ".join(f"{ranks_per_seed[s][m]:.1f}" for m in MODES) + " |")
+    winners = {s: min(ranks_per_seed[s], key=lambda a: ranks_per_seed[s][a]) for s in seeds}
+    best_pooled = min(ranks_pooled.values())
+    tied = [a for a in MODES if ranks_pooled[a] == best_pooled]
+    beaten_by_seed = {
+        m: max(pooled[a][m] for a in MODES) - min(pooled[a][m] for a in MODES)
+        < float(np.mean([spread[a][m] for a in MODES]))
+        for m in METRIC_NAMES
+    }
+    won = ", ".join(f"seed {s} -> `{w}`" for s, w in winners.items())
+    disagree = len(set(winners.values())) == len(seeds)
     lines += [
+        "",
+        "## Verdict, computed from the rows above",
+        "",
+        f"* **Each seed picks a different winner**: {won}."
+        if disagree
+        else f"* Per-seed winners: {won}.",
+        f"* Pooled median rank is a **{len(tied)}-way tie** at {best_pooled:.1f}"
+        f" ({', '.join(f'`{a}`' for a in tied)})."
+        if len(tied) > 1
+        else f"* Pooled median rank ranks `{tied[0]}` first at {best_pooled:.1f}.",
+        f"* On **{sum(beaten_by_seed.values())} of {len(METRIC_NAMES)}** metrics the spread between"
+        " the three arms is smaller than the arms' own spread across seeds — the gate is reading"
+        " seed variation, not layout.",
+        "* `resample`'s `celltype_localization` has an across-seed spread of **exactly zero**, and"
+        " that is a correctness check rather than a coincidence: `_resample_layout` copies the"
+        " flanking section's coordinates and types unchanged, so the layout carries no seed, and"
+        " this metric is a per-type field correlation over positions and type labels only. Its"
+        " expression-driven metrics do vary across seeds, which is how you can tell the three fits"
+        " really are different.",
         "",
         "## Pairwise gaps against `resample`, per metric (median over seeds)",
         "",
@@ -203,28 +291,23 @@ def main(argv: list[str] | None = None) -> int:
     text = "\n".join(lines)
     print()
     print(text)
-    out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text + "\n")
     out.with_suffix(".json").write_text(
         json.dumps(
             {
-                "steps": int(base.train_steps),
-                "seeds": list(args.seeds),
-                "layout_sampler": base.layout_sampler,
-                "prior_mode": base.prior_mode,
-                "expr_mode": base.expr_mode,
-                "text_emb_mode": base.text_emb_mode,
-                "per_seed": {str(s): per_seed[s] for s in args.seeds},
+                **meta,
+                "seeds": list(seeds),
+                "per_seed": {str(s): per_seed[s] for s in seeds},
                 "pooled_median": pooled,
                 "across_seed_spread": spread,
                 "median_rank_pooled": ranks_pooled,
-                "median_rank_per_seed": {str(s): ranks_per_seed[s] for s in args.seeds},
+                "median_rank_per_seed": {str(s): ranks_per_seed[s] for s in seeds},
             },
             indent=2,
         )
     )
-    print(f"\nwrote {out}")
+    print(f"\nwrote {out} and {out.with_suffix('.json')}")
     return 0
 
 

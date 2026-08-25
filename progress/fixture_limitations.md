@@ -89,8 +89,14 @@ fixture advertises.
 **So the fixture cannot rank a layout mode, at any power.** It is not a question of more seeds:
 the referent itself is unrepresentative, and a criterion stated against it (`specs/05`'s
 `test_localization_beats_the_real_data_baseline`) measures the fixture's z-decorrelation rate as
-much as the layout head. The fixture gate was re-run on the corrected sampler for the record
-(`reports/t09_layout_mode_gate_grid.md`); the decision rests on the real-data measurement.
+much as the layout head.
+
+**Measured, not argued.** The gate re-run on the corrected sampler (3 seeds x 2400 steps,
+`reports/t09_layout_mode_gate_grid.md`) returns **a different winner for every seed** — `field`,
+`hybrid`, `resample` at seeds 1, 2, 3 — and a pooled median rank that is an exact **3-way tie**.
+On 5 of the 6 metrics the between-arm spread is smaller than each arm's own across-seed spread.
+A gate whose answer is a function of the seed is not underpowered, it is uninformative, and no
+seed budget fixes it. The decision rests on the real-data measurement.
 
 A second thing the fixture cannot show, and it is the one that decided the mode: **the count**.
 The fixture's intensity integral is stable enough to pass `test_expected_count_matches` (mean

@@ -253,7 +253,11 @@ reconstructions of training sections**:
 > tie-break shipped `hybrid` while real data ships `resample` (`specs/05` §4a,
 > `progress/fixture_limitations.md` §2). A per-dataset selection run on **real** data decides this
 > gate; the fixture's verdict is recorded for comparison only
-> (`reports/t09_layout_mode_gate_grid.md`).
+> (`reports/t09_layout_mode_gate_grid.md`) — and that verdict is **no verdict**: re-run on the
+> corrected sampler at 3 seeds, the gate names a different winner for each seed (`field`,
+> `hybrid`, `resample`) and its pooled median ranks tie exactly, with the between-arm spread
+> smaller than the across-seed spread on 5 of the 6 metrics. A selector run on this fixture will
+> return one of the three arms and the number it returns will be the seed's, not the layout's.
 >
 > **The merged gate costs 6 fits, not 18 — implemented 2026-08-25.** `layout_mode` is read only at
 > generation time, so one model serves all three of its options: `FitScorer` caches the fit under a

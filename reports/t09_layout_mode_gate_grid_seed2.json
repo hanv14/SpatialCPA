@@ -1,0 +1,102 @@
+{
+  "steps": 2400,
+  "seeds": [
+    2
+  ],
+  "layout_sampler": "grid",
+  "prior_mode": "correlated",
+  "expr_mode": "zinb-flow",
+  "text_emb_mode": "lookup",
+  "per_seed": {
+    "2": {
+      "field": {
+        "morans_pearson": 0.7417402380425594,
+        "gearys_pearson": 0.6754647670199829,
+        "umap_mixing": 0.30520662407620525,
+        "marker_field_r": 0.012403568855118306,
+        "marker_depth_r": 0.050630062295448995,
+        "celltype_localization": -0.08976934284752801
+      },
+      "hybrid": {
+        "morans_pearson": 0.7493003937078736,
+        "gearys_pearson": 0.6794121021486208,
+        "umap_mixing": 0.31054917735038895,
+        "marker_field_r": 0.009318925601176543,
+        "marker_depth_r": 0.0691438307460192,
+        "celltype_localization": -0.08642795124523457
+      },
+      "resample": {
+        "morans_pearson": 0.7488465535169655,
+        "gearys_pearson": 0.7051531716440026,
+        "umap_mixing": 0.30249172839506183,
+        "marker_field_r": 0.00534968621924467,
+        "marker_depth_r": 0.04330417303764414,
+        "celltype_localization": -0.06597911892877363
+      }
+    }
+  },
+  "pooled_median": {
+    "field": {
+      "morans_pearson": 0.7417402380425594,
+      "gearys_pearson": 0.6754647670199829,
+      "umap_mixing": 0.30520662407620525,
+      "marker_field_r": 0.012403568855118306,
+      "marker_depth_r": 0.050630062295448995,
+      "celltype_localization": -0.08976934284752801
+    },
+    "hybrid": {
+      "morans_pearson": 0.7493003937078736,
+      "gearys_pearson": 0.6794121021486208,
+      "umap_mixing": 0.31054917735038895,
+      "marker_field_r": 0.009318925601176543,
+      "marker_depth_r": 0.0691438307460192,
+      "celltype_localization": -0.08642795124523457
+    },
+    "resample": {
+      "morans_pearson": 0.7488465535169655,
+      "gearys_pearson": 0.7051531716440026,
+      "umap_mixing": 0.30249172839506183,
+      "marker_field_r": 0.00534968621924467,
+      "marker_depth_r": 0.04330417303764414,
+      "celltype_localization": -0.06597911892877363
+    }
+  },
+  "across_seed_spread": {
+    "field": {
+      "morans_pearson": 0.0,
+      "gearys_pearson": 0.0,
+      "umap_mixing": 0.0,
+      "marker_field_r": 0.0,
+      "marker_depth_r": 0.0,
+      "celltype_localization": 0.0
+    },
+    "hybrid": {
+      "morans_pearson": 0.0,
+      "gearys_pearson": 0.0,
+      "umap_mixing": 0.0,
+      "marker_field_r": 0.0,
+      "marker_depth_r": 0.0,
+      "celltype_localization": 0.0
+    },
+    "resample": {
+      "morans_pearson": 0.0,
+      "gearys_pearson": 0.0,
+      "umap_mixing": 0.0,
+      "marker_field_r": 0.0,
+      "marker_depth_r": 0.0,
+      "celltype_localization": 0.0
+    }
+  },
+  "median_rank_pooled": {
+    "field": 2.5,
+    "hybrid": 1.5,
+    "resample": 2.5
+  },
+  "median_rank_per_seed": {
+    "2": {
+      "field": 2.5,
+      "hybrid": 1.5,
+      "resample": 2.5
+    }
+  }
+}

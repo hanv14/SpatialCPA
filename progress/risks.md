@@ -42,8 +42,33 @@ The reasoning, in the order it carried weight:
 
 Written into `specs/05` §4a, `specs/10` §4.5b and §6, `design/v23_design.md` §3.3 and its risk
 register, `progress/fixture_limitations.md` §2, and the tie-break note in
-`progress/t09_inference_and_calibration.md`. The fixture gate was re-run on the corrected sampler
-for the record: `reports/t09_layout_mode_gate_grid.md`.
+`progress/t09_inference_and_calibration.md`.
+
+**The fixture gate was re-run on the corrected sampler (3 seeds x 2400 steps, one fit per seed,
+`reports/t09_layout_mode_gate_grid.md`) and it returns no answer at all** — which is a cleaner
+result than the one it was expected to give:
+
+| | seed 1 | seed 2 | seed 3 | pooled |
+|---|---|---|---|---|
+| winner by median rank | `field` | `hybrid` | `resample` | **3-way tie at 2.0** |
+
+**Three seeds, three different winners**, and the pooled ranks tie exactly. On **5 of the 6**
+metrics the spread between the three arms is smaller than the arms' own spread across seeds, so
+the gate is reading seed variation rather than layout. On `celltype_localization` — the one metric
+where the arms separate at all — `resample` leads by 0.0193 (`field`) and 0.0204 (`hybrid`), which
+agrees in direction with the real data and is 0.6x the envelope, i.e. still not a difference.
+
+This supersedes the earlier reading of the fixture as *underpowered*. It is not that three seeds
+were too few; it is that the answer changes with the seed while the arms' true separation on this
+dataset is smaller than that noise. The real-data measurement is the one that decides, and it is
+9x further from the envelope.
+
+**One number in that report is a correctness check worth keeping.** `resample`'s
+`celltype_localization` has an across-seed spread of **exactly zero** — `_resample_layout` copies
+the flanking section's coordinates and types unchanged, so the layout carries no seed, and the
+fixture's localization is a per-type field correlation over positions and type labels only. Its
+expression-driven metrics *do* vary across seeds, which is how the three fits are known to be
+genuinely different rather than accidentally identical.
 
 **What stays open is the defect, not the risk.** The intensity integral's scale — 1.5x-64x against
 ground truth, unstable 3.7x across refits, link-coupled through the shared triplane — is T05's, and
