@@ -1503,51 +1503,62 @@ re-measured on tier-1 STARmap.
 
 ---
 
-### C32. GATE 2's `G2.1h-c` reads 63.97 against a recorded 40.28, and the recorded value is not reproducible — **OPEN** (raised 2026-08-25)
+### C32. GATE 2's `G2.1h-c` reads 63.97 against a recorded 40.28 — **RESOLVED 2026-08-25: it is the pre-C1c retrieval window, reproduced exactly; criterion restated** (raised 2026-08-25)
 
-`reports/gate2.md` records `G2.1h-c` — the mutation check that querying retrieval in the model frame
-instead of the data frame perturbs the neighbour sets — at **40.28**. Regenerating the report gives
-**63.97**. The criterion passes either way (`> 0`) and every other GATE 2 number agrees to six
-significant figures, so nothing about the gate's verdict turns on it. It is raised because a value
-that moved 40 to 64 with no identified cause should not sit in a report unexplained.
+`reports/gate2.md` recorded `G2.1h-c` — the mutation check that querying retrieval in the model frame
+instead of the data frame perturbs the neighbour sets — at **40.28**. Regenerating gave **63.97**.
+The criterion passes either way (`> 0`) and every other GATE 2 number agrees to six significant
+figures, so no verdict turned on it; it was raised because a value that moved 40 to 64 with no
+identified cause should not sit in a report unexplained.
 
-Two explanations were offered and **both are refuted**:
+**Two explanations were offered and both were refuted before the right one was found.** *The host*:
+the recorded value came from macOS / arm / Python 3.12 and the regeneration from Linux / x86 /
+Python 3.11 — refuted by regenerating on the original macOS platform, which gives 63.9697. *A commit
+in this repository*: refuted by evaluating the **oldest** commit, `70076ad`, which already gives
+63.9697 — that bounds the transition outside the 52-commit history rather than inside it, and
+`reports/gate2.md` carries a generation date of 2026-08-16 against an oldest commit dated
+2026-08-20.
 
-* *The host.* The recorded value came from macOS / arm / Python 3.12 and the regeneration from
-  Linux / x86 / Python 3.11, so a cross-platform float difference in a discrete count looked
-  plausible. The spec owner regenerated on the original macOS platform and got 63.9697, identical.
-  False.
-* *A change in this repository.* The measurement was isolated (reproduced without a trained probe,
-  with each arm's imported module paths printed so a mis-resolved import would show). The **oldest
-  commit in the repository**, `70076ad`, already gives 63.9697 — which bounds the transition outside
-  the 52-commit history rather than inside it, so a bisect cannot locate it. `reports/gate2.md`
-  carries a generation date of 2026-08-16; the oldest commit is dated 2026-08-20. The state that
-  produced 40.28 was never committed.
+**Cause, reproduced exactly.** The recorded value was produced by the **pre-C1c** retrieval window —
+the single absolute term `retrieval_z_window x median_spacing`, with no gap-relative widening.
+Substituting that window and re-running the measurement gives **40.2783**, bit-for-bit the recorded
+number, with **23.69 of 32 slots returning `PAD`** in the mutation's broken arm.
 
-**What the diagnostic is.** It is essentially a function of how far the mutation displaces the query
-points, saturating almost at once. On rotations about z: 0° -> 0.00, 0.5° -> 9.88, 1° -> 19.28,
-2° -> 35.68, 5° -> 57.89, 10° -> 62.43, 20° -> 63.58, 45° -> 63.93, against a ceiling of 2K = 64.
-The gate's own rotation is **179.68°**, so 63.97 is the correct value for the rotation the gate
-draws, and 40.28 corresponds to an effective displacement of about 2°. The value is invariant to
-`retrieval_z_window` (0.05-3.0), `retrieval_z_window_gap_factor`, `retrieval_candidates_per_section`,
-`rotation_bias` and `rotation_bias_max_tilt_deg`; and both arms return **zero PAD slots**, because
-C1c's per-query gap term makes the pool non-empty by construction — which closes the other route to
-a smaller symmetric difference.
+The mechanism is the one C1c was written to fix, seen from the other side. The broken arm queries
+deliberately **off-stack** points: the model frame puts them far from any section's z. Under the
+pre-C1c window they fall outside `3 x median_spacing` of everything, retrieve nothing, and come back
+mostly padded — and a truncated pool makes the symmetric difference *smaller*, which is what 40.28
+is. C1c's per-query term `retrieval_z_window_gap_factor x gap_to_nearest(p)` makes the pool
+non-empty by construction, so the same mutation now returns two fully populated and disjoint sets:
+63.97, against a ceiling of 2K = 64.
 
-*Open, with two untestable candidates, both in pre-import code:* a mutation pose built differently
-(a ~2° effective displacement rather than ~180°), or the **pre-C1c** retrieval window, which had no
-gap term and so could return a truncated pool. Note that `PROGRESS.md` records the C1c amendment as
-leaving "gate numbers unchanged"; if that claim was made without regenerating the report, this
-diagnostic is a counter-example to it, and that is the first thing to check if the pre-amendment
-code is recoverable from outside this repository.
+**This also fixes the scope of C1c's "gate numbers unchanged".** That claim was *not* asserted
+without measurement — C1c (b) argues that on a regular stack `gap_factor x gap <= 2 < 3 =
+retrieval_z_window`, so the absolute term wins and the relative term is inert, and
+`test_gap_relative_window_is_identity_on_a_regular_stack` asserts **bitwise** identity on that path
+(it passes today). The claim is correct **for the evaluation path**, which is what the test covers:
+real query cells, on a regular stack, `apply_dropout=False`. `G2.1h-c`'s broken arm is outside it by
+construction — it queries points that are deliberately in the wrong frame, where `gap_to_nearest` is
+large and the relative term is exactly what dominates. So the amendment did move a number in the
+gate report, and the claim as written ("gate numbers unchanged") reads wider than the path that was
+measured. `PROGRESS.md`'s T04 row is restated to its true scope.
 
-*Separately, and independent of the discrepancy:* **`G2.1h-c` saturates at 2K for any real
-rotation**, so as a graded diagnostic it carries almost no information — it is a binary "the channel
-is wired" check wearing a continuous number. Proposed: keep the criterion (it does catch an unwired
-channel) but stop reporting its magnitude as if it measured something, or restate it at a fixed
-small probe rotation where it is actually graded.
+**Why nothing caught it.** `pytest tests/ -m gate` asserts criteria, not reported values, and
+`G2.1h-c`'s criterion is `> 0`. A value can move from 40 to 64 and the gate suite stays green — the
+only artefact that would have shown it is the regenerated report, and the report is regenerated only
+when someone runs the script. That is the general lesson, and it applies to every "gates re-run,
+unchanged" claim in this project: those are **verdict-level** claims. See the audit note in
+`progress/t04_field_and_retrieval.md`.
 
----
+**Restated, so this cannot recur.** `G2.1h-c` now measures the same mutation at a **fixed 3 degree
+probe rotation** about `(1, 1, 1)` (`MUTATION_PROBE_DEG` / `MUTATION_PROBE_AXIS`), where the
+quantity is graded rather than saturated: on this fixture it reads 12.6 / 22.8 / 32.2 / 40.2 / 46.7
+at 1 / 2 / 3 / 4 / 5 degrees, so 3 degrees sits at about half the ceiling and a retrieval path that
+became *less* sensitive to its query frame would show up as the number falling. The axis is
+`(1, 1, 1)` rather than `z` because a rotation about `z` preserves depth and would leave a retrieval
+path that had lost its z component entirely still scoring full marks. The old form is retained as
+**`G2.1h-c2`**, explicitly a binary wired/not-wired check, with its ceiling and its meaninglessness
+as a magnitude stated in its own note.
 
 ---
 

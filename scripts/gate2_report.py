@@ -39,6 +39,7 @@ from tests.gate2_criteria import (  # noqa: E402
     ANGLES_DEG,
     FRACTIONAL_DEPTHS,
     G23_Z_WINDOW,
+    MUTATION_PROBE_DEG,
     PROBE_BATCH,
     PROBE_LR,
     PROBE_STEPS,
@@ -172,7 +173,7 @@ that, because an unwired channel satisfies invariance trivially.
 |---|---|
 | coords | {aug_coords:.4f} mean \|delta\| per field feature |
 | GRF query points | {aug_grf:.4f} mean \|delta\| per noise channel |
-| retrieval neighbourhoods | {aug_retrieval:.1f} of K = {k} neighbours change per cell |
+| retrieval neighbourhoods | {aug_retrieval:.1f} of {aug_ceil}, at a {aug_deg:g} deg probe |
 | plane normals | {aug_planes:.4f} max component change |
 
 All four register. The augmentation is complete.
@@ -415,6 +416,8 @@ def _escalation(
         aug_coords=by_key["G2.1h-a"].measured,
         aug_grf=by_key["G2.1h-b"].measured,
         aug_retrieval=by_key["G2.1h-c"].measured,
+        aug_ceil=2 * int(cfg.retrieval_k),
+        aug_deg=MUTATION_PROBE_DEG,
         aug_planes=by_key["G2.1h-d"].measured,
         aug_pose=follow_ups["G2.1h"].artifacts["pose_spread"],
         aug_pose_frac=by_key["G2.1h-e"].measured,

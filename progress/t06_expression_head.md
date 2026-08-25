@@ -249,10 +249,12 @@ assertion in the generation path; `genes_per_step` subsampling; and the v20 Bern
 (§4b). The observation-token row (T02/T04/T06) is assembled in `spatialcpav25_gen.py` as the matrix
 says. Nothing in the design docs is missing from the matrix for this task.
 
-**Both gates re-run after the change** (`pytest tests/ -m gate`): unchanged — GATE 1 and GATE 2 pass
+**Both gates re-run after the change** (`pytest tests/ -m gate`): **no criterion changed verdict** — GATE 1 and GATE 2 pass
 exactly as at T03/T04. T06 adds modules and `Config` fields and adds one function to `model/layout.py`;
 it changes no code path either gate exercises, and `test_gate_reports_unchanged` pins the `Config`
 defaults both gates were measured at so a later edit cannot move them silently.
+
+> Scope, restated 2026-08-25: `pytest tests/ -m gate` asserts **criteria**, not the values a gate report prints, so this is a verdict-level claim. A criterion whose threshold is `> 0` can have its value move a long way and stay green — `G2.1h-c` did, 40.28 -> 63.97, for an unrelated reason (SPEC_QUESTIONS C32). The verdicts here are correct and were re-measured 2026-08-24; "unchanged" in this log never means "no number moved". Audit: `progress/t04_field_and_retrieval.md`.
 
 ### T06 (follow-ups) — four questions answered, and two of the answers are corrections (2026-08-16)
 

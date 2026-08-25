@@ -420,3 +420,49 @@ The guard cannot fire on any non-degenerate query, and the gates were re-run to 
 re-run: 11 gate tests pass in 8 m 05 s, and every headline number reproduces the recorded report
 exactly — G2.1a **0.954742**, G2.1b **0.979466**, G2.1c **+0.0783596**, G2.3a **0.0302834**, G2.3b
 **0.00335065**, G2.4a **3.4222**, G2.4b **0.98744**. GATE 1 unaffected and passing.
+
+---
+
+### Audit — what "gate numbers unchanged" was actually measured on (2026-08-25)
+
+Prompted by SPEC_QUESTIONS **C32**, where `G2.1h-c` moved 40.28 -> 63.97 with no identified cause
+and the T04 row's "gate numbers unchanged" was the leading suspect. The audit's question was
+whether that claim was asserted without measurement, and whether any other claim in `PROGRESS.md`
+rests on the same basis. Answers below, and the second one is the one worth keeping.
+
+**1. C1c's claim was measured, but on a narrower path than it names.** It is not an unmeasured
+assertion. C1c (b) argues that on a regular stack `gap_factor x gap <= 2 < 3 = retrieval_z_window`,
+so the absolute term wins and the relative term is inert, and
+`test_gap_relative_window_is_identity_on_a_regular_stack` asserts **bitwise** identity — it passes
+today. What the test covers is the **evaluation path**: real query cells, regular stack,
+`apply_dropout=False`. That is the path every published number is measured on, which is why the
+claim was worth making.
+
+`G2.1h-c` is outside it **by construction**. Its broken arm queries points deliberately left in the
+wrong frame, so they sit far off-stack, `gap_to_nearest` is large, and the relative term is exactly
+what dominates — the one regime the identity argument excludes. Substituting the pre-C1c window
+(absolute term only) and re-running the measurement returns **40.2783**, bit-for-bit the recorded
+value, with 23.69 of 32 slots padded in the broken arm. So the amendment *did* move a number in the
+gate report, and "gate numbers unchanged" reads wider than what was tested. The T04 row is restated
+to its true scope; C32 carries the reproduction.
+
+**2. The general defect: these are verdict-level claims, and they are phrased as value-level ones.**
+Three entries rest on the same basis — this row, `progress/t05_layout_head.md` and
+`progress/t06_expression_head.md`, all of the form "both gates re-run (`pytest tests/ -m gate`):
+unchanged". That command asserts **criteria**, not reported values. `G2.1h-c`'s criterion is `> 0`,
+so its value can move from 40 to 64 with the gate suite fully green, and it did. The only artefact
+that would have surfaced it is the regenerated report, and the report is regenerated only when
+someone runs the script by hand.
+
+None of the three is *false*: every gate verdict named in them is still correct, re-measured
+2026-08-24 and 2026-08-25. But "unchanged" should be read as "no criterion changed verdict"
+throughout this log, never as "no number moved" — and a claim of the second kind needs a regenerated
+report behind it, not a green gate suite. `progress/t03_noise_field.md` already gets this right
+("all gate criteria unchanged **in verdict**", with `reports/gate1.md` regenerated beside it);
+the other two are the loose phrasing.
+
+**3. What was changed as a result.** `G2.1h-c` is restated at a fixed 3-degree probe rotation where
+it is graded rather than saturated, with the old saturating form retained as `G2.1h-c2` and labelled
+a binary check. A criterion whose value carries information is one whose movement is worth chasing;
+the old one was a wired/not-wired bit wearing a continuous number, and it cost two wrong
+explanations before the right one. C32 has the detail.

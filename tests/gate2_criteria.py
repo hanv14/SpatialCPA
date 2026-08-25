@@ -1216,6 +1216,59 @@ POSE_INVARIANCE_SAMPLES = 16
 """Random poses the trained probe is evaluated under, for the achieved-equivariance check."""
 POSE_INVARIANCE_CELLS = 4096
 
+MUTATION_PROBE_AXIS: tuple[float, float, float] = (1.0, 1.0, 1.0)
+MUTATION_PROBE_DEG = 3.0
+"""The fixed small rotation `G2.1h-c` measures the retrieval mutation at.
+
+The mutation's effect on the neighbour sets is a symmetric difference, so it is bounded by
+``2K`` — and it reaches that bound almost at once. Measured on this fixture, a rotation about
+``(1, 1, 1)`` moves it 12.6 / 22.8 / 32.2 / 40.2 / 46.7 at 1 / 2 / 3 / 4 / 5 degrees, and the
+gate's *own* augmentation rotation is **179.7 degrees**, where the two neighbour sets are
+simply disjoint and the value pins at 63.97 of a possible 64.
+
+So at the gate's own rotation the number is not a measurement of anything: it is a
+wired/not-wired bit wearing a continuous value, and it moves for reasons that cost time to
+chase without ever changing the verdict (SPEC_QUESTIONS C32). Measuring the same mutation at a
+fixed small rotation puts it back in the regime where it is graded — 3 degrees lands at about
+half the ceiling — so a future change that made retrieval *less* sensitive to its query frame
+would show up as a number falling rather than as a saturated value that cannot fall.
+
+The axis is ``(1, 1, 1)`` rather than ``z``: a rotation about ``z`` preserves depth, so it
+would exercise only the in-plane half of the query and a retrieval path that had lost its z
+component entirely could still score full marks.
+"""
+
+
+def _axis_rotation(axis: tuple[float, float, float], degrees: float) -> FloatArray:
+    """A rotation of ``degrees`` about ``axis``. ``(3, 3)`` float64, orthonormal.
+
+    Rodrigues' formula. Deliberately *not* :func:`~spatialcpav25_gen.model.field.random_rotation`:
+    the point of the probe is that its magnitude is fixed and known, so the criterion it feeds
+    is comparable across runs and its value can be read as a measurement rather than as
+    whatever angle a seed happened to draw.
+    """
+    unit = np.asarray(axis, dtype=np.float64)
+    unit = unit / float(np.linalg.norm(unit))
+    theta = float(np.radians(degrees))
+    cross = np.array(
+        [
+            [0.0, -unit[2], unit[1]],
+            [unit[2], 0.0, -unit[0]],
+            [-unit[1], unit[0], 0.0],
+        ],
+        dtype=np.float64,
+    )
+    return np.asarray(
+        np.eye(3) + np.sin(theta) * cross + (1.0 - np.cos(theta)) * (cross @ cross),
+        dtype=np.float64,
+    )
+
+
+def _rotation_angle_deg(rotation: FloatArray) -> float:
+    """The rotation angle of a ``(3, 3)`` orthonormal matrix, in degrees."""
+    trace = float(np.trace(np.asarray(rotation, dtype=np.float64)))
+    return float(np.degrees(np.arccos(np.clip(0.5 * (trace - 1.0), -1.0, 1.0))))
+
 
 def measure_coronal_arms(
     cfg: Config, vol: Volume, *, seed: int, steps: int = PROBE_STEPS
@@ -1497,18 +1550,31 @@ def measure_augmentation_completeness(
         broken_noise = grf(model_frame.astype(np.float32)).numpy()
     grf_effect = float(np.abs(correct_noise - broken_noise).mean())
 
-    correct_idx, _ = index.query(
-        context.to_data(model_frame), set(), seed=_seed_for(seed, 53), source_section=owner
-    )
-    broken_idx, _ = index.query(model_frame, set(), seed=_seed_for(seed, 53), source_section=owner)
-    retrieval_effect = float(
-        np.mean(
-            [
-                len((set(a) - {PAD_INDEX}) ^ (set(b) - {PAD_INDEX}))
-                for a, b in zip(correct_idx, broken_idx, strict=True)
-            ]
+    def retrieval_mutation(pose: FloatArray) -> float:
+        """Neighbours per cell that change when the query is left in ``pose``'s model frame.
+
+        A symmetric difference, so it is bounded by ``2 * cfg.retrieval_k`` — see
+        :data:`MUTATION_PROBE_DEG` for why the gate reports it at a small fixed rotation as
+        well as at its own.
+        """
+        frame = RotationContext(cfg, pose, centre, requires=())
+        moved = frame.to_model(xyz)
+        correct, _ = index.query(
+            frame.to_data(moved), set(), seed=_seed_for(seed, 53), source_section=owner
         )
-    )
+        broken, _ = index.query(moved, set(), seed=_seed_for(seed, 53), source_section=owner)
+        return float(
+            np.mean(
+                [
+                    len((set(a) - {PAD_INDEX}) ^ (set(b) - {PAD_INDEX}))
+                    for a, b in zip(correct, broken, strict=True)
+                ]
+            )
+        )
+
+    retrieval_effect = retrieval_mutation(rotation)
+    retrieval_probe = retrieval_mutation(_axis_rotation(MUTATION_PROBE_AXIS, MUTATION_PROBE_DEG))
+    retrieval_ceiling = 2 * int(cfg.retrieval_k)
 
     normals = np.tile(np.array([0.0, 0.0, 1.0]), (8, 1))
     origins = np.tile(centre, (8, 1))
@@ -1566,12 +1632,36 @@ def measure_augmentation_completeness(
                 key="G2.1h-c",
                 description=(
                     "MUTATION: querying **retrieval** in the model frame instead of the data "
-                    "frame changes this many of the K neighbours per cell, on average"
+                    "frame changes this many of the K neighbours per cell, on average, at a "
+                    f"**fixed {MUTATION_PROBE_DEG:g} degree** probe rotation"
+                ),
+                measured=retrieval_probe,
+                threshold=0.0,
+                comparison=">",
+                note=(
+                    f"symmetric difference, so the ceiling is 2K = {retrieval_ceiling}; this "
+                    f"sits at {retrieval_probe / retrieval_ceiling:.0%} of it. Measured at a "
+                    f"small fixed rotation about {MUTATION_PROBE_AXIS} **on purpose**: at the "
+                    f"gate's own rotation the quantity "
+                    f"saturates and stops being a measurement (SPEC_QUESTIONS C32). Read a "
+                    f"fall here as retrieval becoming less sensitive to its query frame"
+                ),
+            ),
+            Criterion(
+                key="G2.1h-c2",
+                description=(
+                    "the same mutation at the gate's **own** augmentation rotation. Retained "
+                    "as a binary wired/not-wired check only"
                 ),
                 measured=retrieval_effect,
                 threshold=0.0,
                 comparison=">",
-                note=f"out of K = {cfg.retrieval_k}",
+                note=(
+                    f"out of a ceiling of 2K = {retrieval_ceiling}. At "
+                    f"{_rotation_angle_deg(rotation):.1f} degrees the two "
+                    f"neighbour sets are disjoint, so this pins near its ceiling for any real "
+                    f"rotation and its magnitude means nothing — C32. G2.1h-c is the graded form"
+                ),
             ),
             Criterion(
                 key="G2.1h-d",

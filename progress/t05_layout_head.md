@@ -171,8 +171,10 @@ the ablation; Potts smoothing with `beta` fitted, not set; the `layout_mode` gat
 resample, all three exercised); and the slab-volume integral. Nothing in the design docs is missing
 from the matrix for this task.
 
-**Both gates re-run after the change** (`pytest tests/ -m gate`): unchanged — GATE 1 and GATE 2 pass
+**Both gates re-run after the change** (`pytest tests/ -m gate`): **no criterion changed verdict** — GATE 1 and GATE 2 pass
 exactly as at T03/T04. T05 adds `Config` fields and three modules but touches no existing code path.
+
+> Scope, restated 2026-08-25: `pytest tests/ -m gate` asserts **criteria**, not the values a gate report prints, so this is a verdict-level claim. A criterion whose threshold is `> 0` can have its value move a long way and stay green — `G2.1h-c` did, 40.28 -> 63.97, for an unrelated reason (SPEC_QUESTIONS C32). The verdicts here are correct and were re-measured 2026-08-24; "unchanged" in this log never means "no number moved". Audit: `progress/t04_field_and_retrieval.md`.
 
 ---
 
@@ -312,11 +314,21 @@ per-query gap term (C1c) makes the candidate pool non-empty by construction, whi
 route to a smaller symmetric difference (a truncated pool). So 40.28 is not reproducible from any
 committed state under any reachable configuration.
 
-**Left open, deliberately.** The candidates that remain both sit in pre-import code: a mutation pose
-built differently (a ~2° effective displacement rather than ~180°), or the pre-C1c retrieval window,
-which had no gap term and so *could* return a truncated pool. Neither can be tested from this
-repository. Recorded as `SPEC_QUESTIONS` C32 rather than explained away. Nothing in this change
-touches `model/retrieval.py`, and the criterion's own verdict is unaffected.
+**Attributed, 2026-08-25 — it is the pre-C1c retrieval window.** The candidate named here as
+untestable turned out to be testable after all, by substituting the old window rule rather than the
+old code: the pre-C1c bound is the single absolute term `retrieval_z_window x median_spacing`, with
+no gap-relative widening. Substituting it and re-running the measurement returns **40.2783**,
+bit-for-bit the recorded number, with **23.69 of 32 slots padded** in the mutation's broken arm.
+
+The mechanism is C1c's own, seen from the other side. The broken arm queries deliberately off-stack
+points, so under the pre-C1c window they fall outside `3 x median_spacing` of every section,
+retrieve nothing, and come back mostly padded — and a truncated pool makes the symmetric difference
+*smaller*. C1c's per-query gap term makes the pool non-empty by construction, so the same mutation
+now returns two fully populated, disjoint sets at 63.97. The recorded 40.28 is therefore a
+**pre-amendment** number that the report carried forward un-regenerated, which is consistent with
+its 2026-08-16 generation date. C32 is closed with the reproduction, and
+`progress/t04_field_and_retrieval.md` carries the audit of what C1c's "gate numbers unchanged"
+claim was measured on.
 
 A second observation the sweep makes unavoidable, recorded because it is what makes the 40 -> 64
 move consequence-free: **`G2.1h-c` saturates at 2K for any real rotation**, so as a *graded*
