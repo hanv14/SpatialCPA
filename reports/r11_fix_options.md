@@ -14,8 +14,11 @@ all. This costs the four available fixes. **Nothing is implemented; this is the 
 > 16 tests). Option C was **not** implemented: the rejection sampler still truncates silently, which
 > is acceptable only because it is no longer the default and is now covered by tests that assert its
 > failure. Option A stays rejected on the measurement below. The invalidation this section costs
-> was paid for T05 (re-measured, still passing — `progress/t05_layout_head.md`) and is **still owed
-> for T09's `layout_mode` gate** and for R11's STARmap comparison.
+> was paid for T05 (re-measured, still passing — `progress/t05_layout_head.md`) and for **R11's
+> STARmap comparison** (`reports/r11_starmap_layout_modes.md`, 2026-08-25: five arms off one refit,
+> with the old sampler re-run as a control — the ordering is unchanged, `field` gains 1.8x the
+> envelope and `hybrid` gains nothing measurable, and both stay below the copy floor). It is
+> **still owed for T09's `layout_mode` gate** on the fixture.
 
 ## What any fix must preserve
 

@@ -712,6 +712,11 @@ below 0.0335 (R10's envelope) is not a difference.
 `random`, `flanking_copy` and `oracle` are bench3's own model-free probes (§3). `hybrid` is the
 `layout_mode` that currently ships.
 
+⚠️ **The three `layout_mode` columns below are superseded.** They were produced by the rejection
+sampler `reports/r11_envelope.md` later found to be biased; the re-measurement on the grid sampler
+is `reports/r11_starmap_layout_modes.md` and the reading is in `progress/risks.md` under R11. The
+other columns — the referents, and the §5-vs-here comparison the section is about — stand.
+
 | metric | §5 smoke | `field` | **`hybrid`** | `resample` | `random` | `flanking_copy` | `oracle` |
 |---|---|---|---|---|---|---|---|
 | `celltype_localization` | 0.4111 | 0.6136 | **0.6572** | 0.7601 | 0.065 | 0.7765 | 0.9808 |

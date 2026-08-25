@@ -1,0 +1,710 @@
+{
+  "arms": [
+    {
+      "arm": "field-grid",
+      "mode": "field",
+      "layout_sampler": "grid",
+      "model": "runs/pilot/model_exp_2400.pt",
+      "decoder_mu_link": "exp",
+      "train_steps": 2400,
+      "seed": 1,
+      "n_pred": {
+        "section_2": 267567.0,
+        "section_4": 21993.0,
+        "section_6": 3727.0
+      },
+      "n_gt": {
+        "section_2": 4187,
+        "section_4": 4102,
+        "section_6": 4162
+      },
+      "cell_count_ratio_raw": 5.36153096050707,
+      "cell_count_ratio_per_section": {
+        "section_2": 63.90422737043229,
+        "section_4": 5.36153096050707,
+        "section_6": 0.8954829408938011
+      },
+      "raw": {
+        "paper_morans_pearson": 0.644457180310837,
+        "paper_gearys_pearson": 0.6440343438956293,
+        "paper_umap_mixing": NaN,
+        "paper_marker_field_r": 0.6006447471522341,
+        "paper_marker_depth_r": 0.8240410178530423,
+        "paper_celltype_localization": 0.6267718781757126,
+        "paper_gene_mean_spearman": 0.9770114942528736
+      },
+      "matched": {
+        "paper_morans_pearson": 0.6563574321871904,
+        "paper_gearys_pearson": 0.6587764800556198,
+        "paper_umap_mixing": NaN,
+        "paper_marker_field_r": 0.6006447471522341,
+        "paper_marker_depth_r": 0.792492990913074,
+        "paper_celltype_localization": 0.6606875474360525,
+        "paper_gene_mean_spearman": 0.980295566502463
+      },
+      "matched_per_section": {
+        "paper_morans_pearson": {
+          "section_2": 0.6694365376248766,
+          "section_4": 0.6563574321871904,
+          "section_6": 0.6457566838066017
+        },
+        "paper_gearys_pearson": {
+          "section_2": 0.666991523751383,
+          "section_4": 0.6587764800556198,
+          "section_6": 0.6471774243778239
+        },
+        "paper_umap_mixing": {
+          "section_2": null,
+          "section_4": null,
+          "section_6": null
+        },
+        "paper_marker_field_r": {
+          "section_2": 0.6039742148563376,
+          "section_4": 0.44984855766589543,
+          "section_6": 0.6006447471522341
+        },
+        "paper_marker_depth_r": {
+          "section_2": 0.792492990913074,
+          "section_4": 0.6236748264784571,
+          "section_6": 0.8597867486816506
+        },
+        "paper_celltype_localization": {
+          "section_2": 0.663403761428615,
+          "section_4": 0.44365284508118813,
+          "section_6": 0.6606875474360525
+        },
+        "paper_gene_mean_spearman": {
+          "section_2": 0.9704433497536945,
+          "section_4": 0.980295566502463,
+          "section_6": 0.9863163656267103
+        }
+      },
+      "raw_per_section": {
+        "paper_morans_pearson": {
+          "section_2": 0.6319650155055504,
+          "section_4": 0.644457180310837,
+          "section_6": 0.6457566838066017
+        },
+        "paper_gearys_pearson": {
+          "section_2": 0.6323363446792902,
+          "section_4": 0.6440343438956293,
+          "section_6": 0.6471774243778239
+        },
+        "paper_umap_mixing": {
+          "section_2": null,
+          "section_4": null,
+          "section_6": null
+        },
+        "paper_marker_field_r": {
+          "section_2": 0.6132005062945803,
+          "section_4": 0.47884762271985165,
+          "section_6": 0.6006447471522341
+        },
+        "paper_marker_depth_r": {
+          "section_2": 0.8240410178530423,
+          "section_4": 0.6229400392059422,
+          "section_6": 0.8597867486816506
+        },
+        "paper_celltype_localization": {
+          "section_2": 0.6267718781757126,
+          "section_4": 0.4175319736322199,
+          "section_6": 0.6606875474360525
+        },
+        "paper_gene_mean_spearman": {
+          "section_2": 0.9666119321291735,
+          "section_4": 0.9770114942528736,
+          "section_6": 0.9863163656267103
+        }
+      },
+      "pooled_weighted_mean_matched": {
+        "paper_morans_pearson": 0.6572121345972444,
+        "paper_gearys_pearson": 0.6576617999675284,
+        "paper_umap_mixing": null,
+        "paper_marker_field_r": 0.5520843513610623,
+        "paper_marker_depth_r": 0.7593699091784356,
+        "paper_celltype_localization": 0.5900985536947632,
+        "paper_gene_mean_spearman": 0.9789950552526054
+      }
+    },
+    {
+      "arm": "hybrid-grid",
+      "mode": "hybrid",
+      "layout_sampler": "grid",
+      "model": "runs/pilot/model_exp_2400.pt",
+      "decoder_mu_link": "exp",
+      "train_steps": 2400,
+      "seed": 1,
+      "n_pred": {
+        "section_2": 267567.0,
+        "section_4": 21993.0,
+        "section_6": 3727.0
+      },
+      "n_gt": {
+        "section_2": 4187,
+        "section_4": 4102,
+        "section_6": 4162
+      },
+      "cell_count_ratio_raw": 5.36153096050707,
+      "cell_count_ratio_per_section": {
+        "section_2": 63.90422737043229,
+        "section_4": 5.36153096050707,
+        "section_6": 0.8954829408938011
+      },
+      "raw": {
+        "paper_morans_pearson": 0.6365314286291506,
+        "paper_gearys_pearson": 0.6394746023857117,
+        "paper_umap_mixing": NaN,
+        "paper_marker_field_r": 0.7034187789933544,
+        "paper_marker_depth_r": 0.8418746850323725,
+        "paper_celltype_localization": 0.6948404602622527,
+        "paper_gene_mean_spearman": 0.9874110563765736
+      },
+      "matched": {
+        "paper_morans_pearson": 0.6523686595230302,
+        "paper_gearys_pearson": 0.6543702845791094,
+        "paper_umap_mixing": NaN,
+        "paper_marker_field_r": 0.6604899926285497,
+        "paper_marker_depth_r": 0.8208088661721668,
+        "paper_celltype_localization": 0.6692038659619997,
+        "paper_gene_mean_spearman": 0.9874110563765736
+      },
+      "matched_per_section": {
+        "paper_morans_pearson": {
+          "section_2": 0.6741059773290353,
+          "section_4": 0.644310587939173,
+          "section_6": 0.6523686595230302
+        },
+        "paper_gearys_pearson": {
+          "section_2": 0.6732442705978752,
+          "section_4": 0.6462583865676014,
+          "section_6": 0.6543702845791094
+        },
+        "paper_umap_mixing": {
+          "section_2": null,
+          "section_4": null,
+          "section_6": null
+        },
+        "paper_marker_field_r": {
+          "section_2": 0.6792040847150304,
+          "section_4": 0.6594273500291319,
+          "section_6": 0.6604899926285497
+        },
+        "paper_marker_depth_r": {
+          "section_2": 0.9003496545961153,
+          "section_4": 0.8208088661721668,
+          "section_6": 0.7602494144734248
+        },
+        "paper_celltype_localization": {
+          "section_2": 0.6692038659619997,
+          "section_4": 0.6599624723192579,
+          "section_6": 0.6948404602622527
+        },
+        "paper_gene_mean_spearman": {
+          "section_2": 0.9534756431308156,
+          "section_4": 0.9989053092501368,
+          "section_6": 0.9874110563765736
+        }
+      },
+      "raw_per_section": {
+        "paper_morans_pearson": {
+          "section_2": 0.6323186196405687,
+          "section_4": 0.6365314286291506,
+          "section_6": 0.6523686595230302
+        },
+        "paper_gearys_pearson": {
+          "section_2": 0.6327399693101913,
+          "section_4": 0.6394746023857117,
+          "section_6": 0.6543702845791094
+        },
+        "paper_umap_mixing": {
+          "section_2": null,
+          "section_4": null,
+          "section_6": null
+        },
+        "paper_marker_field_r": {
+          "section_2": 0.7034187789933544,
+          "section_4": 0.7167316012176109,
+          "section_6": 0.6604899926285497
+        },
+        "paper_marker_depth_r": {
+          "section_2": 0.8418746850323725,
+          "section_4": 0.8842897767078969,
+          "section_6": 0.7602494144734248
+        },
+        "paper_celltype_localization": {
+          "section_2": 0.6657219254969234,
+          "section_4": 0.6990595728856764,
+          "section_6": 0.6948404602622527
+        },
+        "paper_gene_mean_spearman": {
+          "section_2": 0.9545703338806788,
+          "section_4": 0.9967159277504104,
+          "section_6": 0.9874110563765736
+        }
+      },
+      "pooled_weighted_mean_matched": {
+        "paper_morans_pearson": 0.6570237024928126,
+        "paper_gearys_pearson": 0.6580447182645455,
+        "paper_umap_mixing": null,
+        "paper_marker_field_r": 0.6664330448832507,
+        "paper_marker_depth_r": 0.8273134716786247,
+        "paper_celltype_localization": 0.6747288285156199,
+        "paper_gene_mean_spearman": 0.9797861146070264
+      }
+    },
+    {
+      "arm": "resample-grid",
+      "mode": "resample",
+      "layout_sampler": "grid",
+      "model": "runs/pilot/model_exp_2400.pt",
+      "decoder_mu_link": "exp",
+      "train_steps": 2400,
+      "seed": 1,
+      "n_pred": {
+        "section_2": 4073.0,
+        "section_4": 4169.0,
+        "section_6": 4110.0
+      },
+      "n_gt": {
+        "section_2": 4187,
+        "section_4": 4102,
+        "section_6": 4162
+      },
+      "cell_count_ratio_raw": 0.9875060067275349,
+      "cell_count_ratio_per_section": {
+        "section_2": 0.9727728684021972,
+        "section_4": 1.0163334958556802,
+        "section_6": 0.9875060067275349
+      },
+      "raw": {
+        "paper_morans_pearson": 0.646501349144234,
+        "paper_gearys_pearson": 0.6468689189585392,
+        "paper_umap_mixing": NaN,
+        "paper_marker_field_r": 0.6829807783571701,
+        "paper_marker_depth_r": 0.8553666639175823,
+        "paper_celltype_localization": 0.7715887306629564,
+        "paper_gene_mean_spearman": 0.9879584017515052
+      },
+      "matched": {
+        "paper_morans_pearson": 0.646501349144234,
+        "paper_gearys_pearson": 0.6468689189585392,
+        "paper_umap_mixing": NaN,
+        "paper_marker_field_r": 0.6829807783571701,
+        "paper_marker_depth_r": 0.8553666639175823,
+        "paper_celltype_localization": 0.7546030028470386,
+        "paper_gene_mean_spearman": 0.9879584017515052
+      },
+      "matched_per_section": {
+        "paper_morans_pearson": {
+          "section_2": 0.646501349144234,
+          "section_4": 0.6762133808478883,
+          "section_6": 0.6443678038871766
+        },
+        "paper_gearys_pearson": {
+          "section_2": 0.6468689189585392,
+          "section_4": 0.6781842381823128,
+          "section_6": 0.646282130337079
+        },
+        "paper_umap_mixing": {
+          "section_2": null,
+          "section_4": null,
+          "section_6": null
+        },
+        "paper_marker_field_r": {
+          "section_2": 0.6741702211849162,
+          "section_4": 0.6980044620377076,
+          "section_6": 0.6829807783571701
+        },
+        "paper_marker_depth_r": {
+          "section_2": 0.79655916737768,
+          "section_4": 0.8759130149154023,
+          "section_6": 0.8553666639175823
+        },
+        "paper_celltype_localization": {
+          "section_2": 0.7008237900099381,
+          "section_4": 0.7546030028470386,
+          "section_6": 0.7867703289628786
+        },
+        "paper_gene_mean_spearman": {
+          "section_2": 0.9720853858784892,
+          "section_4": 0.9939792008757526,
+          "section_6": 0.9879584017515052
+        }
+      },
+      "raw_per_section": {
+        "paper_morans_pearson": {
+          "section_2": 0.646501349144234,
+          "section_4": 0.6777329115469729,
+          "section_6": 0.6443678038871766
+        },
+        "paper_gearys_pearson": {
+          "section_2": 0.6468689189585392,
+          "section_4": 0.6790533706393925,
+          "section_6": 0.646282130337079
+        },
+        "paper_umap_mixing": {
+          "section_2": null,
+          "section_4": null,
+          "section_6": null
+        },
+        "paper_marker_field_r": {
+          "section_2": 0.6741702211849162,
+          "section_4": 0.697405408294517,
+          "section_6": 0.6829807783571701
+        },
+        "paper_marker_depth_r": {
+          "section_2": 0.79655916737768,
+          "section_4": 0.8738445792524184,
+          "section_6": 0.8553666639175823
+        },
+        "paper_celltype_localization": {
+          "section_2": 0.7008237900099381,
+          "section_4": 0.7715887306629564,
+          "section_6": 0.7867703289628786
+        },
+        "paper_gene_mean_spearman": {
+          "section_2": 0.9720853858784892,
+          "section_4": 0.9956212370005473,
+          "section_6": 0.9879584017515052
+        }
+      },
+      "pooled_weighted_mean_matched": {
+        "paper_morans_pearson": 0.6555768401641133,
+        "paper_gearys_pearson": 0.6569896502422434,
+        "paper_umap_mixing": null,
+        "paper_marker_field_r": 0.6849675543251516,
+        "paper_marker_depth_r": 0.8423600093340537,
+        "paper_celltype_localization": 0.7472708084164857,
+        "paper_gene_mean_spearman": 0.9846042133768643
+      }
+    },
+    {
+      "arm": "field-rejection",
+      "mode": "field",
+      "layout_sampler": "rejection",
+      "model": "runs/pilot/model_exp_2400.pt",
+      "decoder_mu_link": "exp",
+      "train_steps": 2400,
+      "seed": 1,
+      "n_pred": {
+        "section_2": 179495.0,
+        "section_4": 163.0,
+        "section_6": 3727.0
+      },
+      "n_gt": {
+        "section_2": 4187,
+        "section_4": 4102,
+        "section_6": 4162
+      },
+      "cell_count_ratio_raw": 0.8954829408938011,
+      "cell_count_ratio_per_section": {
+        "section_2": 42.86959636971579,
+        "section_4": 0.03973671379814724,
+        "section_6": 0.8954829408938011
+      },
+      "raw": {
+        "paper_morans_pearson": 0.6332951476877966,
+        "paper_gearys_pearson": 0.6332836369005279,
+        "paper_umap_mixing": NaN,
+        "paper_marker_field_r": 0.5995286761560673,
+        "paper_marker_depth_r": 0.8211433426251534,
+        "paper_celltype_localization": 0.6566117566612067,
+        "paper_gene_mean_spearman": 0.9666119321291735
+      },
+      "matched": {
+        "paper_morans_pearson": 0.6577614488255217,
+        "paper_gearys_pearson": 0.6598843504654838,
+        "paper_umap_mixing": NaN,
+        "paper_marker_field_r": 0.5995286761560673,
+        "paper_marker_depth_r": 0.8104087382158874,
+        "paper_celltype_localization": 0.6007712480473106,
+        "paper_gene_mean_spearman": 0.9616858237547894
+      },
+      "matched_per_section": {
+        "paper_morans_pearson": {
+          "section_2": 0.6577614488255217,
+          "section_4": -0.1346459577321637,
+          "section_6": 0.6685409777807628
+        },
+        "paper_gearys_pearson": {
+          "section_2": 0.6598843504654838,
+          "section_4": -0.11934123900695352,
+          "section_6": 0.6677418651552152
+        },
+        "paper_umap_mixing": {
+          "section_2": null,
+          "section_4": null,
+          "section_6": null
+        },
+        "paper_marker_field_r": {
+          "section_2": 0.6257217276696159,
+          "section_4": 0.5605331558348067,
+          "section_6": 0.5995286761560673
+        },
+        "paper_marker_depth_r": {
+          "section_2": 0.8104087382158874,
+          "section_4": 0.3883389277871834,
+          "section_6": 0.8211433426251534
+        },
+        "paper_celltype_localization": {
+          "section_2": 0.6007712480473106,
+          "section_4": 0.0,
+          "section_6": 0.6628005322630333
+        },
+        "paper_gene_mean_spearman": {
+          "section_2": 0.9616858237547894,
+          "section_4": 0.7766830870279146,
+          "section_6": 0.9835796387520527
+        }
+      },
+      "raw_per_section": {
+        "paper_morans_pearson": {
+          "section_2": 0.6332951476877966,
+          "section_4": -0.1346459577321637,
+          "section_6": 0.6685409777807628
+        },
+        "paper_gearys_pearson": {
+          "section_2": 0.6332836369005279,
+          "section_4": -0.11934123900695352,
+          "section_6": 0.6677418651552152
+        },
+        "paper_umap_mixing": {
+          "section_2": null,
+          "section_4": null,
+          "section_6": null
+        },
+        "paper_marker_field_r": {
+          "section_2": 0.6424848502474076,
+          "section_4": 0.5605331558348067,
+          "section_6": 0.5995286761560673
+        },
+        "paper_marker_depth_r": {
+          "section_2": 0.8348761173606233,
+          "section_4": 0.3883389277871834,
+          "section_6": 0.8211433426251534
+        },
+        "paper_celltype_localization": {
+          "section_2": 0.6566117566612067,
+          "section_4": 0.0,
+          "section_6": 0.6628005322630333
+        },
+        "paper_gene_mean_spearman": {
+          "section_2": 0.9666119321291735,
+          "section_4": 0.7766830870279146,
+          "section_6": 0.9835796387520527
+        }
+      },
+      "pooled_weighted_mean_matched": {
+        "paper_morans_pearson": 0.40030495680175554,
+        "paper_gearys_pearson": 0.40579388448867265,
+        "paper_umap_mixing": null,
+        "paper_marker_field_r": 0.5954896979478445,
+        "paper_marker_depth_r": 0.674945487165596,
+        "paper_celltype_localization": 0.42358083935851204,
+        "paper_gene_mean_spearman": 0.9080548569220024
+      }
+    },
+    {
+      "arm": "hybrid-rejection",
+      "mode": "hybrid",
+      "layout_sampler": "rejection",
+      "model": "runs/pilot/model_exp_2400.pt",
+      "decoder_mu_link": "exp",
+      "train_steps": 2400,
+      "seed": 1,
+      "n_pred": {
+        "section_2": 179495.0,
+        "section_4": 163.0,
+        "section_6": 3727.0
+      },
+      "n_gt": {
+        "section_2": 4187,
+        "section_4": 4102,
+        "section_6": 4162
+      },
+      "cell_count_ratio_raw": 0.8954829408938011,
+      "cell_count_ratio_per_section": {
+        "section_2": 42.86959636971579,
+        "section_4": 0.03973671379814724,
+        "section_6": 0.8954829408938011
+      },
+      "raw": {
+        "paper_morans_pearson": 0.6614063973290933,
+        "paper_gearys_pearson": 0.6624279796075214,
+        "paper_umap_mixing": NaN,
+        "paper_marker_field_r": 0.6748662703654841,
+        "paper_marker_depth_r": 0.783773368552866,
+        "paper_celltype_localization": 0.6761571151342033,
+        "paper_gene_mean_spearman": 0.9879584017515052
+      },
+      "matched": {
+        "paper_morans_pearson": 0.6690002451944194,
+        "paper_gearys_pearson": 0.6670540071483207,
+        "paper_umap_mixing": NaN,
+        "paper_marker_field_r": 0.6512961259410667,
+        "paper_marker_depth_r": 0.783773368552866,
+        "paper_celltype_localization": 0.6533544846844815,
+        "paper_gene_mean_spearman": 0.9879584017515052
+      },
+      "matched_per_section": {
+        "paper_morans_pearson": {
+          "section_2": 0.6690002451944194,
+          "section_4": 0.6935754845627239,
+          "section_6": 0.6614063973290933
+        },
+        "paper_gearys_pearson": {
+          "section_2": 0.6670540071483207,
+          "section_4": 0.6736254845914679,
+          "section_6": 0.6624279796075214
+        },
+        "paper_umap_mixing": {
+          "section_2": null,
+          "section_4": null,
+          "section_6": null
+        },
+        "paper_marker_field_r": {
+          "section_2": 0.6512961259410667,
+          "section_4": 0.5122412445457797,
+          "section_6": 0.6748662703654841
+        },
+        "paper_marker_depth_r": {
+          "section_2": 0.8352661261243565,
+          "section_4": 0.783773368552866,
+          "section_6": 0.7710242101455327
+        },
+        "paper_celltype_localization": {
+          "section_2": 0.6533544846844815,
+          "section_4": 0.35811030891076107,
+          "section_6": 0.6790363603388543
+        },
+        "paper_gene_mean_spearman": {
+          "section_2": 0.9556650246305418,
+          "section_4": 0.9928845101258894,
+          "section_6": 0.9879584017515052
+        }
+      },
+      "raw_per_section": {
+        "paper_morans_pearson": {
+          "section_2": 0.6326977561896641,
+          "section_4": 0.6935754845627239,
+          "section_6": 0.6614063973290933
+        },
+        "paper_gearys_pearson": {
+          "section_2": 0.6332513265421384,
+          "section_4": 0.6736254845914679,
+          "section_6": 0.6624279796075214
+        },
+        "paper_umap_mixing": {
+          "section_2": null,
+          "section_4": null,
+          "section_6": null
+        },
+        "paper_marker_field_r": {
+          "section_2": 0.7145108036581999,
+          "section_4": 0.5122412445457797,
+          "section_6": 0.6748662703654841
+        },
+        "paper_marker_depth_r": {
+          "section_2": 0.839439679187081,
+          "section_4": 0.783773368552866,
+          "section_6": 0.7710242101455327
+        },
+        "paper_celltype_localization": {
+          "section_2": 0.6761571151342033,
+          "section_4": 0.35811030891076107,
+          "section_6": 0.6790363603388543
+        },
+        "paper_gene_mean_spearman": {
+          "section_2": 0.9545703338806788,
+          "section_4": 0.9928845101258894,
+          "section_6": 0.9879584017515052
+        }
+      },
+      "pooled_weighted_mean_matched": {
+        "paper_morans_pearson": 0.6745581953247943,
+        "paper_gearys_pearson": 0.6676726461208518,
+        "paper_umap_mixing": null,
+        "paper_marker_field_r": 0.613363093864202,
+        "paper_marker_depth_r": 0.7968275954150063,
+        "paper_celltype_localization": 0.5646705522653745,
+        "paper_gene_mean_spearman": 0.9787217562247402
+      }
+    }
+  ],
+  "referents": {
+    "flanking_copy": {
+      "paper_celltype_localization": {
+        "section_2": 0.7008237894673073,
+        "section_4": 0.7765094338880664,
+        "section_6": 0.7867703289342155
+      },
+      "paper_marker_field_r": {
+        "section_2": 0.847032204478424,
+        "section_4": 0.8856547222842449,
+        "section_6": 0.887298230488892
+      },
+      "paper_marker_depth_r": {
+        "section_2": 0.8712665745963223,
+        "section_4": 0.9819840436757863,
+        "section_6": 0.9794437717626483
+      },
+      "paper_morans_pearson": {
+        "section_2": 0.9516962015527344,
+        "section_4": 0.9913088976163014,
+        "section_6": 0.9835681737432941
+      },
+      "paper_gearys_pearson": {
+        "section_2": 0.9519787315059178,
+        "section_4": 0.9916198771848329,
+        "section_6": 0.9840340448129041
+      },
+      "paper_gene_mean_spearman": {
+        "section_2": 0.980295566502463,
+        "section_4": 0.9863163656267103,
+        "section_6": 0.9890530925013684
+      },
+      "paper_cell_count_ratio": {
+        "section_2": 0.9727728684021972,
+        "section_4": 1.0163334958556802,
+        "section_6": 0.9875060067275349
+      }
+    },
+    "oracle": {
+      "paper_celltype_localization": {
+        "section_2": 0.9764818731002821,
+        "section_4": 0.988758411121545,
+        "section_6": 0.9807504660802333
+      },
+      "paper_marker_field_r": {
+        "section_2": 0.999485241504381,
+        "section_4": 0.9997331501400781,
+        "section_6": 0.9997626279366146
+      },
+      "paper_marker_depth_r": {
+        "section_2": 0.9999881424245188,
+        "section_4": 0.9999726512642395,
+        "section_6": 0.9999901309850182
+      },
+      "paper_morans_pearson": {
+        "section_2": 1.0,
+        "section_4": 0.9999999999999999,
+        "section_6": 0.9999999999999999
+      },
+      "paper_gearys_pearson": {
+        "section_2": 1.0,
+        "section_4": 0.9999999999999999,
+        "section_6": 0.9999999999999999
+      },
+      "paper_gene_mean_spearman": {
+        "section_2": 0.9999999999999998,
+        "section_4": 0.9999999999999998,
+        "section_6": 0.9999999999999998
+      },
+      "paper_cell_count_ratio": {
+        "section_2": 1.0,
+        "section_4": 1.0,
+        "section_6": 1.0
+      }
+    }
+  }
+}

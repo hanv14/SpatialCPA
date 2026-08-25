@@ -15,13 +15,81 @@ Part of [PROGRESS.md](../PROGRESS.md).
 | R2 | ~~GATE 2's attention is near-uniform (0.987 × log K)~~ — **CLOSED at T06.** With the flow-matching head trained the entropy falls to **0.8563 × log K** (a fall of 0.132, required 0.05) and stays above the 0.5 collapse line. The query is what changed: T04's probe queried with the field feature alone, T06's with `[F(p), fourier(p), type_emb, region_emb, z_embed]`, and a query that knows its own cell type can prefer a donor that shares it. | T04 | T06 | **closed 2026-08-16** |
 | R5 | **C14 blocks the paper's headline novelty.** *(Sharpened: the table also has to be *built correctly* — see B19, four defects in `build_gene_meta` that produced four species' genes for a one-species request, all fixed and replayed, but the live mouse-only summary coverage is still unmeasured here.)* Open-vocabulary decoding has no positive evidence: zero-shot is r = −0.368 on the fixture (B18) because arbitrary gene names carry no text signal, and `resources/gene_meta.parquet` cannot be built here — every gene-annotation host is 403'd by the network policy. Needs one command on a networked machine (see C14). | T02, T06 | T10 (E1) | **before the first real run** |
 | R4 | **Likelihood/fidelity divergence — one pathology, two heads.** *(T08 ran: the cure is **built and measured**, it is **not** enabled by default, and R4 stays **OPEN**. The covariance criterion is missed on both regimes — 11.02 vs 7.73 and 13.39 vs 11.38 — so the covariance claim is downgraded; but at 2400 steps the arm **with** the terms improves its covariance while the arm without it degrades, which is the first direct evidence that anything in this project can arrest the divergence. Decision owed to T09 §3's joint selection gate and reported by T10's A2, at two budgets.)* Fitting by likelihood alone makes the likelihood better and the *generated section* worse. On the **layout intensity** head (SPEC_QUESTIONS B10, T05): recovered intensity correlation 0.97 → 0.28 over 300 → 1200 steps while the Poisson NLL keeps falling. On the **expression** head (T06): 1200 → 2400 steps lowers the ZINB NLL 1.589 → 1.578 nats/pair while Frobenius covariance error goes 17.7 → 21.3 and detection MAD 0.056 → 0.069. Neither head has a term that could stop it. **`TRAIN_STEPS = 1200` is early stopping fitted to this fixture and will not transfer to real data.** | T05 (B10), T06 | ~~T08~~, T09, T10 (A2) | **T08 ran and did not close it**; the criterion is a strict xfail carrying 11.02 / 13.39, and the enable/disable decision moves to **T09 §3's joint selection gate** (`train_steps` × the metric weights, scored per dataset on internal LOSO), reported by **T10's A2** at both budgets. The 0 is a starting point, not a shipped decision |
-| R11 | **The intensity-field layout is worse than copying, on real data.** Holding everything else fixed on tier-1 STARmap and swapping only `layout_mode`: `celltype_localization` at ground-truth-matched density is **0.6136** for `field` and **0.6572** for the shipped `hybrid` against **0.7601** for `resample`, where the model-free `flanking_copy` floor is **0.7765** and the `oracle` ceiling **0.9808** — both field-based modes score *below the floor* on the metric the layout head exists to win, by **4.9x and 3.6x** R10's across-seed envelope, while `resample` lands on the floor to within 0.0164 (inside it). `cell_count_ratio` 0.894 -> 0.988 in the same swap, and `hybrid` cannot help: its count draw precedes the sliced-Wasserstein polish (`layout.py:889`) and is bit-identical to `field`'s. and the count error is large and erratic: 4332/1372/3866 at 1200 steps against a ground truth of 4187/4102/4162, 11168/146/3788 at 2400, and **48 343 against 4 187** in the `exp`-link arm. It agrees with the fixture, where `resample` was the **rank winner** (3.0), `hybrid` followed (4.2) and **`field`'s best cell ranked 7.0, winning nothing** — `hybrid` ships only on a tie-break whose margin (0.0344) sat inside R10's 0.0335 envelope. The fixture signal was **underpowered, not wrong**. ⚠️ It does **not** explain R12: with real positions the emitted expression still carried only 22 % of the tissue's Moran's I. Coupling to the decoder is **indirect** — `IntensityHead` takes only coordinates and field features, but `_layout_term` reads the **shared** triplane and `forward_train` backpropagates `recon` and `layout` together | T05, T09 | T10, then T05/T09 | **open** — `specs/05`'s headline layout claim is in question and the `hybrid` tie-break is flagged in `progress/t09_inference_and_calibration.md` as a decision to revisit; the question is whether the gate may be **inherited** from the fixture at all, given `specs/09` §3 selects per dataset |
+| R11 | **The intensity-field layout is worse than copying, on real data — re-confirmed on a correct sampler.** Holding everything else fixed on tier-1 STARmap and swapping only `layout_mode`, on the **grid** sampler: `celltype_localization` at ground-truth-matched density is **0.6607** for `field` and **0.6692** for the shipped `hybrid` against **0.7546** for `resample`, where the model-free `flanking_copy` floor is **0.7765** and the `oracle` ceiling **0.9808** — both field-based modes score *below the floor* on the metric the layout head exists to win, by **3.5x and 3.2x** R10's across-seed envelope, while `resample` lands on the floor to within 0.0219 (inside it). The rejection sampler's bias was **not** the explanation: correcting it buys `field` 0.0599 (1.8x the envelope) and `hybrid` 0.0158 (inside it), and leaves the ordering unchanged. It made the **count** worse, by unmasking it — median `cell_count_ratio` 0.895 -> **5.362**, `section_4` 163 cells placed -> 21 993 (`reports/r11_starmap_layout_modes.md`). `cell_count_ratio` 0.894 -> 0.988 in the same swap, and `hybrid` cannot help: its count draw precedes the sliced-Wasserstein polish (`layout.py:889`) and is bit-identical to `field`'s. and the count error is large and erratic: 4332/1372/3866 at 1200 steps against a ground truth of 4187/4102/4162, 11168/146/3788 at 2400, and **48 343 against 4 187** in the `exp`-link arm. It agrees with the fixture, where `resample` was the **rank winner** (3.0), `hybrid` followed (4.2) and **`field`'s best cell ranked 7.0, winning nothing** — `hybrid` ships only on a tie-break whose margin (0.0344) sat inside R10's 0.0335 envelope. The fixture signal was **underpowered, not wrong**. ⚠️ It does **not** explain R12: with real positions the emitted expression still carried only 22 % of the tissue's Moran's I. Coupling to the decoder is **indirect** — `IntensityHead` takes only coordinates and field features, but `_layout_term` reads the **shared** triplane and `forward_train` backpropagates `recon` and `layout` together | T05, T09 | T10, then T05/T09 | **open** — `specs/05`'s headline layout claim is in question and the `hybrid` tie-break is flagged in `progress/t09_inference_and_calibration.md` as a decision to revisit; the question is whether the gate may be **inherited** from the fixture at all, given `specs/09` §3 selects per dataset |
 | R3 | **The stack's ends reconstruct far worse than its interior.** Per-section R² was **0.2912** at the first section and **0.3642** at the last, against an interior mean of **0.4474** — a 20–35 % deficit. One-sided evidence at the volume boundary. | T04 | T09, T10 | **at T09** |
 
 ### R11 — the layout head, on one page
 
 `layout_mode` field vs hybrid vs resample, on both datasets, on the metric the layout head exists
 to win. **Every number is a median over held-out sections** (`specs/10` §4.6).
+
+#### Re-measured on the corrected sampler (2026-08-25). The ordering survives; the counts do not.
+
+Everything below this subsection was measured on the **rejection** sampler that
+`reports/r11_envelope.md` found biased, so the whole comparison had to be re-taken. It has been:
+`reports/r11_starmap_layout_modes.md`, five arms off one refit of the same configuration, on the
+same instrument and the same ground-truth-matched density, with `field` and `hybrid` also re-run on
+the old sampler as a control. **The referents reproduce `reports/pilot.md` §3 to four decimals**
+(`flanking_copy` 0.7008 / 0.7765 / 0.7868, `oracle` 0.9808), which is what says the instrument and
+the dataset build are the pilot's and not merely similar.
+
+| arm | `celltype_localization` (median) | per section (2 / 4 / 6) | `cell_count_ratio` (median) | per section |
+|---|---|---|---|---|
+| `oracle` — ceiling | **0.9808** | 0.9765 / 0.9888 / 0.9808 | 1.000 | 1.000 / 1.000 / 1.000 |
+| `flanking_copy` — copy floor | **0.7765** | 0.7008 / 0.7765 / 0.7868 | 0.988 | 0.973 / 1.016 / 0.988 |
+| `resample` (sampler-independent) | **0.7546** | 0.7008 / 0.7546 / 0.7868 | 0.988 | 0.973 / 1.016 / 0.988 |
+| `hybrid`, **grid** | **0.6692** | 0.6692 / 0.6600 / 0.6948 | **5.362** | 63.90 / 5.36 / 0.895 |
+| `field`, **grid** | **0.6607** | 0.6634 / 0.4437 / 0.6607 | **5.362** | 63.90 / 5.36 / 0.895 |
+| `hybrid`, rejection (control) | 0.6534 | 0.6534 / 0.3581 / 0.6790 | 0.895 | 42.87 / 0.040 / 0.895 |
+| `field`, rejection (control) | 0.6008 | 0.6008 / **0.0000** / 0.6628 | 0.895 | 42.87 / 0.040 / 0.895 |
+
+Emitted / ground truth: `field` and `hybrid` **267 567 / 4 187**, **21 993 / 4 102**, 3 727 / 4 162
+on the grid sampler; 179 495, 163, 3 727 on the rejection control; `resample` 4 073, 4 169, 4 110.
+
+**1. The refit is not the confound, and the control is what proves it.** The pilot's checkpoint no
+longer exists, so these arms come from a refit on a different machine, where Convention 3's bitwise
+determinism does not reach. Re-running the *old* sampler on the *new* weights reproduces the pilot
+within R10's 0.0335 envelope on every arm — `field` 0.6008 vs 0.6136 (0.38x), `hybrid` 0.6534 vs
+0.6572 (0.11x), `resample` 0.7546 vs 0.7601 (0.16x). So the grid-minus-rejection differences below
+are the sampler's, not the refit's.
+
+**2. The bias was real but small, and it does not change the answer.** Same weights, sampler
+swapped: `field` **+0.0599** (1.8x the envelope — a real gain), `hybrid` **+0.0158** (0.5x — inside
+it, not a difference). Both field-based modes remain **below the model-free copy floor**, now by
+**3.5x** (`field`) and **3.2x** (`hybrid`) the envelope, against 4.9x and 3.6x before. `resample`
+sits 0.0219 under the floor, *inside* the envelope, exactly as before — it is the copy layout, and
+lands on it. **The ordering `resample` > `hybrid` > `field` is unchanged on both samplers.**
+
+**3. The count went the other way, and that is the sharpest new fact.** The grid sampler could not
+have fixed the count — `n_target ~ Poisson(n_expected)` is drawn from the slab integral *before*
+either sampler is reached — but by removing the starvation it stops the intensity integral's
+overshoot from being masked. `section_4` goes from **163** cells placed to **21 993**; the median
+`cell_count_ratio` for both field-based modes goes **0.895 -> 5.362**. The reassuring median this
+risk warned was "hiding the failure" is gone: the failure is now the median.
+
+**4. The count is also far less reproducible than the scores.** On the *same* sampler and the same
+configuration, the pilot emitted 48 343 cells for `section_2` and this refit emits **179 495** —
+3.7x — while every density-matched score moved less than 0.013. Whatever the intensity integral is
+estimating, it is not stable across a refit that the metrics cannot tell apart. Any future report of
+`cell_count_ratio` has to carry that alongside the per-section spread.
+
+**5. `layout_mode` does not move the autocorrelation metrics at all.** `morans_pearson` spans
+0.6465-0.6690 across all five arms — a spread of 0.0225, inside the envelope — against a copy floor
+of 0.9836. R12 is untouched by any of this, which is the same conclusion the pilot reached from the
+other direction.
+
+**6. `marker_field_r` is the standing weakness for the fifth time.** Best arm 0.6830 (`resample`)
+against a 0.8857 floor: **6.0x** the envelope, the largest shortfall in the table.
+
+**What is still not settled.** One seed (`claim_min_seeds` = 3 before any of this carries a claim);
+still `text_emb_mode="lookup"`, i.e. ablation A3; T09's per-dataset selection and calibration have
+still never run on this dataset. And **the `layout_mode` decision is not taken here** — this is the
+measurement it was waiting on, not the call.
+
+#### The original measurement, on the biased sampler — superseded by the subsection above
+
+*(Kept because the reasoning below is still the reasoning, and because the fixture half of it was
+never re-run. The three STARmap `layout_mode` rows are the ones superseded; do not quote them.)*
 
 **Real STARmap, tier 1 (`paper_2_4_6`).** `flanking_copy` and `oracle` are bench3's own probes,
 measured on the pinned instrument (`reports/pilot.md` §3) and model-free, so they bracket what is
