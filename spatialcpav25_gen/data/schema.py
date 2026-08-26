@@ -219,7 +219,9 @@ class Volume:
     median_nn_dist
         Derived: median in-plane nearest-neighbour distance, pooled over sections.
     bbox
-        Derived: ``(2, 3)`` float32, row 0 = min over ``(x, y, z)``, row 1 = max.
+        Derived: ``(2, 3)`` float32, row 0 = min over ``(x, y, z)``, row 1 = max. The ``z``
+        axis spans the sections' **slabs** — ``z +/- thickness/2`` — not their centres, so the
+        support is the tissue the model is actually queried about (SPEC_QUESTIONS C33).
 
     Notes
     -----
@@ -254,13 +256,34 @@ class Volume:
         self.bbox = self._compute_bbox()
 
     def _compute_bbox(self) -> npt.NDArray[np.float32]:
-        """Return ``(2, 3)`` float32 min/max over ``(x, y, z)``."""
+        """Return ``(2, 3)`` float32 min/max over ``(x, y, z)``.
+
+        **The z axis spans the sections' slabs, not their centres** (SPEC_QUESTIONS C33,
+        accepted 2026-08-26). A section is a slab of tissue ``thickness`` deep, and the model
+        is asked about every depth inside it: ``CTFFlow._layout_targets`` jitters each cell's
+        depth uniformly within its own slab, and ``uniform_slab_points`` draws the Monte-Carlo
+        set the Poisson integral is evaluated on from the same interval. Taking the box of the
+        section *centres* put the first and last sections' own slabs half outside the support,
+        so **half of every boundary section's queries were clamped to the bbox face** — 2067 of
+        ``section_1``'s 4073 cells on tier-1 STARmap, ~50 % on the fixture, and ~50 % whatever
+        the point set, which is what made it look like a frame bug rather than a geometry one.
+
+        The consequence was not cosmetic: at the two boundary sections the intensity head was
+        queried at the tissue's surface instead of at the depth the jitter chose, so the layout
+        term's integral was evaluated on a support that is half surface-clamped — exactly the
+        regime open risks R3 and R11 are about.
+
+        The in-plane axes are unchanged: ``x`` and ``y`` are real cell coordinates and a cell
+        on the face is a real cell there, which is the reason
+        ``field._BBOX_TOLERANCE_FRAC`` exists.
+        """
         xy = np.concatenate(
             [np.asarray(s.coords, dtype=np.float32) for s in self.sections], axis=0
         )
         z = np.asarray([s.z for s in self.sections], dtype=np.float32)
-        lo = np.array([xy[:, 0].min(), xy[:, 1].min(), z.min()], dtype=np.float32)
-        hi = np.array([xy[:, 0].max(), xy[:, 1].max(), z.max()], dtype=np.float32)
+        half = 0.5 * np.asarray([s.thickness for s in self.sections], dtype=np.float32)
+        lo = np.array([xy[:, 0].min(), xy[:, 1].min(), (z - half).min()], dtype=np.float32)
+        hi = np.array([xy[:, 0].max(), xy[:, 1].max(), (z + half).max()], dtype=np.float32)
         return np.stack([lo, hi], axis=0, dtype=np.float32)
 
     @property

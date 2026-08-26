@@ -656,7 +656,15 @@ def test_cross_terms_are_the_specified_four(built: Built):
         )
     assert set(terms) == {"params", "h", "type", "lambda"}
     assert all(value.shape == () for value in terms.values())
-    assert all(float(value) >= 0.0 for value in terms.values())
+    # ``type`` is a KL divergence, so it is >= 0 *mathematically* — but on an untrained model
+    # the student and the EMA teacher are identical, the KL is exactly zero, and float32
+    # rounding scatters it symmetrically about zero: measured over 8 seeds, 4 negative, all
+    # |v| <= 9.6e-9 against a float32 eps of 1.19e-7. Asserting `>= 0.0` therefore fails on a
+    # coin-flip, which is what it did when C33 widened the bbox and moved the sampled geometry.
+    # The tolerance is float32's, not a fudge factor: a term below it is zero.
+    tol = 10.0 * float(np.finfo(np.float32).eps)
+    for name, value in terms.items():
+        assert float(value) >= -tol, f"{name} = {float(value):.3e}, below -{tol:.1e}"
 
 
 def test_cross_loss_skips_planes_that_do_not_meet(built: Built):

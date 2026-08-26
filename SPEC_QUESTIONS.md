@@ -1661,3 +1661,27 @@ that ships — as `text_emb_mode` now is whenever `cross-mix` wins — the shipp
 value chosen on evidence from elsewhere. That is the honest option and it is reported as such,
 but whether such a gate should instead be recorded as *undetermined for this dataset* is a
 question about what the selected config claims.
+
+### C33 — **decided 2026-08-26: fixed.** The bbox spans the sections' slabs.
+
+`Volume._compute_bbox` takes `z ± thickness/2` at each end. In-plane unchanged. Measured on the
+fixture: cells outside the support during `_layout_term` **749/1500 → 0**, MC points
+**2103/4096 → 2/4096**, and the survivors are in-plane layout proposals, which is what the
+warning calls expected. One committed assertion moved
+(`tests/test_schema.py::test_volume_derived_fields`); no report number was invalidated that was
+not already superseded.
+
+**A consequence worth its own line:** the fix changed every score while leaving every `Config`
+hash identical, so `ScoreCache` — keyed on the config — would have served pre-fix numbers into a
+post-fix run, silently. `ScoreCache` is now keyed on a `volume_cache_key` as well, which
+includes the bbox. Any cached selection from before this date is stale and will correctly miss.
+
+### C34 — **decided 2026-08-26: UNDETERMINED.**
+
+A gate that was inert under the shipped incumbent and therefore measured under a different one
+is recorded as **undetermined for the dataset**. `selected.yaml` gains `undetermined:` and
+`undetermined_won_elsewhere:` and does **not** carry the winner into the config; the report's
+selected-configuration table prints `UNDETERMINED` in place of a value, and the
+elsewhere-evidence is kept in its own section, labelled as evidence about the configuration it
+was taken under. Rationale, as decided: under the configuration that ships the gate changes no
+emitted count, so writing a winner would claim a decision the shipped model cannot express.

@@ -201,6 +201,8 @@ def run_selection_for(adata, args, fingerprint: dict, dsid: str):
                 "selection_seed": args.seed,
                 "config_hash": result.config.content_hash(),
                 "pinned": result.pinned,
+                "undetermined": sorted(result.undetermined),
+                "undetermined_won_elsewhere": result.elsewhere_winner,
                 "config": result.config.to_dict(),
             },
             sort_keys=False,

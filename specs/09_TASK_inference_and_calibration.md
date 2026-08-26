@@ -290,6 +290,58 @@ reconstructions of training sections**:
 - Coordinate descent, 2 passes, over the gates the rule leaves eligible.
 - Persist the chosen config and the full score table to `reports/config_selection_{dataset}.md`.
 
+### The inert-gate rule (added at T09, from a measured failure on real data)
+
+> **A gate must not be scored under an incumbent that makes its options inert.**
+>
+> A gate is *inert* under a configuration when changing it cannot change a single emitted
+> count. Scoring it there measures nothing and reports a separation of exactly **0.0000**,
+> which reads like a perfect tie and is an absence of measurement.
+>
+> Measured on the first real tier-1 STARmap selection: the merged gate selected
+> `expr_mode="cross-mix"`, and `infer/generate.py::_expression` returns from `_cross_mix`
+> **before** `prior_latent`, `flow.sample`, the decoder and the gene embeddings are reached.
+> So `prior_mode`, `text_emb_mode`, `decoder_mu_link` and `ell_*` are all unreachable under
+> it, and **the gate built to test the open-vocabulary channel ran in the one configuration
+> where it cannot be tested**. `calibrate_lengthscale` already refused that path for exactly
+> this reason; the selector did not.
+>
+> **The relation is derived, not declared.** `train/select.py::inert_gates` *runs* each option
+> and compares emitted counts bitwise. Nothing writes down "cross-mix kills prior_mode", so a
+> future edit that creates a new inert path is caught by whoever introduces it rather than by
+> a reversal months later. Inertness is a property of the code path and not of the weights, so
+> the probe uses an **untrained** model: no fit, one generation per option, run *before* the
+> gate is scored.
+>
+> **On detection the selector re-orders**, onto the best-ranked cell that can decide the gate
+> (`live_incumbent_for`); a gate inert under every scored configuration raises rather than
+> shipping a tie.
+>
+> **And the gate is then UNDETERMINED for the dataset** (SPEC_QUESTIONS C34). It was measured
+> where the shipped configuration is not, so the shipped configuration cannot support the
+> answer — `selected.yaml` records the gate as undetermined and does **not** carry the winner.
+> The elsewhere-evidence stays in the report, labelled as evidence about that configuration
+> rather than about this dataset.
+
+### A four-section training stack cannot honour `selection_n_folds = 3`
+
+`selection_folds` returns the **interior** sections — a boundary fold would decide gates on the
+regime the model is worst at (open risk R3). Tier-1 STARmap's `paper_2_4_6` holdout leaves four
+training sections (1/3/5/7), so the interior is **two**, and `Config.selection_n_folds = 3`
+cannot be honoured however it is set.
+
+**Every tier-1 gate margin is therefore a mean of two numbers**, and nothing in the six scored
+columns says so: a margin averaged over 2 folds reads exactly like one averaged over 30.
+
+Two consequences, both required:
+
+1. **The fold count is printed beside every margin**, in the selection report's tie-break table
+   and in `selected.yaml` (`n_loso_folds`). It is not kept internally.
+2. **A margin whose folds disagree in sign is not a result.** `fold_scores` returns the
+   unaveraged per-fold six beside `selection_scores`'s mean, and
+   `scripts/t09_audit_starmap.py` reports them per metric with the sign-agreement check
+   stated. At n = 2 a mean can be the average of a win and a loss.
+
 ### The training-free-option rule (added at T09, from a measured failure)
 
 > **A gate is scored at the selected budget when either of two conditions holds.**

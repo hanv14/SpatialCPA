@@ -77,6 +77,7 @@ from spatialcpav25_gen.train.select import (
     repulsion_is_reachable,
     run_selection,
     selection_folds,
+    volume_cache_key,
 )
 from spatialcpav25_gen.train.select import Candidate as _Candidate
 
@@ -285,7 +286,10 @@ def main(argv: list[str] | None = None) -> int:
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    cache = ScoreCache(out_dir / "scores.csv")
+    # Keyed on the volume as well as the config: C33 changed every score while leaving
+    # every config hash identical, so a config-only key served pre-fix numbers into a
+    # post-fix run. A changed volume now simply misses rather than silently hitting.
+    cache = ScoreCache(out_dir / "scores.csv", volume_key=volume_cache_key(volume))
     print(f"  checkpoint: {cache.path} ({len(cache)} cells already scored)")
 
     if args.preflight:
@@ -377,6 +381,13 @@ def main(argv: list[str] | None = None) -> int:
                 "selection_seed": args.seed,
                 "config_hash": result.config.content_hash(),
                 "pinned": result.pinned,
+                # SPEC_QUESTIONS C34: a gate this dataset cannot decide is recorded as
+                # undetermined rather than carrying a value the shipped config cannot
+                # support. The field still holds *something* — Config is a total record —
+                # but a consumer that reads this file is told not to treat it as selected.
+                "undetermined": sorted(result.undetermined),
+                "undetermined_won_elsewhere": result.elsewhere_winner,
+                "n_loso_folds": len(selection_folds(volume, cfg)),
                 "config": result.config.to_dict(),
             },
             sort_keys=False,
@@ -385,7 +396,15 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\nselection done in {wall:.0f}s, {len(result.fits)} fits issued this process")
     print(f"  selected config {result.config.content_hash()} -> {selected}")
     for gate, _ in ALL_GATES:
-        print(f"    {gate:<16} {getattr(result.config, gate)}")
+        mark = "  ⛔ UNDETERMINED for this dataset" if gate in result.undetermined else ""
+        print(f"    {gate:<16} {getattr(result.config, gate)}{mark}")
+    if result.undetermined:
+        print(
+            "\n  ⛔ "
+            + ", ".join(sorted(result.undetermined))
+            + " could not be decided on this dataset: inert under the shipped incumbent. "
+            "The winner measured elsewhere is in the report and is NOT in selected.yaml."
+        )
     print(f"    {'train_steps':<16} {result.config.train_steps}")
     print(
         f"    {'weights':<16} {result.config.w_autocorr:g} / {result.config.w_profile:g} / "
@@ -394,7 +413,7 @@ def main(argv: list[str] | None = None) -> int:
     envelope = cfg.claim_tie_break_envelope
     print(f"\n── per-gate tie-break review (margin vs claim_tie_break_envelope={envelope:g}) ──")
     for r in result.reviews:
-        margin = "—" if r.margin != r.margin else f"{r.margin:.4f}"
+        margin = "—" if r.margin != r.margin else f"{r.margin:.4f} (n={r.n_folds} folds)"
         print(
             f"  {r.gate:<16} ships {r.winner:<10} rival {r.runner_up!s:<10} "
             f"margin {margin:<8} {'INSIDE' if r.inside_envelope else ''} "

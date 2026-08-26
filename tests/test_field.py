@@ -625,41 +625,38 @@ def test_gate2_angles_cover_the_specs_sweep() -> None:
     assert ANGLES_DEG == (0.0, 15.0, 30.0, 45.0, 60.0, 90.0)
 
 
-def test_the_bbox_excludes_the_boundary_sections_own_slabs():
-    """Measured, not fixed: half of the first section's cells query outside the field's bbox.
+def test_the_bbox_spans_the_sections_slabs_not_their_centres():
+    """SPEC_QUESTIONS C33, fixed 2026-08-26. The support is the tissue, not the mid-planes.
 
     ``CTFFlow._layout_targets`` jitters every cell's depth uniformly within its slab
-    (``z += U(-thickness/2, +thickness/2)``), but ``Volume.bbox`` is the box of the section
-    **centres**, not of the slabs. The first section sits *at* ``z_min``, so half its jittered
-    cells fall below the bbox floor and are clamped to it — and the same at ``z_max``. The
-    fraction is ~50 % of that section's cells regardless of the point set, which is the
-    signature seen on tier-1 STARmap (2067 of section_1's 4073 cells) and on the fixture.
+    (``z += U(-thickness/2, +thickness/2)``) and draws the Poisson integral's Monte-Carlo set
+    from the same interval. While ``Volume.bbox`` was the box of the section **centres**, the
+    first and last sections' own slabs lay half outside it, so half of every boundary
+    section's queries were clamped to the bbox face — 2067 of ``section_1``'s 4073 cells on
+    tier-1 STARmap, and ~50 % whatever the point set, which is what made it read as a frame
+    bug rather than a geometry one. Measured after the fix: **0.05 %**, and the survivors are
+    in-plane layout proposals, which is what the warning calls expected.
 
-    The consequence is real: for those cells the intensity head is queried at the tissue's
-    surface instead of at the depth the jitter chose, so the layout term's Poisson integral is
-    evaluated on a support that is half surface-clamped **at exactly the boundary sections**.
-    That is open risk R3's regime, and a candidate contributor to R11's unstable intensity
-    integral.
-
-    Not fixed here: inflating the bbox by half a section thickness changes the support every
-    fitted number was produced on, which is a T03/T04 design decision, not a test's to take.
-    This asserts the arithmetic so the day the bbox changes, this fails and the record is
-    updated.
+    Asserted at both ends, and that the in-plane axes are untouched: ``x`` and ``y`` are real
+    cell coordinates and a cell on the face is a real cell there.
     """
     vol, _ = make_synthetic_volume(seed=0)
     box = np.asarray(vol.bbox, dtype=np.float64)
     first, last = vol.sections[0], vol.sections[-1]
+    half_first = 0.5 * float(first.thickness)
+    half_last = 0.5 * float(last.thickness)
 
-    assert float(first.z) == pytest.approx(box[0, 2], abs=1e-6), "the first section is at z_min"
-    assert float(last.z) == pytest.approx(box[1, 2], abs=1e-6), "the last section is at z_max"
+    assert box[0, 2] == pytest.approx(first.z - half_first, abs=1e-4)
+    assert box[1, 2] == pytest.approx(last.z + half_last, abs=1e-4)
 
-    # The slab the jitter draws in extends half a thickness beyond the box, at each end.
-    half = 0.5 * float(first.thickness)
-    assert half > 0.0
-    assert first.z - half < box[0, 2], "the first slab reaches below the bbox floor"
-    assert last.z + half > box[1, 2], "the last slab reaches above the bbox ceiling"
-
-    # ...and uniform jitter puts half of them there, which is the ~50 % that gets clamped.
+    # Every depth the jitter can reach is inside the support, at both ends.
     gen = np.random.default_rng(0)
-    jitter = gen.uniform(-half, half, size=20_000)
-    assert (first.z + jitter < box[0, 2]).mean() == pytest.approx(0.5, abs=0.02)
+    for section, half in ((first, half_first), (last, half_last)):
+        jittered = float(section.z) + gen.uniform(-half, half, size=20_000)
+        assert jittered.min() >= box[0, 2] - 1e-6
+        assert jittered.max() <= box[1, 2] + 1e-6
+
+    # In-plane is still the cells' own extent — not inflated.
+    xy = np.concatenate([np.asarray(s.coords, dtype=np.float64) for s in vol.sections])
+    assert box[0, 0] == pytest.approx(xy[:, 0].min(), abs=1e-4)
+    assert box[1, 1] == pytest.approx(xy[:, 1].max(), abs=1e-4)

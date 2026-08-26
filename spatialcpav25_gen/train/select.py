@@ -50,6 +50,8 @@ either gate.
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -128,6 +130,7 @@ __all__ = [
     "select_config",
     "selection_folds",
     "selection_scores",
+    "volume_cache_key",
     "write_selection_report",
 ]
 
@@ -531,6 +534,13 @@ class SelectionResult:
     section_ids
         The training sections the folds ran on. No held-out section can appear here: the
         entry point takes a ``TrainingVolume``.
+    undetermined
+        ``{gate: why}`` for every gate this dataset **cannot decide**: it was inert under the
+        incumbent that ships, so it was measured elsewhere and its winner is not written into
+        :attr:`config`. ``selected.yaml`` records the gate as undetermined rather than
+        carrying a value the shipped configuration cannot support (SPEC_QUESTIONS C34).
+    elsewhere_winner
+        ``{gate: option}`` — what won *there*. Reported, never shipped.
     inert_notes
         ``{gate: why}`` for every gate that was inert under the incumbent and had to be
         measured under a different one. Non-empty is a fact about the run that the report
@@ -563,6 +573,8 @@ class SelectionResult:
     reviews: list[GateReview] = field(default_factory=list)
     failures: list[tuple[str, int, str]] = field(default_factory=list)
     inert_notes: dict[str, str] = field(default_factory=dict)
+    undetermined: dict[str, str] = field(default_factory=dict)
+    elsewhere_winner: dict[str, str] = field(default_factory=dict)
     pinned: dict[str, str] = field(default_factory=dict)
     pinned_reason: str = ""
 
@@ -1081,10 +1093,17 @@ class ScoreCache:
         the machine rather than merely the process.
     """
 
-    def __init__(self, path: str | Path, on_write: Callable[[str], None] | None = None) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        on_write: Callable[[str], None] | None = None,
+        *,
+        volume_key: str = "",
+    ) -> None:
         """Load any existing rows from ``path``; create it with a header if it is absent."""
         self.path = Path(path)
         self.on_write = on_write
+        self.volume_key = str(volume_key)
         self._rows: dict[str, dict[str, float]] = {}
         if self.path.exists():
             with self.path.open(newline="", encoding="utf-8") as handle:
@@ -1095,10 +1114,18 @@ class ScoreCache:
             with self.path.open("w", newline="", encoding="utf-8") as handle:
                 csv.writer(handle).writerow(["key", "label", "steps", *METRIC_NAMES])
 
-    @staticmethod
-    def key(cfg: Config, steps: int) -> str:
-        """Return the cache key: the config's content hash and the budget it is fitted at."""
-        return f"{cfg.content_hash()}:{int(steps)}"
+    def key(self, cfg: Config, steps: int) -> str:
+        """Return the cache key: the volume, the config's content hash, and the budget.
+
+        **The volume is part of the key**, and it has to be. A score depends on data the
+        ``Config`` does not describe: the training volume's own geometry. C33 proved it —
+        widening ``Volume.bbox`` to span the sections' slabs changed every score while leaving
+        every config hash identical, so a cache keyed on the config alone silently served
+        pre-fix numbers into a post-fix run. An empty ``volume_key`` reproduces the old
+        behaviour for callers that have not got one, and is the reason this is a keyword.
+        """
+        stem = f"{cfg.content_hash()}:{int(steps)}"
+        return f"{self.volume_key}:{stem}" if self.volume_key else stem
 
     def get(self, cfg: Config, steps: int) -> dict[str, float] | None:
         """Return the recorded scores for this cell, or ``None`` if it has not been run."""
@@ -1219,6 +1246,12 @@ class GateReview:
         gate was decided by measurement or by capability.
     pinned
         The gate was not selected here at all; ``winner`` is the value it was pinned to.
+    n_folds
+        How many LOSO folds the margin is a mean of. Printed beside every margin, not kept
+        internally: ``selection_folds`` takes the *interior* sections, so tier-1 STARmap's
+        four-section training stack gives **two** however large ``Config.selection_n_folds``
+        is — and a margin that is a mean of two numbers reads exactly like one that is a mean
+        of thirty unless the count is on the page.
     """
 
     gate: str
@@ -1230,6 +1263,7 @@ class GateReview:
     flipped: bool
     reason: str
     pinned: bool = False
+    n_folds: int = 0
 
 
 def review_gates(
@@ -1238,6 +1272,7 @@ def review_gates(
     cfg: Config,
     *,
     pinned: Mapping[str, str] | None = None,
+    n_folds: int = 0,
 ) -> list[GateReview]:
     """Re-check every gate against the capability tie-break, holding the others selected.
 
@@ -1264,6 +1299,7 @@ def review_gates(
                     flipped=False,
                     reason="pinned: not selected on this dataset",
                     pinned=True,
+                    n_folds=n_folds,
                 )
             )
             continue
@@ -1292,6 +1328,7 @@ def review_gates(
                     flipped=False,
                     reason="not comparable here: fewer than two options scored against this "
                     "incumbent",
+                    n_folds=n_folds,
                 )
             )
             continue
@@ -1308,6 +1345,7 @@ def review_gates(
                     flipped=False,
                     reason="not comparable here: the selected option was not scored against "
                     "this incumbent",
+                    n_folds=n_folds,
                 )
             )
             continue
@@ -1352,6 +1390,7 @@ def review_gates(
                 ),
                 flipped=winner is not best,
                 reason=reason,
+                n_folds=n_folds,
             )
         )
     return reviews
@@ -1461,6 +1500,28 @@ def live_incumbent_for(
     return None
 
 
+def volume_cache_key(vol: TrainingVolume) -> str:
+    """Return a short fingerprint of the training volume, for :class:`ScoreCache`.
+
+    Everything a score depends on that the ``Config`` does not describe: the sections, the cell
+    and gene counts, and the **bounding box** — which C33 changed without touching a single
+    config field, and which changed every score.
+    """
+    box = np.asarray(vol.bbox, dtype=np.float64).round(4).tolist()
+    payload = json.dumps(
+        {
+            "specimen": vol.specimen_id,
+            "sections": list(vol.section_ids),
+            "n_cells": int(vol.n_cells),
+            "n_genes": int(vol.n_genes),
+            "bbox": box,
+            "flattened": bool(vol.flattened_sections),
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
 def rank_candidates(candidates: Sequence[Candidate]) -> list[Candidate]:
     """Fill in each candidate's median rank within this comparison group.
 
@@ -1505,7 +1566,8 @@ def run_selection(
     Parameters
     ----------
     checkpoint
-        Optional :class:`ScoreCache`. The merged gate is scored at full budget, so a run that
+        Optional :class:`ScoreCache`, **keyed on the volume as well as the config** — see
+        :meth:`ScoreCache.key`. The merged gate is scored at full budget, so a run that
         loses it to an interrupted session is not usable; with a checkpoint each scored cell
         is flushed to disk as it completes and a re-run skips what is already there.
     pinned
@@ -1547,6 +1609,8 @@ def run_selection(
     fits: list[tuple[dict[str, Any], int]] = []
     failures: list[tuple[str, int, str]] = []
     inert_notes: dict[str, str] = {}
+    undetermined: dict[str, str] = {}
+    elsewhere: dict[str, str] = {}
     cache: dict[tuple[tuple[str, Any], ...], dict[str, float]] = {}
 
     def score(overrides: dict[str, Any], steps: int, label: str = "") -> dict[str, float]:
@@ -1725,16 +1789,32 @@ def run_selection(
             group = _ranked(group)
             _require_a_live_group(group, f"gate {gate}")
             candidates.extend(group)
+            chosen = str(min(group, key=lambda c: c.rank).overrides[gate])
+            if note:
+                # SPEC_QUESTIONS C34, decided 2026-08-26. The gate was measured somewhere the
+                # shipped configuration is not, so the shipped configuration cannot support
+                # the answer: under the incumbent that ships, this gate changes no emitted
+                # count, and writing the winner into ``selected.yaml`` would claim a decision
+                # the shipped model cannot express. It is recorded **UNDETERMINED for this
+                # dataset**, and the elsewhere-evidence is kept in the report, labelled.
+                undetermined[gate] = (
+                    f"{note}. Measured winner there: `{chosen}` — **evidence from a "
+                    f"configuration this dataset does not ship**, so it is not written into "
+                    f"the selected config."
+                )
+                elsewhere[gate] = chosen
+                continue
             # The gate's *answer* is adopted; the rest of the re-ordered incumbent is not —
             # the search still stands where the merged gate left it.
-            chosen = min(group, key=lambda c: c.rank).overrides[gate]
             incumbent = {**incumbent, gate: chosen}
 
     # 5. the capability tie-break, per gate, on the table the search just produced
     # (``specs/09`` §3). ``min(rank)`` decided every gate above; below the reproducibility
     # envelope that ordering is not evidence, and the rule — not the ranking — decides.
     reviewed = base_cfg.replace(**incumbent)
-    reviews = review_gates(candidates, reviewed, base_cfg, pinned=fixed)
+    reviews = review_gates(
+        candidates, reviewed, base_cfg, pinned=fixed, n_folds=len(selection_folds(vol, base_cfg))
+    )
     flips = {r.gate: r.winner for r in reviews if r.flipped}
     if flips:
         incumbent = {**incumbent, **flips}
@@ -1754,6 +1834,8 @@ def run_selection(
         reviews=reviews,
         failures=failures,
         inert_notes=dict(inert_notes),
+        undetermined=dict(undetermined),
+        elsewhere_winner=dict(elsewhere),
         pinned=dict(fixed),
         pinned_reason=pinned_reason,
     )
@@ -1981,10 +2063,15 @@ def write_selection_report(
         "",
         _table(
             [
-                ["`layout_mode`", str(cfg.layout_mode)],
-                ["`prior_mode`", str(cfg.prior_mode)],
-                ["`expr_mode`", str(cfg.expr_mode)],
-                ["`text_emb_mode`", str(cfg.text_emb_mode)],
+                *[
+                    [
+                        f"`{gate}`",
+                        "**UNDETERMINED** (see below)"
+                        if gate in result.undetermined
+                        else str(getattr(cfg, gate)),
+                    ]
+                    for gate, _ in ALL_GATES
+                ],
                 ["`train_steps`", str(cfg.train_steps)],
                 ["`w_autocorr`", f"{cfg.w_autocorr:g}"],
                 ["`w_profile`", f"{cfg.w_profile:g}"],
@@ -2095,6 +2182,26 @@ def write_selection_report(
         "implementations — `eval/metrics.py` is T10's module. The names match, and T10 "
         "re-scores the selected config with the vendored code.",
     ]
+    if result.undetermined:
+        chunks += [
+            "",
+            "## ⛔ Gates **UNDETERMINED** for this dataset",
+            "",
+            "These gates were inert under the configuration that ships — changing them cannot "
+            "change a single emitted count — so they were measured under a different one. "
+            "**The selected config does not carry their winners**: `selected.yaml` records "
+            "them as undetermined rather than claiming a decision the shipped model cannot "
+            "express (SPEC_QUESTIONS C34). What won *elsewhere* is below, and it is evidence "
+            "about that configuration, not about this dataset's shipped one.",
+            "",
+            _table(
+                [
+                    [f"`{gate}`", f"`{result.elsewhere_winner.get(gate, '—')}`", why]
+                    for gate, why in sorted(result.undetermined.items())
+                ],
+                ["gate", "won elsewhere", "why it is undetermined here"],
+            ),
+        ]
     if result.inert_notes:
         chunks += [
             "",
@@ -2139,6 +2246,14 @@ def write_selection_report(
             "evidence**, and the rule decides instead. Applied once, on the completed table, "
             "which is where the evidence is.",
             "",
+            "**`folds` is how many LOSO folds each margin is a mean of, and it is printed "
+            "because it is small.** `selection_folds` takes the *interior* sections, so a "
+            "four-section training stack — which is what tier-1 STARmap's `paper_2_4_6` "
+            f"holdout leaves — gives **{result.reviews[0].n_folds if result.reviews else 0}** "
+            f"however large `Config.selection_n_folds` ({cfg.selection_n_folds}) is set. "
+            "A margin that is a mean of two numbers reads exactly like one that is a mean of "
+            "thirty unless the count is beside it.",
+            "",
             _table(
                 [
                     [
@@ -2146,13 +2261,23 @@ def write_selection_report(
                         f"`{r.winner}`",
                         "—" if r.runner_up is None else f"`{r.runner_up}`",
                         "—" if r.margin != r.margin else f"{r.margin:.4f}",
+                        "—" if r.pinned else f"**n = {r.n_folds}**",
                         "**inside**" if r.inside_envelope else ("—" if r.pinned else "outside"),
                         "**yes**" if r.flipped else "no",
                         r.reason,
                     ]
                     for r in result.reviews
                 ],
-                ["gate", "ships", "closest rival", "margin", "vs envelope", "flipped", "why"],
+                [
+                    "gate",
+                    "ships",
+                    "closest rival",
+                    "margin",
+                    "folds",
+                    "vs envelope",
+                    "flipped",
+                    "why",
+                ],
             ),
         ]
     chunks += calibration_chunks(calibration, window, modules)

@@ -64,8 +64,14 @@ def test_volume_derived_fields(volume):
     assert 5.0 < volume.median_nn_dist < 30.0
     assert volume.bbox.shape == (2, 3)
     assert np.all(volume.bbox[0] <= volume.bbox[1])
-    assert volume.bbox[0, 2] == pytest.approx(0.0)
-    assert volume.bbox[1, 2] == pytest.approx(400.0)
+    # The z axis spans the sections' **slabs**, not their centres (SPEC_QUESTIONS C33, fixed
+    # 2026-08-26): the model is queried at every depth inside a slab — ``_layout_targets``
+    # jitters cell depths within it and the Poisson integral's MC set is drawn from it — so a
+    # box of mid-planes left the first and last sections half outside their own support.
+    half = 0.5 * float(volume.sections[0].thickness)
+    assert half > 0.0
+    assert volume.bbox[0, 2] == pytest.approx(0.0 - half)
+    assert volume.bbox[1, 2] == pytest.approx(400.0 + half)
     with pytest.raises(TypeError):
         Volume(  # derived fields are init=False and cannot go stale
             sections=volume.sections,

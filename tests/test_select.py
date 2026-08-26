@@ -23,6 +23,7 @@ run. The paper-scale run is ``scripts/t09_report.py``.
 from __future__ import annotations
 
 import warnings
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -57,6 +58,7 @@ from spatialcpav25_gen.train.select import (
     run_selection,
     select_config,
     selection_folds,
+    volume_cache_key,
     write_selection_report,
 )
 
@@ -1179,3 +1181,131 @@ def test_selection_folds_are_two_on_a_four_section_stack(split):
         flattened_sections=training.flattened_sections,
     )
     assert len(selection_folds(four, cfg)) == 2, "interior of 4 sections is 2"
+
+
+def test_a_gate_decided_elsewhere_is_undetermined_not_shipped(split):
+    """SPEC_QUESTIONS C34. ``selected.yaml`` must not carry a value the shipped config cannot
+    support.
+
+    When ``text_emb_mode`` is inert under the shipped ``expr_mode=cross-mix``, the search
+    measures it under ``zinb-flow`` — but that winner is evidence about a configuration this
+    dataset does not ship, and under the one it *does* ship the gate changes no emitted count.
+    So the gate is recorded **undetermined**, the winner stays in the report, and the selected
+    config does not adopt it.
+    """
+    _, training, _ = split
+    base = t09_cfg(train_steps=50).replace(text_emb_mode="lookup")
+
+    class DeadUnderCrossMix:
+        def __call__(self, cfg: Config, *, steps: int, seed: int) -> dict[str, float]:
+            if cfg.expr_mode == "cross-mix":
+                return dict.fromkeys(METRIC_NAMES, 0.90)
+            return dict.fromkeys(METRIC_NAMES, 0.70 if cfg.text_emb_mode == "medcpt" else 0.50)
+
+        def inertness_probe(self, cfg: Config, *, seed: int):
+            if cfg.expr_mode == "cross-mix":
+                return np.zeros((4, 3))
+            return np.full((4, 3), {"medcpt": 1.0, "lookup": 2.0}[cfg.text_emb_mode])
+
+    with pytest.warns(InertGateWarning):
+        result = run_selection(
+            training,
+            base,
+            seed=SEED,
+            scorer=DeadUnderCrossMix(),
+            pinned={"layout_mode": "resample"},
+            pinned_reason="R11.",
+        )
+
+    assert result.config.expr_mode == "cross-mix"
+    assert "text_emb_mode" in result.undetermined
+    assert result.elsewhere_winner["text_emb_mode"] == "medcpt", "it did win, elsewhere"
+    assert result.config.text_emb_mode == "lookup", (
+        "the elsewhere winner must NOT be adopted: the shipped config cannot support it"
+    )
+    assert "not written into" in result.undetermined["text_emb_mode"]
+
+    # ...and the report says so, in both places a reader looks.
+
+
+def test_the_report_marks_an_undetermined_gate_and_prints_the_fold_count(split, tmp_path):
+    """The two things a reader must not have to infer: what was not decided, and on how many
+    folds the margins that *were* decided rest."""
+    _, training, _ = split
+
+    class DeadUnderCrossMix:
+        def __call__(self, cfg: Config, *, steps: int, seed: int) -> dict[str, float]:
+            if cfg.expr_mode == "cross-mix":
+                return dict.fromkeys(METRIC_NAMES, 0.90)
+            return dict.fromkeys(METRIC_NAMES, 0.70 if cfg.text_emb_mode == "medcpt" else 0.50)
+
+        def inertness_probe(self, cfg: Config, *, seed: int):
+            if cfg.expr_mode == "cross-mix":
+                return np.zeros((4, 3))
+            return np.full((4, 3), {"medcpt": 1.0, "lookup": 2.0}[cfg.text_emb_mode])
+
+    with pytest.warns(InertGateWarning):
+        result = run_selection(
+            training,
+            t09_cfg(train_steps=50),
+            seed=SEED,
+            scorer=DeadUnderCrossMix(),
+            pinned={"layout_mode": "resample"},
+            pinned_reason="R11.",
+        )
+    text = write_selection_report(result, tmp_path / "r.md").read_text()
+
+    assert "**UNDETERMINED**" in text, "the selected-config table must not print a value"
+    assert "Gates **UNDETERMINED** for this dataset" in text
+    assert "does not ship" in text
+    # the fold count, beside every margin
+    n = len(selection_folds(training, t09_cfg()))
+    assert f"**n = {n}**" in text
+    assert "how many LOSO folds each margin is a mean of" in text
+    assert all(r.n_folds == n for r in result.reviews if not r.pinned)
+
+
+def test_the_score_cache_is_keyed_on_the_volume_as_well_as_the_config(split, tmp_path):
+    """A score depends on data the ``Config`` does not describe.
+
+    C33 proved it the hard way: widening ``Volume.bbox`` to span the sections' slabs changed
+    every score while leaving every config hash identical, so a cache keyed on the config
+    alone served pre-fix numbers straight into a post-fix run — silently, because a cache hit
+    looks exactly like a cache hit. A changed volume must **miss**.
+    """
+    _, training, _ = split
+    cfg = t09_cfg(train_steps=50)
+    scores = dict.fromkeys(METRIC_NAMES, 0.5)
+
+    cache = ScoreCache(tmp_path / "scores.csv", volume_key=volume_cache_key(training))
+    cache.put(cfg, 50, "cell", scores)
+    assert cache.get(cfg, 50) == scores
+
+    # Same file, same config, a volume whose geometry differs -> miss, not a stale hit.
+    shorter = TrainingVolume(
+        specimen_id=training.specimen_id,
+        sections=list(training.sections)[:-1],
+        gene_names=training.gene_names,
+        celltype_names=training.celltype_names,
+        region_names=training.region_names,
+        flattened_sections=training.flattened_sections,
+    )
+    assert volume_cache_key(shorter) != volume_cache_key(training)
+    assert (
+        ScoreCache(tmp_path / "scores.csv", volume_key=volume_cache_key(shorter)).get(cfg, 50)
+        is None
+    )
+
+    # ...and the C33 case exactly: the same sections at a different thickness are the same
+    # cells and the same config, but a different bbox — and so a different key.
+    thicker = TrainingVolume(
+        specimen_id=training.specimen_id,
+        sections=[replace(sec, thickness=float(sec.thickness) * 2.0) for sec in training.sections],
+        gene_names=training.gene_names,
+        celltype_names=training.celltype_names,
+        region_names=training.region_names,
+        flattened_sections=training.flattened_sections,
+    )
+    assert thicker.n_cells == training.n_cells
+    assert not np.allclose(np.asarray(thicker.bbox), np.asarray(training.bbox))
+    assert volume_cache_key(thicker) != volume_cache_key(training)

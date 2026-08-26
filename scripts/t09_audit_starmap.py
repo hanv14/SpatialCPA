@@ -127,6 +127,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--flattened", dest="flattened", action="store_true", default=None)
     ap.add_argument("--no-flattened", dest="flattened", action="store_false")
     ap.add_argument(
+        "--fit-only",
+        action="store_true",
+        help="fit each option and stop, without scoring. The fit checkpoint is a resume "
+        "point, so a later full run of the same command re-enters a finished fit as a no-op "
+        "and goes straight to scoring — which is what lets the four arms of the two audits "
+        "run as four concurrent processes instead of two sequential pairs",
+    )
+    ap.add_argument(
         "--preflight",
         action="store_true",
         help="report whether the gate is live under --under, and the fold count, then exit",
@@ -217,6 +225,9 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             checkpoint=workdir / f"fit_{args.gate}_{option}_seed{args.seed}.pt",
         )
+        if args.fit_only:
+            print(f"  fitted in {time.time() - t0:.0f}s; --fit-only, not scoring", flush=True)
+            continue
         anchor = None
         if arm.expr_mode == "auto-blend":
             from spatialcpav25_gen.infer.calibrate import calibrate_anchor_weight
@@ -242,6 +253,10 @@ def main(argv: list[str] | None = None) -> int:
         for name in METRIC_NAMES:
             each = "  ".join(f"{f[name]:+.4f}" for f in per_fold)
             print(f"    {name:<24} mean {mean[name]:+.4f}   per fold [{each}]")
+
+    if args.fit_only:
+        print("\n--fit-only: every arm is fitted and checkpointed. Re-run without it to score.")
+        return 0
 
     lines = _report(rows, args, cfg, under, folds, source)
     text = "\n".join(lines)

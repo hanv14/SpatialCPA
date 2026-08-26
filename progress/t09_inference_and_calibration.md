@@ -912,3 +912,88 @@ Three measurements, none of them made:
 `scripts/t09_audit_starmap.py` makes them: one gate, an incumbent the caller names, per-fold
 columns, and each margin printed against 0.0335. `--preflight` refuses an incumbent under which
 the gate is inert before anything is fitted.
+
+---
+
+### T09 — C33 and C34 decided; the fold count made visible (2026-08-26)
+
+Both spec questions the previous entry raised came back accepted. This is what changed.
+
+#### C33 — the bbox now spans the sections' slabs. Fixed.
+
+`Volume._compute_bbox` takes `z ± thickness/2` at each end instead of the section centres. The
+in-plane axes are untouched: `x` and `y` are real cell coordinates and a cell on the face is a
+real cell there, which is what `field._BBOX_TOLERANCE_FRAC` exists for.
+
+**What it changes, measured on the fixture (`scripts/` diagnostic, 8 training steps):**
+
+| | before | after |
+|---|---|---|
+| bbox z (fixture volume) | `[0, 400]` | **`[−12.5, 412.5]`** |
+| cells outside, `_layout_term` | **749 / 1500 (49.9 %)** | **0** |
+| MC points outside, `_layout_term` | **2103 / 4096 (51.3 %)** | **2 / 4096 (0.05 %)** |
+| which axis | z, entirely | **y** — in-plane layout proposals |
+
+The 2 survivors are what the warning's own docstring calls expected ("layout proposals, planes
+grazing the boundary"). The z axis is clean.
+
+**One committed number moves, and it is a test:** `tests/test_schema.py::test_volume_derived_fields`
+asserted `bbox[:, 2] == [0, 400]` and now asserts `[0 − half, 400 + half]`. Nothing else in the
+suite changed value — 368 fast tests pass. No *report* number is invalidated that was not already
+superseded: every fitted STARmap number to date is one seed on a config the selection has since
+replaced, and every fixture number in `reports/` was produced before the boundary sections' slabs
+entered the support.
+
+**What it does not fix.** The clamp was a symptom; R11's intensity integral being unstable 3.7x
+between refits is still open. What can now be said is that the layout term is no longer evaluated
+against a half-surface-clamped support at the two boundary sections, so a re-measurement of R11
+is no longer confounded by it.
+
+#### C34 — a gate decided elsewhere is UNDETERMINED, not shipped
+
+When a gate is inert under the incumbent that ships, the search still measures it (re-ordered
+onto a live cell) — but **the winner is no longer adopted**. `SelectionResult.undetermined`
+carries the gate and why; `SelectionResult.elsewhere_winner` carries what won there;
+`selected.yaml` gains `undetermined:` and `undetermined_won_elsewhere:`; and the report's
+selected-configuration table prints **UNDETERMINED** in place of a value.
+
+The reasoning is the user's and it is the right one: under the configuration that ships, the gate
+changes no emitted count, so writing a winner into `selected.yaml` would claim a decision the
+shipped model cannot express. The evidence is not discarded — it is labelled as evidence about
+the configuration it was taken under.
+
+#### The two-fold constraint, made visible
+
+`specs/09` §3 now carries **"A four-section training stack cannot honour `selection_n_folds = 3`"**
+as a rule of its own. `selection_folds` takes the interior sections; `paper_2_4_6` leaves four
+training sections; the interior is two.
+
+* `GateReview.n_folds` is filled in for every gate and the report prints a **`folds`** column
+  beside every margin, with a paragraph saying why the count is on the page.
+* `selected.yaml` records `n_loso_folds`.
+* `scripts/t09_select_starmap.py` prints `margin 0.0813 (n=2 folds)` per gate.
+* `fold_scores` returns the unaveraged per-fold six, and `scripts/t09_audit_starmap.py` reports
+  them per metric with an explicit sign-agreement check — at n = 2 a mean can be the average of
+  a win and a loss.
+
+#### Two things the fix surfaced that were not the fix
+
+**A stale-cache hazard, closed.** C33 changed every score while leaving every `Config` hash
+identical, so `ScoreCache` — keyed on the config — served **11 pre-fix cells straight into a
+post-fix run** in the smoke test. `ScoreCache` now takes a `volume_cache_key` (sections, cell
+and gene counts, **bbox**, flattened flag) and a changed volume misses instead of silently
+hitting. **Any `scores.csv` from before 2026-08-26 is stale and will now correctly miss.**
+
+**A latent test flakiness, exposed rather than caused.**
+`test_sefl.py::test_cross_terms_are_the_specified_four` asserted every cross term `>= 0.0`.
+`type` is a KL divergence, so it is non-negative *mathematically* — but on an untrained model
+the student and the EMA teacher are identical, the KL is exactly zero, and float32 rounding
+scatters it about zero: measured over 8 seeds, **4 negative, all |v| <= 9.6e-9** against a
+float32 eps of 1.19e-7. The assertion was a coin flip and the bbox change happened to land on
+tails. It now allows a float32 tolerance, with the measurement in the comment.
+
+#### `--fit-only`, so the two audits parallelise
+
+`scripts/t09_audit_starmap.py --fit-only` fits each arm and stops. The fit checkpoint is a
+resume point and re-entering a finished fit is a no-op, so the four arms of the two audits run
+as **four concurrent processes** and the two scoring runs afterwards resume instantly.
