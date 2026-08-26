@@ -27,7 +27,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DATASET = "starmap_visual_cortex"
+"""Default dataset. Tier 1 (``specs/10`` §1); ``--dataset`` selects another built one."""
+
 HOLDOUT = "paper_2_4_6"
+"""Default holdout id. ``deep_starmap`` runs the same design, which is why it is the analogue
+``specs/10`` §5.4 picks for E1."""
 
 
 def _default_bench3() -> Path:
@@ -44,6 +48,8 @@ class Bench3Paths:
     v2_methods: Path
     input: Path
     ground_truth: Path
+    dataset: str = DATASET
+    holdout: str = HOLDOUT
 
     def describe(self) -> str:
         return (
@@ -51,7 +57,8 @@ class Bench3Paths:
             f"  src       {self.src}\n"
             f"  v2 methods{self.v2_methods}\n"
             f"  input     {self.input}\n"
-            f"  truth     {self.ground_truth}"
+            f"  truth     {self.ground_truth}\n"
+            f"  dataset   {self.dataset}  holdout {self.holdout}"
         )
 
 
@@ -63,6 +70,18 @@ def add_path_args(ap: argparse.ArgumentParser) -> None:
         default=None,
         help="benchmark-pbya-v3 root (env SPATIALCPA_BENCH3; default: this repo's copy). "
         "The other three default from it.",
+    )
+    g.add_argument(
+        "--dataset",
+        default=DATASET,
+        help=f"built dataset name under $BENCH_V3_DATA (default: {DATASET}). Selects both the "
+        "ground truth and the leakage-guarded input, so one flag moves a run to another "
+        "dataset; --input / --ground-truth still override it individually",
+    )
+    g.add_argument(
+        "--holdout",
+        default=HOLDOUT,
+        help=f"holdout id under the dataset's _inputs/ (default: {HOLDOUT})",
     )
     g.add_argument("--v2-methods", default=None, help="dir holding _v2_io.py (v2's methods/)")
     g.add_argument("--input", default=None, help="training-only input h5ad (train_registered)")
@@ -98,16 +117,18 @@ def resolve(args: argparse.Namespace, *, need_input: bool = True) -> Bench3Paths
 
     data_dir = Path(os.environ.get("BENCH_V3_DATA", bench3 / "data" / "processed"))
     results_dir = Path(os.environ.get("BENCH_V3_RESULTS", bench3 / "results"))
+    dataset = str(getattr(args, "dataset", None) or DATASET)
+    holdout = str(getattr(args, "holdout", None) or HOLDOUT)
     gt = (
         Path(args.ground_truth)
         if getattr(args, "ground_truth", None)
-        else data_dir / DATASET / "data.h5ad"
+        else data_dir / dataset / "data.h5ad"
     )
     _require(gt, "the built dataset", "--ground-truth", "BENCH_V3_DATA")
     inp = (
         Path(args.input)
         if getattr(args, "input", None)
-        else results_dir / "_inputs" / DATASET / HOLDOUT / "train_registered.h5ad"
+        else results_dir / "_inputs" / dataset / holdout / "train_registered.h5ad"
     )
     if need_input:
         _require(
@@ -120,7 +141,15 @@ def resolve(args: argparse.Namespace, *, need_input: bool = True) -> Bench3Paths
     for p in (str(src), str(v2)):
         if p not in sys.path:
             sys.path.insert(0, p)
-    return Bench3Paths(bench3=bench3, src=src, v2_methods=v2, input=inp, ground_truth=gt)
+    return Bench3Paths(
+        bench3=bench3,
+        src=src,
+        v2_methods=v2,
+        input=inp,
+        ground_truth=gt,
+        dataset=dataset,
+        holdout=holdout,
+    )
 
 
 def set_torch_threads() -> int:

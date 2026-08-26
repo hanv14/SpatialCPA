@@ -44,11 +44,29 @@ handles one held-out position and cannot settle the criterion. C1 reports each h
 against both measured referents (`oracle` ceiling, `flanking_copy` floor), with the pooled median
 beside them as a summary.
 
-**E1 is blocked, not descoped.** `deep_starmap` is absent from the repository. Case folding is
-measured as mandatory and sufficient on the testable symbols (0/6 exact, 6/6 folded). What unblocks
-it: the 1017 panel symbols alone answer the coverage question — the long pole, because a shortfall
-needs `mygene` network access that is 403'd here — and a path to the source volume unblocks the
-rest.
+**E1 is blocked, not descoped.** `deep_starmap` is absent from the repository. What unblocks it:
+the 1017 panel symbols alone answer the coverage question — the long pole, because a shortfall needs
+`mygene` network access that is 403'd here — and a path to the source volume unblocks the rest.
+
+> ✅ **The coverage question is answered (2026-08-26), and this paragraph's case-folding claim is
+> superseded.** It read *"case folding is measured as mandatory and sufficient on the testable
+> symbols (0/6 exact, 6/6 folded)"*, which was true of the table of that date. `gene_meta.parquet`
+> was rebuilt on 2026-08-25 from `all_mouse_symbols.txt` + `deep_starmap_symbols.txt` (2155 rows)
+> and **stores the panel's uppercase keys directly**, so the exact lookup
+> `gene_descriptor(symbol, meta.get(symbol))` that `build_entity_embeddings` performs now hits:
+>
+> | | |
+> |---|---|
+> | exact matches | **1017 / 1017** |
+> | case-folded matches | 1017 / 1017 (folding is no longer needed) |
+> | with a summary | **966** — 805 ortholog, 161 native, 51 none |
+> | `species_resolved` | **10090 for all 1017** |
+> | Ensembl prefix | **`ENSMUSG` for all 1017** |
+>
+> The last two matter: uppercase symbols in a mouse table is the exact shape of the B19 defect
+> (human annotations silently attached to a mouse panel), and this is **not** that — mygene
+> resolved each uppercase symbol to the mouse gene and the rows are labelled and prefixed
+> accordingly. No case-folding code is needed, and E1's text channel is live on this panel.
 
 **Owed fix, found by the pilot — ✅ delivered 2026-08-26.** `specs/09`'s selector must clamp
 `Config.expr_pca_dim` to the panel width. STARmap has 28 genes against a default of 32, so
