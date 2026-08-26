@@ -1,0 +1,72 @@
+[
+  {
+    "option": "cross-mix",
+    "config_hash": "d068229e5608c7e8",
+    "seconds": 5.1,
+    "mean": {
+      "morans_pearson": 0.9254702704172625,
+      "gearys_pearson": 0.9293282782452983,
+      "umap_mixing": 0.8097727797334047,
+      "marker_field_r": -0.141186926777449,
+      "marker_depth_r": -0.3086032474320969,
+      "celltype_localization": 0.025577603205937757
+    },
+    "per_fold": [
+      {
+        "morans_pearson": 0.9150703873493667,
+        "gearys_pearson": 0.9174069217672588,
+        "umap_mixing": 0.7919414684025445,
+        "marker_field_r": -0.16789239316961882,
+        "marker_depth_r": -0.32428660633398465,
+        "celltype_localization": 0.014632110593661712
+      },
+      {
+        "morans_pearson": 0.9358701534851582,
+        "gearys_pearson": 0.9412496347233377,
+        "umap_mixing": 0.8276040910642647,
+        "marker_field_r": -0.11448146038527922,
+        "marker_depth_r": -0.29291988853020917,
+        "celltype_localization": 0.0365230958182138
+      }
+    ],
+    "fold_ids": [
+      "section_3",
+      "section_5"
+    ]
+  },
+  {
+    "option": "zinb-flow",
+    "config_hash": "9d1ce6c0ff7cfb15",
+    "seconds": 7.0,
+    "mean": {
+      "morans_pearson": 0.7509865177838673,
+      "gearys_pearson": 0.7519115363679907,
+      "umap_mixing": 0.656384426769459,
+      "marker_field_r": -0.13549761270838884,
+      "marker_depth_r": -0.30841876880871855,
+      "celltype_localization": 0.025577603205937757
+    },
+    "per_fold": [
+      {
+        "morans_pearson": 0.7289497541719243,
+        "gearys_pearson": 0.7374274804977906,
+        "umap_mixing": 0.6553143767914049,
+        "marker_field_r": -0.15524848511005743,
+        "marker_depth_r": -0.3030394235807119,
+        "celltype_localization": 0.014632110593661712
+      },
+      {
+        "morans_pearson": 0.7730232813958101,
+        "gearys_pearson": 0.7663955922381906,
+        "umap_mixing": 0.6574544767475131,
+        "marker_field_r": -0.11574674030672025,
+        "marker_depth_r": -0.3137981140367252,
+        "celltype_localization": 0.0365230958182138
+      }
+    ],
+    "fold_ids": [
+      "section_3",
+      "section_5"
+    ]
+  }
+]
