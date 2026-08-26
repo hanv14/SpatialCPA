@@ -174,13 +174,24 @@ def run_selection_for(adata, args, fingerprint: dict, dsid: str):
           f"dataset's scale). Checkpointed to {out_dir / 'scores.csv'} — an interrupted "
           f"run resumes rather than restarts.")
     volume = load_training_volume(adata, args)
+    # run_selection refuses to invent embeddings — they come from T02's cache, which
+    # train/select.py has no business knowing about — so the factory is passed here. Without
+    # it every --select-only invocation raised SelectionError at the first line of the search,
+    # which is why no selection had ever run through this wrapper.
+    base = Config(seed=args.seed).replace(
+        section_key="section", coord_key="spatial", celltype_key="cell_type", region_key=None,
+    )
+    pinned, reason = selection_pins(args)
     result = run_selection(
         volume,
-        Config(seed=args.seed),
+        base,
         seed=args.seed,
+        embeddings=lambda cfg: build_embeddings(cfg, volume),
         dataset=dsid,
         report_path=out_dir / "selection_report.md",
         checkpoint=ScoreCache(out_dir / "scores.csv"),
+        pinned=pinned,
+        pinned_reason=reason,
     )
     (out_dir / "selected.yaml").write_text(
         yaml.safe_dump(
@@ -189,6 +200,7 @@ def run_selection_for(adata, args, fingerprint: dict, dsid: str):
                 "volume_fingerprint": fingerprint,
                 "selection_seed": args.seed,
                 "config_hash": result.config.content_hash(),
+                "pinned": result.pinned,
                 "config": result.config.to_dict(),
             },
             sort_keys=False,
@@ -238,27 +250,55 @@ def load_training_volume(adata, args, cfg=None):
 
 
 def build_embeddings(cfg, volume):
-    """T02's entity embeddings for this panel.
+    """T02's entity embeddings for this panel, from the panel's own gene-metadata table.
 
-    Under ``text_emb_mode='medcpt'`` the descriptors are encoded by the frozen MedCPT
-    encoder, which needs ``transformers`` and the model weights. If that is unavailable the
-    wrapper **raises** rather than substituting a lookup table: a silent downgrade would
-    make A3's two arms indistinguishable and the shipped configuration unreproducible
-    (Convention 6).
+    Delegates to ``model.build_entity_embeddings``. Two defects it replaces, both of which
+    made ``text_emb_mode`` a gate with nothing behind it:
+
+    * the descriptors were ``gene_descriptor(symbol, None)`` — a bare ``"Slc17a7."`` — so the
+      full names and NCBI summaries in ``Config.gene_meta_path`` never reached MedCPT, and
+      every STARmap number produced through this wrapper is ablation A3's ``lookup`` arm under
+      another name;
+    * the ``lookup`` arm was additionally handed a **zero** matrix, so the two arms of A3
+      differed in two things at once. ``"lookup"`` is applied inside
+      ``TextGroundedEmbedding._text_channel``; both arms now get the same vectors and differ
+      only in the gate.
+
+    The encoder needs ``transformers`` and the MedCPT weights. If they are unavailable this
+    **raises** rather than substituting a lookup table: a silent downgrade would make the two
+    arms indistinguishable and the shipped configuration unreproducible (Convention 6).
     """
-    import torch
-    from spatialcpav25_gen.data.text import TextEncoder, gene_descriptor
-    from spatialcpav25_gen.model.embeddings import EntityEmbeddings
+    from spatialcpav25_gen.model.embeddings import build_entity_embeddings
 
-    if cfg.text_emb_mode == "lookup":
-        zeros = torch.zeros((volume.n_genes, cfg.text_dim_in), dtype=torch.float32)
-        types = torch.zeros((len(volume.celltype_names), cfg.text_dim_in), dtype=torch.float32)
-        return EntityEmbeddings(cfg, zeros, types, None)
+    return build_entity_embeddings(cfg, volume.gene_names, volume.celltype_names, None)
 
-    encoder = TextEncoder(cfg)
-    genes = encoder.encode([gene_descriptor(g, None) for g in volume.gene_names])
-    types = encoder.encode([f"{t}. A cell type." for t in volume.celltype_names])
-    return EntityEmbeddings(cfg, torch.from_numpy(genes), torch.from_numpy(types), None)
+
+def selection_pins(args):
+    """``(pinned, reason)`` for gates this dataset must not re-select.
+
+    ``--pin-gate layout_mode=resample`` excludes a gate from the merged full-budget gate and
+    from coordinate descent. It is not a tuning flag: it names a gate whose evidence is
+    *elsewhere*, and the selection report records it as pinned rather than as chosen.
+
+    The saving is scoring, not fitting — ``layout_mode`` does not enter the fit
+    (``select.FIT_INVARIANT_GATES``), so 6 fits already served the merged gate's 18 cells and
+    pinning it removes 12 LOSO scorings.
+    """
+    pinned = {}
+    for item in getattr(args, "pin_gate", None) or []:
+        if "=" not in item:
+            raise SystemExit(f"--pin-gate expects gate=option, got {item!r}")
+        gate, option = item.split("=", 1)
+        pinned[gate.strip()] = option.strip()
+    if not pinned:
+        return {}, ""
+    return pinned, (
+        "Pinned by `--pin-gate` on this invocation: "
+        + ", ".join(f"`{g}` = `{o}`" for g, o in sorted(pinned.items()))
+        + ". A pinned gate is one whose evidence is elsewhere; `specs/09` §3 selects per "
+        "dataset, and re-opening a gate that real data has already settled, at one seed and "
+        "inside a search whose own margins are envelope-sized, can only lose to noise."
+    )
 
 
 # ── run ───────────────────────────────────────────────────────────────────────
@@ -330,6 +370,10 @@ def main() -> int:
                    help="run per-dataset selection, persist it, write no prediction")
     p.add_argument("--require-config", action="store_true",
                    help="refuse to select; raise if no selected config exists for this dataset")
+    p.add_argument("--pin-gate", action="append", default=None, metavar="GATE=OPTION",
+                   help="exclude a gate from selection, fixing it to OPTION and recording it "
+                        "as pinned in the report (repeatable). Not a tuning flag: it applies "
+                        "only during --select-only and never overrides a selected config")
     # ablation switches (specs/10 §6). Each overrides ONE Config field after selection.
     p.add_argument("--prior-mode", default=None, choices=["correlated", "iid"], help="A1")
     p.add_argument("--w-autocorr", type=float, default=None, help="A2")

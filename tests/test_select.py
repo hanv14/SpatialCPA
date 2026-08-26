@@ -31,6 +31,7 @@ import torch
 from spatialcpav25_gen.config import Config
 from spatialcpav25_gen.data.loaders import split_holdout
 from spatialcpav25_gen.data.schema import HeldOutSections, TrainingVolume
+from spatialcpav25_gen.model.expression import ExpressionError
 from spatialcpav25_gen.model.field import BBoxClampWarning
 from spatialcpav25_gen.train.select import (
     ALL_GATES,
@@ -42,12 +43,14 @@ from spatialcpav25_gen.train.select import (
     TRAINING_FREE_OPTIONS,
     V20_CONFIG,
     Candidate,
+    CandidateFailedWarning,
     FitScorer,
     ScoreCache,
     SelectionError,
     capability_tie_break,
     incumbent_is_unconverged,
     joint_gate_cells,
+    repulsion_is_reachable,
     run_selection,
     select_config,
     selection_folds,
@@ -633,3 +636,382 @@ def test_fit_cache_keys_ignore_only_the_fit_invariant_gates():
                 assert other != reference, (gate, option)
     assert scorer._fit_key(base, 20, 1) != reference, "the budget must be part of the key"
     assert scorer._fit_key(base, 10, 2) != reference, "the seed must be part of the key"
+
+
+# --------------------------------------------------------------------------------------
+# pinned gates, and the per-gate tie-break review
+# --------------------------------------------------------------------------------------
+
+
+def test_a_pinned_gate_is_excluded_from_both_gate_sets_and_fixed_everywhere(split):
+    """Pinning a gate removes it from the search and fixes it in every candidate.
+
+    ``specs/09`` §3 selects per dataset; a gate that a *different* dataset settled — R11's
+    ``layout_mode`` on real STARmap — must not be re-opened at one seed inside a search whose
+    own margins are envelope-sized. The mechanism has to do three things and this asserts all
+    three: shrink the merged gate's product, drop the gate from coordinate descent, and carry
+    the pinned value into the selected config.
+    """
+    _, training, _ = split
+    base = t09_cfg(train_steps=50)
+    # Pinned to a *non-default* option, so "the pinned value reached everything" is a real
+    # assertion rather than one the default would satisfy on its own.
+    assert base.layout_mode != "hybrid"
+    scorer = RecordingScorer({"expr_mode": "zinb-flow"}, interaction=False)
+    result = run_selection(
+        training,
+        base,
+        seed=SEED,
+        scorer=scorer,
+        pinned={"layout_mode": "hybrid"},
+        pinned_reason="R11 settled this gate on real data.",
+    )
+
+    assert result.config.layout_mode == "hybrid"
+    assert result.pinned == {"layout_mode": "hybrid"}
+    assert len(result.full_budget) == 6, "2 prior x 3 expr; the pinned gate leaves the product"
+    # A pinned gate is fixed in the base config, not carried as a per-candidate override —
+    # which is what makes it unreachable by the search rather than merely unvisited.
+    assert not any("layout_mode" in c.overrides for c in result.candidates)
+    assert "layout_mode" not in {c.gate for c in result.candidates}
+    pinned_base = base.replace(layout_mode="hybrid")
+    for overrides, _steps in result.fits:
+        assert "layout_mode" not in overrides
+        assert pinned_base.replace(**overrides).layout_mode == "hybrid"
+
+    review = {r.gate: r for r in result.reviews}
+    assert review["layout_mode"].pinned is True
+    assert review["layout_mode"].winner == "hybrid"
+    assert "pinned" in review["layout_mode"].reason
+
+
+def test_pinning_costs_scorings_and_not_fits(split):
+    """The saving is 12 LOSO scorings, not 12 fits — ``layout_mode`` never enters the fit.
+
+    Stated as a test because the opposite belief is the natural one and would misdescribe
+    what excluding this gate buys. ``FitScorer`` keys its cache with
+    :data:`FIT_INVARIANT_GATES` normalised out, so the 18-cell and the 6-cell merged gates
+    issue the *same* fits; only the number of cells scored differs.
+    """
+    _, training, _ = split
+    base = t09_cfg(train_steps=50)
+
+    free = run_selection(
+        training,
+        base,
+        seed=SEED,
+        scorer=RecordingScorer({"expr_mode": "zinb-flow"}, interaction=False),
+    )
+    pinned = run_selection(
+        training,
+        base,
+        seed=SEED,
+        scorer=RecordingScorer({"expr_mode": "zinb-flow"}, interaction=False),
+        pinned={"layout_mode": "resample"},
+        pinned_reason="R11.",
+    )
+    assert len(free.full_budget) == 18
+    assert len(pinned.full_budget) == 6
+
+    def fit_keys(result):
+        scorer = FitScorer(training, lambda cfg: build_embeddings(cfg, training))
+        return {
+            scorer._fit_key(base.replace(**overrides), steps, SEED)
+            for overrides, steps in result.fits
+        }
+
+    assert fit_keys(pinned) <= fit_keys(free)
+    assert len(fit_keys(free)) == len(fit_keys(pinned)), (
+        "the merged gate's fit count must not depend on layout_mode: it is fit-invariant"
+    )
+
+
+@pytest.mark.parametrize(
+    ("pinned", "message"),
+    [
+        ({"not_a_gate": "x"}, "not a gate"),
+        ({"prior_mode": "nonsense"}, "not an option"),
+        ({g: o[0] for g, o in ALL_GATES}, "nothing to select"),
+    ],
+)
+def test_pinning_refuses_what_it_cannot_mean(split, pinned, message):
+    """An unknown gate, an option that gate does not have, or pinning everything. All raise."""
+    _, training, _ = split
+    with pytest.raises(SelectionError, match=message):
+        run_selection(
+            training,
+            t09_cfg(train_steps=50),
+            seed=SEED,
+            scorer=RecordingScorer({"expr_mode": "zinb-flow"}, interaction=False),
+            pinned=pinned,
+            pinned_reason="because",
+        )
+
+
+def test_pinning_requires_a_stated_reason(split):
+    """A gate removed from selection without a reason is indistinguishable, in the report,
+    from a gate that was never a gate."""
+    _, training, _ = split
+    with pytest.raises(SelectionError, match="pinned_reason"):
+        run_selection(
+            training,
+            t09_cfg(train_steps=50),
+            seed=SEED,
+            scorer=RecordingScorer({"expr_mode": "zinb-flow"}, interaction=False),
+            pinned={"layout_mode": "resample"},
+        )
+
+
+def test_the_search_applies_the_capability_tie_break_and_reports_every_gate(split):
+    """``min(rank)`` decided every gate; below the envelope the rule decides instead.
+
+    T09 §13 applied this rule *by hand* to a printed table and recorded the result as the
+    shipped config, while nothing in the code did it — so a persisted ``selected.yaml`` would
+    have carried the rank winner. This pins the wiring: a gate whose options are separated by
+    less than ``claim_tie_break_envelope`` ships the capability-preserving option, and the
+    review says so.
+    """
+    _, training, _ = split
+    base = t09_cfg(train_steps=50)
+
+    class NearTie:
+        """``lookup`` outranks ``medcpt`` by 0.001 — inside any plausible envelope."""
+
+        def __call__(self, cfg: Config, *, steps: int, seed: int) -> dict[str, float]:
+            value = 0.500 if cfg.text_emb_mode == "medcpt" else 0.501
+            return dict.fromkeys(METRIC_NAMES, value)
+
+    result = run_selection(
+        training,
+        base.replace(claim_tie_break_envelope=0.04),
+        seed=SEED,
+        scorer=NearTie(),
+        pinned={"layout_mode": "resample"},
+        pinned_reason="R11.",
+    )
+    review = {r.gate: r for r in result.reviews}
+    text = review["text_emb_mode"]
+    assert text.margin == pytest.approx(0.001, abs=1e-9)
+    assert text.inside_envelope is True
+    assert text.winner == "medcpt", "the capability-preserving option ships below the envelope"
+    assert result.config.text_emb_mode == "medcpt", "the review must reach the returned config"
+
+
+def test_a_margin_outside_the_envelope_leaves_the_rank_winner_alone(split):
+    """The rule is a tie-break, not a thumb on the scale: a real margin decides on its own."""
+    _, training, _ = split
+    base = t09_cfg(train_steps=50)
+
+    class Clear:
+        def __call__(self, cfg: Config, *, steps: int, seed: int) -> dict[str, float]:
+            return dict.fromkeys(METRIC_NAMES, 0.9 if cfg.text_emb_mode == "lookup" else 0.2)
+
+    result = run_selection(
+        training,
+        base.replace(claim_tie_break_envelope=0.04),
+        seed=SEED,
+        scorer=Clear(),
+        pinned={"layout_mode": "resample"},
+        pinned_reason="R11.",
+    )
+    review = {r.gate: r for r in result.reviews}["text_emb_mode"]
+    assert review.inside_envelope is False
+    assert review.flipped is False
+    assert result.config.text_emb_mode == "lookup"
+
+
+def test_the_report_names_the_pinned_gate_and_the_review(split, tmp_path):
+    """Both new sections reach the markdown a reader actually gets."""
+    _, training, _ = split
+    result = run_selection(
+        training,
+        t09_cfg(train_steps=50),
+        seed=SEED,
+        scorer=RecordingScorer({"expr_mode": "zinb-flow"}, interaction=False),
+        pinned={"layout_mode": "resample"},
+        pinned_reason="R11 settled it on real data; see reports/r11_starmap_layout_modes.md.",
+    )
+    path = write_selection_report(result, tmp_path / "selection.md")
+    text = path.read_text()
+    assert "Gates **not** selected here (pinned)" in text
+    assert "R11 settled it on real data" in text
+    assert "Per-gate tie-break review" in text
+    assert "All 6 cells" in text, "the merged gate's size must follow the pinning"
+    assert "`prior_mode` x `expr_mode`" in text
+
+
+def test_an_unscorable_candidate_ranks_last_instead_of_aborting_the_search(split):
+    """The emission guard refusing an under-trained candidate is a ranking fact, not a crash.
+
+    ``assert_detection_rate``'s band is measured against the training sections, and on a dense
+    panel — STARmap's median per-gene detection is 0.9999 (``specs/10`` §0) — an under-trained
+    candidate misses it. The reduced-budget cells of any selection *are* under-trained, so
+    without this a nine-hour search dies at its second cell and the fits already paid for are
+    lost. It must be loud: a warning, an entry in ``failures``, and a line in the report.
+    """
+    _, training, _ = split
+    base = t09_cfg(train_steps=50)
+
+    class GuardTrips:
+        def __call__(self, cfg: Config, *, steps: int, seed: int) -> dict[str, float]:
+            if cfg.text_emb_mode == "lookup":
+                raise ExpressionError("detection rate 0.47 against 1.0000")
+            return dict.fromkeys(METRIC_NAMES, 0.7)
+
+    with pytest.warns(CandidateFailedWarning, match="ranked last"):
+        result = run_selection(
+            training,
+            base,
+            seed=SEED,
+            scorer=GuardTrips(),
+            pinned={"layout_mode": "resample"},
+            pinned_reason="R11.",
+        )
+    assert result.config.text_emb_mode == "medcpt", "the failing option must not be selected"
+    assert [label for label, _s, _w in result.failures] == ["text_emb_mode=lookup"]
+    assert "detection rate 0.47" in result.failures[0][2]
+
+
+def test_a_gate_that_fails_entirely_is_refused_rather_than_ranked(split):
+    """All options failing is not a ranking, it is a broken run, and shipping the first label
+    would be a silent fallback of exactly the kind Convention 6 forbids."""
+    _, training, _ = split
+
+    class AlwaysTrips:
+        def __call__(self, cfg: Config, *, steps: int, seed: int) -> dict[str, float]:
+            raise ExpressionError("detection rate 0.47 against 1.0000")
+
+    with (
+        pytest.warns(CandidateFailedWarning),
+        pytest.raises(SelectionError, match="every candidate of the joint gate failed"),
+    ):
+        run_selection(training, t09_cfg(train_steps=50), seed=SEED, scorer=AlwaysTrips())
+
+
+def test_a_real_bug_still_aborts_the_search(split):
+    """:data:`SCORING_FAILURES` is deliberately narrow: only the emission guard is a candidate
+    fact. A shape error, a missing field or a leakage refusal must still stop everything."""
+    _, training, _ = split
+
+    class Broken:
+        def __call__(self, cfg: Config, *, steps: int, seed: int) -> dict[str, float]:
+            raise KeyError("celltype_key")
+
+    with pytest.raises(KeyError):
+        run_selection(training, t09_cfg(train_steps=50), seed=SEED, scorer=Broken())
+
+
+def test_repulsion_is_fitted_only_where_a_layout_mode_can_read_it(split):
+    """``resample`` returns from ``sample_layout`` before it looks at the interaction.
+
+    So a search whose ``layout_mode`` is pinned to ``resample`` must not pay ``fit_repulsion``
+    — and the reason is not only cost: ``fit_repulsion`` raises ``LayoutError`` on a point
+    pattern with no soft-repulsion range, which would abort a whole selection over a quantity
+    no candidate uses. Asserted on ``FitScorer._fit`` directly, because that is where the
+    decision lands, and because two full selections to observe it cost 100 s.
+    """
+    _, training, _ = split
+    cfg = t09_cfg(train_steps=2)
+    assert cfg.repulsion, "the fixture config must have repulsion on for this to mean anything"
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        off = FitScorer(
+            training, lambda c: build_embeddings(c, training), needs_repulsion=False
+        )._fit(cfg, steps=2, seed=SEED)
+        on = FitScorer(
+            training, lambda c: build_embeddings(c, training), needs_repulsion=True
+        )._fit(cfg, steps=2, seed=SEED)
+    assert off.repulsion is None, "nothing can read it, so it must not have been fitted"
+    assert on.repulsion is not None
+
+
+def test_the_search_decides_repulsion_from_the_pinning():
+    """``run_selection`` reads the rule from :func:`repulsion_is_reachable`, not per candidate."""
+    cfg = t09_cfg()
+    assert cfg.repulsion
+    assert repulsion_is_reachable(cfg, {"layout_mode": "resample"}) is False
+    assert repulsion_is_reachable(cfg, {"layout_mode": "hybrid"}) is True
+    assert repulsion_is_reachable(cfg, None) is True, "unpinned, the gate still offers field"
+    assert repulsion_is_reachable(cfg.replace(repulsion=False), None) is False
+    # The config's own layout_mode does not decide it: the gate offers all three.
+    assert repulsion_is_reachable(cfg.replace(layout_mode="resample"), None) is True
+
+
+def test_the_review_never_contradicts_the_selected_config(split):
+    """The review describes what ships; it must not name a different winner.
+
+    Median rank is not consistent under subsetting — the merged gate ranks 6 or 18 cells at
+    once, and a per-gate slice of it ranks 2 or 3 — so a review that recomputed an argmin
+    inside the slice could report ``prior_mode ships correlated`` beside a selected config
+    saying ``iid``. It did, before this test. The review is anchored on the shipped option and
+    answers only the question the rule actually poses: is that option's margin real.
+    """
+    _, training, _ = split
+
+    class Uneven:
+        """Scores that make the merged gate's argmin differ from a per-gate slice's."""
+
+        def __call__(self, cfg: Config, *, steps: int, seed: int) -> dict[str, float]:
+            base = {
+                ("correlated", "zinb-flow"): [0.90, 0.10, 0.90, 0.10, 0.90, 0.10],
+                ("iid", "zinb-flow"): [0.50, 0.55, 0.52, 0.53, 0.51, 0.54],
+            }.get((cfg.prior_mode, cfg.expr_mode), [0.2] * 6)
+            return dict(zip(METRIC_NAMES, base, strict=True))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = run_selection(
+            training,
+            t09_cfg(train_steps=50),
+            seed=SEED,
+            scorer=Uneven(),
+            pinned={"layout_mode": "resample"},
+            pinned_reason="R11.",
+        )
+    for review in result.reviews:
+        if review.pinned or "not comparable" in review.reason:
+            continue
+        assert review.winner == str(getattr(result.config, review.gate)), (
+            f"{review.gate}: review says {review.winner}, config says "
+            f"{getattr(result.config, review.gate)}"
+        )
+
+
+def test_a_failure_recorded_by_an_earlier_process_still_reaches_the_report(split, tmp_path):
+    """A ``--prewarm`` shard's failure is in the checkpoint, not in this process's memory.
+
+    Without this, the resumed run reports "every candidate scored" about a table that holds a
+    cell nothing could score — the exact reading a reader would most want corrected.
+    """
+    _, training, _ = split
+    base = t09_cfg(train_steps=50)
+    cache = ScoreCache(tmp_path / "scores.csv")
+
+    class Trips:
+        def __call__(self, cfg: Config, *, steps: int, seed: int) -> dict[str, float]:
+            if cfg.text_emb_mode == "lookup":
+                raise ExpressionError("detection rate 0.47 against 1.0000")
+            return dict.fromkeys(METRIC_NAMES, 0.7)
+
+    common = {
+        "seed": SEED,
+        "pinned": {"layout_mode": "resample"},
+        "pinned_reason": "R11.",
+        "checkpoint": cache,
+    }
+    with pytest.warns(CandidateFailedWarning):
+        first = run_selection(training, base, scorer=Trips(), **common)
+    assert len(first.failures) == 1
+
+    # Second run: everything is a cache hit, so nothing raises — and the failure must survive.
+    class NeverCalled:
+        def __call__(self, cfg: Config, *, steps: int, seed: int) -> dict[str, float]:
+            raise AssertionError("every cell should have come from the checkpoint")
+
+    second = run_selection(training, base, scorer=NeverCalled(), **common)
+    assert [label for label, _s, _w in second.failures] == ["text_emb_mode=lookup"]
+    assert "earlier process" in second.failures[0][2]
+    text = write_selection_report(second, tmp_path / "report.md").read_text()
+    assert "ranked last" in text
+    assert "text_emb_mode=lookup" in text

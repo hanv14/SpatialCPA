@@ -3,6 +3,8 @@
 from spatialcpav25_gen.model.embeddings import (
     EntityEmbeddings,
     TextGroundedEmbedding,
+    build_entity_embeddings,
+    describe_entity_descriptors,
     text_embedding_diagnostics,
 )
 from spatialcpav25_gen.model.expression import (
@@ -115,7 +117,9 @@ __all__ = [
     "assert_detection_rate",
     "attention_entropy",
     "build_decoder",
+    "build_entity_embeddings",
     "cross_mix_counts",
+    "describe_entity_descriptors",
     "detection_rate",
     "expected_count",
     "fit_intensity_head",

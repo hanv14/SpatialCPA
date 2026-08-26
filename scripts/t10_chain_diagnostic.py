@@ -133,9 +133,26 @@ def load_training_volume(cfg: Config, input_path: str | Path | None = None) -> T
 
 
 def build_embeddings(cfg: Config, vol: TrainingVolume):
-    """Lookup-only embeddings: the MedCPT encoder is unreachable off the campaign machine."""
+    """Zero text vectors — i.e. **ablation A3's ``lookup`` arm, whatever ``cfg.text_emb_mode``
+    says**. Kept as-is so this script's recorded numbers stay reproducible.
+
+    Written when the MedCPT encoder was unreachable off the campaign machine, and it makes the
+    text channel dead: ``W t = 0`` for every entity. That is fine for a chain diagnostic, whose
+    question is where spatial structure is lost, and it is *not* fine for anything that reports
+    a ``text_emb_mode`` — which is why every STARmap number produced through this loader is a
+    ``lookup`` measurement. A live channel is ``model.build_entity_embeddings``
+    (``scripts/_starmap_run.py``); this function is deliberately not switched over, because
+    doing so would silently move ``reports/chain_2400*.md``.
+
+    It prints what it is, rather than leaving the reader to find this docstring.
+    """
     from spatialcpav25_gen.model.embeddings import EntityEmbeddings
 
+    print(
+        f"  text channel: ZERO VECTORS (cfg.text_emb_mode={cfg.text_emb_mode!r} is not "
+        "exercised here; this run is ablation A3's lookup arm)",
+        flush=True,
+    )
     zeros = torch.zeros((vol.n_genes, cfg.text_dim_in), dtype=torch.float32)
     types = torch.zeros((len(vol.celltype_names), cfg.text_dim_in), dtype=torch.float32)
     return EntityEmbeddings(cfg, zeros, types, None)

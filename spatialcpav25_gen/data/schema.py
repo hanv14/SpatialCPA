@@ -39,6 +39,7 @@ from spatialcpav25_gen.config import Config
 
 __all__ = [
     "AssumedThicknessWarning",
+    "ConfigClampWarning",
     "HeldOutSections",
     "NonIntegerCountsWarning",
     "OverlappingSlabsWarning",
@@ -46,6 +47,7 @@ __all__ = [
     "Section",
     "TrainingVolume",
     "Volume",
+    "clamp_config_to_volume",
     "median_nn_distance",
     "median_section_spacing",
     "to_xyz",
@@ -631,6 +633,58 @@ def _validate_thickness(vol: Volume) -> None:
             OverlappingSlabsWarning,
             stacklevel=2,
         )
+
+
+class ConfigClampWarning(UserWarning):
+    """A config field was narrowed to fit the volume, and the run is not at the default."""
+
+
+def clamp_config_to_volume(cfg: Config, vol: Volume) -> Config:
+    """Narrow the volume-dependent width fields to what this panel can support.
+
+    The owed fix ``specs/10`` §0 records and ``specs/11``'s coverage matrix carries: the
+    protocol dataset **cannot be fitted at the shipped default**, because STARmap's panel is
+    28 genes wide and ``Config.expr_pca_dim`` is 32, so
+    :func:`validate_config_against_volume` refuses every fit. The pilot worked around it with
+    a hand-written value; this is the rule the spec asked for instead — *clamp to the panel
+    width*.
+
+    Two fields, both hard constraints rather than preferences, both narrowed to the volume's
+    own size and never widened:
+
+    * ``expr_pca_dim`` -> ``min(expr_pca_dim, vol.n_genes)``. On a narrow panel the result is
+      a full-rank rotation rather than a reduction. That is what "the top 32 PCs" degrades to
+      when there are fewer than 32 directions, and it is the honest degradation: dropping
+      components would be a *choice* about which of this panel's variance to discard, and the
+      spec does not make one. (``reports/pilot.md``'s 16 was such a choice, taken by hand and
+      recorded as a stand-in; it is not this rule, and a run that wants to be comparable with
+      the pilot's numbers has to set it explicitly.)
+    * ``retrieval_k`` -> ``min(retrieval_k, vol.n_cells)``.
+
+    Every narrowing warns with both numbers, because the clamped value lands in
+    :meth:`Config.content_hash` and a reader comparing two runs is entitled to know which
+    fields the data chose rather than the config.
+
+    Returns ``cfg`` itself when nothing needed narrowing, so the common case adds no hash
+    churn.
+    """
+    changes: dict[str, int] = {}
+    if cfg.expr_pca_dim > vol.n_genes:
+        changes["expr_pca_dim"] = int(vol.n_genes)
+    if cfg.retrieval_k > vol.n_cells:
+        changes["retrieval_k"] = int(vol.n_cells)
+    if not changes:
+        return cfg
+    for name, value in changes.items():
+        warnings.warn(
+            f"clamp_config_to_volume: Config.{name}={getattr(cfg, name)} exceeds what "
+            f"specimen {vol.specimen_id!r} supports; narrowed to {value}. This changes the "
+            "config's content hash, so two runs on panels of different widths are not the "
+            "same configuration.",
+            ConfigClampWarning,
+            stacklevel=2,
+        )
+    return cfg.replace(**changes)
 
 
 def validate_config_against_volume(cfg: Config, vol: Volume) -> None:

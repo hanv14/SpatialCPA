@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import numpy as np
+import pandas as pd
 import pytest
 import torch
 from spatialcpav25_gen.config import Config
@@ -30,6 +31,8 @@ from spatialcpav25_gen.data.text import (
 from spatialcpav25_gen.model.embeddings import (
     EntityEmbeddings,
     TextGroundedEmbedding,
+    build_entity_embeddings,
+    describe_entity_descriptors,
     text_embedding_diagnostics,
 )
 
@@ -1068,3 +1071,119 @@ def test_table_written_before_the_summary_source_columns_reads_as_native(cache_c
         "ortholog": 0,
         "none": 1,
     }
+
+
+# --------------------------------------------------------------------------------------
+# the panel's embeddings: descriptors -> encoder -> EntityEmbeddings
+# --------------------------------------------------------------------------------------
+
+
+def test_build_entity_embeddings_encodes_the_table_not_the_bare_symbol(monkeypatch, cache_cfg):
+    """The defect this builder exists to remove.
+
+    Every real-data caller had been passing either zeros or ``gene_descriptor(symbol, None)``,
+    so ``text_emb_mode="medcpt"`` encoded ``"Slc17a7."`` — MedCPT applied to a token, with the
+    panel's own full names and NCBI summaries sitting unread in
+    ``Config.gene_meta_path``. The assertion is therefore not "it returns something": it is
+    that the vector differs from the bare-symbol one, which is the only thing that
+    distinguishes a live text channel from a dead one.
+    """
+    with pytest.warns(GeneMetaUnavailableWarning):
+        build_gene_meta(["Gad1", "Slc17a7"], cache_cfg)
+    install_fake_backend(monkeypatch, cache_cfg)
+
+    emb = build_entity_embeddings(cache_cfg, ["Gad1", "Slc17a7"], ["Excitatory", "Inhibitory"])
+    assert emb.gene.text_vecs.shape == (2, cache_cfg.text_dim_in)
+    assert emb.celltype.text_vecs.shape == (2, cache_cfg.text_dim_in)
+    assert emb.region is None
+
+    meta = load_gene_meta(cache_cfg.gene_meta_path)
+    bare = TextEncoder(cache_cfg).encode(["Gad1.", "Slc17a7."])
+    described = TextEncoder(cache_cfg).encode(
+        [gene_descriptor(s, meta.get(s)) for s in ("Gad1", "Slc17a7")]
+    )
+    assert np.allclose(emb.gene.text_vecs.numpy(), described)
+    # Offline, build_gene_meta writes symbol-only rows, so the two coincide here. The point
+    # of the test is that the builder reads the table at all; on a real table they differ,
+    # which the next assertion pins with a table that carries a summary.
+    assert np.allclose(bare, described)
+
+
+def test_build_entity_embeddings_uses_a_summary_when_the_table_has_one(monkeypatch, cache_cfg):
+    """With a real (non-degraded) row, the encoded descriptor is not the bare symbol."""
+    from spatialcpav25_gen.data.text import _write_gene_meta_table
+
+    table = pd.DataFrame(
+        [
+            {
+                "symbol": "Gad1",
+                "full_name": "glutamate decarboxylase 1",
+                "summary": "Catalyses the production of GABA from L-glutamic acid.",
+                "summary_source": "native",
+                "aliases": "",
+                "ensembl_id": "ENSMUSG00000070880",
+                "species_requested": "mouse",
+                "species_resolved": "10090",
+            }
+        ]
+    )
+    path = Path(cache_cfg.gene_meta_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_gene_meta_table(table, path)
+    install_fake_backend(monkeypatch, cache_cfg)
+
+    described = describe_entity_descriptors(cache_cfg, ["Gad1"])
+    assert described == {
+        "n_genes": 1,
+        "n_with_meta": 1,
+        "n_bare": 0,
+        "n_with_summary": 1,
+        "example": "Gad1. glutamate decarboxylase 1. Catalyses the production of GABA from "
+        "L-glutamic acid.",
+    }
+
+    emb = build_entity_embeddings(cache_cfg, ["Gad1"], ["Excitatory"])
+    bare = TextEncoder(cache_cfg).encode(["Gad1."])
+    assert not np.allclose(emb.gene.text_vecs.numpy(), bare), (
+        "the summary never reached the encoder: this is the dead-channel state"
+    )
+
+
+def test_both_text_modes_get_the_same_vectors(monkeypatch, cache_cfg):
+    """A3 is a comparison only while ``text_emb_mode`` is the single thing that differs.
+
+    ``"lookup"`` is applied inside ``TextGroundedEmbedding._text_channel``, which zeroes the
+    projection on the seen and the zero-shot path alike. Withholding the vectors as well —
+    which every prior caller did, by handing the lookup arm a zero matrix — would make the two
+    arms differ in two things at once, and would change ``distillation_loss``, which reads
+    ``text_vecs`` directly.
+    """
+    with pytest.warns(GeneMetaUnavailableWarning):
+        build_gene_meta(["Gad1", "Slc17a7"], cache_cfg)
+    install_fake_backend(monkeypatch, cache_cfg)
+
+    medcpt = build_entity_embeddings(
+        cache_cfg.replace(text_emb_mode="medcpt"), ["Gad1", "Slc17a7"], ["Excitatory"]
+    )
+    lookup = build_entity_embeddings(
+        cache_cfg.replace(text_emb_mode="lookup"), ["Gad1", "Slc17a7"], ["Excitatory"]
+    )
+    assert torch.equal(medcpt.gene.text_vecs, lookup.gene.text_vecs)
+    assert torch.equal(medcpt.celltype.text_vecs, lookup.celltype.text_vecs)
+
+    # ...and the gate still does its job: the text channel is gone on the lookup arm.
+    idx = torch.arange(2)
+    assert not torch.equal(medcpt.gene(idx), lookup.gene(idx))
+
+
+def test_build_entity_embeddings_refuses_an_empty_panel(cache_cfg):
+    with pytest.raises(ValueError, match="gene_names is empty"):
+        build_entity_embeddings(cache_cfg, [], ["Excitatory"])
+    with pytest.raises(ValueError, match="celltype_names is empty"):
+        build_entity_embeddings(cache_cfg, ["Gad1"], [])
+
+
+def test_build_entity_embeddings_refuses_a_missing_table(cache_cfg):
+    """No table is a refusal, not a whole panel of bare symbols nobody notices."""
+    with pytest.raises(FileNotFoundError, match="gene_meta_path"):
+        build_entity_embeddings(cache_cfg, ["Gad1"], ["Excitatory"])

@@ -50,8 +50,9 @@ either gate.
 from __future__ import annotations
 
 import csv
+import warnings
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from itertools import product
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol
@@ -63,7 +64,11 @@ from scipy.stats import rankdata
 from torch import Tensor
 
 from spatialcpav25_gen.config import Config
-from spatialcpav25_gen.data.schema import Section, TrainingVolume
+from spatialcpav25_gen.data.schema import (
+    Section,
+    TrainingVolume,
+    clamp_config_to_volume,
+)
 from spatialcpav25_gen.infer.generate import emitted_counts, generate_section
 from spatialcpav25_gen.infer.planes import section_plane
 from spatialcpav25_gen.losses.metric_aware import (
@@ -78,6 +83,7 @@ from spatialcpav25_gen.losses.metric_aware import (
     soft_depth_profile,
     soft_field_profile,
 )
+from spatialcpav25_gen.model.expression import ExpressionError
 
 if TYPE_CHECKING:  # pragma: no cover
     from spatialcpav25_gen.model.embeddings import EntityEmbeddings
@@ -90,18 +96,27 @@ __all__ = [
     "FULL_BUDGET_GATES",
     "GATES",
     "METRIC_NAMES",
+    "SCORING_FAILURES",
     "TRAINING_FREE_OPTIONS",
     "V20_CONFIG",
     "Candidate",
+    "CandidateFailedWarning",
+    "FitScorer",
+    "GateReview",
     "ScoreCache",
     "SelectionError",
     "SelectionResult",
     "calibration_chunks",
     "capability_tie_break",
+    "descent_gates",
     "full_budget_gate_cells",
+    "full_budget_gates",
     "incumbent_is_unconverged",
     "joint_gate_cells",
     "module_morans_agreement",
+    "rank_candidates",
+    "repulsion_is_reachable",
+    "review_gates",
     "run_selection",
     "section_scores",
     "select_config",
@@ -327,6 +342,62 @@ not a numerical one, and it must stay that way — anything that changed a numbe
 the invariant does not hold."""
 
 
+def _check_pinned(pinned: Mapping[str, str] | None) -> dict[str, str]:
+    """Validate a ``gate -> option`` pinning and return it as a plain dict.
+
+    A pinned gate is one this run does **not** select: its value is fixed by evidence from
+    somewhere else and the search must not re-open it. The refusals are Convention 6's —
+    an unknown gate or an option that gate does not have would otherwise silently pin
+    nothing and the report would claim a decision the run never made.
+    """
+    if not pinned:
+        return {}
+    options_by_gate = dict(ALL_GATES)
+    out: dict[str, str] = {}
+    for gate, option in pinned.items():
+        if gate not in options_by_gate:
+            raise SelectionError(
+                f"pinned names gate {gate!r}, which is not a gate. The gates are "
+                f"{sorted(options_by_gate)}."
+            )
+        if option not in options_by_gate[gate]:
+            raise SelectionError(
+                f"pinned[{gate!r}] = {option!r} is not an option of that gate "
+                f"({list(options_by_gate[gate])})."
+            )
+        out[str(gate)] = str(option)
+    if len(out) == len(options_by_gate):
+        raise SelectionError(
+            "pinned fixes every gate, so there is nothing to select. Pin fewer gates, or "
+            "call the fit path directly with the config you already have."
+        )
+    return out
+
+
+def full_budget_gates(
+    pinned: Mapping[str, str] | None = None,
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Return the gates scored jointly at the selected budget, minus anything ``pinned``."""
+    fixed = set(pinned or ())
+    return tuple(
+        (gate, options)
+        for gate, options in ALL_GATES
+        if TRAINING_FREE_OPTIONS[gate] and gate not in fixed
+    )
+
+
+def descent_gates(
+    pinned: Mapping[str, str] | None = None,
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Return the gates coordinate descent visits, minus anything ``pinned``."""
+    fixed = set(pinned or ())
+    return tuple(
+        (gate, options)
+        for gate, options in ALL_GATES
+        if not TRAINING_FREE_OPTIONS[gate] and gate not in fixed
+    )
+
+
 FULL_BUDGET_GATES: Final[tuple[tuple[str, tuple[str, ...]], ...]] = tuple(
     (gate, options) for gate, options in ALL_GATES if TRAINING_FREE_OPTIONS[gate]
 )
@@ -346,6 +417,21 @@ V20_CONFIG: Final[dict[str, str]] = {"layout_mode": "resample", "expr_mode": "cr
 """The previous version's behaviour, and the no-regression guarantee: this combination is
 reachable by the gates above and is what the selector returns when the new components do not
 help (``test_selector_can_recover_v20_config``)."""
+
+
+SCORING_FAILURES: Final[tuple[type[Exception], ...]] = (ExpressionError,)
+"""Exceptions that mean *this candidate is bad*, not *this run is broken*.
+
+Deliberately narrow. ``ExpressionError`` is the emission guard
+(``model/expression.py::assert_detection_rate``) refusing counts whose per-gene detection rate
+is implausible against the training sections' — which an under-trained candidate genuinely is,
+and which the reduced-budget cells of any selection genuinely are. Everything else — a shape
+error, a missing field, a leakage refusal — still aborts, because none of those is a statement
+about the candidate."""
+
+
+class CandidateFailedWarning(UserWarning):
+    """A candidate could not be scored, and was ranked last instead of aborting the search."""
 
 
 class SelectionError(ValueError):
@@ -427,6 +513,18 @@ class SelectionResult:
     section_ids
         The training sections the folds ran on. No held-out section can appear here: the
         entry point takes a ``TrainingVolume``.
+    failures
+        ``(label, steps, reason)`` for every candidate that could not be scored and was
+        ranked last (:data:`SCORING_FAILURES`). Empty on a clean run; non-empty is a fact
+        about the search that the report prints and a reader must see.
+    reviews
+        One :class:`GateReview` per gate: the rank winner, the margin to its closest rival,
+        whether that margin is inside ``Config.claim_tie_break_envelope``, and what the
+        capability tie-break shipped. :attr:`config` already carries the reviewed answer.
+    pinned, pinned_reason
+        Gates this run did **not** select, and the caller's one-sentence justification. A
+        pinned gate is excluded from the merged gate and from coordinate descent, is fixed
+        in every candidate, and is reported as pinned rather than as selected.
     """
 
     config: Config
@@ -439,6 +537,10 @@ class SelectionResult:
     full_budget: list[Candidate] = field(default_factory=list)
     reduced_budget_escalated: bool = False
     escalating_metrics: tuple[str, ...] = ()
+    reviews: list[GateReview] = field(default_factory=list)
+    failures: list[tuple[str, int, str]] = field(default_factory=list)
+    pinned: dict[str, str] = field(default_factory=dict)
+    pinned_reason: str = ""
 
 
 # --------------------------------------------------------------------------------------
@@ -709,10 +811,24 @@ class FitScorer:
         A factory ``Config -> EntityEmbeddings``. A factory rather than an instance because
         the embeddings carry **learned** parameters and every candidate is a fresh fit;
         reusing one object would let the first candidate's training leak into the rest.
+    needs_repulsion
+        Whether any candidate will *generate* under a ``layout_mode`` that reads the fitted
+        interaction. ``sample_layout`` returns ``_resample_layout`` before it looks at
+        ``repulsion``, so a search whose ``layout_mode`` is pinned to ``resample`` pays for a
+        ``fit_repulsion`` no candidate can use — and pays a worse price than time, because
+        ``fit_repulsion`` raises ``LayoutError`` on a point pattern with no soft-repulsion
+        range and would abort the whole search over a quantity it is not using.
+
+        A **property of the search, not of the candidate**: the fit cache is keyed with
+        ``layout_mode`` normalised out (:data:`FIT_INVARIANT_GATES`), so one model serves every
+        option of that gate. Deciding per candidate would make the shared model depend on which
+        cell happened to be fitted first. :func:`run_selection` sets it from the options the
+        gate will actually offer.
     """
 
     vol: TrainingVolume
     embeddings: Callable[[Config], EntityEmbeddings]
+    needs_repulsion: bool = True
     _fits: dict[str, CTFFlow] = field(default_factory=dict, repr=False)
 
     def _fit_key(self, cfg: Config, steps: int, seed: int) -> str:
@@ -753,7 +869,7 @@ class FitScorer:
         data = TrainingData.build(self.vol, cfg)
         model = CTFFlow(cfg, data, self.embeddings(cfg), grf_seed=seed)
         train_ctfflow(model, cfg, steps=steps, seed=seed)
-        if cfg.repulsion:
+        if cfg.repulsion and self.needs_repulsion:
             model.repulsion = fit_repulsion(self.vol, cfg, seed=seed + 1)
         return model
 
@@ -767,7 +883,9 @@ class FitScorer:
 # --------------------------------------------------------------------------------------
 
 
-def full_budget_gate_cells(base_cfg: Config) -> list[tuple[str, dict[str, Any]]]:
+def full_budget_gate_cells(
+    base_cfg: Config, pinned: Mapping[str, str] | None = None
+) -> list[tuple[str, dict[str, Any]]]:
     """Return every cell of the merged full-budget gate, as ``(label, overrides)``.
 
     The cartesian product of :data:`FULL_BUDGET_GATES` — on the current table
@@ -777,12 +895,15 @@ def full_budget_gate_cells(base_cfg: Config) -> list[tuple[str, dict[str, Any]]]
     through the ordering: a wrong choice on an earlier gate biases every gate scored after it.
 
     ``base_cfg`` is unused except to keep the signature parallel to :func:`joint_gate_cells`;
-    the cells are a property of the gate table, not of the config.
+    the cells are a property of the gate table, not of the config. A gate named in ``pinned``
+    is dropped from the product — it is not being selected here, so offering the search its
+    options would be scoring a decision that has already been made elsewhere.
     """
     del base_cfg
+    gates = full_budget_gates(pinned)
     cells: list[tuple[str, dict[str, Any]]] = []
-    names = [gate for gate, _ in FULL_BUDGET_GATES]
-    for combo in product(*[options for _, options in FULL_BUDGET_GATES]):
+    names = [gate for gate, _ in gates]
+    for combo in product(*[options for _, options in gates]):
         overrides = dict(zip(names, combo, strict=True))
         cells.append((", ".join(f"{k}={v}" for k, v in overrides.items()), overrides))
     return cells
@@ -947,6 +1068,205 @@ def _ranked(candidates: list[Candidate]) -> list[Candidate]:
     ]
 
 
+@dataclass(frozen=True)
+class GateReview:
+    """One gate's post-hoc decision record: the rank winner, the margin, and what ships.
+
+    ``specs/09`` §3's capability tie-break is a rule about *gates*, but the search itself only
+    ever takes ``min(rank)``. T09 applied the rule by hand to the table it had printed; nothing
+    in the code did, so a persisted ``selected.yaml`` carried the rank winner while the record
+    said the tie-break had decided two of the four gates. This closes that: every gate is
+    reviewed against :func:`capability_tie_break` after the search, and the review is what the
+    result reports and applies.
+
+    Attributes
+    ----------
+    gate, options
+        The gate reviewed, and the options it was compared over here.
+    winner, runner_up
+        Selected option and its closest rival on median rank.
+    margin
+        The largest absolute difference over the six metrics between winner and runner-up —
+        the same statistic ``reports/envelope_synthetic.md`` measures the envelope of, so the
+        comparison against ``Config.claim_tie_break_envelope`` is like for like.
+    inside_envelope
+        ``margin < Config.claim_tie_break_envelope``: the rank ordering is not evidence.
+    flipped
+        Whether the tie-break overturned the rank winner.
+    reason
+        The tie-break's own sentence, written into the report so a reader can see whether the
+        gate was decided by measurement or by capability.
+    pinned
+        The gate was not selected here at all; ``winner`` is the value it was pinned to.
+    """
+
+    gate: str
+    options: tuple[str, ...]
+    winner: str
+    runner_up: str | None
+    margin: float
+    inside_envelope: bool
+    flipped: bool
+    reason: str
+    pinned: bool = False
+
+
+def review_gates(
+    candidates: Sequence[Candidate],
+    selected: Config,
+    cfg: Config,
+    *,
+    pinned: Mapping[str, str] | None = None,
+) -> list[GateReview]:
+    """Re-check every gate against the capability tie-break, holding the others selected.
+
+    For each gate, the candidates compared are those that differ from the selected config in
+    **that gate alone** — which is what makes the margin a statement about the gate rather
+    than about the cell. That is the shape of T09 §13's re-check table, and it is the only
+    well-defined way to apply a per-gate rule to a merged multi-gate table.
+
+    Returns one :class:`GateReview` per gate, in :data:`ALL_GATES` order. A pinned gate is
+    reported as pinned and never tie-broken.
+    """
+    fixed = dict(pinned or {})
+    reviews: list[GateReview] = []
+    for gate, options in ALL_GATES:
+        if gate in fixed:
+            reviews.append(
+                GateReview(
+                    gate=gate,
+                    options=options,
+                    winner=fixed[gate],
+                    runner_up=None,
+                    margin=float("nan"),
+                    inside_envelope=False,
+                    flipped=False,
+                    reason="pinned: not selected on this dataset",
+                    pinned=True,
+                )
+            )
+            continue
+        others = {g for g, _ in ALL_GATES if g != gate}
+        group: dict[str, Candidate] = {}
+        for c in candidates:
+            if gate not in c.overrides:
+                continue
+            if any(
+                c.overrides.get(g, getattr(selected, g)) != getattr(selected, g) for g in others
+            ):
+                continue
+            option = str(c.overrides[gate])
+            # Several passes revisit the same option; the last scored one is the one the
+            # search itself carried forward.
+            group[option] = c
+        if len(group) < 2:
+            reviews.append(
+                GateReview(
+                    gate=gate,
+                    options=options,
+                    winner=str(getattr(selected, gate)),
+                    runner_up=None,
+                    margin=float("nan"),
+                    inside_envelope=False,
+                    flipped=False,
+                    reason="not comparable here: fewer than two options scored against this "
+                    "incumbent",
+                )
+            )
+            continue
+        shipped = str(getattr(selected, gate))
+        if shipped not in group:
+            reviews.append(
+                GateReview(
+                    gate=gate,
+                    options=tuple(group),
+                    winner=shipped,
+                    runner_up=None,
+                    margin=float("nan"),
+                    inside_envelope=False,
+                    flipped=False,
+                    reason="not comparable here: the selected option was not scored against "
+                    "this incumbent",
+                )
+            )
+            continue
+
+        # The review is anchored on the option the **search** selected, not on a rank
+        # recomputed inside this two-option subgroup. Median rank is not consistent under
+        # subsetting — a merged 18-cell gate and a 2-cell slice of it can name different
+        # winners — so a subgroup argmin would make the review contradict ``result.config``
+        # while claiming to describe it. Ranks are rewritten so the shipped option leads and
+        # the rivals keep their relative order; ``capability_tie_break`` then answers the only
+        # question left, which is whether the shipped option's margin is real.
+        ranked_group = {c.overrides[gate]: c for c in _ranked(list(group.values()))}
+        order = sorted(
+            (opt for opt in ranked_group if opt != shipped),
+            key=lambda opt: ranked_group[opt].rank,
+        )
+        anchored = [replace(ranked_group[shipped], rank=0.0)] + [
+            replace(ranked_group[opt], rank=float(i + 1)) for i, opt in enumerate(order)
+        ]
+        winner, reason = capability_tie_break(anchored, gate, cfg)
+        best = anchored[0]
+
+        def _separation(a: Candidate, b: Candidate) -> float:
+            return max(
+                abs(float(a.scores.get(m, 0.0)) - float(b.scores.get(m, 0.0))) for m in METRIC_NAMES
+            )
+
+        rivals = anchored[1:]
+        # "Closest rival" is the one with the smallest separation, because separation is the
+        # quantity the envelope test is about: if the nearest rival is outside it, all are.
+        rival = min(rivals, key=lambda c: _separation(best, c)) if rivals else None
+        margin = float("nan") if rival is None else _separation(best, rival)
+        reviews.append(
+            GateReview(
+                gate=gate,
+                options=tuple(group),
+                winner=str(winner.overrides[gate]),
+                runner_up=None if rival is None else str(rival.overrides[gate]),
+                margin=margin,
+                inside_envelope=bool(
+                    margin == margin and margin < float(cfg.claim_tie_break_envelope)
+                ),
+                flipped=winner is not best,
+                reason=reason,
+            )
+        )
+    return reviews
+
+
+def repulsion_is_reachable(cfg: Config, pinned: Mapping[str, str] | None = None) -> bool:
+    """Return whether any candidate can *generate* under a layout that reads the interaction.
+
+    ``sample_layout`` returns ``_resample_layout`` before it looks at ``repulsion``, so the
+    answer is no when ``Config.repulsion`` is off, and no when ``layout_mode`` is pinned to
+    ``resample``. It is a property of the search rather than of a candidate because the fit
+    cache normalises ``layout_mode`` out (:data:`FIT_INVARIANT_GATES`) and one model serves
+    every option of that gate — deciding per candidate would make the shared model depend on
+    which cell was fitted first.
+    """
+    if not cfg.repulsion:
+        return False
+    fixed = dict(pinned or {})
+    options = (
+        (fixed["layout_mode"],)
+        if "layout_mode" in fixed
+        else dict(ALL_GATES).get("layout_mode", (cfg.layout_mode,))
+    )
+    return any(mode != "resample" for mode in options)
+
+
+def rank_candidates(candidates: Sequence[Candidate]) -> list[Candidate]:
+    """Fill in each candidate's median rank within this comparison group.
+
+    The public name for the ranking :func:`run_selection` uses internally, so a driver that
+    pre-warms cells in parallel and then needs to know which one won ranks them with the same
+    code the selector does rather than with a second implementation of "median rank".
+    """
+    return _ranked(list(candidates))
+
+
 def run_selection(
     vol: TrainingVolume,
     base_cfg: Config,
@@ -957,6 +1277,8 @@ def run_selection(
     dataset: str = "synthetic",
     report_path: str | Path | None = None,
     checkpoint: ScoreCache | None = None,
+    pinned: Mapping[str, str] | None = None,
+    pinned_reason: str = "",
 ) -> SelectionResult:
     """Run the whole selection and return everything it measured. See :class:`SelectionResult`.
 
@@ -979,11 +1301,31 @@ def run_selection(
     Parameters
     ----------
     checkpoint
-        Optional :class:`ScoreCache`. Step 2 is 18 fits at full budget, so a run that loses
-        them to an interrupted session is not usable; with a checkpoint each scored cell is
-        flushed to disk as it completes and a re-run skips what is already there.
+        Optional :class:`ScoreCache`. The merged gate is scored at full budget, so a run that
+        loses it to an interrupted session is not usable; with a checkpoint each scored cell
+        is flushed to disk as it completes and a re-run skips what is already there.
+    pinned
+        ``gate -> option`` for gates this run must **not** select, because they were decided
+        elsewhere. A pinned gate is fixed in the base config, dropped from the merged gate's
+        product and from coordinate descent, and reported as pinned. ``pinned_reason`` is
+        required alongside it: a gate removed from selection without a stated reason is
+        indistinguishable in the report from a gate that was never a gate.
+    pinned_reason
+        One sentence saying why. Refused as empty when ``pinned`` is non-empty.
     """
     require_training_volume(vol, "run_selection")
+    # ``specs/10`` §0's owed fix, applied here because ``specs/09`` §3 is where the spec puts
+    # it: STARmap's 28-gene panel is narrower than ``Config.expr_pca_dim`` and every fit would
+    # otherwise be refused by ``validate_config_against_volume``. Warns with both numbers.
+    base_cfg = clamp_config_to_volume(base_cfg, vol)
+    fixed = _check_pinned(pinned)
+    if fixed and not pinned_reason.strip():
+        raise SelectionError(
+            "run_selection: pinned gates need a pinned_reason. A gate excluded from selection "
+            "is a claim that the evidence for it is elsewhere, and the report has to name it."
+        )
+    if fixed:
+        base_cfg = base_cfg.replace(**fixed)
     if scorer is None and embeddings is None:
         raise SelectionError(
             "run_selection: pass either a scorer or an embeddings factory. The default "
@@ -992,9 +1334,14 @@ def run_selection(
             "business knowing about."
         )
     run_seed = int(base_cfg.seed) if seed is None else int(seed)
-    score_fn: Scorer = FitScorer(vol, embeddings) if scorer is None else scorer  # type: ignore[arg-type]
+    score_fn: Scorer = (
+        FitScorer(vol, embeddings, needs_repulsion=repulsion_is_reachable(base_cfg, fixed))  # type: ignore[arg-type]
+        if scorer is None
+        else scorer
+    )
 
     fits: list[tuple[dict[str, Any], int]] = []
+    failures: list[tuple[str, int, str]] = []
     cache: dict[tuple[tuple[str, Any], ...], dict[str, float]] = {}
 
     def score(overrides: dict[str, Any], steps: int, label: str = "") -> dict[str, float]:
@@ -1004,12 +1351,53 @@ def run_selection(
             recorded = None if checkpoint is None else checkpoint.get(cfg, int(steps))
             if recorded is not None:
                 cache[key] = recorded  # resumed from a previous run; no fit issued
+                if all(v == float("-inf") for v in recorded.values()):
+                    # The cell failed in whichever process scored it — a --prewarm shard, or
+                    # an earlier attempt. The report has to say so here too, or a resumed run
+                    # claims "every candidate scored" about a table that contains a failure.
+                    failures.append(
+                        (
+                            label or str(overrides),
+                            int(steps),
+                            "recorded as failed by an earlier process (checkpoint); see that "
+                            "run's log for the exception",
+                        )
+                    )
             else:
                 fits.append((dict(overrides), int(steps)))
-                cache[key] = score_fn(cfg, steps=int(steps), seed=run_seed)
+                try:
+                    cache[key] = score_fn(cfg, steps=int(steps), seed=run_seed)
+                except SCORING_FAILURES as exc:
+                    # A candidate that cannot emit plausible counts is a *ranking* fact, not a
+                    # reason to lose a nine-hour search at its second cell. The commonest case
+                    # is real and expected: ``assert_detection_rate``'s band is measured
+                    # against the training sections, and on a dense panel like STARmap's
+                    # (median per-gene detection 0.9999, ``specs/10`` §0) an under-trained
+                    # candidate misses it — which is exactly what the reduced-budget cells are.
+                    # So it ranks last, and it does so **loudly**: warned here, carried in
+                    # ``SelectionResult.failures``, printed in the report, and refused
+                    # outright if it takes a whole gate with it.
+                    name = label or str(overrides)
+                    failures.append((name, int(steps), f"{type(exc).__name__}: {exc}"))
+                    warnings.warn(
+                        f"selection candidate {name!r} at {int(steps)} steps "
+                        f"could not be scored and is ranked last: {type(exc).__name__}: {exc}",
+                        CandidateFailedWarning,
+                        stacklevel=2,
+                    )
+                    cache[key] = dict.fromkeys(METRIC_NAMES, float("-inf"))
                 if checkpoint is not None:
                     checkpoint.put(cfg, int(steps), label or str(overrides), cache[key])
         return cache[key]
+
+    def _require_a_live_group(group: Sequence[Candidate], what: str) -> None:
+        """Refuse a gate every option of which failed: that is not a ranking, it is a break."""
+        if group and all(all(v == float("-inf") for v in c.scores.values()) for c in group):
+            raise SelectionError(
+                f"every candidate of {what} failed to score, so there is nothing to choose "
+                "between. The reasons follow; fix the run rather than shipping the first "
+                "label.\n  " + "\n  ".join(f"{lab} @ {st}: {why}" for lab, st, why in failures)
+            )
 
     # 1. the joint gate, all four cells, each at its own budget.
     joint = _ranked(
@@ -1024,6 +1412,7 @@ def run_selection(
             for label, overrides in joint_gate_cells(base_cfg)
         ]
     )
+    _require_a_live_group(joint, "the joint gate")
     best_joint = min(joint, key=lambda c: c.rank)
     incumbent: dict[str, Any] = dict(best_joint.overrides)
     candidates: list[Candidate] = list(joint)
@@ -1039,9 +1428,10 @@ def run_selection(
                 steps=selected_steps,
                 scores=score({**incumbent, **overrides}, selected_steps, label),
             )
-            for label, overrides in full_budget_gate_cells(base_cfg)
+            for label, overrides in full_budget_gate_cells(base_cfg, fixed)
         ]
     )
+    _require_a_live_group(full_budget, "the merged full-budget gate")
     candidates.extend(full_budget)
     incumbent = dict(min(full_budget, key=lambda c: c.rank).overrides)
 
@@ -1053,7 +1443,8 @@ def run_selection(
     )
     escalated = False
     escalating_metrics: tuple[str, ...] = ()
-    if GATES and reduced != selected_steps:
+    gates = descent_gates(fixed)
+    if gates and reduced != selected_steps:
         escalated, escalating_metrics = incumbent_is_unconverged(
             score(incumbent, selected_steps, "incumbent @ selected"),
             score(incumbent, reduced, "incumbent @ reduced"),
@@ -1063,7 +1454,7 @@ def run_selection(
 
     # 4. coordinate descent over the gates every option of which trains.
     for _ in range(int(base_cfg.selection_passes)):
-        for gate, options in GATES:
+        for gate, options in gates:
             group = []
             for option in options:
                 overrides = {**incumbent, gate: option}
@@ -1077,11 +1468,22 @@ def run_selection(
                     )
                 )
             group = _ranked(group)
+            _require_a_live_group(group, f"gate {gate}")
             candidates.extend(group)
             incumbent = dict(min(group, key=lambda c: c.rank).overrides)
 
+    # 5. the capability tie-break, per gate, on the table the search just produced
+    # (``specs/09`` §3). ``min(rank)`` decided every gate above; below the reproducibility
+    # envelope that ordering is not evidence, and the rule — not the ranking — decides.
+    reviewed = base_cfg.replace(**incumbent)
+    reviews = review_gates(candidates, reviewed, base_cfg, pinned=fixed)
+    flips = {r.gate: r.winner for r in reviews if r.flipped}
+    if flips:
+        incumbent = {**incumbent, **flips}
+        reviewed = reviewed.replace(**flips)
+
     result = SelectionResult(
-        config=base_cfg.replace(**incumbent),
+        config=reviewed,
         joint=joint,
         candidates=candidates,
         fits=fits,
@@ -1091,6 +1493,10 @@ def run_selection(
         full_budget=full_budget,
         reduced_budget_escalated=escalated,
         escalating_metrics=tuple(escalating_metrics),
+        reviews=reviews,
+        failures=failures,
+        pinned=dict(fixed),
+        pinned_reason=pinned_reason,
     )
     if report_path is not None:
         write_selection_report(result, report_path)
@@ -1106,6 +1512,8 @@ def select_config(
     embeddings: Callable[[Config], EntityEmbeddings] | None = None,
     dataset: str = "synthetic",
     report_path: str | Path | None = None,
+    pinned: Mapping[str, str] | None = None,
+    pinned_reason: str = "",
 ) -> Config:
     """Choose the per-dataset configuration by internal LOSO. ``specs/09`` §3's entry point.
 
@@ -1127,6 +1535,8 @@ def select_config(
         embeddings=embeddings,
         dataset=dataset,
         report_path=report_path,
+        pinned=pinned,
+        pinned_reason=pinned_reason,
     ).config
 
 
@@ -1345,15 +1755,19 @@ def write_selection_report(
             ["cell", "steps", *METRIC_NAMES, "median rank"],
         ),
         "",
-        "## The merged full-budget gate: `layout_mode` x `prior_mode` x `expr_mode`",
+        "## The merged full-budget gate: "
+        + (
+            " x ".join(f"`{g}`" for g, _ in full_budget_gates(result.pinned))
+            or "(every gate pinned)"
+        ),
         "",
-        "All 18 cells, every one fitted at the **selected** budget. These three gates are "
-        "disqualified from reduced-budget scoring by `specs/09` §3's training-free-option "
-        "rule — each has an option that reaches its final behaviour without training "
-        "(`resample`, `iid`, `cross-mix`) and is therefore at full strength at any budget "
-        "while its rivals are not. They are scored jointly rather than one after another "
-        "because their errors compound through coordinate descent's ordering (open risk R8, "
-        "`reports/r8_budget_grid.md`).",
+        f"All {len(result.full_budget)} cells, every one fitted at the **selected** budget. "
+        "These gates are disqualified from reduced-budget scoring by `specs/09` §3's "
+        "training-free-option rule — each has an option that reaches its final behaviour "
+        "without training (`resample`, `iid`, `cross-mix`) and is therefore at full strength "
+        "at any budget while its rivals are not. They are scored jointly rather than one "
+        "after another because their errors compound through coordinate descent's ordering "
+        "(open risk R8, `reports/r8_budget_grid.md`).",
         "",
         _table(
             [
@@ -1400,6 +1814,21 @@ def write_selection_report(
             ["gate", "candidate", "steps", *METRIC_NAMES, "median rank"],
         ),
         "",
+        (
+            "**Candidates that could not be scored and were ranked last** "
+            f"({len(result.failures)}). The emission guard refusing an under-trained "
+            "candidate's counts is a fact about that candidate, not about the run — but it "
+            "is printed here because a rank built partly on failures is not the same "
+            "evidence as one built on scores:\n\n"
+            + "\n".join(
+                f"* `{label}` @ {steps} steps — {reason}"
+                for label, steps, reason in result.failures
+            )
+            + "\n"
+            if result.failures
+            else "Every candidate scored; none was ranked last for failing to emit."
+        ),
+        "",
         f"Fits issued: {len(result.fits)} "
         f"({', '.join(f'{steps} steps' for _, steps in result.fits)}).",
         "",
@@ -1407,6 +1836,48 @@ def write_selection_report(
         "implementations — `eval/metrics.py` is T10's module. The names match, and T10 "
         "re-scores the selected config with the vendored code.",
     ]
+    if result.pinned:
+        chunks += [
+            "",
+            "## Gates **not** selected here (pinned)",
+            "",
+            result.pinned_reason,
+            "",
+            _table(
+                [[f"`{gate}`", f"`{option}`"] for gate, option in sorted(result.pinned.items())],
+                ["gate", "pinned to"],
+            ),
+        ]
+    if result.reviews:
+        chunks += [
+            "",
+            "## Per-gate tie-break review (`specs/09` §3's capability rule)",
+            "",
+            "Each gate re-checked against the candidates that differ from the selected config "
+            "in **that gate alone**. `margin` is the largest absolute difference over the six "
+            "metrics between the rank winner and its closest rival — the same statistic "
+            "`reports/envelope_synthetic.md` measures the run-to-run envelope of, so the "
+            f"comparison against `claim_tie_break_envelope` = {cfg.claim_tie_break_envelope:g} "
+            "is like for like. **A margin inside the envelope means the ranking is not "
+            "evidence**, and the rule decides instead. Applied once, on the completed table, "
+            "which is where the evidence is.",
+            "",
+            _table(
+                [
+                    [
+                        f"`{r.gate}`",
+                        f"`{r.winner}`",
+                        "—" if r.runner_up is None else f"`{r.runner_up}`",
+                        "—" if r.margin != r.margin else f"{r.margin:.4f}",
+                        "**inside**" if r.inside_envelope else ("—" if r.pinned else "outside"),
+                        "**yes**" if r.flipped else "no",
+                        r.reason,
+                    ]
+                    for r in result.reviews
+                ],
+                ["gate", "ships", "closest rival", "margin", "vs envelope", "flipped", "why"],
+            ),
+        ]
     chunks += calibration_chunks(calibration, window, modules)
     out.write_text("\n".join(chunks) + "\n", encoding="utf-8")
     return out

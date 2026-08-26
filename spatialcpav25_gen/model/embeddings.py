@@ -21,6 +21,7 @@ Unseen entities get ``r_hat = psi(t)`` from the distillation head, trained again
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -33,7 +34,9 @@ from spatialcpav25_gen.config import Config
 __all__ = [
     "EntityEmbeddings",
     "TextGroundedEmbedding",
+    "build_entity_embeddings",
     "coexpression_modules",
+    "describe_entity_descriptors",
     "text_embedding_diagnostics",
 ]
 
@@ -244,6 +247,130 @@ class EntityEmbeddings(nn.Module):
         """Return the summed distillation loss over the components. Scalar."""
         losses = [component.distillation_loss() for component in self.components()]
         return torch.stack(losses).sum()
+
+
+# --------------------------------------------------------------------------------------
+# the panel's embeddings: descriptors -> MedCPT -> EntityEmbeddings
+# --------------------------------------------------------------------------------------
+
+
+def build_entity_embeddings(
+    cfg: Config,
+    gene_names: Sequence[str],
+    celltype_names: Sequence[str],
+    region_names: Sequence[str] | None = None,
+    *,
+    gene_meta: Mapping[str, Any] | None = None,
+    encoder: Any | None = None,
+) -> EntityEmbeddings:
+    """Build this panel's :class:`EntityEmbeddings` from T02's descriptors and MedCPT.
+
+    The step every caller had been writing for itself, and writing differently: five
+    hand-rolled versions existed across ``scripts/`` and the bench3 wrapper, and **three of
+    them passed no gene metadata at all**, so ``medcpt`` encoded a bare symbol
+    (``"Slc17a7."``) where the panel's table carries a full name and an NCBI summary. That
+    is not the open-vocabulary channel the paper claims; it is MedCPT applied to a token.
+    One builder, in the package, so the descriptors a run encodes are a property of the
+    config rather than of whichever script invoked it.
+
+    Parameters
+    ----------
+    cfg
+        Supplies ``gene_meta_path``, ``mygene_species``, ``text_model``, ``text_cache_dir``
+        and ``text_emb_mode``.
+    gene_names, celltype_names, region_names
+        The panel's entities, in the volume's own order. ``region_names`` may be ``None``
+        (or empty) for a dataset with no regions, which is what ``Config.region_key=None``
+        means.
+    gene_meta
+        Pre-loaded ``symbol -> GeneMeta``. Defaults to
+        ``load_gene_meta(cfg.gene_meta_path, species=cfg.mygene_species)``, which **raises**
+        when the table is absent or is another organism's.
+    encoder
+        Pre-built :class:`~spatialcpav25_gen.data.text.TextEncoder`. Passing one lets several
+        panels share a cache handle; the default constructs one, and on a warm
+        ``cfg.text_cache_dir`` it never loads the transformer.
+
+    Returns
+    -------
+    EntityEmbeddings
+        Genes at ``cfg.gene_emb_dim``, cell types and regions at ``cfg.ctx_emb_dim``.
+
+    Notes
+    -----
+    **Both arms of the ``text_emb_mode`` gate get the same vectors.** ``"lookup"`` is applied
+    *inside* :meth:`TextGroundedEmbedding._text_channel`, which zeroes the projection on the
+    seen and the zero-shot path alike; withholding the vectors here as well would make the
+    two arms differ in two things at once, and the A3 comparison is only a comparison while
+    they differ in one. It also keeps ``distillation_loss`` — which reads ``text_vecs``
+    directly — measuring the same quantity in both arms.
+
+    A gene the table does not know degrades to ``gene_descriptor(symbol, None)``, i.e. the
+    bare symbol, and the count of such genes is returned in ``uns``-style form by
+    :func:`describe_entity_descriptors` rather than being swallowed: a panel that is mostly
+    bare symbols is a table that needs rebuilding, not a run that should proceed quietly.
+    """
+    from spatialcpav25_gen.data.text import (
+        TextEncoder,
+        celltype_descriptor,
+        gene_descriptor,
+        load_gene_meta,
+        region_descriptor,
+    )
+
+    if not gene_names:
+        raise ValueError("build_entity_embeddings: gene_names is empty")
+    if not celltype_names:
+        raise ValueError("build_entity_embeddings: celltype_names is empty")
+
+    meta = (
+        load_gene_meta(cfg.gene_meta_path, species=cfg.mygene_species)
+        if gene_meta is None
+        else gene_meta
+    )
+    text = TextEncoder(cfg) if encoder is None else encoder
+
+    genes = text.encode([gene_descriptor(str(g), meta.get(str(g))) for g in gene_names])
+    types = text.encode([celltype_descriptor(str(t), None) for t in celltype_names])
+    regions = (
+        text.encode([region_descriptor(str(r), None) for r in region_names])
+        if region_names
+        else None
+    )
+    return EntityEmbeddings(
+        cfg,
+        torch.from_numpy(genes),
+        torch.from_numpy(types),
+        None if regions is None else torch.from_numpy(regions),
+    )
+
+
+def describe_entity_descriptors(
+    cfg: Config, gene_names: Sequence[str], gene_meta: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    """Say what the text channel is actually being given, for the run's provenance record.
+
+    ``{n_genes, n_with_meta, n_bare, n_with_summary, example}``. A run that reports
+    ``text_emb_mode=medcpt`` while ``n_bare == n_genes`` has the gate switched on and nothing
+    behind it, and that is exactly the state three of the existing callers were in.
+    """
+    from spatialcpav25_gen.data.text import gene_descriptor, load_gene_meta
+
+    meta = (
+        load_gene_meta(cfg.gene_meta_path, species=cfg.mygene_species)
+        if gene_meta is None
+        else gene_meta
+    )
+    symbols = [str(g) for g in gene_names]
+    known = [s for s in symbols if s in meta]
+    with_summary = [s for s in known if getattr(meta[s], "summary", None)]
+    return {
+        "n_genes": len(symbols),
+        "n_with_meta": len(known),
+        "n_bare": len(symbols) - len(known),
+        "n_with_summary": len(with_summary),
+        "example": gene_descriptor(symbols[0], meta.get(symbols[0]))[:160] if symbols else "",
+    }
 
 
 # --------------------------------------------------------------------------------------

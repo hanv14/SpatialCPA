@@ -50,9 +50,17 @@ it: the 1017 panel symbols alone answer the coverage question — the long pole,
 needs `mygene` network access that is 403'd here — and a path to the source volume unblocks the
 rest.
 
-**Owed fix, found by the pilot:** `specs/09`'s selector must clamp `Config.expr_pca_dim` to the
-panel width. STARmap has 28 genes against a default of 32, so `validate_config_against_volume`
-refuses the fit and the protocol dataset cannot be fitted at the shipped default.
+**Owed fix, found by the pilot — ✅ delivered 2026-08-26.** `specs/09`'s selector must clamp
+`Config.expr_pca_dim` to the panel width. STARmap has 28 genes against a default of 32, so
+`validate_config_against_volume` refuses the fit and the protocol dataset cannot be fitted at the
+shipped default. `data/schema.py::clamp_config_to_volume` is the rule (`expr_pca_dim` and
+`retrieval_k`, narrowed to the volume's own size, never widened, warning with both numbers because
+the clamped value lands in the content hash); `run_selection` applies it, and the STARmap drivers
+apply the same rule from the input file's header, since building a volume to clamp against runs the
+check the clamp exists to satisfy. **The rule gives 28 on tier 1**, not the pilot's hand-picked 16 —
+dropping components would be a choice about which of a narrow panel's variance to discard, and the
+spec does not make one. A run that wants to be comparable with `reports/pilot.md`'s numbers has to
+pass `--expr-pca-dim 16` explicitly.
 
 **`build_gene_meta` merges by default; `--overwrite` is explicit.** Second occurrence of the same
 data loss: building one panel replaced the whole table, so a `deep_starmap` build destroyed the

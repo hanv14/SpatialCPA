@@ -654,3 +654,173 @@ rather than by measurement, and the report says so per gate, which is the point 
 one seed. A single-seed replacement would not be admissible under the rule this task just wrote, so
 they are **not** re-run here: T10 produces them under `00ef4a19a2f576b8` at three seeds, reports
 min–max beside every median, and treats any effect below the campaign's envelope as a tie.
+
+---
+
+### T09 on real data — the machinery for a STARmap tier-1 run (2026-08-26)
+
+Everything above was measured on the synthetic fixture. `specs/09` §3 says the configuration is
+selected **per dataset**, and `progress/fixture_limitations.md` §2 established that at least one
+gate cannot be decided on the fixture at all. This entry is the run being *prepared* on tier-1
+STARmap — the code, the tests and the campaign plan. **No campaign has been run**; every number
+below is from the synthetic fixture, the recorded reports, or a bench3-shaped smoke dataset built
+for the purpose. Nothing here is a STARmap measurement.
+
+#### 1. The finding that made the run necessary, and that no test would have caught
+
+**`text_emb_mode = "medcpt"` has never been exercised on real data, and could not have been.**
+Five callers built entity embeddings and every one of them made the text channel dead or hollow:
+
+| caller | what it passed as text vectors | effect |
+|---|---|---|
+| `scripts/t10_chain_diagnostic.build_embeddings` | **zeros** | `W t = 0`; the channel is off |
+| `scripts/t10_rescore_saved` (imports the above) | **zeros** | same |
+| bench3's `run_spatialcpav25_gen.build_embeddings`, `medcpt` arm | `gene_descriptor(symbol, **None**)` | encodes the string `"Slc17a7."` — MedCPT applied to a token |
+| the same, `lookup` arm | **zeros** | the two A3 arms differ in *two* things, not one |
+| `scripts/t09_layout_mode_gate`, `scripts/t06_expression_report` | fixture stand-ins | fine there, not a real-data path |
+
+So `progress/numbers.md`'s "**Still ablation A3**: `text_emb_mode=lookup` (MedCPT 403'd in the
+container)" understates it: even with the encoder reachable, the wrapper would have encoded bare
+symbols and reported it as `medcpt`. **The panel's own table has the content all along** —
+`resources/gene_meta.parquet` covers **28/28** STARmap symbols and **28/28 carry a summary**, so
+`gene_descriptor` yields e.g. *"Slc17a7. solute carrier family 17 …, member 7. Human orthologue
+SLC17A7: The protein encoded by this gene is a vesicle-bound, sodium-dependent phosphate
+transporter…"* against the bare `"Slc17a7."` the wrapper was sending.
+
+`model/embeddings.py::build_entity_embeddings` is now the single builder: descriptors from
+`Config.gene_meta_path` through `TextEncoder`, refusing a missing table rather than degrading a
+whole panel to bare symbols. **Both arms of the gate get the same vectors** — `"lookup"` is applied
+inside `TextGroundedEmbedding._text_channel`, so withholding the vectors as well made A3 differ in
+two things at once and changed `distillation_loss`, which reads `text_vecs` directly.
+`describe_entity_descriptors` reports `n_bare` so a run that says `medcpt` with nothing behind it
+says so in its own provenance line. `t10_chain_diagnostic` is deliberately **not** switched over —
+that would move `reports/chain_2400*.md` — but it now prints `text channel: ZERO VECTORS` on every
+run rather than leaving the fact in a docstring.
+
+#### 2. Four defects that would each have stopped or spoiled the run
+
+* **Selection through the bench3 wrapper was unreachable.** `run_selection_for` passed neither a
+  scorer nor an embeddings factory, and `run_selection` refuses both-absent by design — so every
+  `--select-only` invocation raised `SelectionError` at the first line of the search. That is why
+  no per-dataset selection had ever run on any dataset. Fixed, along with the base config's obs
+  keys, which were `Config`'s defaults rather than bench3's.
+* **`Config.expr_pca_dim = 32` exceeds STARmap's 28-gene panel**, so `validate_config_against_volume`
+  refuses every fit. This was a recorded **owed fix** (`specs/10` §0, `specs/11`, `progress/decisions.md`)
+  and it is now the rule the spec asked for: `data/schema.py::clamp_config_to_volume` narrows
+  `expr_pca_dim` and `retrieval_k` to the volume's own size, warns with both numbers because the
+  clamped value lands in the content hash, and `run_selection` applies it. **The rule gives 28 on
+  tier 1**; `reports/pilot.md`'s 16 was a hand-picked stand-in, so anything meant to be comparable
+  with the pilot's recorded row must pass `--expr-pca-dim 16` explicitly. The drivers apply the same
+  rule from the input file's *header*, because building a volume to clamp against runs the very
+  check the clamp exists to satisfy.
+* **`fit_repulsion` was being paid for where nothing could read it.** `sample_layout` returns
+  `_resample_layout` before it looks at the interaction, so under the shipped
+  `layout_mode="resample"` the fit is dead work — and worse than dead: it raises `LayoutError` on a
+  point pattern with no soft-repulsion range and would abort a whole search over a quantity it is
+  not using. `FitScorer.needs_repulsion` is set by `run_selection` from
+  `repulsion_is_reachable(cfg, pinned)`. It is a property of the **search**, not of the candidate,
+  because the fit cache normalises `layout_mode` out — deciding per candidate would make the shared
+  model depend on which cell was fitted first.
+* **One under-trained candidate would have killed a nine-hour search.** `assert_detection_rate`'s
+  band is measured against the training sections, and STARmap's median per-gene detection is
+  **0.9999** (`specs/10` §0) — so a reduced-budget candidate genuinely misses it, and the reduced-budget
+  cells of any selection *are* under-trained. It was observed on the smoke dataset: at 60 steps the
+  emitted rate was 0.47 against 1.0000 and the process died. Such a candidate now **ranks last**,
+  and does so loudly: `SCORING_FAILURES` is deliberately narrow (`ExpressionError` only — a shape
+  error or a leakage refusal still aborts), the failure warns, is carried in
+  `SelectionResult.failures`, is printed in the report, survives a resume through the checkpoint,
+  and **a gate every option of which failed is refused outright** rather than shipping the first
+  label.
+
+#### 3. Two mechanisms `specs/09` §3 describes and nothing implemented
+
+* **The capability tie-break was never wired into the search.** `capability_tie_break` existed and
+  was tested, but `run_selection` took `min(rank)` at every gate and §13's shipped configuration was
+  produced by applying the rule *by hand* to a printed table. A persisted `selected.yaml` would
+  therefore have carried the rank winner while the record said the tie-break decided two of the four
+  gates. `review_gates` now re-checks every gate after the search, on the candidates that differ
+  from the selected config **in that gate alone**, and the result applies and reports it.
+
+  Two bugs the smoke run found in that reviewer, both of which produced a *plausible* report:
+  **(a)** median rank is not consistent under subsetting — a merged 6-cell gate and a 2-cell slice
+  of it named different winners, so the review printed `prior_mode ships correlated` beside a
+  selected config saying `iid`. The review is now anchored on the option that actually ships, and
+  answers only the question the rule poses: is that option's margin larger than the envelope.
+  **(b)** a candidate that failed in a `--prewarm` shard was read back from the checkpoint by the
+  final process, which then reported "every candidate scored" about a table containing a failure.
+
+* **Gates can now be pinned.** `run_selection(..., pinned={"layout_mode": "resample"},
+  pinned_reason=...)` fixes a gate in the base config, drops it from the merged gate's product and
+  from coordinate descent, and reports it as pinned. A reason is **required**: a gate removed from
+  selection without one is indistinguishable in the report from a gate that was never a gate.
+  Refusals are Convention 6's — an unknown gate, an option that gate does not have, or pinning
+  everything.
+
+  ⚠️ **Correcting the rationale, not the decision.** Pinning `layout_mode` was asked for on the
+  grounds that "layout_mode does not affect the fitted weights". That fact is real
+  (`FIT_INVARIANT_GATES`) but it argues the *other* way: because the gate is fit-invariant, six fits
+  already served the merged gate's 18 cells, so pinning it removes **12 LOSO scorings and zero
+  fits**. `test_pinning_costs_scorings_and_not_fits` asserts exactly that. The good reason to pin it
+  is the one recorded at R11: real data settled the gate at 3.2x the envelope, and re-opening it at
+  one seed inside a search whose own margins are envelope-sized can only lose to noise.
+
+#### 4. What was built
+
+| file | what |
+|---|---|
+| `model/embeddings.py` | `build_entity_embeddings`, `describe_entity_descriptors` |
+| `data/schema.py` | `clamp_config_to_volume`, `ConfigClampWarning` |
+| `train/select.py` | `pinned` / `pinned_reason`, `full_budget_gates`, `descent_gates`, `GateReview`, `review_gates`, `rank_candidates`, `repulsion_is_reachable`, `SCORING_FAILURES`, `CandidateFailedWarning`, `SelectionResult.{reviews, failures, pinned}` |
+| `scripts/_starmap_run.py` | the shared real-data runtime: volume, base config, embeddings factory, header-level clamp, encoder preflight |
+| `scripts/t09_select_starmap.py` | the selection driver — `--preflight`, `--prewarm {joint,full-budget} --index K --of N`, `--run`, `--pin` |
+| `scripts/t09_ship_starmap.py` | one shipped-config fit, the whole `specs/09` §2 chain, generation, and the six metrics against `oracle` and `flanking_copy` |
+| bench3's `run_spatialcpav25_gen.py` | the selection call fixed, real descriptors, `--pin-gate` |
+
+**21 new tests** (362 in the fast suite, 2 min 11 s on CPU), `make lint` and `make typecheck` clean.
+
+#### 5. The campaign plan, and what it rests on
+
+`run_selection` is sequential — the merged gate needs the joint gate's budget, coordinate descent
+needs the merged gate's incumbent — but the cells *within* a stage are independent and `ScoreCache`
+is the seam. `--prewarm` scores one shard of one stage and flushes it; the final `--run` finds them
+cached and issues only the fits that genuinely depend on a prior decision.
+
+With `layout_mode` pinned, the search is **11 fits**: 4 for the joint gate (2 at 1x, 2 at 2x), 5 new
+for the merged `prior_mode` x `expr_mode` gate at the selected budget (the sixth cell is the joint
+winner's own config and is a cache hit), 1 convergence probe at the reduced budget, and 1 for
+`text_emb_mode`'s rival. At the pilot's measured **28.5 min per 1200-step fit** that is ~8.8 h
+serial and **~3 h** in three parallel waves of at most 6.
+
+**Two things about tier 1 that constrain the calibration, established here rather than assumed.**
+The training stack is **four** sections (1/3/5/7 at z = 19/41/63/85), giving exactly **three**
+distinct z lags — the bare minimum for `_fit_matern_variogram`'s nugget, sill and length-scale. At
+~4176 cells per section every one of the 8x8 grid cells clears
+`variogram_z_min_cells_per_cell = 5` (~65 cells each), so all three lags survive
+`variogram_min_pairs_per_bin = 32`; the margin is real but not large, and `ell_z` on tier 1 will be
+weakly constrained whatever it returns. That is R1's obstacle appearing on real data for the first
+time. The ship driver therefore treats `VariogramError` and `CalibrationError` the same way — the
+fit is already paid for, so `ell` is recorded as refused with the reason verbatim and the run
+continues.
+
+#### 6. What is verified, and what is not
+
+Verified end to end on a **bench3-shaped smoke dataset** (7 sections, 12 genes, 4900 cells, its own
+`paper_protocol`, a matching gene-meta table and a pre-seeded text cache): preflight; four
+concurrent joint-gate shards; six concurrent merged-gate shards; the final `--run` resuming all ten
+from the checkpoint and issuing only the two dependent fits; the pinned gate and the tie-break
+review in the report; a candidate failing and ranking last without killing its stage; a fit killed
+mid-way and resumed from `fit_seed1.pt`; the whole `specs/09` §2 chain including
+`calibrate_lengthscale` **refusing** `prior_mode="iid"` and being recorded as refused; both
+`apply_lengthscale` axes dropped as `target_unreachable` with both numbers named; the anchor `w(v)`
+fitted under `auto-blend` and skipped with a reason otherwise; generation of the three targets at
+raw and ground-truth-matched density; and the six-metric table scored on `bench3.evaluate_paper`
+against `oracle` and `flanking_copy` produced by `bench3.selftest`.
+
+**Not verified, and it cannot be here:** that the MedCPT weights load. `huggingface.co` is 403 from
+this container, so the smoke run used a pre-seeded text cache. `--preflight` is exactly that check
+and costs seconds; it must pass on the campaign machine before anything is fitted.
+
+**No STARmap number is reported in this entry.** The selected config, the calibration statuses and
+the six-metric row against `oracle` and `flanking_copy` are what the run produces; whether `medcpt`
+or `lookup` wins the gate, and by how much against R10's **0.0335** envelope, is what the run
+answers.
