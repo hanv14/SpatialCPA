@@ -1625,3 +1625,39 @@ weaker contrast than it was — it now differs only in `expr_mode`, and `CLAUDE.
   its amendment:* all four pass on the 3000 µm gate fixture. The first pass failed G1.3c/G1.3d on a
   1000 µm fixture; the spec defect behind that is A7, now resolved. The split the stop instruction
   implies turned out to be the right one — G1.3a/G1.3b (the mechanism) never failed.
+
+## C33 — the field's bbox excludes the boundary sections' own slabs (T09, 2026-08-26)
+
+`CTFFlow._layout_targets` jitters every cell's depth uniformly within its slab
+(`z += U(-thickness/2, +thickness/2)`), but `Volume.bbox` is the bounding box of the section
+**centres**. The first and last sections sit *at* `z_min` / `z_max`, so half of each one's
+jittered cells — and half of its Monte-Carlo slab points — fall outside the field's bbox and
+are clamped to its face. Measured: 2067 of section_1's 4073 cells on tier-1 STARmap; 749/1500
+cells and 2103/4096 MC points on the fixture. Not a frame bug: the model→data round trip is
+exact to 1.6e-5 µm and every outside point is on z.
+
+Effect: at the two boundary sections the layout term's Poisson integral is evaluated against
+an intensity queried at the tissue's surface rather than at the depth the jitter chose. R3's
+regime, and a candidate contributor to R11's 3.7x-unstable intensity integral.
+
+**Question for the spec owner.** Should `Volume.bbox` (or the field's copy of it) be inflated
+by half a section thickness on the z axis, so the support the field is defined on is the
+tissue the model is asked about? It is a one-line change and it moves the support every fitted
+number in this project was produced on, so it is a T03/T04 decision rather than a fix to take
+inside T09. `tests/test_field.py::test_the_bbox_excludes_the_boundary_sections_own_slabs`
+records the arithmetic in the meantime.
+
+## C34 — a gate must not be scored under an incumbent that makes its options inert (T09, 2026-08-26)
+
+Implemented rather than asked, because the first real selection run shipped two gates decided
+on a separation of exactly 0.0000: `expr_mode="cross-mix"` returns from `_cross_mix` before the
+prior, the flow, the decoder and the gene embeddings are reached, so `prior_mode` and
+`text_emb_mode` cannot change an emitted count under it. `specs/09` §3 now carries the rule,
+`inert_gates` derives the relation by running the path, and the selector re-orders onto the
+best cell that can decide the gate, or refuses.
+
+**Open for the spec owner:** when a gate is decided under a *different* incumbent from the one
+that ships — as `text_emb_mode` now is whenever `cross-mix` wins — the shipped config carries a
+value chosen on evidence from elsewhere. That is the honest option and it is reported as such,
+but whether such a gate should instead be recorded as *undetermined for this dataset* is a
+question about what the selected config claims.

@@ -103,16 +103,22 @@ __all__ = [
     "CandidateFailedWarning",
     "FitScorer",
     "GateReview",
+    "InertGateError",
+    "InertGateWarning",
     "ScoreCache",
     "SelectionError",
     "SelectionResult",
+    "average_folds",
     "calibration_chunks",
     "capability_tie_break",
     "descent_gates",
+    "fold_scores",
     "full_budget_gate_cells",
     "full_budget_gates",
     "incumbent_is_unconverged",
+    "inert_gates",
     "joint_gate_cells",
+    "live_incumbent_for",
     "module_morans_agreement",
     "rank_candidates",
     "repulsion_is_reachable",
@@ -430,6 +436,18 @@ error, a missing field, a leakage refusal — still aborts, because none of thos
 about the candidate."""
 
 
+class InertGateWarning(UserWarning):
+    """A gate was inert under the incumbent and was measured under a different one."""
+
+
+def _describe(overrides: Mapping[str, Any], gate: str) -> str:
+    """Return the other gates' values, so a message can say *what* made this one inert."""
+    return (
+        ", ".join(f"{g}={overrides.get(g)}" for g, _ in ALL_GATES if g != gate and g in overrides)
+        or "the base config"
+    )
+
+
 class CandidateFailedWarning(UserWarning):
     """A candidate could not be scored, and was ranked last instead of aborting the search."""
 
@@ -513,6 +531,11 @@ class SelectionResult:
     section_ids
         The training sections the folds ran on. No held-out section can appear here: the
         entry point takes a ``TrainingVolume``.
+    inert_notes
+        ``{gate: why}`` for every gate that was inert under the incumbent and had to be
+        measured under a different one. Non-empty is a fact about the run that the report
+        prints: the gate's answer is evidence from where it could be measured, not from the
+        shipped cell.
     failures
         ``(label, steps, reason)`` for every candidate that could not be scored and was
         ranked last (:data:`SCORING_FAILURES`). Empty on a clean run; non-empty is a fact
@@ -539,6 +562,7 @@ class SelectionResult:
     escalating_metrics: tuple[str, ...] = ()
     reviews: list[GateReview] = field(default_factory=list)
     failures: list[tuple[str, int, str]] = field(default_factory=list)
+    inert_notes: dict[str, str] = field(default_factory=dict)
     pinned: dict[str, str] = field(default_factory=dict)
     pinned_reason: str = ""
 
@@ -754,6 +778,31 @@ def selection_folds(vol: TrainingVolume, cfg: Config) -> list[Section]:
     return [vol.sections[interior[int(i)]] for i in dict.fromkeys(picks.tolist())]
 
 
+def average_folds(per_fold: Sequence[Mapping[str, float]]) -> dict[str, float]:
+    """Average per-fold scores into the six. The one place folds become a single number."""
+    return {name: float(np.mean([f[name] for f in per_fold])) for name in METRIC_NAMES}
+
+
+def fold_scores(
+    model: CTFFlow,
+    vol: TrainingVolume,
+    cfg: Config,
+    *,
+    seed: int,
+    anchor: Any | None = None,
+) -> list[dict[str, float]]:
+    """Score a fitted model on internal LOSO, **per fold**, unaveraged.
+
+    :func:`selection_scores` is this averaged. Kept separate because the average is where the
+    evidence goes missing: ``selection_folds`` returns the *interior* sections, so a
+    four-section training stack — which is what tier-1 STARmap's ``paper_2_4_6`` holdout
+    leaves — gives **two** folds however large ``Config.selection_n_folds`` is set. A gate
+    decided on a mean of two numbers cannot be told apart from one decided on a single fold
+    plus noise, and this is the function that lets a caller check.
+    """
+    return _fold_scores(model, vol, cfg, seed=seed, anchor=anchor)
+
+
 def selection_scores(
     model: CTFFlow,
     vol: TrainingVolume,
@@ -769,6 +818,18 @@ def selection_scores(
     folds. Leakage-free by type and by construction: ``vol`` is a ``TrainingVolume`` and the
     folds are its own sections.
     """
+    return average_folds(_fold_scores(model, vol, cfg, seed=seed, anchor=anchor))
+
+
+def _fold_scores(
+    model: CTFFlow,
+    vol: TrainingVolume,
+    cfg: Config,
+    *,
+    seed: int,
+    anchor: Any | None = None,
+) -> list[dict[str, float]]:
+    """Return the per-fold six, in fold order. The implementation both entry points share."""
     require_training_volume(vol, "selection_scores")
     axis = profile_axis(vol, cfg)
     per_fold: list[dict[str, float]] = []
@@ -796,7 +857,7 @@ def selection_scores(
                 n_types=len(vol.celltype_names),
             )
         )
-    return {name: float(np.mean([f[name] for f in per_fold])) for name in METRIC_NAMES}
+    return per_fold
 
 
 @dataclass
@@ -872,6 +933,66 @@ class FitScorer:
         if cfg.repulsion and self.needs_repulsion:
             model.repulsion = fit_repulsion(self.vol, cfg, seed=seed + 1)
         return model
+
+    def inertness_probe(self, cfg: Config, *, seed: int) -> FloatArray:
+        """Emit one fold section's counts under ``cfg``, from an **untrained** model.
+
+        Inertness is a property of which code paths ``_expression`` reaches, not of the
+        weights, so no fit is needed: an untrained model routes through exactly the same
+        branches. That is what makes :func:`inert_gates` affordable enough to run *before*
+        a gate is scored rather than after its fits are already spent.
+
+        The model is built once per ``(architecture, seed)`` and reused across options,
+        because two options of a gate must differ in nothing but the gate.
+        """
+        from spatialcpav25_gen.infer.calibrate import calibrate_anchor_weight
+        from spatialcpav25_gen.model.spatialcpav25_gen import CTFFlow, TrainingData
+
+        # The probe asks whether the emitted counts *change*, never whether they are good, so
+        # ``assert_detection_rate``'s plausibility band does not apply to it — and would stop
+        # it outright, because an untrained decoder emits a detection rate nothing like the
+        # tissue's. Widened to its maximum legal value (a rate is a fraction, so 1.0 admits
+        # everything) identically for every option, so it cannot affect the comparison.
+        cfg = cfg.replace(detection_rate_tol=1.0)
+        key = f"probe:{self._fit_key(cfg, 0, seed)}"
+        model = self._fits.get(key)
+        if model is None:
+            from spatialcpav25_gen.model.layout import fit_repulsion
+
+            model = CTFFlow(
+                cfg, TrainingData.build(self.vol, cfg), self.embeddings(cfg), grf_seed=seed
+            )
+            model.eval()
+            # ``sample_layout`` refuses a drawing layout without the fitted interaction, and
+            # ``repulsion_is_reachable``'s rule applies here too: ``resample`` never reads it.
+            # The interaction depends on the volume and the config, not on training, so an
+            # untrained probe carries the same one a fitted model would.
+            if cfg.repulsion and cfg.layout_mode != "resample":
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    model.repulsion = fit_repulsion(self.vol, cfg, seed=seed + 1)
+            self._fits[key] = model
+        hidden = selection_folds(self.vol, cfg)[0]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            # Mirror __call__: auto-blend refuses to generate without a fitted w(v), and T09
+            # forbids a default one. The probe has to exercise the same path the scorer does,
+            # or it is not measuring the configuration the search would score.
+            anchor = (
+                calibrate_anchor_weight(model, self.vol, cfg, seed=seed, n_folds=1)
+                if cfg.expr_mode == "auto-blend"
+                else None
+            )
+            adata = generate_section(
+                model,
+                section_plane(hidden),
+                self.vol,
+                cfg,
+                seed,
+                exclude_z={float(hidden.z)},
+                anchor=anchor,
+            )
+        return emitted_counts(adata)
 
     def release_fits(self) -> None:
         """Drop the cached models. A fit is ~50 MB and the merged gate holds six."""
@@ -1257,6 +1378,89 @@ def repulsion_is_reachable(cfg: Config, pinned: Mapping[str, str] | None = None)
     return any(mode != "resample" for mode in options)
 
 
+class InertGateError(SelectionError):
+    """A gate was about to be scored under an incumbent that makes its options inert."""
+
+
+def inert_gates(
+    probe: Callable[[Config], Any],
+    cfg: Config,
+    gates: Sequence[tuple[str, tuple[str, ...]]],
+    *,
+    seed: int = 0,
+) -> dict[str, tuple[str, ...]]:
+    """Return ``{gate: options}`` for every gate whose options this config makes **inert**.
+
+    ``specs/09`` §3's fourth control-that-cannot-fire. A gate is inert under a configuration
+    when changing it cannot change a single emitted count — so scoring it there measures
+    nothing, and the two options come back separated by exactly 0.0000, which reads like a
+    perfect tie and is in fact an absence of measurement.
+
+    **The relation is derived, not declared.** ``expr_mode="cross-mix"`` returns from
+    ``infer/generate.py::_expression`` before ``prior_latent``, ``flow.sample``, the decoder
+    and the gene embeddings are ever reached, so ``prior_mode``, ``text_emb_mode``,
+    ``decoder_mu_link`` and ``ell_*`` are all unreachable under it — but nothing here writes
+    that list down. Instead each option is *run*: ``probe`` emits a section under it and the
+    counts are compared bitwise. Two options that produce identical counts are inert, whatever
+    the reason and whatever a future edit does to the branch structure. A hand-maintained
+    table would have to be updated by the person who introduces the next inert path, which is
+    precisely the person who does not know they have introduced one.
+
+    Inertness is a property of the **code path**, not of the weights, so ``probe`` may return
+    an untrained model's output: no fit is needed and the check costs one generation per
+    option.
+
+    Parameters
+    ----------
+    probe
+        ``Config -> array-like`` emitting counts under that config. Anything comparable by
+        :func:`numpy.array_equal`.
+    cfg
+        The incumbent the gates would be scored under.
+    gates
+        ``(gate, options)`` pairs to test.
+    seed
+        Passed through by the caller's ``probe``; recorded here so the check is reproducible
+        (Convention 3).
+    """
+    del seed
+    inert: dict[str, tuple[str, ...]] = {}
+    for gate, options in gates:
+        emitted = {option: np.asarray(probe(cfg.replace(**{gate: option}))) for option in options}
+        first = options[0]
+        same = tuple(
+            option
+            for option in options
+            if option != first and np.array_equal(emitted[option], emitted[first])
+        )
+        if same:
+            inert[gate] = (first, *same)
+    return inert
+
+
+def live_incumbent_for(
+    gate: str,
+    inert_under: Callable[[Config, str], bool],
+    incumbent: Config,
+    alternatives: Sequence[Candidate],
+    base_cfg: Config,
+) -> Candidate | None:
+    """Return the best-ranked alternative incumbent under which ``gate`` is **live**.
+
+    ``specs/09`` §3's re-ordering: a gate that cannot be measured where the search happens to
+    stand is measured where it can be, rather than being reported as a tie. ``alternatives``
+    is searched in rank order, so the gate is decided under the *best* configuration that can
+    decide it at all — which keeps the comparison as close to the shipped model as the
+    obstruction allows.
+    """
+    del incumbent
+    for candidate in sorted(alternatives, key=lambda c: c.rank):
+        cfg = base_cfg.replace(**candidate.overrides)
+        if not inert_under(cfg, gate):
+            return candidate
+    return None
+
+
 def rank_candidates(candidates: Sequence[Candidate]) -> list[Candidate]:
     """Fill in each candidate's median rank within this comparison group.
 
@@ -1342,6 +1546,7 @@ def run_selection(
 
     fits: list[tuple[dict[str, Any], int]] = []
     failures: list[tuple[str, int, str]] = []
+    inert_notes: dict[str, str] = {}
     cache: dict[tuple[tuple[str, Any], ...], dict[str, float]] = {}
 
     def score(overrides: dict[str, Any], steps: int, label: str = "") -> dict[str, float]:
@@ -1453,15 +1658,65 @@ def run_selection(
     descent_steps = selected_steps if escalated else reduced
 
     # 4. coordinate descent over the gates every option of which trains.
+    #
+    # Before a gate is scored, it is checked for **inertness** under the incumbent the search
+    # arrived at (``specs/09`` §3). A gate whose options cannot change a single emitted count
+    # there measures nothing, and reports a 0.0000 separation that reads like a perfect tie.
+    # The relation is derived by running the generation path, not declared; see
+    # :func:`inert_gates`.
+    probe = getattr(score_fn, "inertness_probe", None)
+    inert_cache: dict[tuple[str, str], bool] = {}
+
+    def _is_inert(cfg: Config, gate: str) -> bool:
+        if probe is None:
+            return False
+        key = (cfg.content_hash(), gate)
+        if key not in inert_cache:
+            options = dict(ALL_GATES)[gate]
+            found = inert_gates(
+                lambda c: probe(c, seed=run_seed), cfg, [(gate, options)], seed=run_seed
+            )
+            inert_cache[key] = gate in found
+        return inert_cache[key]
+
     for _ in range(int(base_cfg.selection_passes)):
         for gate, options in gates:
+            scoring_cfg = base_cfg.replace(**incumbent)
+            measured_under: dict[str, Any] = dict(incumbent)
+            note = ""
+            if _is_inert(scoring_cfg, gate):
+                alternative = live_incumbent_for(
+                    gate, _is_inert, scoring_cfg, full_budget, base_cfg
+                )
+                if alternative is None:
+                    raise InertGateError(
+                        f"gate {gate!r} is inert under every configuration this search scored: "
+                        "changing it cannot change a single emitted count, so there is nothing "
+                        "to measure and a 0.0000 separation would be reported as a tie. "
+                        "specs/09 §3 forbids scoring a gate under an incumbent that makes its "
+                        "options inert. Re-run with an incumbent that exercises it, or pin the "
+                        "gate and say so."
+                    )
+                measured_under = dict(alternative.overrides)
+                note = (
+                    f"inert under the incumbent ({_describe(incumbent, gate)}); "
+                    f"re-ordered and measured under {alternative.label}"
+                )
+                inert_notes[gate] = note
+                warnings.warn(
+                    f"gate {gate!r} is inert under the incumbent and was re-ordered: "
+                    f"measured under {alternative.label} instead. Its selected value is "
+                    "evidence from there, not from the shipped cell.",
+                    InertGateWarning,
+                    stacklevel=2,
+                )
             group = []
             for option in options:
-                overrides = {**incumbent, gate: option}
+                overrides = {**measured_under, gate: option}
                 group.append(
                     Candidate(
                         gate=gate,
-                        label=f"{gate}={option}",
+                        label=f"{gate}={option}" + (" (re-ordered)" if note else ""),
                         overrides=overrides,
                         steps=descent_steps,
                         scores=score(overrides, descent_steps, f"{gate}={option}"),
@@ -1470,7 +1725,10 @@ def run_selection(
             group = _ranked(group)
             _require_a_live_group(group, f"gate {gate}")
             candidates.extend(group)
-            incumbent = dict(min(group, key=lambda c: c.rank).overrides)
+            # The gate's *answer* is adopted; the rest of the re-ordered incumbent is not —
+            # the search still stands where the merged gate left it.
+            chosen = min(group, key=lambda c: c.rank).overrides[gate]
+            incumbent = {**incumbent, gate: chosen}
 
     # 5. the capability tie-break, per gate, on the table the search just produced
     # (``specs/09`` §3). ``min(rank)`` decided every gate above; below the reproducibility
@@ -1495,6 +1753,7 @@ def run_selection(
         escalating_metrics=tuple(escalating_metrics),
         reviews=reviews,
         failures=failures,
+        inert_notes=dict(inert_notes),
         pinned=dict(fixed),
         pinned_reason=pinned_reason,
     )
@@ -1836,6 +2095,24 @@ def write_selection_report(
         "implementations — `eval/metrics.py` is T10's module. The names match, and T10 "
         "re-scores the selected config with the vendored code.",
     ]
+    if result.inert_notes:
+        chunks += [
+            "",
+            "## ⚠️ Gates that were **inert** under the incumbent",
+            "",
+            "A gate is inert under a configuration when changing it cannot change a single "
+            "emitted count — so scoring it there measures nothing, and reports a **0.0000** "
+            "separation that reads like a perfect tie. `specs/09` §3 forbids it; the relation "
+            "is derived by running the generation path (`inert_gates`), not declared, and the "
+            "gate is re-ordered onto the best-ranked cell that can decide it.",
+            "",
+            "**Its selected value is evidence from there, not from the shipped cell.**",
+            "",
+            _table(
+                [[f"`{gate}`", why] for gate, why in sorted(result.inert_notes.items())],
+                ["gate", "what happened"],
+            ),
+        ]
     if result.pinned:
         chunks += [
             "",

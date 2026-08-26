@@ -45,10 +45,13 @@ from spatialcpav25_gen.train.select import (
     Candidate,
     CandidateFailedWarning,
     FitScorer,
+    InertGateError,
+    InertGateWarning,
     ScoreCache,
     SelectionError,
     capability_tie_break,
     incumbent_is_unconverged,
+    inert_gates,
     joint_gate_cells,
     repulsion_is_reachable,
     run_selection,
@@ -289,6 +292,11 @@ def test_report_is_written_with_every_joint_cell(split, tmp_path: Path):
 @pytest.mark.slow
 def test_selector_runs_and_persists(split, tmp_path: Path):
     """The real scorer runs end to end on the fixture and writes the report.
+
+    ``slow`` since 2026-08-26: it trains a loop per candidate *and* now pays the inertness
+    probe's untrained model per descent gate (32 s -> 69 s), which the fast suite's 3-minute
+    budget cannot carry. ``make test-all`` runs it. What the search *decides* is pinned by the
+    stub-scorer tests, which stay fast precisely because they do not fit anything.
 
     Toy budgets: this asserts the *wiring* — fit, generate, score on the six metrics, rank,
     persist — not the numbers. The numbers are ``scripts/t09_report.py``'s, at the real
@@ -1015,3 +1023,159 @@ def test_a_failure_recorded_by_an_earlier_process_still_reaches_the_report(split
     text = write_selection_report(second, tmp_path / "report.md").read_text()
     assert "ranked last" in text
     assert "text_emb_mode=lookup" in text
+
+
+# --------------------------------------------------------------------------------------
+# inert gates — the fourth control-that-cannot-fire
+# --------------------------------------------------------------------------------------
+
+
+def test_inertness_is_derived_by_running_the_path_not_declared(split):
+    """``cross-mix`` makes ``prior_mode`` / ``text_emb_mode`` inert, and nothing lists that.
+
+    ``infer/generate.py::_expression`` returns from ``_cross_mix`` before ``prior_latent``,
+    ``flow.sample``, the decoder and the gene embeddings are reached, so those gates cannot
+    change a single emitted count under it. :func:`inert_gates` establishes that by *running*
+    each option and comparing counts bitwise — so a future edit that creates a new inert path
+    is caught by the person who introduces it rather than by a reversal months later.
+
+    Asserted in both directions: inert under ``cross-mix``, live under ``zinb-flow``.
+    """
+    vol, training, _ = split
+    scorer = FitScorer(training, lambda cfg: build_embeddings(cfg, vol))
+    base = t09_cfg(train_steps=2).replace(layout_mode="resample")
+    probe = lambda cfg: scorer.inertness_probe(cfg, seed=SEED)
+    gates = [("prior_mode", ("correlated", "iid")), ("text_emb_mode", ("medcpt", "lookup"))]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        dead = inert_gates(probe, base.replace(expr_mode="cross-mix"), gates, seed=SEED)
+        live = inert_gates(probe, base.replace(expr_mode="zinb-flow"), gates, seed=SEED)
+
+    assert set(dead) == {"prior_mode", "text_emb_mode"}, (
+        "cross-mix copies donor counts verbatim; neither the GRF nor the gene embeddings "
+        f"can reach the output. Got {sorted(dead)}"
+    )
+    assert "prior_mode" not in live, "the GRF reaches the output under zinb-flow"
+    assert "text_emb_mode" not in live, "the gene embeddings reach the decoder under zinb-flow"
+
+
+def test_a_gate_inert_under_the_incumbent_is_re_ordered_not_scored_there(split):
+    """The defect this exists to stop: a 0.0000 margin reported as a decision.
+
+    On real STARmap the merged gate selected ``expr_mode=cross-mix``, and ``text_emb_mode``
+    was then coordinate-descended under it — the one configuration where the open-vocabulary
+    channel cannot act. Both options scored identically and the gate reported a margin of
+    exactly 0.0000, which is an absence of measurement wearing the clothes of a perfect tie.
+    """
+    _, training, _ = split
+    base = t09_cfg(train_steps=50)
+
+    class DeadUnderCrossMix:
+        """text_emb_mode changes nothing under cross-mix, and matters under zinb-flow."""
+
+        def __call__(self, cfg: Config, *, steps: int, seed: int) -> dict[str, float]:
+            if cfg.expr_mode == "cross-mix":
+                return dict.fromkeys(METRIC_NAMES, 0.90)  # identical for both options
+            value = 0.70 if cfg.text_emb_mode == "medcpt" else 0.50
+            return dict.fromkeys(METRIC_NAMES, value)
+
+        def inertness_probe(self, cfg: Config, *, seed: int):
+            # cross-mix emits the same counts whatever text_emb_mode / prior_mode say.
+            if cfg.expr_mode == "cross-mix":
+                return np.zeros((4, 3))
+            return np.full((4, 3), {"medcpt": 1.0, "lookup": 2.0}[cfg.text_emb_mode])
+
+    with pytest.warns(InertGateWarning, match="re-ordered"):
+        result = run_selection(
+            training,
+            base,
+            seed=SEED,
+            scorer=DeadUnderCrossMix(),
+            pinned={"layout_mode": "resample"},
+            pinned_reason="R11.",
+        )
+
+    assert result.config.expr_mode == "cross-mix", "the merged gate's own winner is unchanged"
+    assert "text_emb_mode" in result.inert_notes
+    assert "re-ordered" in result.inert_notes["text_emb_mode"]
+    # ...and the gate was actually decided, on evidence, rather than tied at 0.0000.
+    assert result.config.text_emb_mode == "medcpt"
+    scored = [c for c in result.candidates if c.gate == "text_emb_mode"]
+    assert scored, "the gate must still be scored, somewhere it is live"
+    assert {c.overrides["expr_mode"] for c in scored} == {"zinb-flow"}
+
+
+def test_a_gate_inert_everywhere_is_refused(split):
+    """No live incumbent means no measurement, and shipping a 0.0000 tie would be a fallback."""
+    _, training, _ = split
+
+    class DeadEverywhere:
+        def __call__(self, cfg: Config, *, steps: int, seed: int) -> dict[str, float]:
+            return dict.fromkeys(METRIC_NAMES, 0.5)
+
+        def inertness_probe(self, cfg: Config, *, seed: int):
+            return np.zeros((4, 3))
+
+    with pytest.raises(InertGateError, match="inert under every configuration"):
+        run_selection(
+            training,
+            t09_cfg(train_steps=50),
+            seed=SEED,
+            scorer=DeadEverywhere(),
+            pinned={"layout_mode": "resample"},
+            pinned_reason="R11.",
+        )
+
+
+def test_the_report_names_an_inert_gate(split, tmp_path):
+    """A re-ordered gate is a fact about the run, so a reader must not have to infer it."""
+    _, training, _ = split
+
+    class DeadUnderCrossMix:
+        def __call__(self, cfg: Config, *, steps: int, seed: int) -> dict[str, float]:
+            if cfg.expr_mode == "cross-mix":
+                return dict.fromkeys(METRIC_NAMES, 0.90)
+            return dict.fromkeys(METRIC_NAMES, 0.70 if cfg.text_emb_mode == "medcpt" else 0.50)
+
+        def inertness_probe(self, cfg: Config, *, seed: int):
+            if cfg.expr_mode == "cross-mix":
+                return np.zeros((4, 3))
+            return np.full((4, 3), {"medcpt": 1.0, "lookup": 2.0}[cfg.text_emb_mode])
+
+    with pytest.warns(InertGateWarning):
+        result = run_selection(
+            training,
+            t09_cfg(train_steps=50),
+            seed=SEED,
+            scorer=DeadUnderCrossMix(),
+            pinned={"layout_mode": "resample"},
+            pinned_reason="R11.",
+        )
+    text = write_selection_report(result, tmp_path / "r.md").read_text()
+    assert "were **inert** under the incumbent" in text
+    assert "0.0000" in text
+    assert "evidence from there, not from the shipped cell" in text
+
+
+def test_selection_folds_are_two_on_a_four_section_stack(split):
+    """Tier-1 STARmap's ``paper_2_4_6`` leaves four training sections, so n = 2, not 3.
+
+    ``selection_folds`` takes the *interior* sections — a boundary fold would decide gates on
+    the worst regime (open risk R3) — so ``Config.selection_n_folds = 3`` cannot be honoured
+    on a four-section stack. Every gate decision in a tier-1 selection is therefore a mean of
+    **two** numbers, and :func:`fold_scores` exists so a caller can see which fold moved.
+    Pinned as a test because the fold count is invisible in the report's six columns.
+    """
+    _, training, _ = split
+    cfg = t09_cfg()
+    assert cfg.selection_n_folds == 3
+    four = TrainingVolume(
+        specimen_id=training.specimen_id,
+        sections=list(training.sections)[:4],
+        gene_names=training.gene_names,
+        celltype_names=training.celltype_names,
+        region_names=training.region_names,
+        flattened_sections=training.flattened_sections,
+    )
+    assert len(selection_folds(four, cfg)) == 2, "interior of 4 sections is 2"

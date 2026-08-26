@@ -37,6 +37,7 @@ from spatialcpav25_gen.model.field import (
 )
 from spatialcpav25_gen.model.noise import GaussianRandomField
 
+from tests.fixtures.synthetic import make_synthetic_volume
 from tests.gate2_criteria import (
     ANGLES_DEG,
     measure_augmentation_completeness,
@@ -622,3 +623,43 @@ def test_gate2_4_retrieval_does_not_collapse_to_copying(cfg: Config, gate_volume
 def test_gate2_angles_cover_the_specs_sweep() -> None:
     """The dihedral angles the gate reports are exactly the ones the spec names."""
     assert ANGLES_DEG == (0.0, 15.0, 30.0, 45.0, 60.0, 90.0)
+
+
+def test_the_bbox_excludes_the_boundary_sections_own_slabs():
+    """Measured, not fixed: half of the first section's cells query outside the field's bbox.
+
+    ``CTFFlow._layout_targets`` jitters every cell's depth uniformly within its slab
+    (``z += U(-thickness/2, +thickness/2)``), but ``Volume.bbox`` is the box of the section
+    **centres**, not of the slabs. The first section sits *at* ``z_min``, so half its jittered
+    cells fall below the bbox floor and are clamped to it — and the same at ``z_max``. The
+    fraction is ~50 % of that section's cells regardless of the point set, which is the
+    signature seen on tier-1 STARmap (2067 of section_1's 4073 cells) and on the fixture.
+
+    The consequence is real: for those cells the intensity head is queried at the tissue's
+    surface instead of at the depth the jitter chose, so the layout term's Poisson integral is
+    evaluated on a support that is half surface-clamped **at exactly the boundary sections**.
+    That is open risk R3's regime, and a candidate contributor to R11's unstable intensity
+    integral.
+
+    Not fixed here: inflating the bbox by half a section thickness changes the support every
+    fitted number was produced on, which is a T03/T04 design decision, not a test's to take.
+    This asserts the arithmetic so the day the bbox changes, this fails and the record is
+    updated.
+    """
+    vol, _ = make_synthetic_volume(seed=0)
+    box = np.asarray(vol.bbox, dtype=np.float64)
+    first, last = vol.sections[0], vol.sections[-1]
+
+    assert float(first.z) == pytest.approx(box[0, 2], abs=1e-6), "the first section is at z_min"
+    assert float(last.z) == pytest.approx(box[1, 2], abs=1e-6), "the last section is at z_max"
+
+    # The slab the jitter draws in extends half a thickness beyond the box, at each end.
+    half = 0.5 * float(first.thickness)
+    assert half > 0.0
+    assert first.z - half < box[0, 2], "the first slab reaches below the bbox floor"
+    assert last.z + half > box[1, 2], "the last slab reaches above the bbox ceiling"
+
+    # ...and uniform jitter puts half of them there, which is the ~50 % that gets clamped.
+    gen = np.random.default_rng(0)
+    jitter = gen.uniform(-half, half, size=20_000)
+    assert (first.z + jitter < box[0, 2]).mean() == pytest.approx(0.5, abs=0.02)

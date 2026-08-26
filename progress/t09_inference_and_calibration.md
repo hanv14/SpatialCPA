@@ -824,3 +824,91 @@ and costs seconds; it must pass on the campaign machine before anything is fitte
 the six-metric row against `oracle` and `flanking_copy` are what the run produces; whether `medcpt`
 or `lookup` wins the gate, and by how much against R10's **0.0335** envelope, is what the run
 answers.
+
+---
+
+### T09 — the inert-gate rule, and three findings from the first real selection run (2026-08-26)
+
+The tier-1 STARmap selection ran. **Two of its four gates measured nothing**, and the run
+surfaced two further defects. This entry is the fix and the diagnosis; the measurements the
+run owes are named at the end and have not been made.
+
+#### 1. `prior_mode` and `text_emb_mode` were scored where they cannot act
+
+Both came back with a separation of **exactly 0.0000** under the incumbent the merged gate
+selected, `expr_mode="cross-mix"`. That is not a tie. `infer/generate.py::_expression` returns
+from `_cross_mix` **before** `prior_latent`, `flow.sample`, the decoder and the gene embeddings
+are reached, so neither the GRF nor the text channel can change a single emitted count. The
+gate built to test the open-vocabulary claim ran in the one configuration where it cannot be
+tested, and `calibrate_lengthscale` already refuses that path for precisely this reason.
+
+**This is the fourth control-that-cannot-fire in this project** — after `text_emb_mode` being a
+dead gate nothing read (§9), the reduced-budget rule (R8/R9), and the capability tie-break
+never being wired into the search.
+
+**The rule, enforced the way the reduced-budget one is.** `specs/09` §3 now carries: *a gate
+must not be scored under an incumbent that makes its options inert.* And the relation is
+**derived, not declared** — `inert_gates(probe, cfg, gates)` *runs* each option and compares
+emitted counts bitwise. Nothing writes down "cross-mix kills prior_mode"; a future edit that
+creates a new inert path is caught by the person who introduces it rather than by a reversal
+months later. `test_inertness_is_derived_by_running_the_path_not_declared` asserts it on the
+real code in both directions: inert under `cross-mix`, live under `zinb-flow` and `auto-blend`.
+
+Inertness is a property of the **code path, not the weights**, so the probe uses an *untrained*
+model: no fit, one generation per option. It runs *before* the gate is scored, so the fits are
+never spent on a measurement that cannot mean anything.
+
+On detection the selector **re-orders**: the gate is measured under the best-ranked cell that
+can decide it (`live_incumbent_for`), the choice is recorded in `SelectionResult.inert_notes`,
+a `InertGateWarning` fires, and the report carries a section saying **the gate's value is
+evidence from there, not from the shipped cell**. A gate inert under *every* scored
+configuration raises `InertGateError` rather than shipping a 0.0000 tie.
+
+#### 2. Every tier-1 gate decision rests on **two** folds, not three
+
+`selection_folds` takes the *interior* sections — a boundary fold would decide gates on the
+worst regime (R3). `paper_2_4_6` leaves four training sections (1/3/5/7), so the interior is
+two, and `Config.selection_n_folds = 3` cannot be honoured. Nothing said so: the six columns
+look identical whether they average 2 folds or 30.
+
+`fold_scores` now returns the unaveraged per-fold six beside `selection_scores`'s mean, and
+`test_selection_folds_are_two_on_a_four_section_stack` pins the count.
+
+#### 3. The bbox clamp is the boundary sections' own slabs — diagnosed, not fixed
+
+~50 % of query points clamped, "repeatedly". Traced by instrumenting `_warn_if_outside`:
+**every outside point is on the z axis**, the pose's rotation and centre are correct, and the
+model→data round trip is exact to **1.6e-5 µm** (float32 noise). It is not a frame bug.
+
+`CTFFlow._layout_targets` jitters each cell's depth uniformly within its slab
+(`z += U(-thickness/2, +thickness/2)`), but `Volume.bbox` is the box of section **centres**,
+not of slabs. The first section sits *at* `z_min`, so half its jittered cells fall below the
+bbox floor; likewise at `z_max`. That is ~50 % of one section's cells regardless of the point
+set — matching the fixture (749/1500 cells, 2103/4096 MC points) and tier 1 (**2067 of
+section_1's 4073**, against a predicted ~2036).
+
+**The consequence is real.** For those cells the intensity head is queried at the tissue's
+surface instead of at the depth the jitter chose, so the layout term's Poisson integral is
+evaluated on a support that is half surface-clamped **at exactly the boundary sections** —
+R3's regime, and a candidate contributor to R11's intensity integral being unstable 3.7x
+between refits.
+
+**Not fixed here.** Inflating the bbox by half a section thickness changes the support every
+fitted number in this project was produced on; that is a T03/T04 design decision, not this
+task's. `test_the_bbox_excludes_the_boundary_sections_own_slabs` asserts the arithmetic so the
+day the bbox changes, it fails and the record is updated. Recorded as a spec question.
+
+#### 4. What this leaves owed
+
+Three measurements, none of them made:
+
+* **`medcpt` vs `lookup` under `expr_mode="zinb-flow"`**, where the decoder is live. This is
+  the measurement that was asked for and the selection could not make.
+* **`cross-mix` beating `zinb-flow` by 0.0885 (2.6x the 0.0335 envelope) at full budget on
+  real data** — copying beating generating on STARmap. Substantive enough to deserve scrutiny
+  rather than acceptance, and at n = 2 folds a mean can be a win plus a loss.
+* Both **per fold**, because a mean of two numbers is not a result.
+
+`scripts/t09_audit_starmap.py` makes them: one gate, an incumbent the caller names, per-fold
+columns, and each margin printed against 0.0335. `--preflight` refuses an incumbent under which
+the gate is inert before anything is fitted.
