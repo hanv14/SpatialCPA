@@ -997,3 +997,98 @@ tails. It now allows a float32 tolerance, with the measurement in the comment.
 `scripts/t09_audit_starmap.py --fit-only` fits each arm and stops. The fit checkpoint is a
 resume point and re-entering a finished fit is a no-op, so the four arms of the two audits run
 as **four concurrent processes** and the two scoring runs afterwards resume instantly.
+
+---
+
+### T09 — both STARmap audits, both negative, and what they actually establish (2026-08-26)
+
+`reports/t09_audit_text_emb_mode.md` and `reports/t09_audit_expr_mode.md` (+ their `.json`), run
+on tier-1 STARmap at 2400 steps, seed 1, two LOSO folds (`section_3`, `section_5`), fits resumed
+from `--fit-only` checkpoints. Both answers are **negative**, and the second one is more
+interesting than "copying wins".
+
+#### 1. `medcpt` loses to `lookup` — the open-vocabulary channel does not help here
+
+| metric | `medcpt` | `lookup` | margin | vs 0.0335 |
+|---|---|---|---|---|
+| `morans_pearson` | 0.7510 | **0.7943** | 0.0433 | 1.3x |
+| `gearys_pearson` | 0.7519 | **0.7944** | 0.0425 | 1.3x |
+| `umap_mixing` | 0.6564 | 0.6716 | 0.0152 | inside |
+| `marker_field_r` | −0.1355 | −0.1196 | 0.0159 | inside |
+| `marker_depth_r` | −0.3084 | −0.3117 | 0.0033 | inside |
+| `celltype_localization` | 0.0256 | 0.0256 | 0.0000 | inert |
+
+Folds agree in sign on both metrics that clear the envelope. **This is the first real-data
+measurement of the gate at all** — every prior STARmap number was `lookup` under another name
+(the five embedding builders that passed zeros or a bare symbol). The answer on a 28-gene panel
+is that the text channel costs about 1.3x the envelope on the two autocorrelation metrics and
+does nothing measurable on the other four.
+
+#### 2. `cross-mix` beats `zinb-flow` — but on exactly the three metrics the record predicted
+
+| metric | `cross-mix` | `zinb-flow` | margin | vs 0.0335 |
+|---|---|---|---|---|
+| `morans_pearson` | **0.9255** | 0.7510 | 0.1745 | **5.2x** |
+| `gearys_pearson` | **0.9293** | 0.7519 | 0.1774 | **5.3x** |
+| `umap_mixing` | **0.8098** | 0.6564 | 0.1534 | **4.6x** |
+| `marker_field_r` | −0.1412 | −0.1355 | 0.0057 | inside |
+| `marker_depth_r` | −0.3086 | −0.3084 | 0.0002 | inside |
+| `celltype_localization` | 0.0256 | 0.0256 | 0.0000 | inert |
+
+**The three it wins are the three T06/T09 already said a copy would win.** The record's own words
+about the independent-donor baseline: *"that baseline emits **real counts** drawn from real
+donors, so per-gene autocorrelation and a shared-embedding mixing score are exactly where it is
+strongest and where a generative head has the least to add."* `morans_pearson` and
+`gearys_pearson` **are** per-gene autocorrelation; `umap_mixing` **is** the shared-embedding
+mixing score. `cross-mix` emits donor counts verbatim, so it is a copy by construction.
+
+On the three metrics that measure **spatial arrangement** rather than count realism, the two are
+tied inside the envelope — and on `marker_field_r`, the project's standing weakness, `zinb-flow`
+is nominally *ahead*.
+
+So the honest statement is not "copying beats generating on STARmap". It is: **copying beats
+generating on the three metrics that reward emitting real counts, by 4.6–5.3x, and neither path
+can be distinguished on the three that would show a generative advantage.** That is a much
+weaker claim for copying and a much sharper indictment of the generative path: it pays a large
+price on count realism and buys nothing measurable in arrangement.
+
+#### 3. Three cross-checks the two JSONs support, none of them planned
+
+* **Determinism across processes.** The `zinb-flow` arm of the `expr_mode` audit and the
+  `medcpt` arm of the `text_emb_mode` audit are the *same configuration* — hash
+  `9d1ce6c0ff7cfb15` in both — and their means and per-fold values are **identical to full
+  double precision** (`0.7509865177838673`, …). Two separate processes, same answer. Convention
+  3 holds on real data, unprompted.
+* **A fifth inert control.** `celltype_localization` is **constant at 0.0255776032059378 across
+  all four arms**. Under `layout_mode="resample"` the cell types are copied from the flanking
+  real section, so that metric cannot respond to *any* expression-path gate. The effective
+  comparison is over **five** metrics, not six — and median rank over six with one guaranteed
+  tie compresses every rank difference, because both candidates take 1.5 on it.
+* **`--fit-only` worked.** Per-arm wall times are 5.1–7.8 s against a ~57 min 2400-step fit, so
+  every arm re-entered a finished checkpoint as a no-op and paid only for the two fold scorings.
+
+#### 4. The instrument, stated because it is not bench3's
+
+These are `fold_scores` → `section_scores`, i.e. **T08's kernels under T10's names**
+(`specs/09` §10), scored on internal LOSO over *training* sections. They are **not**
+`bench3.evaluate_paper` and **not** the held-out 2/4/6 sections, so they must not be put beside
+`reports/pilot.md`'s or `progress/numbers.md`'s bench3 numbers. The clearest tell is
+`marker_field_r`, negative here (−0.12 to −0.17) where the pilot's bench3 figure was +0.1611:
+different estimator, different sections.
+
+#### 5. What this does and does not establish
+
+**Establishes**, at one seed, on two folds, on this instrument: on tier-1 STARmap the text
+channel does not help, and the flow path does not beat a copy on any metric while losing badly
+on three.
+
+**Does not establish** that either loses in general. The reading to test — and it is the
+dataset's own properties, not a hope — is that **tier-1 STARmap is close to the most favourable
+case a copy could be handed**: 28 genes, median per-gene detection **0.9999**, 22 µm spacing.
+A panel that dense and that finely sectioned makes the neighbouring section an excellent
+estimate of the held-out one, and leaves a 28-dimensional text channel very little to say.
+`deep_starmap` — 1017 genes, `raw_counts`, 137 types, the same `paper_2_4_6` design — varies
+both at once, and is the next measurement.
+
+**One seed.** `specs/09` §3 asks for `claim_min_seeds` = 3 before any of this reaches a paper
+claim, and the two margins that clear the envelope do so by 1.3x.
