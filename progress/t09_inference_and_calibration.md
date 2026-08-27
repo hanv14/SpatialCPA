@@ -1278,3 +1278,85 @@ restores from checkpoints, six rows, JSON and markdown, `make lint` / `mypy --st
 `pytest -m "not slow"` (371 passed) clean. Every partial on that fixture is noise, which is the
 right answer — its text vectors are deterministic hashes of the descriptors and carry no
 geometry.
+
+### T09 — the `marker_depth_r` mechanism: hypothesis rejected, but the metric survives the test that killed it (2026-08-27)
+
+`reports/t09_depth_mechanism_deep.md` (+ `.json`). `deep_starmap`, `paper_2_4_6`, 115 830 cells x
+1017 genes, 2 folds, 32 marker genes each, 2400 steps, seed 1, 2000 permutations. No refit — the
+audits' four fits restored from their checkpoints. The identity held at every one of the eight
+arm x fold combinations or the run would have aborted.
+
+#### 1. Semantic borrowing is not what is happening
+
+The hypothesis was that MedCPT groups functionally related genes, so a gene borrows laminar
+structure from its text neighbours. It predicts a **positive partial** — gain against the
+neighbours' gradient strength, holding the gene's own gradient fixed.
+
+| gate | fold | rho(gain, own trend) | rho(gain, nbr trend) | **partial** | p (1-sided) |
+|---|---|---|---|---|---|
+| `expr_mode` | `section_3` | +0.082 | +0.085 | **+0.178** | 0.171 |
+| `expr_mode` | `section_5` | +0.411 | −0.247 | **−0.208** | 0.892 |
+| `expr_mode` | pooled | +0.128 | −0.101 | **−0.041** | 0.613 |
+| `text_emb_mode` | `section_3` | +0.016 | +0.187 | **+0.218** | 0.131 |
+| `text_emb_mode` | `section_5` | +0.071 | −0.044 | **−0.096** | 0.714 |
+| `text_emb_mode` | pooled | −0.064 | −0.080 | **−0.113** | 0.730 |
+
+Nothing reaches significance, the two folds **disagree in sign** on both gates, and the pooled
+partial is ≈ 0 on both. The two sub-questions answer separately:
+
+* **does the gain concentrate on the strongest-gradient genes?** No. `rho(gain, own trend)` is
+  +0.082 / +0.411 and +0.016 / +0.071 — one number out of four, on one fold.
+* **does it track text-space similarity?** No, and not even before the partial: the *raw*
+  neighbour correlation is +0.085 / −0.247 and +0.187 / −0.044. There is no signal here that the
+  partial is stripping away — the control is not what is killing the hypothesis.
+
+**Power keeps this from being a disproof**: 18–28% per fold, 35–42% pooled
+(`reports/t09_depth_mechanism_calibration.md`). This is "not supported", not "refuted".
+
+#### 2. But the decomposition establishes something the margin could not
+
+The per-gene terms answer three questions the 2-fold mean cannot reach
+(`scripts/t09_depth_mechanism_summary.py`, which reads the diagnostic's JSON — no refit):
+
+**The advantage is broad, not carried by a few genes.** `expr_mode`: **24/32 and 25/32** genes
+improve (Wilcoxon p = 1.1e−3, 5.1e−4). `text_emb_mode`: **26/32 and 20/32** (9.1e−4, 4.3e−2).
+Per-gene gains within a fold share a model and a section, so these are optimistic — but a mean
+over two folds could not have shown breadth either way.
+
+**Which gene benefits is reproducible — for one gate only.**
+
+| gate | Pearson(gain in `section_3`, gain in `section_5`) | p | improved in both |
+|---|---|---|---|
+| `expr_mode` | **+0.645** | 0.000 | 19/29 |
+| `text_emb_mode` | +0.259 | 0.175 | 16/29 |
+
+**This independently reproduces the fold-spread split, at 29 degrees of freedom instead of 2.**
+The fold-spread column said `expr_mode`'s `marker_depth_r` win stands (4.4x its within-arm
+spread) and `text_emb_mode`'s does not (0.9x). The per-gene pattern says the same thing by a
+different route: the flow path helps a *stable, identifiable set of genes* on both held-out
+sections, and the text channel's per-gene pattern is not distinguishable from noise. Two
+statistics with almost nothing in common agreeing on which of the two wins is real is the
+strongest thing in this run.
+
+**A correlation that is not a finding.** The two gates appear to help the same genes (+0.502,
++0.532; p ≈ 0.002–0.003). They share their winning arm — the same fitted config is `zinb-flow`
+for one gate and `medcpt` for the other — so both gains carry the same `+r(shared arm)` term and
+would correlate with unrelated losing arms. Recorded with the caveat so it is not later read as
+the two gates corroborating each other.
+
+#### 3. What this does to the framing
+
+The scope statement is available for the **generative path** and not for the **text channel**:
+
+* `zinb-flow` has a real advantage on laminar depth structure — broad across genes, reproducible
+  in *which* genes, robust to the fold check, on a 1017-gene panel — while losing count realism
+  by 8–16x. "Better at a different thing" is supportable here.
+* `medcpt`'s only positive remains **unestablished** on every test applied to it: inside its own
+  fold spread, and its per-gene pattern does not reproduce across folds. The open-vocabulary
+  channel has still not been shown to do anything on real data.
+* The mechanism is **not** the proposed one. Whatever `zinb-flow` is doing for depth profiles, it
+  is not gene-neighbourhood borrowing in text space — which is consistent with the effect being
+  present at all under `text_emb_mode=lookup`, where there is no text geometry to borrow from.
+
+**Unchanged**: `claim_min_seeds` = 3 on `marker_depth_r` (12 fits) remains the decisive
+experiment. This run narrows what it needs to settle — `expr_mode`, not both gates.
