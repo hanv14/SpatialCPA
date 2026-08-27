@@ -1735,3 +1735,95 @@ five-metric table, not six.** A 0.0000 margin there is structural and is not evi
 * **`medcpt` has no positive on real data**, and one established negative (`morans_pearson`).
 * Unchanged by any of this: bench3's published `paper_*` numbers, the training losses, and R11's
   `layout_mode=resample` default.
+
+### T09 — the finding, and the scope limit underneath it (2026-08-27)
+
+#### The finding: `cross-mix` **is** the nearest-section copy, measured two independent ways
+
+`layout_mode=resample` copies the nearest admissible flanking section's coordinates; `cross-mix`
+then fills them with donor counts. `scripts/t09_depth_ceiling.py` measures what copying a whole
+real section scores, **with no model, no fit and no generation** — a completely separate code
+path. On `deep_starmap` they report the same number:
+
+| fold | `cross-mix` `marker_depth_r` | nearest donor | model-free copy | difference |
+|---|---|---|---|---|
+| `section_3` | +0.9622 | `section_5` (42.0 µm) | +0.9631 | **−0.0009** |
+| `section_5` | +0.8677 | `section_7` (40.6 µm) | +0.8578 | **+0.0099** |
+
+**This is the strongest result in this line of work.** It is not a margin between two arms — it
+is an identification. `cross-mix` under the shipped `resample` default is a copy of the nearest
+other section, to within a hundredth, and its scores are a property of the tissue rather than of
+the model. Every table that quotes `cross-mix` as a *method* is quoting a copy.
+
+Beside it, the statement worth carrying instead of either gate's margin:
+
+| fold | `zinb-flow` | copying | noiseless ceiling √R | shuffled floor | share of copying |
+|---|---|---|---|---|---|
+| `section_3` | +0.3422 | +0.9631 | 0.9962 | +0.0036 | **36%** |
+| `section_5` | +0.2982 | +0.8578 | 0.9950 | +0.0304 | **35%** |
+
+**The flow head models laminar depth — well clear of the shuffled floor — and gets about a third
+of what a copy gets for free.** The same fraction on both folds. That is more useful than
+"copying wins by 0.5948", because it says how much of the gap is real modelling and how much is
+the task being easy.
+
+#### The scope limit: on this tissue the reconstruction task is *saturated*
+
+The ceiling test also measured how far real sections' depth profiles stay correlated: **0.78–0.99
+across 40–125 µm**. On tissue that stable, copying is near-optimal by construction. Quantified as
+the **headroom** — how much a *perfect, noiseless* method could beat the best available copy, on
+the same attenuated scale the audits report:
+
+| target | noiseless ceiling √R | best copy | headroom | vs the 0.0335 envelope |
+|---|---|---|---|---|
+| `section_1` | 0.9957 | 0.9859 (43 µm) | +0.0098 | **0.3x** |
+| `section_3` | 0.9962 | 0.9861 (43 µm) | +0.0101 | **0.3x** |
+| `section_5` | 0.9950 | 0.9739 (42 µm) | +0.0210 | **0.6x** |
+| `section_7` | 0.9935 | 0.9293 (41 µm) | +0.0642 | 1.9x |
+
+**On three of the four sections the entire headroom above copying is smaller than the run-to-run
+reproducibility envelope.** Median 0.0156, 0.5x. No method — not v25, not a perfect one — can beat
+copying by a measurable amount on this design. `marker_depth_r` under `paper_2_4_6` is not a test
+the generative path can pass or fail; it is a test that has no room in it.
+
+Headroom does grow with the gap. Median over all donor pairs, by section spacing:
+
+| gap | median headroom | vs envelope | |
+|---|---|---|---|
+| ~40 µm | +0.0270 | 0.8x | **saturated — inside the envelope** |
+| ~80 µm | +0.0757 | 2.3x | marginal |
+| ~120 µm | +0.1655 | 4.9x | real headroom |
+
+`paper_2_4_6` puts every fold in the ~40 µm regime. **This is a property of the experimental
+design, not of the method**, and it was invisible until the metric had a measured ceiling.
+
+#### What the generative path's case has to rest on, and what would test it
+
+Reconstruction of an interpolated section cannot separate the methods here. The case has to rest
+on the two things copying cannot do at all:
+
+**(a) Unmeasured genes — and note this retires the `text_emb_mode` result as evidence *against*
+`medcpt`.** `lookup` has no embedding row for a gene it never saw; `medcpt` projects one from
+text. But **every A3 measurement so far has been on genes the model was fitted on**, where
+`lookup` memorises per gene and `medcpt` is strictly more constrained (a linear image of a frozen
+768-d vector plus a gated residual). *The gate as run cannot favour `medcpt` even in principle.*
+Its repeated losses are the expected result of testing an open-vocabulary mechanism on a closed
+vocabulary. The machinery to do it properly already exists and has never been run:
+`TextGroundedEmbedding.forward_zero_shot`, and `gene_pool` threaded through `train_ctfflow`,
+`reconstruct_hidden` and the SEFL losses precisely so a zero-shot run's held-out genes stay held
+out.
+
+**(b) Arbitrary planes.** `generate_oblique` and `generate_curved` exist. On real data there is no
+ground truth at an oblique angle — no real section to score against — so the comparison is
+**categorical**: copying has no output at all, and the measurable quantity is self-consistency
+(`stack_pair_correlations`, intersection agreement where two planes cross) rather than a
+head-to-head score.
+
+**The cheap screen before either.** `exclude_z` already accepts an arbitrary set, so on the
+**existing checkpoints** one can widen the effective gap at inference — reconstruct a fold with
+the nearest one or two admissible donors also excluded — and measure whether `zinb-flow` degrades
+more slowly than copying does. The copy curve is already known model-free; only v25's is missing.
+Scoring only, no refits. **Caveat that must travel with it**: the model was *trained* on the
+sections being excluded, so this measures extrapolation when the nearby evidence is withheld at
+inference, not when it was never seen. It is a screen, not the experiment — if v25's curve falls
+as fast as copying's, the wide-gap refit will fail too and need not be paid for.
