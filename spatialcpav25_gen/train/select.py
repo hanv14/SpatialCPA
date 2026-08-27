@@ -104,6 +104,7 @@ __all__ = [
     "Candidate",
     "CandidateFailedWarning",
     "FitScorer",
+    "FrameMismatchError",
     "GateReview",
     "InertGateError",
     "InertGateWarning",
@@ -593,10 +594,76 @@ def _safe_r(a: npt.NDArray[Any], b: npt.NDArray[Any]) -> float:
     return float(np.corrcoef(x, y)[0, 1])
 
 
+# How far outside the real section's bounding box a generated centroid may sit before
+# `assert_same_frame` calls it a frame error rather than a different window. Not a Config field:
+# it is a correctness guard with no tuning meaning, and a config knob would invite widening it
+# until the guard stops firing.
+_FRAME_CHECK_MARGIN_FRAC = 0.25
+
+
 def _normalised(counts: npt.NDArray[Any], cfg: Config) -> Tensor:
     """Library-size normalise to 1 on the linear scale. ``(N, G)`` -> ``(N, G)`` float32."""
     return normalised_linear(
         torch.from_numpy(np.asarray(counts, dtype=np.float32)), 1.0, float(cfg.metric_eps)
+    )
+
+
+class FrameMismatchError(SelectionError):
+    """The generated and real coordinates are not in the same physical frame.
+
+    Raised by :func:`assert_same_frame`. Three of the six metrics — ``marker_field_r``,
+    ``marker_depth_r`` and ``celltype_localization`` — place both sides on a ruler built from
+    the *real* section's extent, so they mean something only when the two coordinate arrays are
+    in one frame. The other three are built on each side's own kNN graph and are invariant to a
+    rigid transform, which is exactly why this defect is silent without a guard: it puts half
+    the table on the floor and leaves the other half untouched, which reads as a modelling
+    result rather than as a bug.
+    """
+
+
+def assert_same_frame(gen_p: npt.NDArray[Any], real_p: npt.NDArray[Any], section_id: str) -> None:
+    """Refuse coordinates that are not in the real section's frame. ``(N, 2)``, ``(M, 2)``.
+
+    Two independent conditions, both scaled by the real section's own size so neither carries a
+    length unit:
+
+    * the two **centroids** must sit within :data:`_FRAME_CHECK_MARGIN_FRAC` of the section's
+      bounding-box diagonal of each other — this catches a re-centring, which is what the
+      plane-local ``(u, v)`` does (it is centred on the origin, the section is not);
+    * the two **per-axis extents** must agree to the same fraction — this catches a rotation
+      that swaps the axes of a section that is not square.
+
+    **Not a proof.** A pure rotation about the true centroid of a *square* region changes
+    neither statistic and would pass. The guard exists because the observed defect (a 90-degree
+    rotation *and* a re-centring, from
+    :func:`~spatialcpav25_gen.infer.planes.section_plane`'s basis) is caught by the first
+    condition on any real section, not because coordinate frames can be told apart in general.
+    The call sites carry the explicit ``obsm["xyz"]`` comment for the same reason.
+    """
+    if gen_p.size == 0 or real_p.size == 0:
+        return
+    lo = real_p.min(axis=0)
+    hi = real_p.max(axis=0)
+    extent = hi - lo
+    diagonal = float(np.linalg.norm(extent))
+    if diagonal <= 0.0:
+        return
+    offset = float(np.linalg.norm(gen_p.mean(axis=0) - real_p.mean(axis=0)))
+    gen_extent = gen_p.max(axis=0) - gen_p.min(axis=0)
+    skew = float(np.max(np.abs(gen_extent - extent) / np.maximum(extent, 1e-9)))
+    if offset <= _FRAME_CHECK_MARGIN_FRAC * diagonal and skew <= _FRAME_CHECK_MARGIN_FRAC:
+        return
+    raise FrameMismatchError(
+        f"section_scores: the generated coordinates are not in section {section_id!r}'s frame. "
+        f"Their centroid is {offset:.0f} um from the real section's "
+        f"({offset / diagonal:.0%} of its {diagonal:.0f} um diagonal) and their per-axis extent "
+        f"differs by up to {skew:.0%}; both must stay within "
+        f"{_FRAME_CHECK_MARGIN_FRAC:.0%}. A generated AnnData carries the *plane-local* (u, v) "
+        "at obsm[cfg.coord_key] and the physical (x, y, z) at obsm['xyz']; pass "
+        "obsm['xyz'][:, :2]. Scoring the plane-local coordinates puts marker_field_r, "
+        "marker_depth_r and celltype_localization on the floor while leaving the three "
+        "graph-internal metrics untouched, which is not distinguishable from a modelling "
+        "result without this check."
     )
 
 
@@ -612,8 +679,16 @@ def section_scores(
 ) -> dict[str, float]:
     """Return the six target metrics for one generated section against one real section.
 
-    ``gen_coords`` and the real section's coordinates are **in-plane** ``(N, 2)``; the two
-    sides have different cells and different cell counts, which every one of the six
+    ``gen_coords`` must be **physical** ``(N, 2)`` micrometres in the volume's own frame — the
+    same frame as ``real.coords`` — because three of the six place the two sides on one shared
+    ruler. For a generated ``AnnData`` that is ``obsm["xyz"][:, :2]`` and **not**
+    ``obsm[cfg.coord_key]``: the latter is the *plane-local* ``(u, v)``
+    (:func:`~spatialcpav25_gen.infer.generate.generate_section`'s documented output), which for
+    a :func:`~spatialcpav25_gen.infer.planes.section_plane` is the physical frame rotated 90
+    degrees and re-centred on the section's bounding box. :func:`assert_same_frame` refuses that
+    mismatch rather than returning a number computed on two different rulers.
+
+    The two sides have different cells and different cell counts, which every one of the six
     tolerates by construction — they are all distribution-level statistics.
 
     Returns ``{metric: value}`` over :data:`METRIC_NAMES`, higher better throughout.
@@ -623,6 +698,7 @@ def section_scores(
     real_x = _normalised(real_counts, cfg)
     gen_p = np.asarray(gen_coords, dtype=np.float64)[:, :2]
     real_p = np.asarray(real.coords, dtype=np.float64)
+    assert_same_frame(gen_p, real_p, str(real.section_id))
 
     w_gen = knn_weight_graph(gen_p, cfg)
     w_real = knn_weight_graph(real_p, cfg)
@@ -861,7 +937,8 @@ def _fold_scores(
         per_fold.append(
             section_scores(
                 emitted_counts(adata),
-                np.asarray(adata.obsm[cfg.coord_key], dtype=np.float64),
+                # obsm["xyz"], not obsm[cfg.coord_key]: the latter is the plane-local (u, v).
+                np.asarray(adata.obsm["xyz"], dtype=np.float64)[:, :2],
                 types,
                 hidden,
                 axis,

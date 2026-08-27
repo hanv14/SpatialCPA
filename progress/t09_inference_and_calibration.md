@@ -1440,3 +1440,114 @@ guessing from the filename, and runs that differ in anything but the seed (`trai
 cannot work without.
 
 `make lint`, `mypy --strict`, `pytest -m "not slow"` (371 passed) clean.
+
+### T09 — the ceiling test answered its question and exposed a coordinate-frame defect (2026-08-27)
+
+`reports/t09_depth_ceiling_deep.md` (+ `.json`), run on `deep_starmap` / `paper_2_4_6`, all four
+training sections. No model, no fit, no generation.
+
+| target | cells | split-half R | noiseless ceiling √R | nearest other section | best other | shuffled floor |
+|---|---|---|---|---|---|---|
+| `section_1` | 39 327 | +0.9914 | 0.9957 | +0.9859 | +0.9859 | −0.0217 |
+| `section_3` | 29 842 | +0.9924 | 0.9962 | +0.9631 | +0.9861 | +0.0036 |
+| `section_5` | 28 654 | +0.9900 | 0.9950 | +0.8578 | +0.9739 | +0.0304 |
+| `section_7` | 18 007 | +0.9871 | 0.9935 | +0.9293 | +0.9293 | +0.0029 |
+
+`self` was exactly 1.000000 on all four, so the profile code reproduces the metric.
+
+**The metric is almost perfectly reproducible, and copying a whole real section scores +0.86 to
++0.99.** Against that, the audits' `zinb-flow` at **+0.2745** and `cross-mix` at **+0.0147** are
+both at the **shuffled floor** (−0.022 … +0.030). `cross-mix` *literally copies donor counts*; it
+cannot be 60x worse than copying a section unless something is broken. That is a defect
+signature, not a modelling result — and it was.
+
+#### The defect
+
+`generate_section` documents its output as ``obsm[cfg.coord_key]`` = the **plane-local** `(u, v)`
+and `obsm["xyz"]` = the physical `(x, y, z)`. `_fold_scores` passed `obsm[cfg.coord_key]` into
+`section_scores`, which compares it against `Section.coords` — **physical**. For
+`section_plane` the plane basis is `e1 = (0, 1, 0)`, `e2 = (-1, 0, 0)`, so
+
+    u = y - y_c ,   v = -(x - x_c)
+
+— a 90-degree rotation *and* a re-centring on the section's bounding box. Verified on real code
+to **1.5e-5 µm**: `obsm['spatial']` ranged `u[-399, +399] v[-398, +398]` where the real section
+ranged `x[2, 799] y[1, 800]`, and `obsm['xyz'][:, :2]` matched the real range exactly.
+
+**Why it was silent for the whole of T09.** Three of the six metrics are built on each side's
+**own kNN graph** and are invariant to a rigid transform — `morans_pearson`, `gearys_pearson`,
+`umap_mixing` came out **numerically identical** either way. The other three place both sides on
+a ruler built from the *real* section's extent and collapse to the floor:
+
+| metric | as shipped (u, v) | using `xyz` |
+|---|---|---|
+| `morans_pearson` | +0.9780 | +0.9780 |
+| `gearys_pearson` | +0.9823 | +0.9823 |
+| `umap_mixing` | +0.9674 | +0.9674 |
+| `marker_field_r` | +0.0311 | **+0.4048** |
+| `marker_depth_r` | +0.1090 | **+0.4373** |
+| `celltype_localization` | −0.1670 | **+1.0000** |
+
+Half the table moving and half not is not distinguishable from a modelling result. This is the
+fifth control-that-cannot-fire class in this project and the most expensive: it produced numbers
+that were reported, interpreted, and built on for four separate investigations.
+
+**It also corrects an earlier explanation.** `celltype_localization` was recorded as "inert
+(constant −0.005087 across all four arms) because `resample` copies cell types". The *constancy*
+had that cause; the *value* was the frame defect holding it at the floor. On the fixture it is
++1.0000 once the frame is right.
+
+#### Scope, checked rather than assumed
+
+**Not affected.**
+
+* **bench3's published `paper_*` metrics.** `run_spatialcpav25_gen.py` already passes
+  `emitted.obsm["xyz"]` to `_v2_io`, with a comment saying exactly why; `t09_ship_starmap` and
+  `t10_rescore_saved` write `xyz` into the prediction files too. Every benchmark number stands.
+* **The training losses.** `train/loso.py` calls `loss_profile(x_gen, recon.coords, x_real,
+  recon.coords, ...)` — *one* coordinate array for both sides, so the comparison is frame-free.
+  No model was trained against a rotated target.
+* **`module_morans_agreement`** and **`calibrate_ell_xy`** — both build a kNN graph inside the
+  generated section only, so both are invariant. `calibrate_ell_z` already used `xyz`.
+* **`scripts/t09_depth_ceiling.py`** — real coordinates on both sides. The table above stands.
+
+**Affected — every number from the T08-kernel internal LOSO six, on three of the six metrics:**
+the per-dataset selection (`FitScorer` → `selection_scores`), every `t09_audit_starmap` run
+(tier-1 STARmap **and** `deep_starmap`), `t09_layout_mode_gate` (the **R11 table that made
+`resample` the shipped default**), `t09_report`, and `t09_depth_mechanism`.
+
+#### The fix, and the guard
+
+`_fold_scores` now passes `obsm["xyz"][:, :2]`; so do the three `section_scores` calls in
+`t09_report.py` and the one in `t09_depth_mechanism.py`. `section_scores` gained
+`assert_same_frame` / `FrameMismatchError`, which refuses coordinates whose centroid sits more
+than 25% of the real section's bounding-box diagonal away, or whose per-axis extents differ by
+more than 25%. Documented as **not a proof** — a pure rotation about the true centroid of a
+square region changes neither statistic — so the call sites keep the explicit comment too. A
+first attempt using "centroid inside the bounding box" was too weak and is recorded here because
+it *passed* on the synthetic fixture, whose sections span [0, 1000]² so the rotated centroid
+lands just inside.
+
+Two regression tests: the guard fires on the exact `(u, v)` transform, and `fold_scores` drives
+the real path (fit, generate, score) and reaches the guard with coordinates it accepts. 373 pass,
+`ruff` and `mypy --strict` clean.
+
+On the synthetic fixture at 200 steps the `expr_mode` gate **reverses** once the frame is right —
+`cross-mix` +0.4081 vs `zinb-flow` +0.0198 on `marker_depth_r`, where the shipped code had them
+at +0.0509/+0.1090. That is an under-trained fixture and predicts nothing about `deep_starmap`,
+but it establishes that the sign of the gate is not safe.
+
+#### What this invalidates
+
+Every conclusion in §1–§4 above that rests on `marker_depth_r`, `marker_field_r` or
+`celltype_localization` — which is most of them:
+
+* "the generative path beats copying on `marker_depth_r`" — the margin was between two arms both
+  pinned at the floor by the defect;
+* "`medcpt` beats `lookup` by 5.5x on `marker_depth_r`" — same;
+* the per-gene decomposition and the borrowing test, which decomposed those gains;
+* the fold-spread and per-gene-reproducibility split between the two gates.
+
+`morans_pearson`, `gearys_pearson` and `umap_mixing` are unchanged, so **"copying wins count
+realism, by 8–16x on a wide panel" survives intact.** The three-seed run on `text_emb_mode` was
+**not started** — it would have spent four fits establishing a margin on a broken metric.

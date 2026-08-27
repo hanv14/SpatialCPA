@@ -349,7 +349,9 @@ def main(argv: list[str] | None = None) -> int:
                         exclude_z={float(hidden.z)},
                     )
                 gen_counts = emitted_counts(adata)
-                gen_coords = np.asarray(adata.obsm[arm.coord_key], dtype=np.float64)
+                # obsm["xyz"], not obsm[coord_key]: the latter is the plane-local (u, v),
+                # which puts every coordinate-referenced metric on the floor.
+                gen_coords = np.asarray(adata.obsm["xyz"], dtype=np.float64)[:, :2]
                 gen = depth_profiles(gen_counts, gen_coords, hidden, markers, axis, arm)
                 if real_profile is None:
                     real_profile = depth_profiles(

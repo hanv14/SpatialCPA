@@ -149,7 +149,7 @@ def baseline_scores(model: CTFFlow, training, cfg: Config) -> dict[str, dict[str
         arms["method"].append(
             section_scores(
                 emitted_counts(generated),
-                np.asarray(generated.obsm[cfg.coord_key], dtype=np.float64),
+                np.asarray(generated.obsm["xyz"], dtype=np.float64)[:, :2],
                 types,
                 hidden,
                 axis,
@@ -164,7 +164,7 @@ def baseline_scores(model: CTFFlow, training, cfg: Config) -> dict[str, dict[str
         arms["resample"].append(
             section_scores(
                 emitted_counts(resampled),
-                np.asarray(resampled.obsm[cfg.coord_key], dtype=np.float64),
+                np.asarray(resampled.obsm["xyz"], dtype=np.float64)[:, :2],
                 resample_types,
                 hidden,
                 axis,
@@ -175,7 +175,7 @@ def baseline_scores(model: CTFFlow, training, cfg: Config) -> dict[str, dict[str
         arms["donor"].append(
             section_scores(
                 donor_counts,
-                np.asarray(generated.obsm[cfg.coord_key], dtype=np.float64),
+                np.asarray(generated.obsm["xyz"], dtype=np.float64)[:, :2],
                 types,
                 hidden,
                 axis,

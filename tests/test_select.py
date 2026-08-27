@@ -32,6 +32,7 @@ import torch
 from spatialcpav25_gen.config import Config
 from spatialcpav25_gen.data.loaders import split_holdout
 from spatialcpav25_gen.data.schema import HeldOutSections, TrainingVolume
+from spatialcpav25_gen.losses.metric_aware import profile_axis
 from spatialcpav25_gen.model.expression import ExpressionError
 from spatialcpav25_gen.model.field import BBoxClampWarning
 from spatialcpav25_gen.train.select import (
@@ -46,16 +47,19 @@ from spatialcpav25_gen.train.select import (
     Candidate,
     CandidateFailedWarning,
     FitScorer,
+    FrameMismatchError,
     InertGateError,
     InertGateWarning,
     ScoreCache,
     SelectionError,
     capability_tie_break,
+    fold_scores,
     incumbent_is_unconverged,
     inert_gates,
     joint_gate_cells,
     repulsion_is_reachable,
     run_selection,
+    section_scores,
     select_config,
     selection_folds,
     volume_cache_key,
@@ -1309,3 +1313,69 @@ def test_the_score_cache_is_keyed_on_the_volume_as_well_as_the_config(split, tmp
     assert thicker.n_cells == training.n_cells
     assert not np.allclose(np.asarray(thicker.bbox), np.asarray(training.bbox))
     assert volume_cache_key(thicker) != volume_cache_key(training)
+
+
+def test_section_scores_refuses_plane_local_coordinates(split):
+    """The frame guard fires on ``obsm[coord_key]`` and passes on ``obsm['xyz']``.
+
+    The defect this catches was silent for the whole of T09. A generated ``AnnData`` carries
+    the *plane-local* ``(u, v)`` at ``obsm[cfg.coord_key]`` and the physical ``(x, y, z)`` at
+    ``obsm['xyz']``; ``_fold_scores`` read the former. For a ``section_plane`` the two differ
+    by a 90-degree rotation and a re-centring on the section's bounding box, which leaves the
+    three graph-internal metrics untouched — they are built on each side's own kNN graph — and
+    puts the three that share the real section's ruler on the floor. Half a table moving and
+    half not is indistinguishable from a modelling result, which is why this is a guard and
+    not a comment.
+    """
+    _, training, _ = split
+    cfg = t09_cfg(train_steps=40)
+    hidden = selection_folds(training, cfg)[0]
+    real_p = np.asarray(hidden.coords, dtype=np.float64)
+
+    # The physical frame passes: the real section scored against itself.
+    types = np.zeros(real_p.shape[0], dtype=np.int64)
+    scores = section_scores(
+        np.asarray(hidden.counts.todense(), dtype=np.float64),
+        real_p,
+        types,
+        hidden,
+        profile_axis(training, cfg),
+        cfg,
+        n_types=len(training.celltype_names),
+    )
+    assert scores["marker_depth_r"] == pytest.approx(1.0, abs=1e-9)
+
+    # The plane-local frame is refused. `section_plane`'s basis is e1=(0,1,0), e2=(-1,0,0),
+    # so (u, v) = (y - y_c, -(x - x_c)) — the exact transform generate_section applies.
+    centre = 0.5 * (real_p.min(axis=0) + real_p.max(axis=0))
+    uv = np.column_stack([real_p[:, 1] - centre[1], -(real_p[:, 0] - centre[0])])
+    with pytest.raises(FrameMismatchError, match=r"obsm\['xyz'\]"):
+        section_scores(
+            np.asarray(hidden.counts.todense(), dtype=np.float64),
+            uv,
+            types,
+            hidden,
+            profile_axis(training, cfg),
+            cfg,
+            n_types=len(training.celltype_names),
+        )
+
+
+def test_fold_scores_passes_physical_coordinates(split):
+    """``_fold_scores`` reaches the guard with coordinates the guard accepts.
+
+    A unit test on ``assert_same_frame`` alone would still pass if ``_fold_scores`` were
+    reverted, so this drives the real path: a fit, a generated section, and the six scored.
+    """
+    from spatialcpav25_gen.model.spatialcpav25_gen import CTFFlow, TrainingData, train_ctfflow
+
+    _, training, _ = split
+    cfg = t09_cfg(train_steps=40).replace(layout_mode="resample", expr_mode="cross-mix")
+    embeddings = build_embeddings(cfg, training)
+    model = CTFFlow(cfg, TrainingData.build(training, cfg), embeddings, grf_seed=SEED)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        train_ctfflow(model, cfg, steps=int(cfg.train_steps), seed=SEED)
+        per_fold = fold_scores(model, training, cfg, seed=SEED)
+    assert len(per_fold) == len(selection_folds(training, cfg))
+    assert set(per_fold[0]) == set(METRIC_NAMES)
