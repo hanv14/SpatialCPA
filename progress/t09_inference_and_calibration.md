@@ -1551,3 +1551,95 @@ Every conclusion in §1–§4 above that rests on `marker_depth_r`, `marker_fiel
 `morans_pearson`, `gearys_pearson` and `umap_mixing` are unchanged, so **"copying wins count
 realism, by 8–16x on a wide panel" survives intact.** The three-seed run on `text_emb_mode` was
 **not started** — it would have spent four fits establishing a margin on a broken metric.
+
+### T09 — the re-score: the frame fix validated exactly, the `marker_depth_r` result reversed, and a second defect underneath (2026-08-27)
+
+Both `deep_starmap` audits re-scored on the existing fits (no refit; `config_hash` unchanged on
+all four arms, so the checkpoints were accepted).
+
+#### 1. The frame fix behaves exactly as predicted
+
+Full-precision, pre-fix → post-fix, per arm:
+
+| metric | change | verdict |
+|---|---|---|
+| `umap_mixing` | **0.00e+00** on all four arms | bitwise identical — expression-space only |
+| `morans_pearson` | −1.8e−06 … +2.5e−05 | ~1e−5 |
+| `gearys_pearson` | −1.1e−05 … +6.8e−05 | ~1e−5 |
+| `marker_field_r` | +0.36 … **+1.03** | moved |
+| `marker_depth_r` | +0.11 … **+0.97** | moved |
+| `celltype_localization` | **+1.01** on all four arms | moved |
+
+`umap_mixing` identical to the last bit and the two graph metrics moving only at 1e−5 is the
+predicted signature: the two graph metrics are isometry-invariant *mathematically* but the
+coordinates round-trip through `float32` in two different frames, so a handful of kNN ties flip.
+The scope analysis holds.
+
+#### 2. The headline result **reversed**
+
+| metric | `cross-mix` | `zinb-flow` | margin | was (pre-fix) |
+|---|---|---|---|---|
+| `morans_pearson` | +0.9657 | +0.5337 | 0.4321 | same |
+| `gearys_pearson` | +0.9229 | +0.3695 | 0.5534 | same |
+| `umap_mixing` | +0.7902 | +0.5084 | 0.2817 | same |
+| `marker_field_r` | **+0.9659** | +0.2738 | 0.6921 | −0.0658 / −0.0853 |
+| `marker_depth_r` | **+0.9875** | +0.3888 | 0.5988 | +0.0147 / **+0.2745** |
+| `celltype_localization` | +1.0000 | +1.0000 | 0.0000 | −0.0051 both |
+
+**`cross-mix` now wins every live metric.** The one real-data result where the generative path
+beat copying — `zinb-flow` over `cross-mix` on `marker_depth_r` by 7.8x the envelope — was an
+artifact of the frame defect and is **gone and reversed**: copying wins that metric by 0.5988.
+
+And `text_emb_mode`: `medcpt` +0.3888 vs `lookup` +0.4087 on `marker_depth_r` — margin **0.0199,
+inside the envelope, 0.6x the fold spread**, and now favouring `lookup`. `medcpt`'s only positive
+on real data (+0.1850) is gone. **The text channel loses or ties on all six.**
+
+`cross-mix`'s +0.9875 landing inside the copying-ceiling band the model-free ceiling test
+measured independently (+0.86 … +0.99) is a cross-validation of both instruments.
+
+#### 3. `celltype_localization` = exactly 1.0 exposed a second defect
+
+Exactly `1.0` to full double precision on all four arms is not a metric. It is not:
+`layout_mode="resample"` reuses **the nearest flanking section's coordinates and cell types**,
+and `_flanking` took the two nearest sections of `vol` **with no exclusion**. Generating at a
+training section's own depth — which is what internal LOSO does on every fold — returns that
+section itself. Measured on the fixture:
+
+```
+section_3 (z=41.0): _flanking -> [section_3 (41.0), section_1 (19.0)]   nearest is THE FOLD ITSELF
+  max |generated coord - hidden coord| = 0.000e+00 um
+  cell types identical to the hidden section: True (100.0% match)
+```
+
+**The retrieval pool honoured `exclude_z` all along**, which is exactly what let this survive:
+the *expression* was generated honestly while the *positions and cell types* were handed over.
+`celltype_localization` is a function of positions and types only, so it read 1.0 — and the frame
+defect had it pinned at −0.005087, so the tell was invisible until the first fix landed. Two
+defects, the second masked by the first.
+
+**Scope.** Internal LOSO only, where the hidden fold is still a member of `vol`:
+`_fold_scores` / `selection_scores` (the per-dataset selection and every audit),
+`t09_layout_mode_gate`, and any calibration probe generating at a training section's depth.
+**R11 is safe** — `scripts/t10_layout_modes_table.py` scores the *held-out* sections through the
+bench3 instrument, and a `TrainingVolume` does not contain them, so `_flanking` cannot return
+them; `resample` 0.7546 against a `flanking_copy` floor of 0.7765 is what an honest flanking copy
+looks like. The **shipped `layout_mode=resample` default stands.** bench3's published `paper_*`
+numbers are unaffected for the same reason.
+
+**Fixed**: `_flanking` takes `exclude_z` and applies the same thousandth-of-a-spacing tolerance
+as `_default_exclusions`; `generate_section` passes its own exclusion set through `_layout_on`.
+Deployment is unchanged — at a novel depth nothing is excluded and the two nearest sections
+genuinely flank the plane. Two regression tests: the layout is no longer an exact copy of the
+excluded section, and a fully excluded stack raises naming the specimen. 375 pass in 2m55s,
+inside the 3-minute budget.
+
+#### 4. Where this leaves the record
+
+Everything measured through internal LOSO needs a **third** pass. What survives all of it:
+`morans_pearson`, `gearys_pearson` and `umap_mixing` are untouched by either defect, so
+**copying beats the generative path on count realism by 8–16x on a wide panel** still stands, and
+is now joined rather than opposed by the two coordinate metrics.
+
+What is gone: every claim that the generative path or the text channel wins *anything* on real
+data. The three-seed run was never started, which is the one piece of luck here — it would have
+spent four fits on a margin that has since changed sign and then changed instrument.

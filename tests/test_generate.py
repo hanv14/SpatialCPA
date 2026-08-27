@@ -31,6 +31,7 @@ from spatialcpav25_gen.data.loaders import split_holdout
 from spatialcpav25_gen.data.schema import HeldOutSections, TrainingVolume, Volume, to_xyz
 from spatialcpav25_gen.infer.generate import (
     GenerationError,
+    _flanking,
     emitted_counts,
     generate_curved,
     generate_oblique,
@@ -47,6 +48,7 @@ from spatialcpav25_gen.infer.planes import (
     curved_surface,
     intersect,
     plane_from_normal,
+    section_plane,
 )
 from spatialcpav25_gen.model.field import BBoxClampWarning
 from spatialcpav25_gen.model.layout import fit_repulsion
@@ -539,3 +541,51 @@ def test_generate_refuses_heldout_sections(volume: Volume, cfg: Config):
     for bad in (held, volume):
         with pytest.raises(TypeError, match="TrainingVolume"):
             generate_section(None, plane, bad, cfg, 0)  # type: ignore[arg-type]
+
+
+def test_resample_layout_does_not_copy_the_excluded_section():
+    """``exclude_z`` reaches the layout, not only the retrieval pool.
+
+    ``layout_mode="resample"`` reuses the *nearest flanking section's* coordinates and cell
+    types unchanged. ``_flanking`` used to take the two nearest sections with no exclusion, so
+    generating at a training section's own depth — which is what internal LOSO does on every
+    fold — returned that section itself and the "generated" layout was an exact copy of what
+    was being scored: 0.0 um coordinate difference, 100% of cell types matching, and
+    ``celltype_localization`` at exactly 1.0 on every arm of every gate.
+
+    The retrieval pool honoured ``exclude_z`` all along, which is what made this survive: the
+    *expression* was generated honestly while the *positions and types* were handed over.
+    """
+    # A barely-fitted model on purpose, and no `fit_repulsion`: `resample` returns before
+    # `sample_layout` reads the interaction and copies the flanking section's coordinates
+    # whatever the weights say, while `cross-mix` returns before the decoder. Two steps
+    # exercises the path and keeps this inside the fast suite's time budget.
+    cfg = t09_cfg(layout_mode="resample", expr_mode="cross-mix")
+    vol, _ = make_synthetic_volume(seed=0)
+    training, _ = split_holdout(vol, "alternating", 0, cfg)
+    model = CTFFlow(cfg, TrainingData.build(training, cfg), build_embeddings(cfg, vol), grf_seed=11)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", BBoxClampWarning)
+        train_ctfflow(model, cfg, steps=2, seed=SEED)
+    hidden = training.sections[1]
+    plane = section_plane(hidden)
+    excluded = {float(hidden.z)}
+
+    assert _flanking(training, plane)[0].section_id == hidden.section_id, (
+        "the test's premise: without an exclusion the nearest section IS the target"
+    )
+    admissible = _flanking(training, plane, exclude_z=excluded)
+    assert all(s.section_id != hidden.section_id for s in admissible)
+
+    adata = generate(model, training, cfg, plane, exclude_z=excluded)
+    gen_xy = np.asarray(adata.obsm["xyz"], dtype=np.float64)[:, :2]
+    real_xy = np.asarray(hidden.coords, dtype=np.float64)
+    copied = gen_xy.shape == real_xy.shape and bool(np.allclose(gen_xy, real_xy))
+    assert not copied, "the layout is still an exact copy of the section being generated"
+
+
+def test_flanking_refuses_a_fully_excluded_stack(volume: Volume, cfg: Config):
+    """Excluding every depth is an error naming the specimen, not a silent empty layout."""
+    plane = plane_at_z(volume, float(volume.z_values[0]), cfg)
+    with pytest.raises(GenerationError, match="flanking evidence"):
+        _flanking(volume, plane, exclude_z={float(z) for z in volume.z_values})

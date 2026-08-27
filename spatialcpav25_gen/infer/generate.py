@@ -292,10 +292,36 @@ def _using_z_window(index: RetrievalIndex, window: float) -> Iterator[None]:
 # --------------------------------------------------------------------------------------
 
 
-def _flanking(vol: Volume, plane: Plane) -> list[Section]:
-    """Return the two sections nearest ``plane``'s depth, nearest first — T05's evidence."""
-    order = np.argsort(np.abs(vol.z_values.astype(np.float64) - float(plane.origin[2])))
-    return [vol.sections[int(i)] for i in order[:2]]
+def _flanking(vol: Volume, plane: Plane, *, exclude_z: set[float] | None = None) -> list[Section]:
+    """Return the two nearest **admissible** sections, nearest first — T05's evidence.
+
+    ``exclude_z`` drops the same depths the retrieval pool drops, matched to the same
+    thousandth-of-a-spacing tolerance as :func:`_default_exclusions`. It is not optional in
+    practice and the default of ``None`` exists only for a caller generating at a depth where
+    no section sits: **without it, generating a section at a training section's own depth hands
+    the layout that section back.** ``layout_mode="resample"`` reuses the nearest flanking
+    section's coordinates *and cell types* unchanged, so the nearest section being the target
+    itself makes the layout an exact copy of what is being scored — which is what internal LOSO
+    does on every fold, and which put ``celltype_localization`` at exactly 1.0 on every arm.
+
+    Deployment is unaffected: at a novel depth nothing is excluded and the two nearest sections
+    genuinely flank the plane.
+    """
+    excluded = set() if exclude_z is None else exclude_z
+    tolerance = 1e-3 * max(float(vol.median_spacing), 1e-6)
+    depths = vol.z_values.astype(np.float64)
+    keep = [
+        int(i)
+        for i in np.argsort(np.abs(depths - float(plane.origin[2])))
+        if not any(abs(float(depths[int(i)]) - float(e)) <= tolerance for e in excluded)
+    ]
+    if not keep:
+        raise GenerationError(
+            f"_flanking: every section of specimen {vol.specimen_id!r} is excluded "
+            f"({sorted(excluded)}), so the plane at z={float(plane.origin[2]):g} um has no "
+            "flanking evidence to place a layout from."
+        )
+    return [vol.sections[i] for i in keep[:2]]
 
 
 def _region_of(model: CTFFlow, xyz: FloatArray) -> Tensor | None:
@@ -523,7 +549,8 @@ def generate_section(
         there is no hand-set default blend weight, because a hand-set blend weight is exactly
         what T09 removes.
     exclude_z
-        Section depths to remove from the retrieval pool. ``None`` excludes any training
+        Section depths to remove from the evidence — the retrieval pool **and** the flanking
+        sections the layout is placed from. ``None`` excludes any training
         section **at the target depth** — ``specs/09`` §1's step 4 — which is what stops a
         section from being reconstructed by copying itself.
     z_window
@@ -565,7 +592,7 @@ def generate_section(
 
     gen = np.random.default_rng(seed)
     with _using_field(model, cfg, grf_seed):
-        layout = _layout_on(model, plane, vol, cfg, seed)
+        layout = _layout_on(model, plane, vol, cfg, seed, exclude_z=excluded)
         xyz = layout.coords_xyz.astype(np.float64)
         cell_type = torch.from_numpy(layout.cell_type.astype(np.int64))
         region = _region_of(model, xyz)
@@ -619,15 +646,29 @@ def _default_exclusions(vol: Volume, depth: float) -> set[float]:
     return {float(z) for z in vol.z_values.astype(np.float64) if abs(float(z) - depth) <= tolerance}
 
 
-def _layout_on(model: CTFFlow, plane: Plane, vol: Volume, cfg: Config, seed: int) -> Layout:
-    """Sample the section's cells and their types on ``plane`` (T05)."""
+def _layout_on(
+    model: CTFFlow,
+    plane: Plane,
+    vol: Volume,
+    cfg: Config,
+    seed: int,
+    *,
+    exclude_z: set[float] | None = None,
+) -> Layout:
+    """Sample the section's cells and their types on ``plane`` (T05).
+
+    ``exclude_z`` is the generation's own exclusion set and reaches :func:`_flanking`, so the
+    layout draws on the same evidence the retrieval does and no more.
+    """
     return sample_layout(
         intensity_fn_from_head(model.intensity, model.field),
         plane,
         cfg,
         seed,
         repulsion=model.repulsion,
-        flanking=[flanking_from_section(s, plane) for s in _flanking(vol, plane)],
+        flanking=[
+            flanking_from_section(s, plane) for s in _flanking(vol, plane, exclude_z=exclude_z)
+        ],
     )
 
 

@@ -1370,7 +1370,7 @@ def test_fold_scores_passes_physical_coordinates(split):
     from spatialcpav25_gen.model.spatialcpav25_gen import CTFFlow, TrainingData, train_ctfflow
 
     _, training, _ = split
-    cfg = t09_cfg(train_steps=40).replace(layout_mode="resample", expr_mode="cross-mix")
+    cfg = t09_cfg(train_steps=8).replace(layout_mode="resample", expr_mode="cross-mix")
     embeddings = build_embeddings(cfg, training)
     model = CTFFlow(cfg, TrainingData.build(training, cfg), embeddings, grf_seed=SEED)
     with warnings.catch_warnings():
