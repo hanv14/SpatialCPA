@@ -2,8 +2,16 @@
 
 On ``deep_starmap`` the same metric flipped both gates in the machinery's favour —
 ``zinb-flow`` over ``cross-mix`` by 7.8x the envelope, ``medcpt`` over ``lookup`` by 5.5x —
-while every count-realism metric moved the other way and further. One metric splitting two
-independent gates the same way looks like a mechanism rather than noise, and this measures it.
+while every count-realism metric moved the other way and further.
+
+**Correction (2026-08-27).** The two gates are **not** independent. ``zinb-flow`` under
+``prior_mode=correlated`` and ``medcpt`` under ``expr_mode=zinb-flow`` are the *same fitted
+config* — hash ``336cbc6a491faa51`` — so the winning arm is one model measured against two
+different losers, and its per-gene profile correlations are numerically identical in both gates
+(+0.2447 on ``section_3``, +0.3044 on ``section_5``). A single favourable draw of that one fit
+inflates both margins at once. "One metric splitting two gates the same way" was the motivation
+for building this, and it was weaker evidence than it looked; the decomposition below is
+worth reading anyway, but not as two gates corroborating each other.
 
 **The hypothesis under test.** Semantic gene embeddings group functionally related genes, so a
 gene can borrow laminar structure from its neighbours in text space; a lookup table memorises

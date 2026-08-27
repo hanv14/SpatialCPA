@@ -1360,3 +1360,43 @@ The scope statement is available for the **generative path** and not for the **t
 
 **Unchanged**: `claim_min_seeds` = 3 on `marker_depth_r` (12 fits) remains the decisive
 experiment. This run narrows what it needs to settle — `expr_mode`, not both gates.
+
+#### 4. Two corrections to how these two gates were being read (2026-08-27)
+
+**(a) The two gates were never independent evidence, and the record said they were.** `zinb-flow`
+under `prior_mode=correlated` and `medcpt` under `expr_mode=zinb-flow` are the **same fitted
+config**, hash `336cbc6a491faa51`. So the winning arm is *one model measured against two different
+losers*, not two gates agreeing. The per-gene numbers show it directly — the winner's rows are
+identical in both gates:
+
+| gate | fold | arm | median per-gene r | mean | fraction of genes with r > 0 |
+|---|---|---|---|---|---|
+| `expr_mode` | `section_3` | `zinb-flow` | +0.2530 | +0.2447 | 0.69 |
+| `text_emb_mode` | `section_3` | `medcpt` | +0.2530 | +0.2447 | 0.69 |
+| `expr_mode` | `section_5` | `zinb-flow` | +0.2739 | +0.3044 | 0.75 |
+| `text_emb_mode` | `section_5` | `medcpt` | +0.2739 | +0.3044 | 0.75 |
+
+A single favourable draw of that one fit inflates **both** margins simultaneously. This was the
+stated motivation for building the mechanism diagnostic at all ("one metric splitting two
+independent gates the same way looks like a mechanism") and that motivation was weaker than
+claimed. The docstring of `scripts/t09_depth_mechanism.py` now carries the correction; the earlier
+"help the same genes" correlation (+0.50, +0.53) was already flagged as inflated by the shared
+term, and this is the same defect stated at full strength. **It also decides what the repeated-seed
+run is for**: the quantity most likely to be wrong is `r(336cbc6a)` itself, and only new seeds
+move it.
+
+**(b) The gain lifts three quarters of the panel, which is the opposite of selective borrowing.**
+75–81% of individual marker genes improve. A mechanism that helps most of the panel at once is
+not genes borrowing from semantic neighbours — the partial correlation says the same thing, but
+the breadth says it without needing the statistic. Any surviving explanation has to be something
+that shifts *all* genes' depth profiles together, not something that routes information between
+particular genes.
+
+**What the arm-level numbers point at.** `cross-mix`'s per-gene profile correlation is a **coin
+flip**: mean −0.0039 / +0.0333, with **47% / 50%** of genes above zero. `zinb-flow`'s is only
+modestly positive (+0.2447 / +0.3044, 69% / 75% above zero). Both arms share `layout_mode=resample`,
+so the *positions* are real and identical in both; only the expression assignment differs. So the
+gate is not "the flow head models laminar depth well" — it is "copying donors' counts lands laminar
+structure no better than chance, and the flow head is weakly better than chance". Whether +0.27 is
+close to what is achievable on this metric is **not known**, and that missing number is the cheapest
+thing left to measure (§5).
