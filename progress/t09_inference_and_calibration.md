@@ -1202,3 +1202,79 @@ dataset has had: **`claim_min_seeds` = 3** on `marker_depth_r` for both gates, w
 thing that can separate the 4.4x from the 0.9x. Three seeds x two arms x two gates = 12 fits;
 at `deep_starmap`'s measured ~500 s per scored arm plus the fit, that is the cheapest decisive
 experiment left in T09.
+
+---
+
+### 2026-08-27 — the instrument for the `marker_depth_r` mechanism question
+
+`scripts/t09_depth_mechanism.py`. The two `deep_starmap` audits agree on one metric and
+disagree on every other, and the same metric splits **both** gates the same way. That is either
+a mechanism or a coincidence of two two-fold means, and the margin cannot tell them apart — for
+`text_emb_mode` the margin (0.1850) is *inside* its own worst within-arm fold spread (0.2033).
+
+**Why a decomposition is a stronger test than the margin it explains.** `marker_depth_r` is a
+mean over `Config.metric_marker_genes` (32) genes of a per-gene depth-profile correlation, so it
+decomposes exactly: **32 internal degrees of freedom against the 2 LOSO folds**. A *structured*
+pattern across genes is far harder to obtain by chance than a difference of two means, so this
+can carry weight the n = 2 margin cannot. That is the whole reason for building it rather than
+waiting on the three-seed run — which is still the decisive experiment and is not replaced.
+
+**The hypothesis under test** (the user's): semantic gene embeddings group functionally related
+genes, so a gene borrows laminar structure from its text neighbours, while a lookup table
+memorises each gene and wins per-gene autocorrelation instead. Prediction: the per-gene gain
+concentrates on genes whose *text neighbours* carry strong depth gradients.
+
+**The confound, named before measuring.** A gene with a flat real depth profile conditions its
+own Pearson r badly, so *any* arm difference has more room where the gradient is strong. Gain
+will correlate with gradient strength with no semantics involved. Three controls separate them:
+
+1. a **partial** Spearman of gain against the *neighbours'* gradient, holding the gene's own
+   trend **and** its own bin-to-bin contrast fixed;
+2. a **permutation null** (2000 shuffles of the text vectors across the marker genes, rebuilding
+   the neighbourhood predictor) — does MedCPT's *actual* geometry matter, or only the shape of
+   the gradient distribution?
+3. **`expr_mode` as a control gate.** It does not touch the text channel. A neighbourhood effect
+   on both gates is a property of the metric, not of text space; only a `text_emb_mode` effect
+   *without* an `expr_mode` effect supports the hypothesis.
+
+**Built on the metric's own code**, and the identity is asserted rather than assumed: the
+per-gene terms are checked to average to `section_scores`' own `marker_depth_r` for that arm and
+fold to 1e-6, and the run aborts naming the drift if they do not. A decomposition that does not
+add back up explains a different number than the audit reported.
+
+**No refit.** The audit's fit checkpoints are resume points; re-entering a finished fit restores
+it. The script refuses with a named path if a checkpoint is missing, and `require_compatible`
+refuses a checkpoint written under a different config — so `--train-steps` and `--expr-pca-dim`
+must match the audit that wrote it, and a mismatch raises instead of silently refitting.
+
+Not run here: `deep_starmap` and its four fits are on the user's server.
+
+**Two changes the calibration forced.** `scripts/t09_depth_mechanism_calibration.py` plants three
+worlds at the diagnostic's own scale (32 genes, kNN 10) and asks how often each rejects:
+
+| test | folds | `null` | `text-carries-trend` (the confound) | `borrowing` (power) |
+|---|---|---|---|---|
+| two-sided | single fold | 8% | 5% | 18% |
+| two-sided | pooled over 2 folds | 7% | 5% | 35% |
+| one-sided | single fold | 8% | 8% | 28% |
+| one-sided | pooled over 2 folds | 5% | 8% | 42% |
+
+The **partial works**: the confound world — text space encodes the depth gradient, but the gain
+depends only on each gene's *own* gradient — rejects at the null rate, 5–8%, while its raw
+`rho(gain, neighbour trend)` sits at +0.42. Without the partial that world would have been read
+as a mechanism.
+
+**Power is the problem, not calibration.** 18–28% per fold. So two things were added rather than
+left implicit: a **pooled row** (the genes both folds select as markers, gains averaged — the
+same measurement at lower noise, not a third replicate) and a **one-sided** p against the sign
+the hypothesis predicts, printed beside the two-sided one. Together 18% → 42%. That is still
+weak enough that the report says so in the body: **a null result here is not evidence of
+absence**, and does not replace `claim_min_seeds` = 3.
+
+**Verified.** The identity holds *exactly* — per-gene mean vs `section_scores`' `marker_depth_r`,
+drift **0.0e+00** on both folds of the synthetic fixture, and the run aborts on any drift above
+1e-6. End to end on a sparse bench3-shaped fixture (2799 cells x 12 genes, 200 steps): four
+restores from checkpoints, six rows, JSON and markdown, `make lint` / `mypy --strict` /
+`pytest -m "not slow"` (371 passed) clean. Every partial on that fixture is noise, which is the
+right answer — its text vectors are deterministic hashes of the descriptors and carry no
+geometry.
