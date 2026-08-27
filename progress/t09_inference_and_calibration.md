@@ -1643,3 +1643,95 @@ is now joined rather than opposed by the two coordinate metrics.
 What is gone: every claim that the generative path or the text channel wins *anything* on real
 data. The three-seed run was never started, which is the one piece of luck here — it would have
 spent four fits on a margin that has since changed sign and then changed instrument.
+
+### T09 — third re-score, both defects fixed: the instruments agree and the result is clean (2026-08-27)
+
+`deep_starmap` / `paper_2_4_6`, 2400 steps, seed 1, 2 folds, scoring only on the existing fits.
+`celltype_localization` is **+0.6028**, no longer exactly 1.0 — the leak is closed.
+
+#### 1. Two independently written instruments agree to 0.001
+
+`layout_mode=resample` copies the **nearest admissible** flanking section. The ceiling test
+measured every donor independently, **with no model at all**. They should therefore report the
+same number for `cross-mix`, which copies donor counts onto that layout:
+
+| fold | `cross-mix` `marker_depth_r` | nearest donor | ceiling test (model-free) | difference |
+|---|---|---|---|---|
+| `section_3` | +0.9622 | `section_5` (42.0 µm) | +0.9631 | **−0.0009** |
+| `section_5` | +0.8677 | `section_7` (40.6 µm) | +0.8578 | **+0.0099** |
+
+Written days apart, sharing no code path, agreeing to 0.001–0.01. That validates the frame fix,
+the leak fix, and the ceiling instrument at once, and it settles what `cross-mix` *is* on this
+dataset: **copying the nearest other section**, to within a hundredth.
+
+Against the same ruler, `zinb-flow` reaches **36% and 35% of what copying achieves** — the same
+fraction on both folds:
+
+| fold | `zinb-flow` | copying | noiseless ceiling √R | shuffled floor |
+|---|---|---|---|---|
+| `section_3` | +0.3422 | +0.9631 | 0.9962 | +0.0036 |
+| `section_5` | +0.2982 | +0.8578 | 0.9950 | +0.0304 |
+
+Well clear of the floor — the flow head does model laminar depth — and about a third of the way
+to what a copy gets for free.
+
+#### 2. `expr_mode` — copying wins four of five, on both checks
+
+Recomputed from the JSON (margin `cross-mix` − `zinb-flow`; "spread" is the worst within-arm
+fold spread):
+
+| metric | margin | fold spread | ratio | vs 0.0335 | folds agree |
+|---|---|---|---|---|---|
+| `morans_pearson` | +0.3930 | 0.0657 | **6.0x** | 11.7x | yes |
+| `gearys_pearson` | +0.5502 | 0.0910 | **6.0x** | 16.4x | yes |
+| `umap_mixing` | +0.2364 | 0.1547 | ⚠ 1.5x | 7.1x | yes |
+| `marker_field_r` | +0.6614 | 0.1105 | **6.0x** | 19.7x | yes |
+| `marker_depth_r` | +0.5948 | 0.0945 | **6.3x** | 17.8x | yes |
+| `celltype_localization` | 0.0000 | 0.1430 | — | — | — |
+
+**Copying beats the generative path on every live metric**, four of them clearing both the
+envelope and the fold spread. The earlier reading — "copying wins count realism and buys nothing
+in arrangement" — is **inverted**: the two arrangement metrics are now copying's *largest*
+margins (0.66 and 0.59), because they were the two the frame defect had pinned at the floor.
+
+#### 3. `text_emb_mode` — one established result, and it is negative for `medcpt`
+
+| metric | margin (`medcpt` − `lookup`) | fold spread | ratio | vs 0.0335 |
+|---|---|---|---|---|
+| `morans_pearson` | **−0.1252** | 0.0126 | **10.0x** | 3.7x |
+| `gearys_pearson` | −0.1364 | 0.1058 | ⚠ 1.3x | 4.1x |
+| `umap_mixing` | −0.0177 | 0.0661 | ⚠ 0.3x | 0.5x |
+| `marker_field_r` | −0.0562 | 0.0637 | ⚠ 0.9x | 1.7x |
+| `marker_depth_r` | −0.0080 | 0.0440 | ⚠ 0.2x | 0.2x |
+| `celltype_localization` | 0.0000 | 0.1430 | — | — |
+
+Every sign favours `lookup`, and exactly **one** metric clears both thresholds:
+`morans_pearson`, at 10.0x the fold spread with both folds agreeing. So the one thing established
+about the open-vocabulary channel on real data is that **MedCPT embeddings make per-gene spatial
+autocorrelation worse.** `marker_depth_r`, which two rounds ago was `medcpt`'s headline win at
+5.5x the envelope, is now −0.0080 — 0.2x its own fold spread, i.e. nothing.
+
+#### 4. `celltype_localization` is structurally inert for every expression-side gate
+
++0.6028388701933918, **bit-identical across all four arms**. That is correct, not a defect:
+under `layout_mode=resample` the cell types come from the copied layout, which is the same in
+both arms of a gate that changes only the expression path. The metric measures the **layout**,
+so it can separate `layout_mode` and nothing else.
+
+Recording it explicitly because it has now been misread twice — once as "inert because resample
+copies cell types" (true but incomplete: the *value* was floored by the frame defect) and once as
+a leak signature (true, at 1.0). **Under the shipped default, every expression-side gate has a
+five-metric table, not six.** A 0.0000 margin there is structural and is not evidence of a tie.
+
+#### 5. What stands after three passes
+
+* **Copying beats the generative path on all five live metrics, on a 1017-gene panel**, by
+  6.0–6.3x the within-arm fold spread on four of them. One seed, two folds.
+* **`cross-mix` under `resample` is exactly "copy the nearest other section"** — confirmed to
+  0.001 against a model-free instrument. Its scores are not a model result and should never be
+  quoted as one.
+* **`zinb-flow` reaches ~35% of copying** on `marker_depth_r`, consistently across folds, well
+  clear of the shuffled floor.
+* **`medcpt` has no positive on real data**, and one established negative (`morans_pearson`).
+* Unchanged by any of this: bench3's published `paper_*` numbers, the training losses, and R11's
+  `layout_mode=resample` default.
