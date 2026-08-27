@@ -1400,3 +1400,43 @@ gate is not "the flow head models laminar depth well" — it is "copying donors'
 structure no better than chance, and the flow head is weakly better than chance". Whether +0.27 is
 close to what is achievable on this metric is **not known**, and that missing number is the cheapest
 thing left to measure (§5).
+
+#### 5. The two instruments the corrections call for (2026-08-27)
+
+**`scripts/t09_depth_ceiling.py` — what is `marker_depth_r` capable of?** No model, no fit, no
+generation: the metric's own kernels applied to the built input. Four reference points per target
+section, all on the target's own ruler (its markers, its bounds, its `z`) exactly as
+`section_scores` builds them:
+
+* `self` — the target against itself, which **must** be 1.0. A correctness check on the file; the
+  run aborts otherwise. Measured 1.000000 on the synthetic fixture.
+* `split_half` — the target's cells split at random, halves correlated, Spearman-Brown corrected.
+  The **reliability** R of a whole-section profile.
+* `noiseless_ceiling` — `sqrt(R)`. Correction for attenuation: a method with *no* noise of its own
+  still cannot exceed this against a target that is itself a finite sample. The hard bound.
+* `other_section` — another **real** section on the target's ruler, by `|dz|`. The **copying
+  ceiling**: the most a donor-copying method could score, which is what `cross-mix` competes
+  against rather than 1.0.
+* `shuffled` — the target's counts with the cell-to-position assignment permuted. The floor.
+
+This is the number the whole `expr_mode` reading turns on and it has been missing all along. If
+the copying ceiling is near zero, `cross-mix`'s +0.0147 is not a model failure and the margin says
+nothing about the flow head. The audit numbers quoted in the report are **read out of the audit
+JSON**, not transcribed — this project has twice shipped a report carrying a hand-copied number
+for the wrong dataset.
+
+**`scripts/t09_seed_claim.py` — `specs/09` §3's repeated-seed rule, applied.** Aggregates one
+audit JSON per seed and reports the spread rather than a point estimate. A margin is **STANDS**
+only under four conditions: every seed agrees in sign; the mean margin exceeds the across-seed
+spread; it exceeds the 0.0335 R10 envelope; and it exceeds the largest within-arm fold spread.
+`specs/09` requires only the third and the reporting — the other three are this file's and are
+stated in its output so a reader can disagree and recompute. "Not established" is reported as
+distinct from "refuted".
+
+Two refusals, both exercised: an audit JSON with no `seed` field raises naming it rather than
+guessing from the filename, and runs that differ in anything but the seed (`train_steps`,
+`expr_pca_dim`, `under`, dataset, cell or gene count) raise rather than being averaged.
+`t09_audit_starmap.py` now records `seed` in every row — it did not, which a seed comparison
+cannot work without.
+
+`make lint`, `mypy --strict`, `pytest -m "not slow"` (371 passed) clean.

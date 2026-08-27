@@ -247,6 +247,7 @@ def main(argv: list[str] | None = None) -> int:
                 "n_cells": int(volume.n_cells),
                 "n_genes": int(volume.n_genes),
                 "n_sections": int(volume.n_sections),
+                "seed": int(args.seed),
                 "train_steps": int(arm.train_steps),
                 "expr_pca_dim": int(arm.expr_pca_dim),
                 "under": dict(under),
