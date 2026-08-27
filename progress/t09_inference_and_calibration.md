@@ -1092,3 +1092,113 @@ both at once, and is the next measurement.
 
 **One seed.** `specs/09` §3 asks for `claim_min_seeds` = 3 before any of this reaches a paper
 claim, and the two margins that clear the envelope do so by 1.3x.
+
+---
+
+### T09 — `deep_starmap`: both mechanisms finally do something, and one of the two results is not robust (2026-08-26)
+
+`reports/t09_audit_deep_expr_mode.md` and `reports/t09_audit_deep_text_emb_mode.md` (+ `.json`).
+`deep_starmap`, `paper_2_4_6`, tier 2 — 1017 genes, mouse brain, `raw_counts`, 137 cell types —
+at 2400 steps, seed 1, folds `section_3` / `section_5`. The hypothesis under test was that
+tier-1 STARmap is close to the most favourable case a copy could be handed (28 genes, 0.9999
+detection, 22 µm spacing), so the STARmap negatives are about *that dataset*, not about the
+mechanisms.
+
+#### 0. Which dataset these are, established rather than asserted
+
+The reports' headers said `starmap_visual_cortex`, because `_report` hardcoded the tier-1 name.
+That is a provenance defect and it is fixed — the header now comes from the resolved paths and
+the JSON records `dataset`, `holdout`, `n_cells`, `n_genes`, `n_sections`, `train_steps`,
+`expr_pca_dim` and `under`, none of which it carried before.
+
+**The numbers are `deep_starmap`'s, proven from the config hashes.** Reconstructing the audit's
+config gives all four arms exactly under `expr_pca_dim=32` (1017 genes, unclamped) and none
+under `28` (STARmap's clamp) — and that same reconstruction reproduces the *STARmap* reports'
+hashes exactly, which is a second, unplanned confirmation of both runs:
+
+| arm | reported | `expr_pca_dim=32` | `=28` |
+|---|---|---|---|
+| expr / `cross-mix` | `f31b0764c4f27de1` | **match** | `d068229e5608c7e8` (= the STARmap report) |
+| expr / `zinb-flow` | `336cbc6a491faa51` | **match** | `9d1ce6c0ff7cfb15` (= the STARmap report) |
+| text / `medcpt` | `336cbc6a491faa51` | **match** | ” |
+| text / `lookup` | `b21d98fed9b7b958` | **match** | `12fc94609f4d6c7a` (= the STARmap report) |
+
+Only the headers were corrected; every number is as emitted.
+
+#### 1. Nothing reversed. Every margin moved the same way, and further
+
+| gate | metric | STARmap | deep_starmap |
+|---|---|---|---|
+| `expr_mode` (`cross-mix` − `zinb-flow`) | morans | +0.1745 | **+0.4321** |
+| | gearys | +0.1774 | **+0.5533** |
+| | umap_mixing | +0.1534 | **+0.2817** |
+| | **marker_depth_r** | −0.0002 (tie) | **−0.2598** |
+| `text_emb_mode` (`medcpt` − `lookup`) | morans | −0.0433 | **−0.1234** |
+| | gearys | −0.0425 | **−0.1288** |
+| | **marker_depth_r** | +0.0033 (tie) | **+0.1850** |
+
+No metric changes sign. The sparse panel does not rescue either mechanism on the
+count-realism metrics — it makes `cross-mix`'s lead **larger** (12.9x / 16.5x / 8.4x the
+envelope, against 5.2 / 5.3 / 4.6 on STARmap) and `lookup`'s lead larger too (3.7x / 3.8x
+against 1.3x).
+
+#### 2. But `marker_depth_r` comes alive, and both mechanisms win it
+
+The metric that was a dead tie on STARmap (0.0002 and 0.0033, both arms *negative* at −0.31)
+separates on `deep_starmap`, and **in favour of the machinery both times**:
+
+* **`zinb-flow` beats `cross-mix`: +0.2745 vs +0.0147**, 7.8x the envelope. The first real-data
+  metric on which the generative path beats copying.
+* **`medcpt` beats `lookup`: +0.2745 vs +0.0895**, 5.5x the envelope. The first real-data metric
+  on which the text channel does anything at all.
+
+Mechanistically this is the metric one would predict: `marker_depth_r` asks whether marker genes
+carry the right laminar depth profile — whether the model knows which genes are superficial and
+which are deep. With 1017 genes and **966 carrying summaries**, that is exactly what a gene
+description can supply and what 28 curated genes never needed supplying.
+
+#### 3. One of those two is not robust at n = 2, and the report did not say so
+
+The tooling checked whether the *folds agree in sign* on the gap. That is necessary and not
+sufficient. The missing statistic is the spread **within one arm** across folds:
+
+| gate | metric | margin | worst within-arm fold spread | ratio |
+|---|---|---|---|---|
+| `expr_mode` | morans | 0.4321 | 0.0319 | 13.6x |
+| `expr_mode` | gearys | 0.5533 | 0.0287 | 19.3x |
+| `expr_mode` | umap_mixing | 0.2817 | 0.0242 | 11.7x |
+| `expr_mode` | **marker_depth_r** | 0.2598 | 0.0597 | **4.4x** |
+| `text_emb_mode` | morans | 0.1234 | 0.0319 | 3.9x |
+| `text_emb_mode` | gearys | 0.1288 | 0.0284 | 4.5x |
+| `text_emb_mode` | **marker_depth_r** | 0.1850 | **0.2033** | **0.9x** |
+
+**`medcpt`'s `marker_depth_r` win is inside its own fold noise.** `lookup` alone swings
+**−0.0121 → +0.1911** between `section_3` and `section_5` — a range wider than the 0.1850 that
+separates it from `medcpt`. The two arms are being told apart by less than one arm moves on its
+own. It clears the across-seed envelope by 5.5x and is still not a result.
+
+`zinb-flow`'s win on the same metric is 4.4x its fold spread and **does** stand.
+
+`_fold_spread` is now a column in every audit (**⚠** below 2x), with the reasoning in the report:
+R10's 0.0335 is an across-*seed* envelope measured on the fixture and says nothing about how far
+a metric moves between *this* dataset's folds.
+
+#### 4. What this leaves
+
+**Established** (one seed, two folds, T08 kernels on internal LOSO — *not* `bench3.evaluate_paper`):
+
+* the generative path beats copying on **`marker_depth_r`**, on a sparse panel, robustly to the
+  fold check — and loses count realism by 8–16x;
+* the text channel's only positive is on the same metric and is **not** robust at n = 2.
+
+**The reading that survives.** Copying wins wherever the metric rewards emitting real counts,
+and that advantage *grows* with panel width rather than shrinking. What the generative path buys
+is laminar structure — one metric, one dataset, one seed. `celltype_localization` was inert
+again (constant −0.005087 across all four arms, because `resample` copies cell types), so the
+effective comparison remains **five** metrics.
+
+**The measurement this now justifies** is the one `specs/09` §3 already requires and neither
+dataset has had: **`claim_min_seeds` = 3** on `marker_depth_r` for both gates, which is the only
+thing that can separate the 4.4x from the 0.9x. Three seeds x two arms x two gates = 12 fits;
+at `deep_starmap`'s measured ~500 s per scored arm plus the fit, that is the cheapest decisive
+experiment left in T09.

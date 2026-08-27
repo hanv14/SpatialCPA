@@ -242,6 +242,14 @@ def main(argv: list[str] | None = None) -> int:
         rows.append(
             {
                 "option": option,
+                "dataset": paths.dataset,
+                "holdout": paths.holdout,
+                "n_cells": int(volume.n_cells),
+                "n_genes": int(volume.n_genes),
+                "n_sections": int(volume.n_sections),
+                "train_steps": int(arm.train_steps),
+                "expr_pca_dim": int(arm.expr_pca_dim),
+                "under": dict(under),
                 "config_hash": arm.content_hash(),
                 "seconds": round(time.time() - t0, 1),
                 "mean": mean,
@@ -258,7 +266,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\n--fit-only: every arm is fitted and checkpointed. Re-run without it to score.")
         return 0
 
-    lines = _report(rows, args, cfg, under, folds, source)
+    lines = _report(rows, args, cfg, under, folds, source, paths, volume)
     text = "\n".join(lines)
     print()
     print(text)
@@ -270,12 +278,32 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _report(rows, args, cfg, under, folds, source) -> list[str]:
+def _fold_spread(rows, metric: str) -> float:
+    """The largest spread *within* one arm across folds, for the metric.
+
+    The statistic the envelope cannot supply. R10's 0.0335 is an across-**seed** envelope
+    measured on the fixture; it says nothing about how much a metric moves between the folds of
+    *this* dataset. At n = 2 folds a between-arm margin smaller than the within-arm fold spread
+    is not a result — the two arms are being separated by less than one arm moves on its own —
+    and that is a distinct failure from the folds disagreeing in sign, which is what the report
+    checked before. Measured on ``deep_starmap``: ``text_emb_mode``'s ``marker_depth_r`` margin
+    is 0.1850 while ``lookup`` alone swings 0.2033 between ``section_3`` and ``section_5``.
+    """
+    worst = 0.0
+    for r in rows:
+        values = [f[metric] for f in r["per_fold"]]
+        worst = max(worst, max(values) - min(values))
+    return worst
+
+
+def _report(rows, args, cfg, under, folds, source, paths, volume) -> list[str]:
     fold_ids = [s.section_id for s in folds]
     lines = [
         f"# T09 audit — `{args.gate}` measured where it is live, per fold",
         "",
-        f"Tier-1 STARmap (`starmap_visual_cortex`, `paper_2_4_6`). Config from {source}, "
+        f"Dataset **`{paths.dataset}`**, holdout **`{paths.holdout}`** — "
+        f"{volume.n_cells} training cells x {volume.n_genes} genes over "
+        f"{volume.n_sections} sections. Config from {source}, "
         f"measured under **{', '.join(f'`{k}={v}`' for k, v in under.items())}**, "
         f"{cfg.train_steps} steps, seed {args.seed}.",
         "",
@@ -295,8 +323,8 @@ def _report(rows, args, cfg, under, folds, source) -> list[str]:
     header = lines[-1]
     for sid in fold_ids:
         header += " | " + " | ".join(f"`{r['option']}` {sid}" for r in rows)
-    lines[-1] = header + " | margin (mean) | vs 0.0335 |"
-    lines.append("|---" * (1 + len(rows) * (1 + len(fold_ids)) + 2) + "|")
+    lines[-1] = header + " | margin (mean) | vs 0.0335 | vs fold spread |"
+    lines.append("|---" * (1 + len(rows) * (1 + len(fold_ids)) + 3) + "|")
     for name in METRIC_NAMES:
         cells = [f"{r['mean'][name]:+.4f}" for r in rows]
         for i in range(len(fold_ids)):
@@ -309,10 +337,20 @@ def _report(rows, args, cfg, under, folds, source) -> list[str]:
             if margin != margin
             else ("**inside**" if margin < ENVELOPE else f"{margin / ENVELOPE:.1f}x")
         )
+        spread = _fold_spread(rows, name)
+        vs_spread = (
+            "—"
+            if margin != margin or spread <= 0
+            else (
+                f"**{margin / spread:.1f}x**"
+                if margin / spread >= 2.0
+                else f"⚠ {margin / spread:.1f}x"
+            )
+        )
         lines.append(
             f"| `{name}` | "
             + " | ".join(cells)
-            + f" | {'—' if margin != margin else f'{margin:.4f}'} | {verdict} |"
+            + f" | {'—' if margin != margin else f'{margin:.4f}'} | {verdict} | {vs_spread} |"
         )
 
     if len(rows) == 2:
@@ -327,13 +365,22 @@ def _report(rows, args, cfg, under, folds, source) -> list[str]:
         lines += [
             "",
             f"**Largest separation: `{worst}` at {margin:.4f}** "
-            f"({margin / ENVELOPE:.1f}x the 0.0335 envelope). The two folds "
+            f"({margin / ENVELOPE:.1f}x the 0.0335 envelope, "
+            f"{margin / max(_fold_spread(rows, worst), 1e-12):.1f}x the worst within-arm fold "
+            f"spread). The two folds "
             + (
                 "**agree in sign**, so the gap is not carried by one of them."
                 if agree
                 else "**disagree in sign** — the mean is the average of a win and a loss, and "
                 "at n = 2 that is not a result."
             ),
+            "",
+            "",
+            "**`vs fold spread` is the column to read at n = 2.** R10's 0.0335 is an "
+            "across-*seed* envelope measured on the fixture; it says nothing about how much a "
+            "metric moves between *this* dataset's folds. A margin smaller than the worst "
+            "within-arm fold spread (**⚠** below 2x) separates the two arms by less than one "
+            "arm moves on its own, and is not a result however far it clears the envelope.",
             "",
             "**One seed.** `specs/09` §3's repeated-seed rule asks for "
             f"`claim_min_seeds` = {cfg.claim_min_seeds} before this reaches a paper claim.",
