@@ -1827,3 +1827,73 @@ Scoring only, no refits. **Caveat that must travel with it**: the model was *tra
 sections being excluded, so this measures extrapolation when the nearby evidence is withheld at
 inference, not when it was never seen. It is a screen, not the experiment — if v25's curve falls
 as fast as copying's, the wide-gap refit will fail too and need not be paid for.
+
+### T09 — tier-1 STARmap re-scored, and a third check the report was missing (2026-08-27)
+
+Scoring only on `runs/audit`; all four config hashes unchanged, so no refit. 16 527 cells x 28
+genes, `expr_pca_dim` correctly clamped to 28.
+
+#### 1. The two fixes move tier-1 as they moved `deep_starmap`
+
+| arm | morans | gearys | umap | `marker_field_r` | `marker_depth_r` | `celltype_localization` |
+|---|---|---|---|---|---|---|
+| `cross-mix` | −0.0119 | −0.0057 | −0.0089 | **+0.8734** | **+1.0342** | **+0.7498** |
+| `zinb-flow` / `medcpt` | −0.0047 | −0.0039 | −0.0115 | **+0.8152** | **+0.9376** | **+0.7498** |
+| `lookup` | −0.0122 | −0.0146 | −0.0132 | **+0.8242** | **+1.0070** | **+0.7498** |
+
+The three coordinate metrics were **negative** before (`marker_depth_r` −0.3086 / −0.3084 /
+−0.3117, `marker_field_r` ≈ −0.13) and are now +0.63 … +0.73. The three graph metrics move by
+−0.004 … −0.015 — small and *negative*, because unlike the `deep_starmap` frame-only comparison
+this run also closed the layout leak, so the generated section is a genuine flanking copy rather
+than the fold itself and everything got slightly harder.
+
+**The old tier-1 conclusion was wrong in both halves.** "`marker_field_r` 0.0057, `marker_depth_r`
+0.0002 … copying wins count realism and buys nothing in arrangement" — those two margins were
+between two arms both sitting at −0.13 and −0.31.
+
+#### 2. `expr_mode` on 28 genes: copying wins, but arrangement barely separates
+
+| metric | margin (`cross-mix` − `zinb-flow`) | vs envelope | vs fold spread | fold balance |
+|---|---|---|---|---|
+| `morans_pearson` | +0.1673 | 5.0x | **3.9x** | 0.92 |
+| `gearys_pearson` | +0.1756 | 5.2x | **4.3x** | 0.94 |
+| `umap_mixing` | +0.1559 | 4.7x | **2.5x** | 0.85 |
+| `marker_field_r` | +0.0525 | 1.6x | ⚠ 0.3x | 0.77 |
+| `marker_depth_r` | +0.0964 | 2.9x | ⚠ 0.5x | ⚠ 0.21 |
+
+**The dataset contrast is the finding.** On 28 genes the two arms are close on arrangement —
+`zinb-flow` reaches 0.6797 against copying's 0.7322 on `marker_field_r`, and 0.6292 against
+0.7256 on `marker_depth_r`, neither clearing its fold spread. On 1017 genes the same two metrics
+were copying's **largest** margins (0.6614 and 0.5948, both 6.0x+). So the generative path's
+spatial arrangement **degrades sharply with panel width** — 0.87x of copying's `marker_depth_r`
+at 28 genes, **0.35x** at 1017 — while copying holds up. That is the same "the gap widened on the
+wide panel" pattern seen before the fixes, but now on metrics that were measuring something.
+
+#### 3. `text_emb_mode` on 28 genes: nothing is established
+
+Every margin is below 2x its within-arm fold spread — 0.5x, 0.4x, 0.4x, 0.2x, 0.3x. Every sign
+still favours `lookup`. The one that looked like a result, `marker_depth_r` at 2.0x the envelope,
+is the reason for §4.
+
+Set against `deep_starmap`, where `morans_pearson` cleared at **10.0x** the fold spread: the text
+gate's single established real-data result is on the wide panel only, and tier-1 adds nothing to
+it either way.
+
+#### 4. The report claimed the opposite of the truth, and now has the statistic to see it
+
+`text_emb_mode`'s `marker_depth_r` margin of 0.0661 has per-fold differences of **−0.1322 and
+−0.0000** (4.2e-5). The report printed *"The two folds **agree in sign**, so the gap is not
+carried by one of them"* — the sign check passed on a difference of 4e-5 and asserted the
+opposite of what the numbers say. The mean of two numbers, one of which is zero, is the other one
+halved.
+
+`_fold_balance` = `min |per-fold difference| / max |per-fold difference|` is now a column
+(**⚠** below 0.25), and the headline sentence prints it and the per-fold differences instead of
+resting on sign agreement alone. Measured on the four audits: tier-1 `expr_mode` is 0.77–0.94 on
+the metrics that matter and **0.21** on `marker_depth_r`; tier-1 `text_emb_mode` is 0.15–0.36 and
+**0.00**; `deep_starmap` is healthy throughout.
+
+This is the third statistic the n = 2 design has needed — after the within-arm fold spread and
+the inertness probe — and the same failure each time: **a check that cannot fail in the way it is
+meant to.** Sign agreement over two folds has only four outcomes and cannot express "one fold
+carried it". 375 tests pass, `ruff` and `mypy --strict` clean.

@@ -297,6 +297,29 @@ def _fold_spread(rows, metric: str) -> float:
     return worst
 
 
+def _fold_balance(rows, metric: str) -> float:
+    """How evenly the two folds carry the margin: ``min |diff| / max |diff|``, in ``[0, 1]``.
+
+    The statistic sign-agreement cannot supply. Two folds can agree in sign while one of them
+    contributes essentially the whole mean — measured on tier-1 STARmap, `text_emb_mode`'s
+    `marker_depth_r` margin of 0.0661 has per-fold differences of **-0.1322 and -0.0000**, so
+    the report's "the folds agree in sign, so the gap is not carried by one of them" was passing
+    on a difference of 4e-5 and saying the opposite of the truth. A balance near zero means the
+    mean of two numbers is one number halved.
+
+    Returns NaN when both differences are zero (an inert metric), which the caller renders as
+    a dash rather than as a failure.
+    """
+    if len(rows) != 2:
+        return float("nan")
+    diffs = [
+        abs(rows[0]["per_fold"][i][metric] - rows[1]["per_fold"][i][metric])
+        for i in range(len(rows[0]["per_fold"]))
+    ]
+    hi = max(diffs)
+    return float(min(diffs) / hi) if hi > 0 else float("nan")
+
+
 def _report(rows, args, cfg, under, folds, source, paths, volume) -> list[str]:
     fold_ids = [s.section_id for s in folds]
     lines = [
@@ -324,8 +347,8 @@ def _report(rows, args, cfg, under, folds, source, paths, volume) -> list[str]:
     header = lines[-1]
     for sid in fold_ids:
         header += " | " + " | ".join(f"`{r['option']}` {sid}" for r in rows)
-    lines[-1] = header + " | margin (mean) | vs 0.0335 | vs fold spread |"
-    lines.append("|---" * (1 + len(rows) * (1 + len(fold_ids)) + 3) + "|")
+    lines[-1] = header + " | margin (mean) | vs 0.0335 | vs fold spread | fold balance |"
+    lines.append("|---" * (1 + len(rows) * (1 + len(fold_ids)) + 4) + "|")
     for name in METRIC_NAMES:
         cells = [f"{r['mean'][name]:+.4f}" for r in rows]
         for i in range(len(fold_ids)):
@@ -348,15 +371,23 @@ def _report(rows, args, cfg, under, folds, source, paths, volume) -> list[str]:
                 else f"⚠ {margin / spread:.1f}x"
             )
         )
+        balance = _fold_balance(rows, name)
+        vs_balance = (
+            "—"
+            if balance != balance
+            else (f"**{balance:.2f}**" if balance >= 0.25 else f"⚠ {balance:.2f}")
+        )
         lines.append(
             f"| `{name}` | "
             + " | ".join(cells)
-            + f" | {'—' if margin != margin else f'{margin:.4f}'} | {verdict} | {vs_spread} |"
+            + f" | {'—' if margin != margin else f'{margin:.4f}'} | {verdict} | {vs_spread} "
+            f"| {vs_balance} |"
         )
 
     if len(rows) == 2:
         worst = max(METRIC_NAMES, key=lambda n: abs(rows[0]["mean"][n] - rows[1]["mean"][n]))
         margin = abs(rows[0]["mean"][worst] - rows[1]["mean"][worst])
+        balance = _fold_balance(rows, worst)
         agree = all(
             (rows[0]["per_fold"][i][worst] - rows[1]["per_fold"][i][worst])
             * (rows[0]["mean"][worst] - rows[1]["mean"][worst])
@@ -370,12 +401,32 @@ def _report(rows, args, cfg, under, folds, source, paths, volume) -> list[str]:
             f"{margin / max(_fold_spread(rows, worst), 1e-12):.1f}x the worst within-arm fold "
             f"spread). The two folds "
             + (
-                "**agree in sign**, so the gap is not carried by one of them."
+                (
+                    "**agree in sign**"
+                    + (
+                        f", and carry it evenly (balance {balance:.2f}), so the gap is not "
+                        "carried by one of them."
+                        if balance != balance or balance >= 0.25
+                        else f" but **one fold carries almost all of it** (balance "
+                        f"{balance:.2f}): the per-fold differences are "
+                        + " and ".join(
+                            f"{rows[0]['per_fold'][i][worst] - rows[1]['per_fold'][i][worst]:+.4f}"
+                            for i in range(len(fold_ids))
+                        )
+                        + ". The mean of two numbers, one of which is ~0, is that one number "
+                        "halved — sign agreement does not catch this and did not."
+                    )
+                )
                 if agree
                 else "**disagree in sign** — the mean is the average of a win and a loss, and "
                 "at n = 2 that is not a result."
             ),
             "",
+            "",
+            "**`fold balance`** is ``min |per-fold difference| / max |per-fold difference|``. "
+            "Sign agreement is not enough: two folds can agree in sign while one contributes "
+            "the whole mean (**⚠** below 0.25). A margin with a balance near zero is one fold's "
+            "difference halved, whatever its ratio to the envelope.",
             "",
             "**`vs fold spread` is the column to read at n = 2.** R10's 0.0335 is an "
             "across-*seed* envelope measured on the fixture; it says nothing about how much a "
