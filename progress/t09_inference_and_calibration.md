@@ -1955,3 +1955,74 @@ The claim to carry is "`cross-mix` tracks the nearest-section copy", quantified 
   `text_emb_mode` measurement remains on fitted genes, where `lookup` memorises and `medcpt` is
   strictly more constrained, and tier-1 added nothing either way (every margin below 2x its fold
   spread).
+
+### T09 — the headroom bootstrap, and a Convention 3 violation it turned up (2026-08-27)
+
+#### 1. `scripts/t09_ceiling_bootstrap.py` — is the reversal trustworthy?
+
+The tier-1-vs-`deep_starmap` reversal rests on a split-half reliability estimated from **28 genes
+at ~4 100 cells per section**, and a point estimate at that scale is not self-evidently stable.
+This resamples it: per replicate, an independent **cell** subsample (80%, without replacement) of
+the target *and* the donor, and a **marker-gene** resample with replacement, then the whole chain
+recomputed — R, `sqrt(R)`, the copy correlation, the headroom.
+
+Two copy referents, because they answer different questions: the **operational** donor
+(`_resample_layout`'s actual pick — nearest by `|dz|`, ties by `section_id`) and the **best**
+available donor (the oracle bound the claim was stated against). `--compare` takes the other
+dataset's JSON and reports interval overlap, `P(this > other)`, and a bootstrap CI on the
+*difference*, with an explicit **"REVERSAL NOT ESTABLISHED"** verdict when the intervals overlap.
+
+Two biases are stated in the report because **both cut against the conclusion this file exists to
+test**: R is estimated by splitting the *subsample*, so Spearman-Brown corrects to the
+subsample's size and the ceiling comes out slightly low; and the gene resample captures the
+spread of the mean over the *selected* markers, not the variance of the selection itself — real
+on `deep_starmap` (32 chosen from 1017), absent on tier-1 where all 28 genes are markers, so
+tier-1's interval is the more complete of the two.
+
+**Not run here** — both datasets are on the user's server. `specs/10` is **not** being rewritten
+until it returns.
+
+#### 2. What the smoke test found: `hash()` on a `str` is salted per process
+
+Two runs of the bootstrap with the **same `--seed`** disagreed. The cause was in my own script and
+then, on grepping, in **the package**:
+
+```
+spatialcpav25_gen/train/loso.py:281   gen = np.random.default_rng([int(seed), hash(hidden.section_id) % (2**31)])
+spatialcpav25_gen/infer/calibrate.py:1169                        (identical line)
+```
+
+`hash()` on a `str` is salted by `PYTHONHASHSEED`, random by default since Python 3.3 — measured
+here at 1223376786 / 929189150 / 474838271 for `'section_3'` in three consecutive processes. So
+**the same declared seed drew a different stream in every run.** That is a direct Convention 3
+violation ("two runs with the same seed must be bitwise identical, and a test asserts it"), and
+no single-process determinism test can see it — which is why
+`test_resumed_fit_is_bitwise_identical` and friends have always passed.
+
+**What it touches**: `reconstruct_hidden`'s cell and gene subsample, drawn **every metric-aware
+training step**, and `_decode_hidden`'s subsample in **calibration**. Both are on the shipping
+path. **Scoring is not affected** — `_fold_scores` → `generate_section` never calls `hash()` — so
+every audit number measured against a fixed checkpoint stands.
+
+**Fixed**: `data.schema.section_seed()` (`zlib.crc32`, stable across processes and platforms),
+used at both sites and in the bootstrap script. `test_section_seed_is_stable_across_processes`
+spawns interpreters under three different `PYTHONHASHSEED` values and compares — and asserts in
+the same subprocesses that the **builtin** is *unstable*, so the test cannot quietly become
+vacuous. 376 pass in 3m01s.
+
+#### 3. This implicates R10's envelope, which is the yardstick for every gate margin
+
+R10 records: *"Fitting one configuration twice — same config, same seed, different process — moved
+its scores by up to **0.0120**."* That is precisely the signature of this bug: same seed, different
+process, different training stream. The 0.0335 figure is an *across-seed* spread and is less
+directly implicated, but it was measured with the bug present and both numbers should be
+re-measured now that a declared seed means what it says.
+
+This matters beyond tidiness: **0.0335 is the yardstick every gate margin in this project is
+quoted against**, and several verdicts are "inside the envelope". If the envelope shrinks, some of
+those become measurable — and the two margins currently sitting closest to it are exactly the ones
+the campaign turns on. Re-measuring it is now the cheapest high-value item in T09, and it needs
+fits rather than scoring.
+
+**Not claimed**: that the whole envelope is this bug. The across-seed component is real by
+construction; only the same-seed cross-process component is explained.

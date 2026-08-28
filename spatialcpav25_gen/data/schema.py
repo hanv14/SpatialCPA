@@ -25,6 +25,7 @@ separately as a scalar ``z``. :func:`to_xyz` is the only sanctioned way to obtai
 from __future__ import annotations
 
 import warnings
+import zlib
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -144,8 +145,7 @@ def to_xyz(section: Section) -> npt.NDArray[np.float32]:
     xy = np.asarray(section.coords, dtype=np.float32)
     if xy.ndim != 2 or xy.shape[1] != 2:
         raise SchemaError(
-            f"Section.coords for section_id={section.section_id!r} must be (N, 2); "
-            f"got {xy.shape}"
+            f"Section.coords for section_id={section.section_id!r} must be (N, 2); got {xy.shape}"
         )
     z = np.full((xy.shape[0], 1), section.z, dtype=np.float32)
     return np.concatenate([xy, z], axis=1, dtype=np.float32)
@@ -154,10 +154,7 @@ def to_xyz(section: Section) -> npt.NDArray[np.float32]:
 def median_section_spacing(sections: Sequence[Section]) -> float:
     """Return the median ``|z_{i+1} - z_i|`` over consecutive sections."""
     if len(sections) < 2:
-        raise SchemaError(
-            "median section spacing needs at least 2 sections, "
-            f"got {len(sections)}"
-        )
+        raise SchemaError(f"median section spacing needs at least 2 sections, got {len(sections)}")
     z = np.asarray([s.z for s in sections], dtype=np.float64)
     return float(np.median(np.abs(np.diff(z))))
 
@@ -277,9 +274,7 @@ class Volume:
         on the face is a real cell there, which is the reason
         ``field._BBOX_TOLERANCE_FRAC`` exists.
         """
-        xy = np.concatenate(
-            [np.asarray(s.coords, dtype=np.float32) for s in self.sections], axis=0
-        )
+        xy = np.concatenate([np.asarray(s.coords, dtype=np.float32) for s in self.sections], axis=0)
         z = np.asarray([s.z for s in self.sections], dtype=np.float32)
         half = 0.5 * np.asarray([s.thickness for s in self.sections], dtype=np.float32)
         lo = np.array([xy[:, 0].min(), xy[:, 1].min(), (z - half).min()], dtype=np.float32)
@@ -478,6 +473,7 @@ def validate_volume(vol: Volume, cfg: Config) -> None:
             stacklevel=2,
         )
 
+
 def _validate_sections_ordered(vol: Volume, cfg: Config) -> None:
     """Check the section count, unique ids, and strictly increasing z."""
     if vol.n_sections < cfg.min_sections_per_volume:
@@ -584,7 +580,9 @@ def _validate_counts(vol: Volume, cfg: Config) -> None:
     """Check that counts are finite and non-negative; warn if they are not integers."""
     non_integer: list[str] = []
     for section in vol.sections:
-        data = np.asarray(section.counts.data if sparse.issparse(section.counts) else section.counts)
+        data = np.asarray(
+            section.counts.data if sparse.issparse(section.counts) else section.counts
+        )
         sid = section.section_id
         if data.size == 0:
             continue
@@ -660,6 +658,22 @@ def _validate_thickness(vol: Volume) -> None:
 
 class ConfigClampWarning(UserWarning):
     """A config field was narrowed to fit the volume, and the run is not at the default."""
+
+
+def section_seed(section_id: str) -> int:
+    """A **stable** 31-bit seed derived from a section id. ``str`` -> ``int``.
+
+    Convention 3 requires two runs with the same seed to be bitwise identical. Python's builtin
+    ``hash()`` on a ``str`` is salted per process (``PYTHONHASHSEED`` is random by default since
+    3.3), so ``np.random.default_rng([seed, hash(section_id) % 2**31])`` draws a *different*
+    stream in every process for the same declared seed. That is not a reproducibility envelope,
+    it is a bug, and it is invisible to any test that runs in one process.
+
+    ``zlib.crc32`` is used rather than a cryptographic digest because the requirement is
+    stability across processes and platforms, not collision resistance: the value only has to
+    decorrelate the streams of two sections within one run.
+    """
+    return int(zlib.crc32(section_id.encode("utf-8")) & 0x7FFFFFFF)
 
 
 def clamp_config_to_volume(cfg: Config, vol: Volume) -> Config:

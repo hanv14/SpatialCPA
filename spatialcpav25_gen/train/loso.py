@@ -83,7 +83,7 @@ from torch import Tensor
 
 from spatialcpav25_gen.config import Config
 from spatialcpav25_gen.data.loaders import loso_folds
-from spatialcpav25_gen.data.schema import Section, TrainingVolume, to_xyz
+from spatialcpav25_gen.data.schema import Section, TrainingVolume, section_seed, to_xyz
 from spatialcpav25_gen.infer.planes import section_plane, uniform_slab_points
 from spatialcpav25_gen.losses.metric_aware import (
     METRIC_TERMS,
@@ -278,7 +278,9 @@ def reconstruct_hidden(
     the reconstruction; randomising the evidence between two steps would put that randomness
     straight into the loss.
     """
-    gen = np.random.default_rng([int(seed), hash(hidden.section_id) % (2**31)])
+    # `section_seed`, not the builtin `hash()`: the latter is salted per process, so the
+    # same declared seed drew a different stream in every run (Convention 3).
+    gen = np.random.default_rng([int(seed), section_seed(hidden.section_id)])
     n_cells = min(int(cfg.loso_max_cells), hidden.n_cells)
     rows = np.sort(gen.choice(hidden.n_cells, size=n_cells, replace=False)).astype(np.intp)
     pool = (

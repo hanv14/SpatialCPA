@@ -5,6 +5,7 @@ Numeric thresholds here are the ones written in ``specs/01_TASK_config_and_data.
 
 from __future__ import annotations
 
+import sys
 import warnings
 
 import numpy as np
@@ -535,3 +536,38 @@ def test_loso_folds_excludes_holdout(volume, cfg):
         assert rest.median_spacing == pytest.approx(
             float(np.median(np.abs(np.diff(rest.z_values.astype(np.float64)))))
         )
+
+
+def test_section_seed_is_stable_across_processes():
+    """Convention 3: the same section id must give the same seed in every process.
+
+    The builtin ``hash()`` on a ``str`` is salted per process, and two places in the package
+    seeded ``np.random.default_rng`` with it — ``reconstruct_hidden``'s cell and gene subsample
+    for every metric-aware training step, and ``_decode_hidden``'s in calibration. So the same
+    declared seed drew a different stream in every run, which no single-process determinism test
+    can see. This spawns interpreters with **different** ``PYTHONHASHSEED`` values and compares.
+
+    The builtin is measured in the same subprocesses, so the test also proves it has teeth: if
+    ``hash()`` were stable here, agreement would say nothing.
+    """
+    import os
+    import subprocess
+
+    code = (
+        "from spatialcpav25_gen.data.schema import section_seed;"
+        "print(section_seed('section_3'), section_seed('section_5'), hash('section_3') % (2**31))"
+    )
+    out = [
+        subprocess.run(
+            [sys.executable, "-c", code],
+            env={**os.environ, "PYTHONHASHSEED": salt},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        for salt in ("0", "1", "12345")
+    ]
+    stable = {(row[0], row[1]) for row in out}
+    builtin = {row[2] for row in out}
+    assert len(stable) == 1, f"section_seed differs across PYTHONHASHSEED: {stable}"
+    assert len(builtin) > 1, "builtin hash() was stable here, so this test proves nothing"

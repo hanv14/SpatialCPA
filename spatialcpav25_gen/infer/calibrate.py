@@ -47,7 +47,7 @@ import torch
 from torch import Tensor
 
 from spatialcpav25_gen.config import Config
-from spatialcpav25_gen.data.schema import Section, TrainingVolume
+from spatialcpav25_gen.data.schema import Section, TrainingVolume, section_seed
 from spatialcpav25_gen.infer.generate import emitted_counts, generate_section
 from spatialcpav25_gen.infer.planes import section_plane
 from spatialcpav25_gen.losses.metric_aware import (
@@ -1166,7 +1166,9 @@ def _decode_hidden(model: CTFFlow, hidden: Section, cfg: Config, *, seed: int) -
     """
     from spatialcpav25_gen.data.schema import to_xyz
 
-    gen = np.random.default_rng([int(seed), hash(hidden.section_id) % (2**31)])
+    # `section_seed`, not the builtin `hash()`: the latter is salted per process, so the
+    # same declared seed drew a different stream in every run (Convention 3).
+    gen = np.random.default_rng([int(seed), section_seed(hidden.section_id)])
     rows = _subsample(hidden.n_cells, int(cfg.loso_max_cells), int(seed))
     xyz = to_xyz(hidden)[rows].astype(np.float64)
     points = torch.from_numpy(xyz.astype(np.float32))
