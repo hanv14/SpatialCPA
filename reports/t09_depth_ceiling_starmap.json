@@ -1,0 +1,126 @@
+[
+  {
+    "target": "section_1",
+    "dataset": "starmap_visual_cortex",
+    "holdout": "paper_2_4_6",
+    "n_cells": 4073,
+    "n_markers": 28,
+    "self": 1.0,
+    "split_half": 0.8704055253832521,
+    "noiseless_ceiling": 0.9329552644062051,
+    "shuffled": 0.014413269993431555,
+    "nearest_other": 0.7407747568942026,
+    "best_other": 0.7407747568942026,
+    "mean_other": 0.6699266136056158,
+    "others": [
+      {
+        "donor": "section_3",
+        "dz": 22.0,
+        "r": 0.7407747568942026
+      },
+      {
+        "donor": "section_5",
+        "dz": 44.0,
+        "r": 0.6666113396462433
+      },
+      {
+        "donor": "section_7",
+        "dz": 66.0,
+        "r": 0.6023937442764016
+      }
+    ]
+  },
+  {
+    "target": "section_3",
+    "dataset": "starmap_visual_cortex",
+    "holdout": "paper_2_4_6",
+    "n_cells": 4169,
+    "n_markers": 28,
+    "self": 1.0,
+    "split_half": 0.878366680646933,
+    "noiseless_ceiling": 0.937212185498531,
+    "shuffled": 0.0001429731381015327,
+    "nearest_other": 0.7433537917552288,
+    "best_other": 0.7791258961094787,
+    "mean_other": 0.7441584516110965,
+    "others": [
+      {
+        "donor": "section_1",
+        "dz": 22.0,
+        "r": 0.7433537917552288
+      },
+      {
+        "donor": "section_5",
+        "dz": 22.0,
+        "r": 0.7791258961094787
+      },
+      {
+        "donor": "section_7",
+        "dz": 44.0,
+        "r": 0.7099956669685817
+      }
+    ]
+  },
+  {
+    "target": "section_5",
+    "dataset": "starmap_visual_cortex",
+    "holdout": "paper_2_4_6",
+    "n_cells": 4110,
+    "n_markers": 28,
+    "self": 1.0,
+    "split_half": 0.8815195673213514,
+    "noiseless_ceiling": 0.938892734726045,
+    "shuffled": -0.012720812434036898,
+    "nearest_other": 0.7839094204681375,
+    "best_other": 0.7839094204681375,
+    "mean_other": 0.7286120047111456,
+    "others": [
+      {
+        "donor": "section_3",
+        "dz": 22.0,
+        "r": 0.7839094204681375
+      },
+      {
+        "donor": "section_7",
+        "dz": 22.0,
+        "r": 0.7226738485277285
+      },
+      {
+        "donor": "section_1",
+        "dz": 44.0,
+        "r": 0.6792527451375706
+      }
+    ]
+  },
+  {
+    "target": "section_7",
+    "dataset": "starmap_visual_cortex",
+    "holdout": "paper_2_4_6",
+    "n_cells": 4175,
+    "n_markers": 28,
+    "self": 1.0,
+    "split_half": 0.8594172509383302,
+    "noiseless_ceiling": 0.9270475990683166,
+    "shuffled": -0.03665884010329634,
+    "nearest_other": 0.6988835455249003,
+    "best_other": 0.7134053955779109,
+    "mean_other": 0.6702430978551535,
+    "others": [
+      {
+        "donor": "section_5",
+        "dz": 22.0,
+        "r": 0.6988835455249003
+      },
+      {
+        "donor": "section_3",
+        "dz": 44.0,
+        "r": 0.7134053955779109
+      },
+      {
+        "donor": "section_1",
+        "dz": 66.0,
+        "r": 0.5984403524626493
+      }
+    ]
+  }
+]

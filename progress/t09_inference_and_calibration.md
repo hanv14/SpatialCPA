@@ -1897,3 +1897,61 @@ This is the third statistic the n = 2 design has needed — after the within-arm
 the inertness probe — and the same failure each time: **a check that cannot fail in the way it is
 meant to.** Sign agreement over two folds has only four outcomes and cannot express "one fold
 carried it". 375 tests pass, `ruff` and `mypy --strict` clean.
+
+### T09 — the tier-1 ceiling corrects R13: saturation is dataset-dependent, and the two sit on opposite sides (2026-08-27)
+
+`reports/t09_depth_ceiling_starmap.md`. `self` = 1.000000 on all four; model-free.
+
+| | tier-1 STARmap (28 genes, ~4.1k cells/section) | `deep_starmap` (1017 genes, 18–39k cells/section) |
+|---|---|---|
+| split-half R | 0.859 – 0.882 | 0.987 – 0.992 |
+| noiseless ceiling √R | 0.927 – 0.939 | 0.994 – 0.996 |
+| best copy | 0.713 – 0.784 | 0.929 – 0.986 |
+| **headroom over the best copy** | **+0.155 … +0.214 (median 5.2x the envelope)** | +0.010 … +0.064 (median **0.5x**) |
+| copying, as a share of the ceiling | 81% | 98% |
+| `zinb-flow`, as a share of the ceiling | 67% | 32% |
+| `zinb-flow`, as a share of copying | **83%** | **33%** |
+
+**R13 said "the interpolation task is saturated". That is true of `deep_starmap` and false of
+tier-1**, and the earlier entry generalised from one dataset. Corrected in `PROGRESS.md` and
+`progress/numbers.md`. What actually holds:
+
+* On **`deep_starmap` the comparison is uninformative** — a perfect method could beat the best
+  copy by 0.016, half the reproducibility envelope. Its huge `expr_mode` margins (0.6614, 0.5948,
+  both 6.0x+) separate the arms on a task where copying is already at **98% of the achievable
+  ceiling**. They are real, and they are measuring "copy vs not-copy" where copying is nearly
+  perfect.
+* On **tier-1 there is 0.175 of genuine room above copying, 5.2x the envelope** — and
+  **`zinb-flow` uses none of it.** It sits 0.096 *below* copying, at 67% of the ceiling against
+  copying's 81%.
+
+That is a **better-founded negative than either dataset alone.** The saturation defence — "the
+task had no room, so we could not show an advantage" — is available for `deep_starmap` and **not**
+for tier-1. Where the task has room, the generative path still loses.
+
+**And the reversal is the interesting part.** The arms are *closest* where the task is hardest:
+tier-1's `expr_mode` margin is 0.0964 and does not clear its fold spread (⚠0.5x), while
+`deep_starmap`'s is 0.5948 at 6.3x. `zinb-flow` reaches 83% of copying on the sparse noisy panel
+and 33% on the dense one. Consistent with the previous entry's finding that spatial arrangement
+degrades with panel width — and it means **tier-1, not `deep_starmap`, is the informative
+reconstruction benchmark**, despite being the smaller dataset.
+
+**The copy identification holds on tier-1 too, more loosely.** `cross-mix` against a model-free
+copy of the section `_resample_layout` actually picks (nearest by `|dz|`, ties broken by
+`section_id`): `section_3` +0.6930 vs +0.7434 (−0.0503), `section_5` +0.7581 vs +0.7839 (−0.0258).
+Same direction and order as `deep_starmap`'s −0.0009 / +0.0099, but not the near-exact match —
+expected, since tier-1's profile is far noisier (R 0.87 vs 0.99) and `cross-mix` mixes counts from
+several retrieved donors rather than copying one section wholesale, which costs more on 28 genes.
+The claim to carry is "`cross-mix` tracks the nearest-section copy", quantified per dataset —
+**not** the 0.001 figure on its own.
+
+#### What this does to the plan
+
+* **No wide-gap experiment.** It was proposed to manufacture headroom that tier-1 already has at
+  22 µm spacing. Score the reconstruction claim on tier-1 and report `deep_starmap`'s margins with
+  the saturation caveat attached.
+* **The `exclude_z` screen is no longer the priority** for the same reason.
+* **Unchanged: the zero-shot gene run is the only test of the text channel's actual claim.** Every
+  `text_emb_mode` measurement remains on fitted genes, where `lookup` memorises and `medcpt` is
+  strictly more constrained, and tier-1 added nothing either way (every margin below 2x its fold
+  spread).
