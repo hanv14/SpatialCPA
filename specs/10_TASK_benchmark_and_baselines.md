@@ -16,6 +16,56 @@ a preprocessor for the derived datasets the extension claims need, and the exper
 
 ---
 
+## 0a. ⚠️ READ FIRST — which dataset can carry a reconstruction claim, and which cannot
+
+**Measured 2026-08-27, model-free, and it inverts how this campaign has been prioritised.**
+`reports/t09_depth_ceiling_{starmap,deep}.md` and `reports/t09_ceiling_bootstrap_{starmap,deep}.md`.
+
+Every reconstruction metric compares a generated section with a real one, and §2's *achievable
+ceiling* argument says the top of the scale is not reachable. The ceiling is now **measured on
+real data** rather than argued, and with it the **headroom**: how much a perfect, noiseless method
+could beat a copy of another real section — which is what the `resample` + `cross-mix` baseline
+is (R13: it *is* that copy, to −0.0009 / +0.0099 on `deep_starmap`).
+
+| | tier-1 `starmap_visual_cortex` (28 genes, ~4.1k cells/section) | `deep_starmap` (1017 genes, 18–39k cells/section) |
+|---|---|---|
+| split-half reliability R | 0.859 – 0.882 | 0.987 – 0.992 |
+| noiseless ceiling √R | 0.927 – 0.939 | 0.994 – 0.996 |
+| best available copy | 0.713 – 0.784 | 0.929 – 0.986 |
+| **headroom over the best copy** | **+0.1551 [+0.1075, +0.2186]** | **+0.0160 [+0.0104, +0.0243]** |
+| headroom over the **operational** copy | +0.1833 [+0.1274, +0.2567] | +0.0855 [+0.0489, +0.1351] |
+| copying, as a share of the ceiling | 81 % | **98 %** |
+
+400-replicate bootstrap over cell subsamples and marker-gene resamples. The two intervals are
+**disjoint**, P(deep > tier-1) = **0.000**, difference **−0.1389 [−0.2017, −0.0884]**.
+
+**Consequences, and they are binding on this task:**
+
+1. **`deep_starmap` cannot carry a reconstruction claim against an optimal copier.** Its entire
+   headroom is **half the reproducibility envelope**. Its large `expr_mode` margins (0.6614 and
+   0.5948 on the two arrangement metrics, both 6.0x+ the within-arm fold spread) are real, and
+   they separate the arms on a task where copying already reaches **98 %** of what is achievable.
+   Any such number must be reported **with the ceiling beside it**, never alone.
+2. **Tier-1 is the informative reconstruction benchmark** — 4.6x the envelope of genuine room —
+   **despite being the smaller and sparser dataset.** This is the reverse of the campaign's
+   working assumption that tier 2 is the more demanding test.
+3. **The "saturated" verdict is against an *oracle* copier.** Against the copy the shipped
+   configuration actually performs, `deep_starmap` has **2.6x** the envelope of headroom — see
+   **R14**, which is a defect in that copier, not a property of the tissue.
+4. **Report every reconstruction number as a fraction of the measured headroom**, not only as a
+   raw value or an envelope multiple. §2's ceiling protocol was written for the synthetic fixture
+   because it was "the only dataset with a known generative law"; `scripts/t09_depth_ceiling.py`
+   supplies a model-free ceiling for any dataset and that limitation no longer holds.
+
+**What this does not say.** It does not say the generative path is untestable — it says
+*reconstruction of an interpolated section* is the wrong instrument on a dense panel. The claims
+copying cannot address at all — **unmeasured genes** (zero-shot; `forward_zero_shot` and
+`gene_pool` exist and have never been run) and **arbitrary planes** (where copying has no output
+and the comparison is categorical) — are unaffected by any of this and are where the method's case
+now rests.
+
+---
+
 ## 0. The additivity contract
 
 **Existing bench3 results must never need re-running.** Every change is additive; nothing in

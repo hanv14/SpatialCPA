@@ -2026,3 +2026,55 @@ fits rather than scoring.
 
 **Not claimed**: that the whole envelope is this bug. The across-seed component is real by
 construction; only the same-seed cross-process component is explained.
+
+### T09 — the bootstrap lands: the reversal is established, and it exposes a defect in the shipped layout (2026-08-27)
+
+`reports/t09_ceiling_bootstrap_{starmap,deep}.md`. 400 replicates each, resampling cells (80%,
+without replacement) and marker genes (with replacement).
+
+| dataset | referent | median headroom | 95% CI | vs envelope |
+|---|---|---|---|---|
+| tier-1 | best copy (oracle) | **+0.1551** | [+0.1075, +0.2186] | 4.6x [3.2x, 6.5x] |
+| tier-1 | operational copy | +0.1833 | [+0.1274, +0.2567] | 5.5x |
+| `deep_starmap` | best copy (oracle) | **+0.0160** | [+0.0104, +0.0243] | 0.5x [0.3x, 0.7x] |
+| `deep_starmap` | operational copy | +0.0855 | [+0.0489, +0.1351] | **2.6x** |
+
+**Intervals disjoint. P(deep > tier-1) = 0.000. Difference −0.1389 [−0.2017, −0.0884].** The
+reversal is established and is now `specs/10` **§0a**, ahead of the additivity contract.
+
+**The bootstrap validates itself**: its medians reproduce the independent point estimates to
+±0.007 on every one of the four targets (tier-1 `section_3` +0.1520 vs +0.1581; `section_5`
++0.1618 vs +0.1550; deep +0.0106 vs +0.0101 and +0.0215 vs +0.0210).
+
+#### The nuance that narrows the claim — and is a defect, not a footnote
+
+"Saturated" is true of `deep_starmap` **against an oracle copier**. Against the copy the shipped
+configuration actually performs it is 2.6x the envelope, and `deep_starmap`'s `section_5` carries
+all of it: **4.1x** against the operational donor, **0.6x** against the best.
+
+`_resample_layout` selects `nearest = min(sections, key=(abs(dz), section_id))`. On that section it
+takes **`section_7` at 40.6 µm (`marker_depth_r` 0.8578)** over **`section_3` at 42.0 µm
+(0.9739)** — **0.116 of score for 1.4 µm of proximity**, 3.5x the envelope, measured model-free so
+it is a property of the rule rather than of any fit.
+
+Recorded as **R14**, not as a baselines note: `resample` is the shipped `layout_mode`, so every
+"copying wins" number in the campaign is measured against a copier leaving 2.6x the envelope
+unclaimed, and a reader may fairly discount those margins as beating a weak baseline. **The better
+rule** is donor selection by **profile correlation** to the target, or by **niche similarity**
+(mean retrieval-feature distance) — both computable from the training volume at generation time,
+neither needing a fit, and the ceiling instrument already measures the first for every donor pair.
+
+**Deliberately not changed now.** Touching `_resample_layout` would invalidate every number the
+coordinate-frame and layout-leak fixes have just stabilised — both audits on both datasets and
+both ceiling runs. Order: re-measure the envelope, then fix the donor rule, then re-run the audits
+against it.
+
+#### R10 reopened
+
+Three things are now known about the 0.0335 every margin is divided by: it was measured **on the
+synthetic fixture**; it was measured **with the `hash()` seeding bug present**, which is precisely
+the mechanism behind this row's own 0.0120 same-seed cross-process finding; and it is **one pooled
+number applied to six metrics** whose spread this row already recorded as *5x metric-dependent*.
+The replacement is a **per-metric** across-seed spread measured on **real data**, and every
+existing "inside the envelope" verdict then needs re-reading against its own metric's figure.
+`t09_seed_claim.py` already reports per-metric seed spread, so this needs fits and no new code.
