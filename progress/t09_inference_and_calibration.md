@@ -2078,3 +2078,65 @@ number applied to six metrics** whose spread this row already recorded as *5x me
 The replacement is a **per-metric** across-seed spread measured on **real data**, and every
 existing "inside the envelope" verdict then needs re-reading against its own metric's figure.
 `t09_seed_claim.py` already reports per-metric seed spread, so this needs fits and no new code.
+
+### T09 — the envelope re-measured on real data: R10's 0.0120 was entirely the seeding bug (2026-08-27)
+
+Tier-1 STARmap, `expr_mode` gate, seeds 2/3/4 fitted post-`section_seed`, plus seed 2 refitted in
+a **separate process**. 6 cold fits at ~62 min each, run three-up.
+
+#### 1. Same seed, separate process: **0.000000**, bitwise
+
+**36 of 36 values identical** — all six metrics, both arms, means and per-fold alike, largest
+absolute difference exactly `0`. R10 recorded this quantity at **0.0120** and shipped it as part
+of the justification for a 0.0335 envelope.
+
+**That 0.0120 was the salted-`hash()` seeding bug in its entirety**, not run-to-run variation. With
+`section_seed` in place and threads pinned to one, a declared seed now means what it says: the
+fit is reproducible across processes to the last bit. Every "inside the envelope" verdict in this
+project was decided against a figure inflated by a defect.
+
+#### 2. The envelope is neither one number nor a property of the metric alone
+
+| metric | `cross-mix` spread | `zinb-flow` spread | envelope | vs pooled 0.0335 |
+|---|---|---|---|---|
+| `morans_pearson` | 0.0054 | **0.0574** | 0.0574 | pooled too **small**, 1.7x |
+| `gearys_pearson` | 0.0027 | **0.0595** | 0.0595 | pooled too **small**, 1.8x |
+| `umap_mixing` | 0.0068 | 0.0190 | 0.0190 | pooled too large, 1.8x |
+| `marker_field_r` | 0.0049 | 0.0148 | 0.0148 | pooled too large, 2.3x |
+| `marker_depth_r` | 0.0084 | **0.0472** | 0.0472 | pooled too **small**, 1.4x |
+| `celltype_localization` | 0.0000 | 0.0000 | 0.0000 | inert (copied layout) |
+
+**A 4.0x range across the six**, and the pooled figure errs in *both* directions depending on the
+metric — too lenient on `morans`/`gearys`/`marker_depth_r`, too strict on `umap_mixing`/
+`marker_field_r`. It is also **arm-dependent**, which was not anticipated: a copying arm barely
+uses the fitted weights (0.0027–0.0084 across seeds) where the generative arm moves 0.0148–0.0595,
+**up to 22x more**. A margin inherits nearly all its seed variance from one side.
+
+#### 3. Which verdicts change
+
+**No overall verdict flips**, but one sub-test does and every margin of safety moves:
+
+* **`marker_field_r`'s envelope test flips FAIL → pass.** Its margin (0.0206) was "inside" the
+  pooled 0.0335 and beats its own 0.0148. It remains *not established* only because it fails the
+  within-arm fold spread (0.1741) — a different and much larger obstacle.
+* **`morans_pearson` and `gearys_pearson` weaken sharply**: 3.9x/4.8x against the pooled figure
+  becomes **2.2x/2.2x** against their own. They still stand, with far less room. Seed 4 is why —
+  its `zinb-flow` arm scored 0.8265 on `morans` against 0.7690 and 0.7914 at the other two seeds,
+  so one seed nearly trebled the envelope.
+* **`umap_mixing` strengthens**: 4.2x → **7.7x**, and it is now the most secure of the six.
+* **`marker_depth_r`** stays not established; its margin moves 0.0543–0.1021 across seeds, a range
+  larger than the pooled envelope it used to be judged against.
+
+**`cross-mix` beats `zinb-flow` on `morans_pearson`, `gearys_pearson` and `umap_mixing` at three
+seeds, against a per-metric real-data envelope** — the first claim in this project to satisfy
+`claim_min_seeds` = 3 on real data. The two arrangement metrics remain unestablished, on the fold
+spread rather than the envelope.
+
+#### 4. ⚠️ What this envelope may **not** be used for
+
+It was measured on **tier-1**, for the **`expr_mode`** arms. Applying it to `deep_starmap`, or to
+the `text_emb_mode` gate, would repeat exactly the error just diagnosed — a figure measured in one
+setting applied to another because it was the only one available. `deep_starmap`'s `expr_mode`
+margins (0.2364–0.6614) clear even the widest tier-1 envelope by 4x and are safe on any reading;
+its `text_emb_mode` margins are **not**, and stay quoted against the pooled figure with that
+caveat until an envelope is measured for them.
