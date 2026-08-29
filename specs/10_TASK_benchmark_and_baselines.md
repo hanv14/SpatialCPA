@@ -474,9 +474,54 @@ classification is made when a measurement is added, not rediscovered after a rev
 | calibration statuses and their achieved-vs-target numbers | no — reported as statuses, not compared against a baseline | 1 |
 | config selection itself | no — `specs/09` §3's rules govern it, and its margins are checked against the envelope | 1 |
 
-Report the spread as **min–max across seeds** beside every claim-bearing median, and state the
-campaign's own **envelope** (the largest across-seed spread observed) in the methods. **A claim
-whose effect is smaller than that envelope is not a claim** — report it as a tie, with the numbers.
+Report the spread as **min–max across seeds** beside every claim-bearing median. **A claim whose
+effect is smaller than its own envelope is not a claim** — report it as a tie, with the numbers.
+"Its own" is doing real work in that sentence; see §4.2a.
+
+⚠️ **The 0.0120 figure above is retired.** Re-measured 2026-08-27 on tier-1 after
+`data.schema.section_seed` replaced a salted builtin `hash()` in two RNG seeds: refitting one
+configuration at the same seed in a separate process now agrees **bitwise — 36 of 36 values,
+largest difference exactly 0**. The original 0.0120 was that defect, not run-to-run variation, so
+the envelope it helped justify was inflated by a bug. The sentences above are kept because the
+*rule* they motivate survives; the number does not.
+
+### 4.2a The envelope is per-metric **and per-arm** — a methods finding, not a caveat
+
+**State this in the paper's methods. It is not reported anywhere in this literature, and it
+changes how any repeated-seed benchmark should be read.**
+
+A single pooled reproducibility envelope is wrong in two independent directions at once.
+Measured on tier-1 STARmap, `expr_mode` gate, three post-fix seeds:
+
+| metric | `cross-mix` (copying) | `zinb-flow` (generative) | envelope | vs a pooled 0.0335 |
+|---|---|---|---|---|
+| `morans_pearson` | 0.0054 | **0.0574** | 0.0574 | pooled too **small**, 1.7x |
+| `gearys_pearson` | 0.0027 | **0.0595** | 0.0595 | pooled too **small**, 1.8x |
+| `umap_mixing` | 0.0068 | 0.0190 | 0.0190 | pooled too large, 1.8x |
+| `marker_field_r` | 0.0049 | 0.0148 | 0.0148 | pooled too large, 2.3x |
+| `marker_depth_r` | 0.0084 | **0.0472** | 0.0472 | pooled too **small**, 1.4x |
+| `celltype_localization` | 0.0000 | 0.0000 | 0.0000 | inert under `resample` |
+
+**1. Across metrics — a 4.0x range**, and a pooled figure errs in *both* directions: too lenient
+on three of the six, too strict on two. A pooled envelope does not merely lose resolution, it
+gives the wrong answer in a direction that depends on which metric is being read.
+
+**2. Across arms — up to 22x**, and this is the part nobody reports. **A copying baseline barely
+uses the fitted weights, so its score is nearly seed-invariant; a generative method's is not.**
+`cross-mix` moves 0.0027–0.0084 across seeds where `zinb-flow` moves 0.0148–0.0595. A margin
+between them therefore inherits **nearly all** of its run-to-run variance from one side.
+
+The consequence for any benchmark that compares a generative method against a copying or
+retrieval baseline — which is most of this field — is that **the envelope must be measured on the
+arm that carries the variance**, and quoting a margin against a pooled figure systematically
+flatters whichever comparison happens to involve the steadier arm. The effect is invisible unless
+the arms are seeded separately and reported separately.
+
+**The envelope is also dataset- and gate-specific.** The table above is tier-1's, for the
+`expr_mode` arms. It may not be applied to `deep_starmap`, nor to the `text_emb_mode` gate:
+reusing a figure measured in one setting because it is the only one available is exactly the
+error this section exists to retire. Each claim-bearing comparison pays for its own envelope, and
+`scripts/t09_seed_claim.py` computes it from the runs.
 
 ### 4.3 The boundary holdout (R3) — additive, no new dataset, no new design function
 
