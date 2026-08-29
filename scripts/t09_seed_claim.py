@@ -115,6 +115,45 @@ def margins(runs: list[dict], options: tuple[str, ...], metric: str) -> dict:
     return {"per_seed": per_seed, "fold_spread": spread}
 
 
+def arm_spreads(runs: list[dict], options: tuple[str, ...], metric: str) -> dict[str, float]:
+    """Across-seed spread of **each arm's own score**, per metric. ``{option: max - min}``.
+
+    This is the like-for-like replacement for R10's pooled 0.0335: that number answered "how far
+    does re-running one configuration move its score", and this answers it per metric *and* per
+    arm. Both refinements matter and the second was not anticipated — a copying arm barely uses
+    the fitted weights, so its score is nearly seed-invariant, while a generative arm's is not.
+    Measured on tier-1 at seeds 2/3: ``cross-mix`` moves 0.0008-0.0084 across seeds where
+    ``zinb-flow`` moves 0.0130-0.0368, up to 27x more. A single pooled envelope applied to both
+    is therefore wrong in two directions at once.
+    """
+    out: dict[str, float] = {}
+    for option in options:
+        values = [
+            float({str(r["option"]): r for r in run["rows"]}[option]["mean"][metric])
+            for run in runs
+        ]
+        out[option] = float(max(values) - min(values))
+    return out
+
+
+def duplicate_gap(base_rows: list[dict], dup_rows: list[dict], metric: str) -> dict[str, float]:
+    """Same-seed, different-process absolute difference per arm. ``{option: |a - b|}``.
+
+    R10 recorded that fitting one configuration twice — same config, same seed, different
+    process — moved its scores by up to 0.0120. That is the signature of the salted-``hash()``
+    seeding bug fixed by ``data.schema.section_seed``, and this measures what is left. A figure
+    at or near **zero** says the old 0.0120 was the bug rather than genuine variation, which
+    decides how much of the pooled envelope was ever real and how many "inside the envelope"
+    verdicts need re-reading.
+    """
+    a = {str(r["option"]): r for r in base_rows}
+    b = {str(r["option"]): r for r in dup_rows}
+    return {
+        option: abs(float(a[option]["mean"][metric]) - float(b[option]["mean"][metric]))
+        for option in sorted(set(a) & set(b))
+    }
+
+
 def verdict(per_seed: dict[int, float], fold_spread: float, envelope: float) -> dict:
     """The four conditions, each reported separately so a reader can disagree with any one."""
     values = np.array([per_seed[s] for s in sorted(per_seed)], dtype=np.float64)
@@ -142,7 +181,20 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("json_paths", nargs="+", help="one audit .json per seed")
-    ap.add_argument("--envelope", type=float, default=R10_ENVELOPE)
+    ap.add_argument(
+        "--pooled-envelope",
+        type=float,
+        default=R10_ENVELOPE,
+        dest="envelope",
+        help="R10's single pooled figure, kept only for the verdict-change comparison. The "
+        "envelope this file decides against is measured per metric from the runs themselves.",
+    )
+    ap.add_argument(
+        "--duplicate",
+        default=None,
+        help="an audit .json for one of the same seeds, fitted in a SEPARATE process. Measures "
+        "what is left of R10's same-seed cross-process figure after the section_seed fix.",
+    )
     ap.add_argument("--out", default=None)
     args = ap.parse_args(argv)
 
@@ -164,12 +216,38 @@ def main(argv: list[str] | None = None) -> int:
             "below reaches a paper claim however it comes out."
         )
 
+    dup_rows = json.loads(Path(args.duplicate).read_text()) if args.duplicate else None
+    dup_seed = int(dup_rows[0]["seed"]) if dup_rows else None
+    base_rows: list[dict] | None = None
+    if dup_rows is not None:
+        base_rows = [r for run in runs for r in run["rows"] if int(r["seed"]) == dup_seed]
+        if not base_rows:
+            raise SystemExit(
+                f"--duplicate was fitted at seed {dup_seed}, which is not among the runs "
+                f"{meta['seeds']}. A same-seed comparison needs the same seed on both sides."
+            )
+
     results = {}
     for metric in METRIC_NAMES:
         m = margins(runs, options, metric)
+        spreads = arm_spreads(runs, options, metric)
+        # The per-metric envelope: how far the worse-behaved arm moves across seeds. This is
+        # what replaces the pooled 0.0335 as the thing a margin has to beat.
+        envelope = max(spreads.values())
+        v = verdict(m["per_seed"], m["fold_spread"], envelope)
+        v_pooled = verdict(m["per_seed"], m["fold_spread"], args.envelope)
         results[metric] = {
-            **verdict(m["per_seed"], m["fold_spread"], args.envelope),
+            **v,
             "per_seed": m["per_seed"],
+            "arm_spreads": spreads,
+            "envelope": envelope,
+            "stands_under_pooled": v_pooled["stands"],
+            "verdict_changed": v["stands"] != v_pooled["stands"],
+            "duplicate_gap": (
+                duplicate_gap(base_rows, dup_rows, metric)
+                if dup_rows is not None and base_rows is not None
+                else None
+            ),
         }
 
     header = " | ".join(f"seed {s}" for s in meta["seeds"])
@@ -182,24 +260,88 @@ def main(argv: list[str] | None = None) -> int:
         f"{meta['seeds']} ({n_seeds} of `Config.claim_min_seeds`={cfg.claim_min_seeds}). "
         f"Margins are `{a}` minus `{b}`; positive favours `{a}`.",
         "",
-        f"| metric | {header} | mean | s.d. | seed spread | fold spread | vs {args.envelope} "
-        "| verdict |",
-        "|---" * (n_seeds + 7) + "|",
+        f"| metric | {header} | mean margin | **per-metric envelope** | vs it | margin's own "
+        "seed spread | fold spread | verdict | was, vs pooled {0} |".format(args.envelope),
+        "|---" * (n_seeds + 8) + "|",
     ]
     for metric in METRIC_NAMES:
         v = results[metric]
         cells = " | ".join(f"{v['per_seed'][s]:+.4f}" for s in meta["seeds"])
-        ratio = abs(v["mean"]) / args.envelope if args.envelope else float("inf")
+        env = v["envelope"]
+        ratio = abs(v["mean"]) / env if env else float("inf")
         mark = "**STANDS**" if v["stands"] else "not established"
+        was = ("STANDS" if v["stands_under_pooled"] else "not established") + (
+            " ← **CHANGED**" if v["verdict_changed"] else ""
+        )
         lines.append(
-            f"| `{metric}` | {cells} | {v['mean']:+.4f} | {v['sd']:.4f} | {v['seed_spread']:.4f} "
-            f"| {v['fold_spread']:.4f} | {ratio:.1f}x | {mark} |"
+            f"| `{metric}` | {cells} | {v['mean']:+.4f} | **{env:.4f}** | {ratio:.1f}x "
+            f"| {v['seed_spread']:.4f} | {v['fold_spread']:.4f} | {mark} | {was} |"
+        )
+
+    lines += [
+        "",
+        "### The envelope, per metric and per arm",
+        "",
+        "R10's **0.0335** was one pooled figure, measured on the synthetic fixture, applied to "
+        "all six metrics and both arms. Measured here on real data it is neither constant across "
+        "metrics nor across arms:",
+        "",
+        "| metric | "
+        + " | ".join(f"`{o}` across-seed spread" for o in options)
+        + " | envelope used |",
+        "|---|" + "---|" * (len(options) + 1),
+    ]
+    for metric in METRIC_NAMES:
+        v = results[metric]
+        lines.append(
+            f"| `{metric}` | "
+            + " | ".join(f"{v['arm_spreads'][o]:.4f}" for o in options)
+            + f" | **{v['envelope']:.4f}** |"
         )
     lines += [
         "",
+        "A **copying** arm barely uses the fitted weights, so its score is nearly seed-invariant; "
+        "a **generative** arm's is not. The margin therefore inherits almost all of its seed "
+        "variance from one side, which a pooled envelope cannot express.",
+    ]
+
+    if dup_rows is not None:
+        lines += [
+            "",
+            f"### Same seed ({dup_seed}), separate process — what is left of R10's 0.0120",
+            "",
+            "| metric | " + " | ".join(f"`{o}`" for o in options) + " |",
+            "|---|" + "---|" * len(options),
+        ]
+        worst = 0.0
+        for metric in METRIC_NAMES:
+            gap = results[metric]["duplicate_gap"] or {}
+            worst = max(worst, max(gap.values(), default=0.0))
+            lines.append(
+                f"| `{metric}` | "
+                + " | ".join(f"{gap.get(o, float('nan')):.6f}" for o in options)
+                + " |"
+            )
+        lines += [
+            "",
+            f"**Largest same-seed cross-process difference: {worst:.6f}.** "
+            + (
+                "Bitwise identical — R10's 0.0120 was the salted-`hash()` seeding bug entirely, "
+                "not run-to-run variation, and every 'inside the envelope' verdict decided "
+                "against a figure inflated by it should be re-read."
+                if worst == 0.0
+                else "Not zero, so something beyond the seeding bug is nondeterministic across "
+                "processes. That is a finding in its own right and must be attributed before "
+                "this envelope is trusted."
+            ),
+        ]
+    lines += [
+        "",
         "**The four conditions.** A margin STANDS only if every seed agrees on the sign, the "
-        f"mean margin exceeds the across-seed spread, exceeds the {args.envelope} R10 envelope, "
-        "and exceeds the largest within-arm fold spread. Which condition failed, per metric:",
+        "mean margin exceeds the spread of the margin itself across seeds, exceeds **that "
+        "metric's own envelope** — the worse arm's across-seed spread from the table above, "
+        f"not R10's pooled {args.envelope} — and exceeds the largest within-arm fold spread. "
+        "Which condition failed, per metric:",
         "",
         "| metric | signs agree | > seed spread | > envelope | > fold spread |",
         "|---|---|---|---|---|",
