@@ -34,6 +34,7 @@ from spatialcpav25_gen.config import Config
 __all__ = [
     "EntityEmbeddings",
     "TextGroundedEmbedding",
+    "ZeroShotView",
     "build_entity_embeddings",
     "coexpression_modules",
     "describe_entity_descriptors",
@@ -205,6 +206,72 @@ class TextGroundedEmbedding(nn.Module):
         """
         predicted = self.distill(self.text_vecs)
         return torch.mean((predicted - self.r.weight.detach()) ** 2)
+
+
+class ZeroShotView(nn.Module):
+    """A :class:`TextGroundedEmbedding` in which named entities are embedded as **unseen**.
+
+    The generation path calls ``embeddings.gene(arange(n_genes))`` and gets
+    :meth:`TextGroundedEmbedding.forward` for every gene. That is the right answer for a gene
+    the model was fitted on and the wrong one for a gene it was not, because ``forward`` reads
+    the free residual ``r_g`` — which is the parameter a held-out gene never receives a
+    gradient for. This view substitutes :meth:`~TextGroundedEmbedding.forward_zero_shot` for
+    the entities in ``unseen`` and leaves every other row exactly as it was, so one fit can be
+    scored under either rule without refitting.
+
+    It is the apparatus of the zero-shot arms, not a model change: wrapping ``embeddings.gene``
+    in a view rather than adding a branch to ``forward`` keeps the fitted path bitwise
+    identical to the one every other number in this project was measured on.
+
+    Three of the four arms differ only in ``use_distill`` and in the fit's ``text_emb_mode``:
+
+    ==========  ==================  ============  =============================
+    arm         ``text_emb_mode``   ``use_distill``  unseen gene's embedding
+    ==========  ==================  ============  =============================
+    A1          ``medcpt``          ``True``      ``norm(W t + gamma psi(t))``
+    A2          ``medcpt``          ``False``     ``norm(W t)``
+    A3          ``lookup``          ``True``      ``norm(gamma psi(t))``
+    A4          ``lookup``          ``False``     ``norm(0)`` — one vector for every gene
+    ==========  ==================  ============  =============================
+
+    With ``use_distill=False`` this view is a **no-op** whenever the unseen rows' residuals are
+    still their zeros init, which is what a fit given ``gene_pool`` guarantees. That identity is
+    the view's own check, and ``tests/test_embeddings.py`` asserts it bitwise: A2 and A4 need no
+    view at all, so if the view were wrong they would disagree with plain generation.
+    """
+
+    def __init__(
+        self, base: TextGroundedEmbedding, unseen: Tensor, *, use_distill: bool = True
+    ) -> None:
+        super().__init__()
+        idx = unseen.to(torch.int64).reshape(-1)
+        if idx.numel() and (int(idx.min()) < 0 or int(idx.max()) >= base.n_entities):
+            raise ValueError(
+                f"ZeroShotView: unseen indexes outside the {base.n_entities}-entity table "
+                f"(min {int(idx.min())}, max {int(idx.max())})"
+            )
+        self.base = base
+        self.use_distill = bool(use_distill)
+        mask = torch.zeros(base.n_entities, dtype=torch.bool)
+        mask[idx] = True
+        self.register_buffer("unseen_mask", mask)
+
+    @property
+    def out_dim(self) -> int:
+        """Width of the returned embedding, unchanged by the view."""
+        return int(self.base.out_dim)
+
+    def forward(self, idx: Tensor) -> Tensor:
+        """``(V_query,)`` int64 -> ``(V_query, out_dim)``, mixing the two rules row by row."""
+        seen_rows: Tensor = self.base(idx)
+        unseen = self.unseen_mask[idx]
+        if not bool(unseen.any()):
+            return seen_rows
+        text = self.base.text_vecs[idx[unseen]]
+        zero_shot = self.base.forward_zero_shot(text, self.use_distill)
+        out = seen_rows.clone()
+        out[unseen] = zero_shot.to(out.dtype)
+        return out
 
 
 class EntityEmbeddings(nn.Module):

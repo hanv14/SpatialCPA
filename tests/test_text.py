@@ -31,6 +31,7 @@ from spatialcpav25_gen.data.text import (
 from spatialcpav25_gen.model.embeddings import (
     EntityEmbeddings,
     TextGroundedEmbedding,
+    ZeroShotView,
     build_entity_embeddings,
     describe_entity_descriptors,
     text_embedding_diagnostics,
@@ -1187,3 +1188,88 @@ def test_build_entity_embeddings_refuses_a_missing_table(cache_cfg):
     """No table is a refusal, not a whole panel of bare symbols nobody notices."""
     with pytest.raises(FileNotFoundError, match="gene_meta_path"):
         build_entity_embeddings(cache_cfg, ["Gad1"], ["Excitatory"])
+
+
+# --------------------------------------------------------------------------------------
+# the zero-shot view (T09's four-arm experiment)
+# --------------------------------------------------------------------------------------
+
+
+def test_zero_shot_view_is_a_no_op_on_seen_entities(cfg):
+    """Rows outside ``unseen`` come back bitwise identical to plain ``forward``.
+
+    The view is the apparatus the paper's zero-shot table is computed with, and its whole
+    claim is that it changes the held-out genes and nothing else. Asserted on both settings
+    of ``use_distill``, because a view that quietly moved the seen genes would make the arms
+    incomparable to every other number measured on this fit.
+    """
+    emb = _embedding(cfg, n=32)
+    emb.set_progress(1.0)
+    with torch.no_grad():
+        emb.r.weight.normal_(generator=torch.Generator().manual_seed(3))
+    unseen = torch.tensor([2, 5, 11], dtype=torch.int64)
+    seen = torch.tensor([i for i in range(32) if i not in {2, 5, 11}], dtype=torch.int64)
+
+    baseline = emb(seen)
+    for use_distill in (True, False):
+        view = ZeroShotView(emb, unseen, use_distill=use_distill)
+        assert torch.equal(view(seen), baseline)
+
+
+def test_zero_shot_view_without_distill_agrees_with_plain_generation(cfg):
+    """The pure-text arms are plain generation — to 1e-5, and **not** bitwise.
+
+    An entity whose residual is still its zeros init has ``forward`` equal to
+    ``forward_zero_shot(t, use_distill=False)`` *algebraically*, which is exactly the state a
+    fit given ``gene_pool`` leaves the held-out genes in. So A2 and A4 need no view, and if the
+    view were wrong the two would disagree — the cheapest available check on the apparatus.
+
+    They do not agree bitwise, and the reason matters for how the arms are scored. The view
+    runs ``W`` over the unseen rows alone while ``forward`` runs it over the whole query, and a
+    float32 GEMM at two batch sizes rounds differently: 3e-8 on ``W t``, amplified to **1.3e-6**
+    by the ``LayerNorm``. The seen rows, which both paths compute the same way, are bitwise
+    identical (asserted above). The consequence is a rule for the scorer, not a defect here:
+    **every arm is computed through the view**, so the only difference between two arms is
+    ``use_distill`` and the fit — not which code path produced the embedding.
+    """
+    emb = _embedding(cfg, n=16)
+    emb.set_progress(1.0)
+    unseen = torch.tensor([1, 4, 9], dtype=torch.int64)
+    with torch.no_grad():
+        # Every *seen* residual trained; the unseen ones never received a gradient.
+        emb.r.weight.normal_(generator=torch.Generator().manual_seed(7))
+        emb.r.weight[unseen] = 0.0
+    idx = torch.arange(16, dtype=torch.int64)
+
+    plain = emb(idx)
+    pure_text = ZeroShotView(emb, unseen, use_distill=False)(idx)
+    assert torch.allclose(pure_text, plain, atol=1e-5, rtol=0.0), (
+        f"max |delta| {(pure_text - plain).abs().max().item():.3g}"
+    )
+    seen = torch.tensor([i for i in range(16) if i not in {1, 4, 9}], dtype=torch.int64)
+    assert torch.equal(pure_text[seen], plain[seen])
+    # ...and with the distillation head it must *not* be a no-op, or the arm is not an arm.
+    distilled = ZeroShotView(emb, unseen, use_distill=True)(idx)
+    assert float((distilled[unseen] - plain[unseen]).abs().max()) > 1e-3
+
+
+def test_zero_shot_view_under_lookup_is_one_vector_for_every_gene(cfg):
+    """A4 is degenerate by construction, which is what makes it the leak detector.
+
+    Under ``lookup`` the text channel is zeroed and a never-trained residual is zero, so every
+    held-out gene gets ``norm(0)`` — the *same* vector. An arm that cannot tell two genes apart
+    cannot score above the constant-field referent unless something else is feeding it the
+    answer, so a score above the band is a leak rather than a result.
+    """
+    emb = _embedding(cfg.replace(text_emb_mode="lookup"), n=12)
+    emb.set_progress(1.0)
+    unseen = torch.tensor([0, 3, 7], dtype=torch.int64)
+    rows = ZeroShotView(emb, unseen, use_distill=False)(unseen)
+    assert torch.equal(rows[0], rows[1])
+    assert torch.equal(rows[1], rows[2])
+
+
+def test_zero_shot_view_refuses_an_index_off_the_table(cfg):
+    emb = _embedding(cfg, n=8)
+    with pytest.raises(ValueError, match="outside the 8-entity table"):
+        ZeroShotView(emb, torch.tensor([8], dtype=torch.int64))

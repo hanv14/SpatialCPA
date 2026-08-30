@@ -1361,6 +1361,59 @@ def test_section_scores_refuses_plane_local_coordinates(split):
         )
 
 
+def test_gene_pool_restricts_the_metrics_to_its_own_genes(split):
+    """``gene_pool`` scores the pool and nothing else, and ``None`` is unchanged.
+
+    Two properties, because the zero-shot experiment needs both. **Restriction**: vandalising
+    the *generated* counts outside the pool must not move the four gene-dependent metrics, or
+    the held-out-gene number is partly a kept-gene number. **No regression**: the default is
+    bitwise what it was, so every score already in the record still means what it said.
+
+    ``celltype_localization`` reads no expression and is deliberately unmoved by either — it is
+    reported for completeness and is not evidence about a gene split.
+    """
+    _, training, _ = split
+    cfg = t09_cfg(train_steps=40)
+    hidden = selection_folds(training, cfg)[0]
+    real_p = np.asarray(hidden.coords, dtype=np.float64)
+    axis = profile_axis(training, cfg)
+    types = np.zeros(real_p.shape[0], dtype=np.int64)
+    counts = np.asarray(hidden.counts.todense(), dtype=np.float64)
+    n_genes = counts.shape[1]
+    pool = np.arange(0, n_genes, 2, dtype=np.int64)
+    outside = np.setdiff1d(np.arange(n_genes, dtype=np.int64), pool)
+
+    def score(gen_counts, gene_pool):
+        return section_scores(
+            gen_counts,
+            real_p,
+            types,
+            hidden,
+            axis,
+            cfg,
+            n_types=len(training.celltype_names),
+            gene_pool=gene_pool,
+        )
+
+    restricted = score(counts, pool)
+    rng = np.random.default_rng(11)
+    vandalised = counts.copy()
+    vandalised[:, outside] = rng.integers(0, 500, size=(counts.shape[0], outside.size))
+    after = score(vandalised, pool)
+    gene_metrics = [m for m in METRIC_NAMES if m != "celltype_localization"]
+    for metric in gene_metrics:
+        assert after[metric] == pytest.approx(restricted[metric], abs=1e-9), metric
+
+    # The vandalism is real: unrestricted, it wrecks the same metrics.
+    whole = score(counts, None)
+    assert whole == score(counts, np.arange(n_genes, dtype=np.int64))
+    damaged = score(vandalised, None)
+    assert any(abs(damaged[m] - whole[m]) > 1e-3 for m in gene_metrics), (
+        "vandalising the off-pool genes changed nothing even unrestricted, so the restriction "
+        "test above proves nothing"
+    )
+
+
 def test_fold_scores_passes_physical_coordinates(split):
     """``_fold_scores`` reaches the guard with coordinates the guard accepts.
 

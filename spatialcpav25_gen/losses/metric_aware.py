@@ -352,7 +352,9 @@ def _weighted_huber(gen: Tensor, real: Tensor, weights: Tensor, delta: float) ->
     return (per_gene * weights).sum()
 
 
-def marker_genes(x_real: Tensor, W_real: SparseTensor, cfg: Config) -> Tensor:
+def marker_genes(
+    x_real: Tensor, W_real: SparseTensor, cfg: Config, *, pool: Tensor | None = None
+) -> Tensor:
     """Return the most spatially structured genes of the real section. ``(k,)`` int64 indices.
 
     ``specs/08`` §2's "top-k spatially variable genes from training": the ``k =
@@ -363,17 +365,30 @@ def marker_genes(x_real: Tensor, W_real: SparseTensor, cfg: Config) -> Tensor:
     Candidates are restricted to genes detected in at least
     ``Config.metric_marker_min_detection`` of the real cells; see that field for the failure
     the floor prevents. If fewer than ``k`` genes clear it the pool falls back to the whole
-    panel, because a loss that silently computed itself over three genes would be worse than
-    one computed over noisy ones.
+    candidate set, because a loss that silently computed itself over three genes would be worse
+    than one computed over noisy ones.
+
+    ``pool`` restricts the candidates to a subset of the panel — the zero-shot experiment scores
+    over the held-out genes and over the kept genes separately, and each side needs its markers
+    chosen *within* it, or the metric is computed over genes the side does not contain. Returned
+    indices are always into the full panel. ``None`` means the whole panel and is the same code
+    path, not a second one: a mirrored copy of this rule is exactly the thing that drifts from
+    it.
     """
     with torch.no_grad():
         detection = (x_real.detach() > 0).to(x_real.dtype).mean(dim=0)
         score = torch.nan_to_num(morans_i(x_real, W_real, eps=float(cfg.metric_eps)), nan=0.0)
-    k = min(int(cfg.metric_marker_genes), int(x_real.shape[1]))
-    eligible = detection >= float(cfg.metric_marker_min_detection)
+    candidates = (
+        torch.arange(x_real.shape[1], dtype=torch.int64, device=score.device)
+        if pool is None
+        else pool.to(dtype=torch.int64, device=score.device)
+    )
+    k = min(int(cfg.metric_marker_genes), int(candidates.numel()))
+    ranked = score[candidates]
+    eligible = detection[candidates] >= float(cfg.metric_marker_min_detection)
     if int(eligible.sum()) >= k:
-        score = torch.where(eligible, score, torch.full_like(score, -float("inf")))
-    return torch.topk(score, k).indices.sort().values
+        ranked = torch.where(eligible, ranked, torch.full_like(ranked, -float("inf")))
+    return candidates[torch.topk(ranked, k).indices].sort().values
 
 
 # --------------------------------------------------------------------------------------

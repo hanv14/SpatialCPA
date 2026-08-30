@@ -601,11 +601,26 @@ def _safe_r(a: npt.NDArray[Any], b: npt.NDArray[Any]) -> float:
 _FRAME_CHECK_MARGIN_FRAC = 0.25
 
 
-def _normalised(counts: npt.NDArray[Any], cfg: Config) -> Tensor:
-    """Library-size normalise to 1 on the linear scale. ``(N, G)`` -> ``(N, G)`` float32."""
-    return normalised_linear(
-        torch.from_numpy(np.asarray(counts, dtype=np.float32)), 1.0, float(cfg.metric_eps)
+def _normalised(
+    counts: npt.NDArray[Any], cfg: Config, pool: npt.NDArray[np.int64] | None = None
+) -> Tensor:
+    """Library-size normalise to 1 on the linear scale. ``(N, G)`` -> ``(N, G)`` float32.
+
+    ``pool`` restricts the **size factor** to those columns, leaving the returned width at ``G``.
+    A metric scored over a gene pool has to, or it is not scored over that pool: the library
+    size is a sum over the whole panel, so a gene outside the pool rescales every gene inside
+    it, and the held-out-gene score would move with what the model emitted for the kept genes —
+    which is exactly what differs between two arms. Same defect as the one closed in
+    ``model/retrieval.py::_normalised_expression``, in a second function, found the same way:
+    by a test that vandalised the excluded columns and required the number not to move.
+    """
+    values = torch.from_numpy(np.asarray(counts, dtype=np.float32))
+    totals = (
+        None
+        if pool is None
+        else values[:, torch.from_numpy(np.asarray(pool, dtype=np.int64))].sum(dim=1, keepdim=True)
     )
+    return normalised_linear(values, 1.0, float(cfg.metric_eps), totals=totals)
 
 
 class FrameMismatchError(SelectionError):
@@ -676,6 +691,7 @@ def section_scores(
     cfg: Config,
     *,
     n_types: int,
+    gene_pool: npt.NDArray[np.int64] | None = None,
 ) -> dict[str, float]:
     """Return the six target metrics for one generated section against one real section.
 
@@ -691,11 +707,19 @@ def section_scores(
     The two sides have different cells and different cell counts, which every one of the six
     tolerates by construction — they are all distribution-level statistics.
 
+    ``gene_pool`` restricts the four gene-dependent metrics to a subset of the panel: the two
+    autocorrelation correlations are taken over those genes only, and the marker genes the two
+    profile metrics use are selected *within* the pool rather than across the panel and then
+    intersected — a top-k taken over the panel can contain none of the pool's genes at all.
+    ``celltype_localization`` does not read expression and is unaffected; it is returned
+    unchanged and is the same number for every pool, which is why it is not evidence about a
+    gene split. ``None`` scores the whole panel and is the shipped behaviour.
+
     Returns ``{metric: value}`` over :data:`METRIC_NAMES`, higher better throughout.
     """
-    gen_x = _normalised(gen_counts, cfg)
+    gen_x = _normalised(gen_counts, cfg, gene_pool)
     real_counts = np.asarray(real.counts.todense(), dtype=np.float64)
-    real_x = _normalised(real_counts, cfg)
+    real_x = _normalised(real_counts, cfg, gene_pool)
     gen_p = np.asarray(gen_coords, dtype=np.float64)[:, :2]
     real_p = np.asarray(real.coords, dtype=np.float64)
     assert_same_frame(gen_p, real_p, str(real.section_id))
@@ -703,14 +727,22 @@ def section_scores(
     w_gen = knn_weight_graph(gen_p, cfg)
     w_real = knn_weight_graph(real_p, cfg)
     eps = float(cfg.metric_eps)
+    scored = slice(None) if gene_pool is None else np.asarray(gene_pool, dtype=np.int64)
     morans = _safe_r(
-        morans_i(gen_x, w_gen, eps=eps).numpy(), morans_i(real_x, w_real, eps=eps).numpy()
+        morans_i(gen_x, w_gen, eps=eps).numpy()[scored],
+        morans_i(real_x, w_real, eps=eps).numpy()[scored],
     )
     gearys = _safe_r(
-        gearys_c(gen_x, w_gen, eps=eps).numpy(), gearys_c(real_x, w_real, eps=eps).numpy()
+        gearys_c(gen_x, w_gen, eps=eps).numpy()[scored],
+        gearys_c(real_x, w_real, eps=eps).numpy()[scored],
     )
 
-    markers = marker_genes(real_x, w_real, cfg)
+    markers = marker_genes(
+        real_x,
+        w_real,
+        cfg,
+        pool=None if gene_pool is None else torch.from_numpy(np.asarray(gene_pool, np.int64)),
+    )
     bounds_x = (float(real_p[:, 0].min()), float(real_p[:, 0].max()))
     bounds_y = (float(real_p[:, 1].min()), float(real_p[:, 1].max()))
     grid = _type_grid_size(bounds_x[1] - bounds_x[0], cfg)
@@ -802,14 +834,19 @@ def section_scores(
     return {
         "morans_pearson": morans,
         "gearys_pearson": gearys,
-        "umap_mixing": _mixing(gen_counts, real_counts, cfg),
+        "umap_mixing": _mixing(gen_counts, real_counts, cfg, gene_pool),
         "marker_field_r": marker_field,
         "marker_depth_r": marker_depth,
         "celltype_localization": localization,
     }
 
 
-def _mixing(gen_counts: npt.NDArray[Any], real_counts: npt.NDArray[Any], cfg: Config) -> float:
+def _mixing(
+    gen_counts: npt.NDArray[Any],
+    real_counts: npt.NDArray[Any],
+    cfg: Config,
+    pool: npt.NDArray[np.int64] | None = None,
+) -> float:
     """KNN mixing of generated and real cells in a shared embedding. 1 = indistinguishable.
 
     The shared embedding is the top-``Config.expr_pca_dim`` PCs of the **pooled**
@@ -821,11 +858,20 @@ def _mixing(gen_counts: npt.NDArray[Any], real_counts: npt.NDArray[Any], cfg: Co
     ``Config.selection_mixing_knn_k`` neighbours drawn from the *other* group, divided by the
     fraction expected if the two clouds were identical. Capped at 1: a generated cloud that
     is *more* mixed than chance is not better than one that matches.
+
+    ``pool`` restricts the embedding to those genes — columns, size factor and PCA together,
+    since the embedding is fitted here rather than carried in. Unlike the other five this
+    metric has no per-gene decomposition to subset after the fact: two clouds are mixed in the
+    space the cells are placed in, so scoring a gene pool means *building that space* from the
+    pool. Restricting anything less would leave the kept genes deciding where a cell sits.
     """
     from scipy.spatial import cKDTree
 
     a = np.asarray(gen_counts, dtype=np.float64)
     b = np.asarray(real_counts, dtype=np.float64)
+    if pool is not None:
+        columns = np.asarray(pool, dtype=np.int64)
+        a, b = a[:, columns], b[:, columns]
     pooled = np.concatenate([a, b], axis=0)
     totals = np.clip(pooled.sum(axis=1, keepdims=True), 1.0, None)
     values = np.log1p(pooled / totals * float(np.median(totals)))
@@ -878,6 +924,7 @@ def fold_scores(
     *,
     seed: int,
     anchor: Any | None = None,
+    gene_pool: npt.NDArray[np.int64] | None = None,
 ) -> list[dict[str, float]]:
     """Score a fitted model on internal LOSO, **per fold**, unaveraged.
 
@@ -887,8 +934,11 @@ def fold_scores(
     leaves — gives **two** folds however large ``Config.selection_n_folds`` is set. A gate
     decided on a mean of two numbers cannot be told apart from one decided on a single fold
     plus noise, and this is the function that lets a caller check.
+
+    ``gene_pool`` is forwarded to :func:`section_scores`; see there. The zero-shot experiment
+    scores the same fold twice, once over the held-out genes and once over the kept ones.
     """
-    return _fold_scores(model, vol, cfg, seed=seed, anchor=anchor)
+    return _fold_scores(model, vol, cfg, seed=seed, anchor=anchor, gene_pool=gene_pool)
 
 
 def selection_scores(
@@ -916,6 +966,7 @@ def _fold_scores(
     *,
     seed: int,
     anchor: Any | None = None,
+    gene_pool: npt.NDArray[np.int64] | None = None,
 ) -> list[dict[str, float]]:
     """Return the per-fold six, in fold order. The implementation both entry points share."""
     require_training_volume(vol, "selection_scores")
@@ -944,6 +995,7 @@ def _fold_scores(
                 axis,
                 cfg,
                 n_types=len(vol.celltype_names),
+                gene_pool=gene_pool,
             )
         )
     return per_fold

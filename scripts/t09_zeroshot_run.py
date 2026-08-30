@@ -52,6 +52,57 @@ from _starmap_run import (
 )
 
 
+def load_split(path: str | Path) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Read the recorded gene split. ``(kept, held_out, record)``, both int64 panel indices."""
+    record = json.loads(Path(path).read_text())
+    return (
+        np.asarray(record["kept"], dtype=np.int64),
+        np.asarray(record["held_out"], dtype=np.int64),
+        record,
+    )
+
+
+def arm_config(arm: str, seed: int, input_path: Path, *, train_steps: int, expr_pca_dim=None):
+    """The config one arm is fitted under. ``expr_mode`` and ``prior_mode`` are pinned here.
+
+    Shared with the scorer rather than reconstructed there: the checkpoint's ``config_hash``
+    has to match or the resume refuses, and two copies of this drift.
+    """
+    overrides: dict = {"train_steps": int(train_steps), "text_emb_mode": arm}
+    if expr_pca_dim is not None:
+        overrides["expr_pca_dim"] = int(expr_pca_dim)
+    cfg = clamp_config_to_input(base_config(seed, **overrides), input_path)
+    return cfg.replace(expr_mode="zinb-flow", prior_mode="correlated")
+
+
+def build_and_fit(cfg, volume, embeddings, kept, held, *, seed: int, checkpoint: Path) -> CTFFlow:
+    """Build the model with the split applied and fit it, or resume a finished fit.
+
+    The scorer calls this too, so the model it scores is built through the same path that
+    fitted it — including ``gene_pool`` on ``TrainingData.build``. Rebuilding it without the
+    pool would refit the retrieval PCA over the whole panel at *scoring* time and put the
+    held-out genes straight back into the conditioning, with the checkpoint none the wiser.
+    """
+    data = TrainingData.build(volume, cfg, gene_pool=kept)
+    if not np.all(data.index.expression_pcs.basis[held, :] == 0.0):
+        raise SystemExit(
+            "the retrieval PCA basis is non-zero on held-out genes after TrainingData.build "
+            "was given the kept pool. The exclusion did not take; do not use this fit."
+        )
+    model = CTFFlow(cfg, data, embeddings(cfg), grf_seed=seed)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", BBoxClampWarning)
+        train_ctfflow(
+            model,
+            cfg,
+            steps=int(cfg.train_steps),
+            seed=seed,
+            gene_pool=kept,
+            checkpoint=str(checkpoint),
+        )
+    return model
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -81,15 +132,14 @@ def main(argv: list[str] | None = None) -> int:
     print(paths.describe())
     print(f"  torch threads = {set_torch_threads()}")
 
-    split = json.loads(Path(args.split).read_text())
-    kept = np.asarray(split["kept"], dtype=np.int64)
-    held = np.asarray(split["held_out"], dtype=np.int64)
-
-    overrides: dict = {"train_steps": int(args.train_steps), "text_emb_mode": args.arm}
-    if args.expr_pca_dim is not None:
-        overrides["expr_pca_dim"] = int(args.expr_pca_dim)
-    cfg = clamp_config_to_input(base_config(args.seed, **overrides), paths.input)
-    cfg = cfg.replace(expr_mode="zinb-flow", prior_mode="correlated")
+    kept, held, split = load_split(args.split)
+    cfg = arm_config(
+        args.arm,
+        args.seed,
+        paths.input,
+        train_steps=args.train_steps,
+        expr_pca_dim=args.expr_pca_dim,
+    )
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -123,23 +173,7 @@ def main(argv: list[str] | None = None) -> int:
     checkpoint = workdir / f"fit_zeroshot_{args.arm}_seed{args.seed}.pt"
 
     t0 = time.time()
-    data = TrainingData.build(volume, cfg, gene_pool=kept)
-    if not np.all(data.index.expression_pcs.basis[held, :] == 0.0):
-        raise SystemExit(
-            "the retrieval PCA basis is non-zero on held-out genes after TrainingData.build "
-            "was given the kept pool. The exclusion did not take; do not use this fit."
-        )
-    model = CTFFlow(cfg, data, embeddings(cfg), grf_seed=args.seed)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", BBoxClampWarning)
-        train_ctfflow(
-            model,
-            cfg,
-            steps=int(cfg.train_steps),
-            seed=args.seed,
-            gene_pool=kept,
-            checkpoint=str(checkpoint),
-        )
+    build_and_fit(cfg, volume, embeddings, kept, held, seed=args.seed, checkpoint=checkpoint)
     print(f"\n── zeroshot {args.arm} seed {args.seed} ({cfg.content_hash()}) ──")
     print(f"  fitted in {time.time() - t0:.0f}s -> {checkpoint}")
     if args.fit_only:

@@ -50,6 +50,7 @@ from spatialcpav25_gen.infer.planes import (
     plane_from_normal,
     section_plane,
 )
+from spatialcpav25_gen.model.embeddings import ZeroShotView
 from spatialcpav25_gen.model.field import BBoxClampWarning
 from spatialcpav25_gen.model.layout import fit_repulsion
 from spatialcpav25_gen.model.spatialcpav25_gen import CTFFlow, TrainingData, train_ctfflow
@@ -589,3 +590,67 @@ def test_flanking_refuses_a_fully_excluded_stack(volume: Volume, cfg: Config):
     plane = plane_at_z(volume, float(volume.z_values[0]), cfg)
     with pytest.raises(GenerationError, match="flanking evidence"):
         _flanking(volume, plane, exclude_z={float(z) for z in volume.z_values})
+
+
+@pytest.mark.slow
+def test_zero_shot_arms_share_one_layout_and_differ_only_in_expression():
+    """The four-arm experiment's precondition, driven through the real generation path.
+
+    ``scripts/t09_zeroshot_score.py`` reads ``A1 - A3`` as a statement about the text channel.
+    That reading holds only if the four arms put their cells in the same places: the layout
+    head does not read a gene embedding, so under ``layout_mode=resample`` the coordinates and
+    the cell types must be *identical* across arms and the whole difference must sit in the
+    counts. The script asserts it per fold and aborts if it fails; this is the same assertion
+    on the fixture, so a regression in ``ZeroShotView`` or in the generation path is caught
+    here rather than four hours into a campaign.
+
+    It also pins the two halves of the arm design: ``use_distill`` must *move* the held-out
+    genes (or A1 and A2 are one arm), and it must leave the kept genes' embeddings alone (or
+    the comparison is not about the held-out ones).
+    """
+    cfg = t09_cfg(layout_mode="resample", expr_mode="zinb-flow")
+    vol, _ = make_synthetic_volume(seed=0)
+    training, _ = split_holdout(vol, "alternating", 0, cfg)
+    kept = np.arange(0, training.n_genes, 2, dtype=np.int64)
+    held = np.setdiff1d(np.arange(training.n_genes, dtype=np.int64), kept)
+
+    data = TrainingData.build(training, cfg, gene_pool=kept)
+    model = CTFFlow(cfg, data, build_embeddings(cfg, vol), grf_seed=11)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", BBoxClampWarning)
+        train_ctfflow(model, cfg, steps=GEN_STEPS, seed=SEED, gene_pool=kept)
+
+    # The experiment rests on this: a held-out gene's residual never received a gradient.
+    residual = model.embeddings.gene.r.weight.detach()
+    assert float(residual[held].abs().max()) == 0.0
+    assert float(residual[kept].abs().max()) > 0.0
+
+    hidden = training.sections[1]
+    plane = section_plane(hidden)
+    base = model.embeddings.gene
+    emitted = {}
+    layouts = {}
+    for name, use_distill in (("distilled", True), ("pure_text", False)):
+        model.embeddings.gene = ZeroShotView(base, torch.from_numpy(held), use_distill=use_distill)
+        try:
+            adata = generate(model, training, cfg, plane, exclude_z={float(hidden.z)})
+        finally:
+            model.embeddings.gene = base
+        emitted[name] = np.asarray(adata.X.todense(), dtype=np.float64)
+        layouts[name] = (
+            np.asarray(adata.obsm["xyz"], dtype=np.float64),
+            np.asarray(adata.obs[cfg.celltype_key]).copy(),
+        )
+
+    assert np.array_equal(layouts["distilled"][0], layouts["pure_text"][0])
+    assert np.array_equal(layouts["distilled"][1], layouts["pure_text"][1])
+    assert not np.array_equal(emitted["distilled"], emitted["pure_text"]), (
+        "the distillation head changed nothing the decoder could see, so A1 and A2 are one arm"
+    )
+
+    # ...and the embeddings themselves: held-out rows move, kept rows do not.
+    idx = torch.arange(training.n_genes, dtype=torch.int64)
+    plain = base(idx)
+    view = ZeroShotView(base, torch.from_numpy(held), use_distill=True)(idx)
+    assert torch.equal(view[torch.from_numpy(kept)], plain[torch.from_numpy(kept)])
+    assert float((view[torch.from_numpy(held)] - plain[torch.from_numpy(held)]).abs().max()) > 1e-3

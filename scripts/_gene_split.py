@@ -27,7 +27,7 @@ import numpy.typing as npt
 import torch
 from spatialcpav25_gen.config import Config
 from spatialcpav25_gen.data.schema import Section, TrainingVolume
-from spatialcpav25_gen.losses.metric_aware import knn_weight_graph, morans_i
+from spatialcpav25_gen.losses.metric_aware import knn_weight_graph, marker_genes, morans_i
 from spatialcpav25_gen.train.select import _normalised
 
 
@@ -173,18 +173,8 @@ def markers_within(
 ) -> torch.Tensor:
     """``marker_genes`` restricted to a gene ``pool``. ``(k,)`` int64 **panel** indices.
 
-    Mirrors :func:`~spatialcpav25_gen.losses.metric_aware.marker_genes` exactly — Moran's I,
-    the ``metric_marker_min_detection`` floor, the fallback to the whole pool when too few
-    genes clear it — but ranks only within ``pool``, so the metric can be computed over the
-    held-out genes alone and over the kept genes alone on the same footing.
+    A thin adapter over :func:`~spatialcpav25_gen.losses.metric_aware.marker_genes` and nothing
+    more. It was a mirrored copy of that rule — Moran's I, the detection floor, the fallback —
+    and a copy of a selection rule drifts from it; the rule now takes ``pool`` itself.
     """
-    with torch.no_grad():
-        detection = (x_real > 0).to(x_real.dtype).mean(dim=0)
-        score = torch.nan_to_num(morans_i(x_real, graph, eps=float(cfg.metric_eps)), nan=0.0)
-    idx = torch.from_numpy(np.asarray(pool, dtype=np.int64))
-    k = min(int(cfg.metric_marker_genes), int(idx.numel()))
-    sub_score = score[idx]
-    eligible = detection[idx] >= float(cfg.metric_marker_min_detection)
-    if int(eligible.sum()) >= k:
-        sub_score = torch.where(eligible, sub_score, torch.full_like(sub_score, -float("inf")))
-    return idx[torch.topk(sub_score, k).indices].sort().values
+    return marker_genes(x_real, graph, cfg, pool=torch.from_numpy(np.asarray(pool, np.int64)))

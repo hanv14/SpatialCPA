@@ -2377,3 +2377,58 @@ own capability experiment — conditioned on PCs fitted over the whole panel, he
 included. Fixed. It is the same shape as the defect that test's docstring already records (the
 first `train_ctfflow` accepted `gene_pool` and dropped it, and 0.9235 in-sample was reported as
 zero-shot): a pool threaded to one consumer of the volume and not to the next.
+
+### T09 — the four-arm scoring path, and a fifth leak of the same shape (2026-08-30)
+
+Built while the fits run: the arms, the pool-restricted metrics, and the referents.
+
+**`ZeroShotView`** (`model/embeddings.py`). Generation calls `embeddings.gene(arange(G))` and
+gets `forward` for every gene — right for a fitted gene, wrong for a held-out one, because
+`forward` reads the free residual `r_g` that a held-out gene never received a gradient for. The
+view substitutes `forward_zero_shot` for named entities and leaves every other row untouched, so
+one fit serves two arms. It is a wrapper, not a branch in `forward`: the fitted path stays
+bitwise what every other number in this project was measured on.
+
+**A2 and A4 are algebraically plain generation, and not bitwise.** A gene whose residual is still
+its zeros init has `forward` = `forward_zero_shot(t, use_distill=False)`. Measured, the two agree
+to **1.3e-6** and not to the bit: the view runs `W` over the unseen rows alone, and a float32 GEMM
+at two batch sizes rounds differently — 3e-8 on `W·t`, amplified by the `LayerNorm`. Seen rows are
+bitwise identical (0.0). That is a rule for the scorer, not a defect: **all four arms go through
+the view**, so the only things differing between two arms are `use_distill` and the fit, never
+which code path produced the embedding.
+
+**A fifth leak, the same shape as the fourth.** `section_scores` gained `gene_pool`, and the test
+written for it — vandalise the *generated* counts outside the pool, require the pool's metrics not
+to move — failed on `marker_depth_r` before it failed on anything else. `_normalised` in
+`train/select.py` library-size normalises over the whole panel, so what the model emitted for the
+**kept** genes rescales the **held-out** genes' scored values. Since the kept-gene emissions are
+exactly what differs between two arms, the held-out-gene score would have carried a kept-gene
+difference. Same defect as `_normalised_expression`, in a second function, found the same way and
+on the same day. Fixed by restricting the size factor to the pool on both sides.
+
+Then it failed again on `umap_mixing`, which has no per-gene decomposition to subset after the
+fact — two clouds are mixed in the space the cells are placed in — so `_mixing` now builds that
+space from the pool: columns, size factor and PCA together. `celltype_localization` reads no
+expression and is unmoved by any pool; it is reported and is not evidence about a gene split.
+
+**One rule for marker selection, not two.** `marker_genes` took a `pool` argument and
+`scripts/_gene_split.markers_within` became a three-line adapter over it. It had been a mirrored
+copy of the Moran's-I-plus-detection-floor rule, and a copy of a selection rule drifts from it.
+
+**The referents are computed by the scorer, on its own folds and markers.** The pre-flight's
+ceiling report measured a constant-field band too, but under its own marker selection; a band from
+one script and scores from another are not comparable, and the band is the thing A1 must clear and
+A4 must stay inside. Both referents reuse an arm's own generated layout with its counts replaced,
+so they isolate the expression rather than the layout.
+
+**The layout must be identical across the four arms** or the gap is not about the text channel.
+The scorer asserts it per fold and aborts; `tests/test_generate.py::
+test_zero_shot_arms_share_one_layout_and_differ_only_in_expression` drives the same assertion
+through a real fit and a real generation on the fixture, so a regression is caught here rather
+than four hours into a campaign.
+
+**What the `expr_pca` leak was worth on the fixture.** `test_zero_shot_gene_decoding`, re-run
+either side of the fix: **−0.1596 → −0.1808** on the held-out genes (seen genes 0.9343 → 0.9389).
+Both are far below the 0.4 the test asks for and it stays a strict xfail, so the fix changes no
+verdict — but the direction is the one the leak predicts, and −0.16 was the number with held-out
+genes in the conditioning. 382 fast tests pass; `ruff` and `mypy --strict` clean.
