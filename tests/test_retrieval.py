@@ -19,6 +19,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import torch
+from scipy import sparse
 from spatialcpav25_gen.config import Config
 from spatialcpav25_gen.data.loaders import split_holdout
 from spatialcpav25_gen.data.schema import HeldOutSections, Volume
@@ -32,6 +33,7 @@ from spatialcpav25_gen.model.retrieval import (
 )
 
 from tests.conftest import copy_section, rebuild_volume
+from tests.fixtures.synthetic import make_synthetic_volume
 
 QUERY_CELLS = 400
 QUERY_SEED = 5
@@ -723,3 +725,73 @@ def test_config_rejects_a_gap_factor_below_one() -> None:
         Config().replace(retrieval_z_window_gap_factor=0.5)
     with pytest.raises(ConfigError, match="retrieval_z_window_gap_factor"):
         Config().replace(retrieval_z_window_gap_factor=float("inf"))
+
+
+def test_gene_pool_makes_the_pcs_invariant_to_the_held_out_genes():
+    """A gene outside ``gene_pool`` contributes **nothing** to the retrieval PCs.
+
+    Demonstrated by invariance rather than by inspection: the excluded columns are replaced
+    with arbitrary garbage — huge values, sign-flipped, reshuffled across cells — and the
+    scores the flow conditions on must come back **bitwise identical**. Checking that the
+    basis rows are zero would prove the same thing, and is asserted too, but invariance is the
+    property the zero-shot experiment actually needs and it holds whatever the rest of the
+    pipeline does with those columns.
+
+    Without this, ``gene_pool`` in the trainer does not close the leak: the trainer and the
+    retrieval index are separate consumers of the same volume, and the ``zinb-flow`` path
+    conditions on the index's PCs. A held-out gene would reach the model through its own
+    neighbours' expression.
+    """
+    vol, _ = make_synthetic_volume(seed=0)
+    cfg = Config().replace(expr_pca_dim=4, retrieval_k=4)
+    training, _ = split_holdout(vol, "alternating", 0, cfg)
+    n_genes = training.n_genes
+    kept = np.arange(0, n_genes, 2, dtype=np.int64)
+    held = np.setdiff1d(np.arange(n_genes, dtype=np.int64), kept)
+    assert held.size, "the fixture must have at least one held-out gene for this to test anything"
+
+    index = RetrievalIndex(training, cfg, gene_pool=kept)
+
+    # 1. The mechanism: every excluded row of the basis is exactly zero.
+    assert np.all(index.expression_pcs.basis[held, :] == 0.0)
+    assert np.any(index.expression_pcs.basis[kept, :] != 0.0)
+
+    # 2. The property that matters: scores are invariant to arbitrary held-out values.
+    counts = sparse.vstack([s.counts for s in training.sections]).tocsr().astype(np.float64)
+    baseline = index.expression_pcs.project(counts)
+
+    rng = np.random.default_rng(4242)
+    for scale in (0.0, 1e3, 1e6):
+        vandalised = np.asarray(counts.todense(), dtype=np.float64)
+        vandalised[:, held] = rng.random((vandalised.shape[0], held.size)) * scale
+        after = index.expression_pcs.project(sparse.csr_matrix(vandalised))
+        assert np.array_equal(after, baseline), (
+            f"held-out genes changed the PCs at scale {scale}: max |delta| "
+            f"{np.abs(after - baseline).max()}"
+        )
+
+    # 3. And the guard fires rather than silently fitting fewer components than asked for.
+    with pytest.raises(ValueError, match=r"exceeds the .* genes available"):
+        RetrievalIndex(training, cfg.replace(expr_pca_dim=kept.size + 1), gene_pool=kept)
+
+    # 4. End to end, on the object the flow actually reads: rebuild the whole index from a
+    #    volume whose held-out columns are garbage and the neighbour tokens must be bitwise
+    #    identical. This covers the basis, the size factor, and anything else the index
+    #    derives from expression, without depending on which of them is the current route.
+    vandal_sections = []
+    for section in training.sections:
+        dense = np.asarray(section.counts.todense(), dtype=np.float64)
+        dense[:, held] = rng.random((dense.shape[0], held.size)) * 1e4
+        vandal_sections.append(copy_section(section, counts=sparse.csr_matrix(dense)))
+    vandalised_vol = rebuild_volume(training, vandal_sections)
+
+    xyz = index.coords[:32]
+    idx, _ = index.query(xyz, set(), seed=0)
+    tokens, mask = index.neighbour_tokens(xyz, idx)
+    other = RetrievalIndex(vandalised_vol, cfg, gene_pool=kept)
+    other_tokens, other_mask = other.neighbour_tokens(xyz, idx)
+    assert torch.equal(tokens, other_tokens), (
+        "held-out genes reached the neighbour tokens the flow conditions on: max |delta| "
+        f"{(tokens - other_tokens).abs().max().item()}"
+    )
+    assert torch.equal(mask, other_mask)

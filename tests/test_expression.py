@@ -226,7 +226,12 @@ def train_model(
     base = base.replace(holdout_consecutive_k=3) if holdout_mode == "consecutive" else base
     vol, _ = make_synthetic_volume(seed=0)
     training, held = split_holdout(vol, holdout_mode, 0, base)
-    data = TrainingData.build(training, base)
+    # `gene_pool` has to reach the retrieval PCA as well as the batches. Without it the index
+    # fits its expression PCs over the whole panel, and the zinb-flow path conditions on those
+    # PCs — so a held-out gene reaches the model through its own neighbours' expression and the
+    # zero-shot number is not zero-shot. Same class of leak as the dropped `gene_pool` this
+    # helper's callers already document, one consumer further along.
+    data = TrainingData.build(training, base, gene_pool=gene_pool)
     model = CTFFlow(base, data, build_embeddings(base, vol), grf_seed=11)
     schedule = LOSOScheduler(training, base, seed=SEED) if loso else None
     with warnings.catch_warnings():

@@ -2340,3 +2340,40 @@ constant-field band: it emits one embedding for every gene and *cannot* distingu
 score above the band proves a leak (`expr_pca` over the full panel, or an incomplete `gene_pool`)
 rather than a result. And the `self` check in the ceiling instrument must still pass on the same
 split. A2 carries no threshold and is reported as the paper's purest arm.
+
+### T09 — the `expr_pca` restriction, demonstrated rather than declared (2026-08-30)
+
+The instruction was *"show me the expr_pca restriction works, not that it exists"*. It did not, on
+the first attempt, and the way it failed is the finding.
+
+**A fourth leak channel, found by the test that was written to confirm the third.** The pre-flight
+had identified the retrieval PCA as a route for a held-out gene into the `zinb-flow` conditioning
+and the fix was to zero the excluded rows of the basis, so a held-out gene multiplies zero. That
+is correct and it is **not sufficient**. `_normalised_expression` library-size normalises before
+the PCA — `x / x.sum(axis=1) * median` — and the sum runs over the **whole panel**. A held-out
+gene therefore rescales every *kept* gene's normalised value, and reaches the conditioning
+through the denominator with the basis rows still exactly zero. The size factor is now restricted
+to the pool too, and `ExpressionPCs` carries the pool so a basis reapplied elsewhere cannot be
+normalised on a different footing.
+
+**What the leak was worth.** On the fixture, with the basis correctly zeroed and only the size
+factor unrestricted, vandalising the held-out columns moves the retrieval PCs the flow conditions
+on by **max 5.78, mean 0.617 standardised units** — the tokens are unit-scaled, so that is 5.8 σ.
+Not a rounding effect: it is the conditioning vector changing character.
+
+**The test asserts the invariance, not the mechanism.** `tests/test_retrieval.py::
+test_gene_pool_makes_the_pcs_invariant_to_the_held_out_genes` replaces the excluded columns with
+garbage at scales 0, 1e3 and 1e4–1e6 and requires the conditioning back **bitwise identical**, at
+two levels: `ExpressionPCs.project` on a vandalised matrix, and a whole `RetrievalIndex` rebuilt
+from a vandalised volume, compared on `neighbour_tokens` — the object the flow actually reads.
+Both leak channels were re-broken one at a time to check the test has teeth: removing the size
+factor restriction fails it, and adding 1e-9 to the off-pool basis rows fails it. Had the test
+been written against the mechanism ("assert the basis rows are zero") it would have passed
+throughout and the campaign would have been spent measuring a leak.
+
+**The same leak was live in `tests/test_expression.py`.** `train_model` passed `gene_pool` to
+`train_ctfflow` and not to `TrainingData.build`, so `test_zero_shot_gene_decoding` — the fixture's
+own capability experiment — conditioned on PCs fitted over the whole panel, held-out genes
+included. Fixed. It is the same shape as the defect that test's docstring already records (the
+first `train_ctfflow` accepted `gene_pool` and dropped it, and 0.9235 in-sample was reported as
+zero-shot): a pool threaded to one consumer of the volume and not to the next.

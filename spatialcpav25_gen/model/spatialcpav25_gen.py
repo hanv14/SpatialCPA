@@ -273,9 +273,20 @@ class TrainingData:
 
     @classmethod
     def build(
-        cls, vol: TrainingVolume, cfg: Config, *, index: RetrievalIndex | None = None
+        cls,
+        vol: TrainingVolume,
+        cfg: Config,
+        *,
+        index: RetrievalIndex | None = None,
+        gene_pool: IntArray | None = None,
     ) -> TrainingData:
-        """Pool ``vol``'s sections and measure the statistics the heads need."""
+        """Pool ``vol``'s sections and measure the statistics the heads need.
+
+        ``gene_pool`` restricts the **retrieval PCA** to those panel columns, so a gene held
+        out of a zero-shot run cannot reach the model as conditioning. It is ignored when an
+        ``index`` is supplied, because that index was built with its own pool (or none) and
+        silently re-deriving one here would let two callers disagree about what is held out.
+        """
         if not isinstance(vol, TrainingVolume):
             raise TypeError(
                 f"TrainingData.build expects a TrainingVolume, got {type(vol).__name__}. "
@@ -306,7 +317,7 @@ class TrainingData:
         )
         return cls(
             vol=vol,
-            index=RetrievalIndex(vol, cfg) if index is None else index,
+            index=(RetrievalIndex(vol, cfg, gene_pool=gene_pool) if index is None else index),
             counts=counts,
             total_counts=totals,
             stats=stats,

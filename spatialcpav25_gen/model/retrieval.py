@@ -178,7 +178,9 @@ class RetrievalIndex:
         index does not hold (GATE 2's held-out section, T08's LOSO folds).
     """
 
-    def __init__(self, vol: Volume, cfg: Config) -> None:
+    def __init__(
+        self, vol: Volume, cfg: Config, *, gene_pool: npt.NDArray[np.int64] | None = None
+    ) -> None:
         if not isinstance(vol, Volume):
             raise TypeError(
                 f"RetrievalIndex expects a Volume (in the pipeline a TrainingVolume), got "
@@ -217,7 +219,7 @@ class RetrievalIndex:
         ).astype(np.intp)
         self._trees = [cKDTree(np.asarray(s.coords, dtype=np.float64)) for s in vol.sections]
 
-        self.expr_pca, self.expression_pcs = _expression_pcs(vol, cfg)
+        self.expr_pca, self.expression_pcs = _expression_pcs(vol, cfg, gene_pool)
         self.niche = self._build_niche(cfg)
 
     # ----------------------------------------------------------------------------------
@@ -834,28 +836,59 @@ class ExpressionPCs:
     """(G, expr_pca_dim) leading eigenvectors of the gene-gene covariance."""
     scale: FloatArray
     """(1, expr_pca_dim) per-component standard deviation, so scores are unit variance."""
+    pool: npt.NDArray[np.int64] | None = None
+    """The gene columns the PCA and the **size factor** were restricted to, or ``None``.
+
+    Carried on the object rather than passed at call time so a reapplied basis cannot be
+    normalised differently from the one it was fitted with."""
 
     def project(self, counts: Any) -> npt.NDArray[np.float32]:
         """Apply the fitted basis to a raw count matrix. ``(N, G)`` -> ``(N, expr_pca_dim)``."""
-        values = _normalised_expression(counts)
+        values = _normalised_expression(counts, self.pool)
         scores = (values.astype(np.float64) - self.mean) @ self.basis
         return cast("npt.NDArray[np.float32]", (scores / self.scale).astype(np.float32))
 
 
-def _normalised_expression(counts: Any) -> npt.NDArray[np.float64]:
+def _normalised_expression(
+    counts: Any, pool: npt.NDArray[np.int64] | None = None
+) -> npt.NDArray[np.float64]:
     """Library-size normalise and ``log1p`` a count matrix. ``(N, G)`` -> ``(N, G)`` float64.
 
     An *input-side* transform of the kind Convention 5 permits and requires to stay off the
     decoder's target: PCs of raw counts would mostly measure library size.
+
+    ``pool`` restricts the **size factor** to those columns. Zeroing the excluded rows of the
+    PCA basis is *not* enough on its own to hold a gene out: the library size is a sum over the
+    whole panel, so an excluded gene rescales every kept gene's normalised value and reaches the
+    conditioning that way. Found by the retrieval suite's ``gene_pool`` invariance test, which
+    failed against a correctly zeroed basis — an argument for testing the invariance an
+    experiment needs rather than the mechanism that was meant to deliver it.
     """
     dense = np.asarray(counts.toarray() if sparse.issparse(counts) else counts, dtype=np.float64)
-    totals = dense.sum(axis=1, keepdims=True)
+    sized = dense if pool is None else dense[:, np.asarray(pool, dtype=np.int64)]
+    totals = sized.sum(axis=1, keepdims=True)
     totals[totals == 0.0] = 1.0
     return cast("npt.NDArray[np.float64]", np.log1p(dense / totals * float(np.median(totals))))
 
 
-def _expression_pcs(vol: Volume, cfg: Config) -> tuple[npt.NDArray[np.float32], ExpressionPCs]:
+def _expression_pcs(
+    vol: Volume, cfg: Config, gene_pool: npt.NDArray[np.int64] | None = None
+) -> tuple[npt.NDArray[np.float32], ExpressionPCs]:
     """Fit the expression PCA over a volume. ``(N, expr_pca_dim)`` scores plus the basis.
+
+    ``gene_pool`` restricts the fit to a subset of the panel — the zero-shot experiment's *kept*
+    genes. It is not a filter on the output: the returned basis stays ``(G, expr_pca_dim)`` so
+    :meth:`ExpressionPCs.project` still takes a full ``(N, G)`` matrix, but **every row outside
+    the pool is exactly zero**. A held-out gene therefore multiplies zero and contributes
+    nothing to any score, whatever its value.
+
+    That matters because the retrieval PCs are what the ``zinb-flow`` path conditions on. Fitted
+    over the whole panel they carry the held-out genes' expression into the model as
+    conditioning, which would let an arm "predict" a gene it was never fitted on by reading it
+    off its own neighbours — a leak that ``gene_pool`` in the trainer does not close, because
+    the trainer and the retrieval index are separate consumers of the same volume. Zeroing the
+    rows makes the exclusion a property that can be *checked* (the scores are invariant to
+    arbitrary changes in the excluded columns) rather than one that has to be trusted.
 
     Mean-centred, then projected onto the leading eigenvectors of the gene-gene covariance.
     The eigendecomposition is of the ``(G, G)`` covariance rather than an SVD of the
@@ -867,28 +900,46 @@ def _expression_pcs(vol: Volume, cfg: Config) -> tuple[npt.NDArray[np.float32], 
     two machines cannot return the same subspace with flipped axes.
     """
     dim = int(cfg.expr_pca_dim)
-    values = np.concatenate(
-        [_normalised_expression(section.counts) for section in vol.sections], axis=0
-    )
-    if dim > values.shape[1]:
+    n_genes = int(vol.sections[0].counts.shape[1])
+    # Validated before the size factor uses it, since `_normalised_expression` would index with
+    # it and a bad pool must name itself rather than surface as an IndexError from numpy.
+    restricted = None if gene_pool is None else np.unique(np.asarray(gene_pool, dtype=np.int64))
+    if (
+        restricted is not None
+        and restricted.size
+        and (restricted.min() < 0 or restricted.max() >= n_genes)
+    ):
         raise ValueError(
-            f"RetrievalIndex: Config.expr_pca_dim={dim} exceeds the {values.shape[1]} genes "
-            f"of specimen {vol.specimen_id!r}"
+            f"RetrievalIndex: gene_pool indexes outside the {n_genes}-gene panel of specimen "
+            f"{vol.specimen_id!r} (min {int(restricted.min())}, max {int(restricted.max())})"
         )
-    mean = values.mean(axis=0, keepdims=True)
-    centred = values - mean
+    pool = np.arange(n_genes, dtype=np.int64) if restricted is None else restricted
+    values = np.concatenate(
+        [_normalised_expression(section.counts, restricted) for section in vol.sections], axis=0
+    )
+    if dim > pool.size:
+        raise ValueError(
+            f"RetrievalIndex: Config.expr_pca_dim={dim} exceeds the {pool.size} genes "
+            f"available to the PCA for specimen {vol.specimen_id!r}"
+            + ("" if gene_pool is None else " (restricted by gene_pool)")
+        )
+    mean = np.zeros((1, n_genes), dtype=values.dtype)
+    mean[0, pool] = values[:, pool].mean(axis=0)
+    centred = values[:, pool] - mean[:, pool]
     covariance = (centred.T @ centred) / max(values.shape[0] - 1, 1)
     eigenvalues, eigenvectors = np.linalg.eigh(covariance)
     order = np.argsort(eigenvalues)[::-1][:dim]
-    basis = eigenvectors[:, order]
+    # Scatter the pool-sized basis back to panel width, leaving every excluded row exactly zero.
+    basis = np.zeros((n_genes, dim), dtype=eigenvectors.dtype)
+    basis[pool, :] = eigenvectors[:, order]
     # Canonical sign: the largest-magnitude loading of each component is positive.
     signs = np.sign(basis[np.abs(basis).argmax(axis=0), np.arange(basis.shape[1])])
     signs[signs == 0.0] = 1.0
     basis = basis * signs[None, :]
-    scores = centred @ basis
+    scores = centred @ basis[pool, :]
     scale = scores.std(axis=0, keepdims=True)
     scale[scale <= 0.0] = 1.0
-    pcs = ExpressionPCs(mean=mean, basis=basis, scale=scale)
+    pcs = ExpressionPCs(mean=mean, basis=basis, scale=scale, pool=restricted)
     return cast("npt.NDArray[np.float32]", (scores / scale).astype(np.float32)), pcs
 
 
