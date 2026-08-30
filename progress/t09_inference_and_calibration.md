@@ -2264,3 +2264,79 @@ The report answers two questions: is √R on the held-out genes clear of that re
 held-out ceiling comparable to the kept genes' (an unrepresentative split would not generalise to
 the panel). `self` = 1.000000 or the run aborts. Fit-free, so unaffected by all three leaks.
 `ruff`, `mypy --strict`, 376 tests clean.
+
+### T09 — the zero-shot split clears, and the four-arm experiment is pre-registered (2026-08-27)
+
+`reports/t09_zeroshot_ceiling_deep.md`, `reports/t09_gene_split_deep.json`. Model-free.
+**813 kept / 204 held out** of 1017 (20.06%), stratified 5x5 on mean expression x Moran's I.
+
+| target | side | genes | markers | R | **ceiling √R** | constant field | shuffled | room |
+|---|---|---|---|---|---|---|---|---|
+| `section_3` | held out | 204 | 32 | 0.9610 | **0.9803** | +0.0416 | +0.0189 | 0.9387 |
+| `section_3` | kept | 813 | 32 | 0.9907 | **0.9953** | +0.0218 | +0.0046 | 0.9735 |
+| `section_5` | held out | 204 | 32 | 0.9711 | **0.9854** | +0.0299 | −0.0021 | 0.9555 |
+| `section_5` | kept | 813 | 32 | 0.9888 | **0.9944** | −0.0310 | +0.0394 | 0.9634 |
+
+**Not saturated, and not marginally.** ~0.94 of room above the referent, against a widest measured
+per-metric envelope of 0.0595 — **16x**. Unlike the reconstruction task, which `deep_starmap` was
+saturated for, this split has room for an arm to demonstrate something.
+
+**The 99% representativeness is conservative, not flattering.** Held-out markers are the top 32 of
+**204** (15.7% of their pool); kept markers the top 32 of **813** (3.9%). A shallower selection
+pool yields weaker markers and should *depress* the held-out ceiling — and it does, slightly. That
+the held-out ceiling still reaches 99% of the kept genes' means the stratified draw did its job
+with a handicap working against it.
+
+**The floor is a band, not a point.** The constant-field referent ranges **−0.0310 … +0.0416**
+across the four rows, a spread of 0.0726 — **wider than the widest per-metric envelope measured
+anywhere in this campaign**. An arm must clear roughly **+0.042**, not 0. Irrelevant against 0.94
+of room, but it must be quoted as a band or the floor will be understated.
+
+**Two incidental confirmations.** The split was ranked on `section_1`, which is *not* one of the
+two scored folds — good, but that is `_reference_section` picking the largest section and
+happening to avoid them, not a guarantee; on another dataset it must be checked. And **R14
+reproduces on a disjoint gene set**: on `section_5`, nearest-by-z takes `section_7` (40.6 µm) over
+`section_3` (42.0 µm) at a cost of **0.152** on held-out genes and 0.121 on kept, against the
+0.116 recorded on the full panel. The donor-selection defect is not an artifact of one gene set.
+
+#### Pre-registration — the FOUR-arm comparison, stated before any fit
+
+The two-arm criteria are void: they rested on `lookup` being unable to embed an unseen gene, which
+is false. **The question is whether `W·t` adds anything over a distillation head that also sees
+the text.**
+
+| arm | unseen-gene embedding | role |
+|---|---|---|
+| **A1** `medcpt` + distill | `W·t + γ·distill(t)` | the full claim |
+| **A2** `medcpt`, pure text | `W·t` | the designed channel alone |
+| **A3** `lookup` + distill | `γ·distill(t)` | **the real competitor** |
+| **A4** `lookup`, pure text | `norm(0)` — one embedding for every gene | degenerate; the leak detector |
+
+**Two fits, four arms.** `use_distill` is a parameter of `forward_zero_shot`, not a training
+setting, so A1/A2 share one fit and A3/A4 share the other. My "four arms ≈ 14 core-hours" assumed
+four fits and was wrong: it is **2 fits per seed**.
+
+**Primary comparison: A1 − A3 on `marker_depth_r`**, over markers selected within the held-out
+pool, on both folds. `marker_depth_r` is primary because it is the metric whose ceiling has been
+measured on these genes; the other five are reported with the caveat that theirs has not been.
+
+**Referents**: the constant field (band above) and the shuffled floor. **`cross-mix` is excluded**
+— it reads the full count matrix and would emit the held-out genes verbatim.
+
+**SUPPORT** for the text channel requires *all* of: A1 > A3, signs agreeing on every seed and both
+folds with fold balance ≥ 0.25; the margin exceeding that metric's own per-arm across-seed
+envelope measured from these runs; the margin exceeding the largest within-arm fold spread; **and**
+A1 clearing the constant-field band by more than that envelope.
+
+**REFUTATION of the architecture, not the idea**: A1 − A3 inside its envelope while *both* clear
+the constant-field band. Text helps, the distillation head alone captures it, and `W·t` is
+redundant.
+
+**REFUTATION of the idea**: neither A1 nor A3 clears the constant-field band by more than the
+envelope. No route from text to an unseen gene works.
+
+**Void conditions — the run means nothing unless both hold.** A4 must sit inside the
+constant-field band: it emits one embedding for every gene and *cannot* distinguish them, so a
+score above the band proves a leak (`expr_pca` over the full panel, or an incomplete `gene_pool`)
+rather than a result. And the `self` check in the ceiling instrument must still pass on the same
+split. A2 carries no threshold and is reported as the paper's purest arm.
