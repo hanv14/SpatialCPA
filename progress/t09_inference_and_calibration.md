@@ -2193,3 +2193,74 @@ about — but the causal gloss was mine and was wrong. `specs/10` §4.2a now sta
 tabulates the worse arm per gate and metric, and says plainly that the mechanism is unexplained.
 The aggregator prints a worse-arm/steadier-arm table instead of the claim, and reports a tie as a
 tie rather than naming whichever key `max()` happened to return.
+
+### T09 — the zero-shot pre-flight: three leaks, a wrong pre-registration, and the ceiling instrument (2026-08-27)
+
+Three code reads before spending four fits. All three found something.
+
+#### A. `cross-mix` would serve the answer key
+
+```python
+donors = model.data.counts[safe.reshape(-1)].todense()   # infer/generate.py:467
+```
+
+`model.data.counts` is the **full** training count matrix; `_cross_mix` and `cross_mix_counts`
+filter by *cell*, never by gene. A gene held out of training is still emitted verbatim from a
+donor cell. **`cross-mix` is not a zero-shot method — it is a lookup of the held-out answer** and
+is excluded from the experiment rather than handicapped. This was pre-registered as the most
+likely way to get a wrong result and it is real.
+
+#### B. The pre-registered support criterion was not a test of anything
+
+It said `lookup` "has no embedding row for an unseen gene, so it structurally cannot do the task."
+**False.** `forward_zero_shot` computes `norm(_text_channel(t) + gamma * distill(t))`, and while
+`_text_channel` returns zeros under `lookup`, `distill` is a two-layer MLP over the text vector
+trained by `distillation_loss` to regress the learned per-gene residual. Under `lookup` that
+residual *is* the whole embedding — so the distill head learns text → embedding and **generalises
+to unseen genes through the same MedCPT vectors.**
+
+Both arms reach unseen genes through text; they differ in *how*, and `use_distill` splits each
+again — which the docstring already anticipated ("both are reported in the zero-shot table"):
+
+| arm | unseen-gene embedding | what it tests |
+|---|---|---|
+| `medcpt` + distill | `W·t + γ·distill(t)` | the full claim |
+| `medcpt`, pure text | `W·t` | the paper's pure-text arm |
+| `lookup` + distill | `γ·distill(t)` | **a real competitor**, not a floor |
+| `lookup`, pure text | `norm(0)` = the LayerNorm bias, constant | the true degenerate arm |
+
+**The question is now "does `W·t` add anything over a distillation head that also sees the
+text".** That is a real test and a harder one; the two-arm criteria are void.
+
+#### C. A third leak, not pre-registered
+
+`RetrievalIndex` stores `self.expr_pca` — PCs of the **full** expression matrix — and the
+`zinb-flow` path conditions on the retrieved neighbours' PCs. A held-out gene contributes to those
+32 components, so even `medcpt`/`lookup` would see it through conditioning. The split must be
+applied in **three** places and only the first exists: `gene_pool` in training (exists),
+`expr_pca` refitted on kept genes (does not), `cross-mix` excluded (a design decision).
+
+#### The instrument, and one thing it corrected on its first run
+
+`scripts/_gene_split.py` builds the split as a recorded, seeded, **stratified** object — quantile
+bins on mean expression × Moran's I, an equal share drawn from every cell of the grid, written out
+gene-by-gene with the statistics behind it. Stratified on those two axes specifically because
+`marker_genes` selects by Moran's I with a detection floor: an unstratified draw could leave the
+held-out set with no eligible markers and no measurement at all.
+
+`scripts/t09_zeroshot_ceiling.py` asks the pre-fit question, and **its shape is different from
+the reconstruction ceiling's.** There the competitor was a copy of another section, so the
+question was room *above copying*; here no arm may copy, so the competitor is the **constant
+field** — predict each held-out gene's own global mean everywhere.
+
+⚠️ **That referent is not zero, and I asserted it was before measuring it.** The intuition — a
+flat field has a flat profile, so `_safe_r` sees no variance and returns 0 — is wrong:
+`soft_depth_profile` divides each bin by the kernel weight it received, so a constant field's
+profile tracks **where the cells are** along the depth axis, and cell density is itself laminar.
+Measured at **+0.013 … +0.049** on the fixture. Small, but it is the number every arm must beat,
+and the docstring's reason for computing rather than asserting it paid off on the first run.
+
+The report answers two questions: is √R on the held-out genes clear of that referent, and is the
+held-out ceiling comparable to the kept genes' (an unrepresentative split would not generalise to
+the panel). `self` = 1.000000 or the run aborts. Fit-free, so unaffected by all three leaks.
+`ruff`, `mypy --strict`, 376 tests clean.
