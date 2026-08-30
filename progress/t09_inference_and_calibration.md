@@ -2140,3 +2140,56 @@ setting applied to another because it was the only one available. `deep_starmap`
 margins (0.2364–0.6614) clear even the widest tier-1 envelope by 4x and are safe on any reading;
 its `text_emb_mode` margins are **not**, and stay quoted against the pooled figure with that
 caveat until an envelope is measured for them.
+
+### T09 — `text_emb_mode` on `deep_starmap`: two established three-seed negatives (2026-08-27)
+
+Six cold fits at **3.3–3.8 h each** (11 826 – 13 724 s), six-up, ~3.8 h wall. All six config
+hashes distinct. Scoring 408–414 s per arm. My pre-run estimate of 2.3 h per fit was low by
+1.4–1.7x: the tier-1 → `deep_starmap` ratio is **3.2–3.7x**, not the 2.2x per-step gene scaling I
+extrapolated from — the extra factor is the 7x cell count feeding the parts of a step that
+`genes_per_step` does not cap.
+
+| metric | seed 2 | seed 3 | seed 4 | mean | own envelope | vs it | verdict |
+|---|---|---|---|---|---|---|---|
+| `morans_pearson` | −0.1108 | −0.1167 | −0.1358 | **−0.1211** | 0.0246 | **4.9x** | **STANDS** |
+| `gearys_pearson` | −0.1126 | −0.1022 | −0.1239 | **−0.1129** | 0.0501 | **2.3x** | **STANDS** |
+| `umap_mixing` | +0.0021 | +0.0029 | −0.0105 | −0.0018 | 0.0201 | 0.1x | signs disagree |
+| `marker_field_r` | −0.0412 | −0.0291 | −0.0485 | −0.0396 | 0.0197 | 2.0x | fails fold spread |
+| `marker_depth_r` | −0.0205 | −0.0106 | **+0.0139** | −0.0058 | 0.0427 | 0.1x | signs disagree |
+
+**`lookup` beats `medcpt` on Moran's and Geary's at three seeds, against an envelope measured in
+its own setting.** Signs agree on every seed; `morans`'s fold spread is 0.0169, the tightest in
+the campaign, and its margin is 7.2x that. This is the **second** claim in the project to satisfy
+`claim_min_seeds` = 3 on real data, and the first about the method's headline novelty.
+
+**It came out stronger than the cautious estimate, which is the point of having measured it.** The
+previous entry warned that if tier-1's envelope transferred, `morans` would fall from 3.7x to
+2.1x. It does not transfer — `deep_starmap`'s own `morans` envelope is **0.0246**, less than half
+tier-1's 0.0574 — so the result is **4.9x**. Borrowing the denominator would have understated a
+negative result about our own method.
+
+**`marker_depth_r` is settled and it is nothing.** Per-seed −0.0205, −0.0106, **+0.0139**: signs
+disagree, mean 0.1x its envelope, one seed favouring `medcpt`. That is the metric this entire line
+of inquiry began from — "`medcpt` beats `lookup` by 5.5x the envelope" — which survived a
+coordinate-frame defect, a layout leak, a fold-balance defect and finally three seeds, and is now
+conclusively noise.
+
+**Standing position on the text channel**: no positive on real data at any dataset or panel width,
+and two established negatives on the wide panel. Recorded as a result, not a disappointment — a
+three-seed negative against a self-measured envelope is a stronger statement than most of what
+this campaign has produced in the positive direction.
+
+#### The correction this run forced
+
+The report's envelope section asserted: *"A copying arm barely uses the fitted weights, so its
+score is nearly seed-invariant; a generative arm's is not."* **False here, and printed anyway.**
+Both arms of this gate are `zinb-flow` — only the embedding differs, so there is no copying arm —
+and the worse arm **alternates by metric**: `medcpt` on `morans` (0.0246 vs 0.0073), `lookup` on
+the other four.
+
+Another sentence that could not fail. The *finding* survives and is reinforced — envelopes are
+per-arm, and since the worse arm is **not predictable** it must be measured rather than reasoned
+about — but the causal gloss was mine and was wrong. `specs/10` §4.2a now states the observation,
+tabulates the worse arm per gate and metric, and says plainly that the mechanism is unexplained.
+The aggregator prints a worse-arm/steadier-arm table instead of the claim, and reports a tie as a
+tie rather than naming whichever key `max()` happened to return.

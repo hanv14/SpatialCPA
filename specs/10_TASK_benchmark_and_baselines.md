@@ -506,16 +506,30 @@ Measured on tier-1 STARmap, `expr_mode` gate, three post-fix seeds:
 on three of the six, too strict on two. A pooled envelope does not merely lose resolution, it
 gives the wrong answer in a direction that depends on which metric is being read.
 
-**2. Across arms — up to 22x**, and this is the part nobody reports. **A copying baseline barely
-uses the fitted weights, so its score is nearly seed-invariant; a generative method's is not.**
-`cross-mix` moves 0.0027–0.0084 across seeds where `zinb-flow` moves 0.0148–0.0595. A margin
-between them therefore inherits **nearly all** of its run-to-run variance from one side.
+**2. Across arms — up to 22x, and this is the part nobody reports.** On the tier-1 `expr_mode`
+gate `cross-mix` moves 0.0027–0.0084 across seeds where `zinb-flow` moves 0.0148–0.0595, so a
+margin between them inherits **nearly all** of its run-to-run variance from one side.
 
-The consequence for any benchmark that compares a generative method against a copying or
-retrieval baseline — which is most of this field — is that **the envelope must be measured on the
-arm that carries the variance**, and quoting a margin against a pooled figure systematically
-flatters whichever comparison happens to involve the steadier arm. The effect is invisible unless
-the arms are seeded separately and reported separately.
+⚠️ **State this as an observation. The mechanism is unexplained.** The obvious reading — that a
+copying baseline barely uses the fitted weights and is therefore seed-invariant — was written
+into an earlier draft of this section and **does not survive the second measurement.** On the
+`deep_starmap` `text_emb_mode` gate *both* arms are `zinb-flow` and only the gene embedding
+differs, yet the arms still move unequally **and the worse arm alternates by metric**:
+
+| gate | `morans` | `gearys` | `umap_mixing` | `marker_field_r` | `marker_depth_r` |
+|---|---|---|---|---|---|
+| tier-1 `expr_mode` — worse arm | `zinb-flow` | `zinb-flow` | `zinb-flow` | `zinb-flow` | `zinb-flow` |
+| `deep_starmap` `text_emb_mode` — worse arm | `medcpt` | `lookup` | `lookup` | `lookup` | `lookup` |
+
+So the asymmetry is **real, per-metric, and not a fixed property of "the copying arm"**. What can
+be claimed is the observation and its consequence; what cannot is a mechanism.
+
+The consequence for any benchmark comparing two arms — which is all of them — is that **the
+envelope must be measured on the arm that carries the variance, per metric and per gate**, and
+quoting a margin against a pooled figure systematically flatters whichever comparison happens to
+involve the steadier arm. Because the worse arm is not predictable, it cannot be reasoned about
+in advance: it has to be measured, which means **seeding both arms and reporting them
+separately**. That is the methods claim.
 
 **The envelope is also dataset- and gate-specific.** The table above is tier-1's, for the
 `expr_mode` arms. It may not be applied to `deep_starmap`, nor to the `text_emb_mode` gate:

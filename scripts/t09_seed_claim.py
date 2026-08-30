@@ -120,11 +120,18 @@ def arm_spreads(runs: list[dict], options: tuple[str, ...], metric: str) -> dict
 
     This is the like-for-like replacement for R10's pooled 0.0335: that number answered "how far
     does re-running one configuration move its score", and this answers it per metric *and* per
-    arm. Both refinements matter and the second was not anticipated — a copying arm barely uses
-    the fitted weights, so its score is nearly seed-invariant, while a generative arm's is not.
-    Measured on tier-1 at seeds 2/3: ``cross-mix`` moves 0.0008-0.0084 across seeds where
-    ``zinb-flow`` moves 0.0130-0.0368, up to 27x more. A single pooled envelope applied to both
-    is therefore wrong in two directions at once.
+    arm. Both refinements matter and the second was not anticipated.
+
+    **The per-arm asymmetry is an observation, and the mechanism is unexplained.** On the tier-1
+    ``expr_mode`` gate ``cross-mix`` moved 0.0027-0.0084 across seeds where ``zinb-flow`` moved
+    0.0148-0.0595 — up to 22x — which invites the reading that a copying arm barely uses the
+    fitted weights and so is seed-invariant. That reading does **not** survive the
+    ``deep_starmap`` ``text_emb_mode`` gate, where *both* arms are ``zinb-flow`` and only the
+    embedding differs: the spreads are comparable and **the worse arm alternates by metric**
+    (``medcpt`` worse on ``morans_pearson``, ``lookup`` worse on the other four). So the
+    asymmetry is real, it is not explained by copying-versus-generating, and it is not a fixed
+    property of an arm. Which is precisely why it has to be measured per gate rather than
+    reasoned about — a single pooled envelope is wrong in two directions at once.
     """
     out: dict[str, float] = {}
     for option in options:
@@ -300,10 +307,29 @@ def main(argv: list[str] | None = None) -> int:
         )
     lines += [
         "",
-        "A **copying** arm barely uses the fitted weights, so its score is nearly seed-invariant; "
-        "a **generative** arm's is not. The margin therefore inherits almost all of its seed "
-        "variance from one side, which a pooled envelope cannot express.",
+        "**The arms do not move equally, and which one moves more is not predictable.** The "
+        "`envelope used` column takes the worse arm per metric, named below. On the tier-1 "
+        "`expr_mode` gate the copying arm was steadier on every metric; on the `deep_starmap` "
+        "`text_emb_mode` gate, where both arms are generative, the worse arm **alternates by "
+        "metric**. The asymmetry is an observation and its mechanism is unexplained — which is "
+        "why it is measured per gate rather than assumed. A margin inherits most of its seed "
+        "variance from one side, and a pooled envelope cannot express that.",
+        "",
+        "| metric | worse arm | its spread | steadier arm | its spread | ratio |",
+        "|---|---|---|---|---|---|",
     ]
+    for metric in METRIC_NAMES:
+        a = results[metric]["arm_spreads"]
+        hi = max(a, key=lambda o: a[o])
+        lo = min(a, key=lambda o: a[o])
+        if a[hi] == a[lo]:
+            # A tie — including the inert 0.0000 case — has no worse arm, and naming one
+            # (`max` and `min` both return the first key) would invent an asymmetry.
+            lines.append(f"| `{metric}` | — | {a[hi]:.4f} | — | {a[lo]:.4f} | tied |")
+        else:
+            ratio = "—" if a[lo] == 0 else f"{a[hi] / a[lo]:.1f}x"
+            lines.append(f"| `{metric}` | `{hi}` | {a[hi]:.4f} | `{lo}` | {a[lo]:.4f} | {ratio} |")
+    lines += []
 
     if dup_rows is not None:
         lines += [
