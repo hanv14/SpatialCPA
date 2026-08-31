@@ -3195,3 +3195,86 @@ wrong one. Those are different claims and the report must not blur them.
 
 **No fits. Compare with the 47 core-hours the replication needs**, which is the reason to do this
 first — not the reason I gave in the close-out, which was wrong.
+
+### ⚠️ T09 — the structured-share run is VOID: three defects, all in my instrument (2026-08-31)
+
+The run returned `share_shape` **1.2136 / 1.2190** and retention **39.4% / 44.4%**. Under the
+pre-registration, ≥ 0.50 on both would read SOUND. **I am not reading it that way, because the
+run cannot be read at all.** Three independent defects, none of them the campaign's.
+
+**1. `share_shape` is not bounded by 1, and my thresholds assumed it was.**
+`Var(log mu) = Var(shape) + Var(log s) + 2 Cov`. Here the covariance is **negative** — median
+−0.018605 against `var_shape` 0.114824 and `var_logsize` 0.016368 — so the total (0.093983) is
+*smaller* than `Var(shape)` alone and the ratio is **1.2218**. A "share" above 1 is not a share.
+Pre-registering ≥ 0.50 / < 0.30 on a statistic I had not checked was bounded is the **third time
+in this session** I have put a threshold on a quantity without first establishing its range
+(after the referent drift cut and the CV cut). The pattern is now explicit enough to name: *before
+thresholding a statistic, establish its range.*
+
+**2. The decomposition was over all 1017 genes, not the kept 813.** `mu_variance_decomposition`
+indexes `arange(len(vol.gene_names))`. The script's docstring and the addendum both claimed the
+restriction; only the Moran's I figures had one. A share computed partly over genes that never
+entered a batch is not evidence about the shipped configuration.
+
+**3. The Moran's I numbers are on the wrong scale *and* the wrong panel.** Two separate problems:
+
+* *Scale*: I passed raw counts where `t10_chain_diagnostic` rank-normalises before every spatial
+  statistic. Measured on the fixture this is small — median I **+0.4315** raw against **+0.3966**
+  rank-normalised, a 0.9x factor — so it is an inconsistency, **not** the explanation for the
+  numbers below, and I would have mis-attributed it had I not measured.
+* *Panel*: `real_morans` came back **+0.0182**, against R12's tissue figure of **0.4635**. That
+  0.4635 is a median over STARmap's **28-gene marker panel**, where every gene is spatially
+  structured by construction. `deep_starmap` has **1017** genes, most carrying no spatial signal,
+  so a median over them sits near zero — and `retention` at 39–44% is then two small numbers
+  divided, dominated by genes with no signal on either side. **I transferred a threshold across a
+  panel boundary it does not cross**, which is the same error as (1) wearing different clothes.
+
+#### What the run does establish
+
+**`decoder_mu_link` = `"exp"`, config hash `2a947e26e6310658`** — matching the seed-2 `medcpt`
+line in the campaign log exactly. The link question is closed by the fit's own output: the weights
+behind the `deep_starmap` zero-shot numbers were trained under `exp`. Nothing about the negatives
+is attributable to `softplus`, which is what the addendum claimed and this confirms independently
+of the date argument.
+
+#### The instrument, fixed
+
+* the decomposition is restricted to the kept pool, as a local function rather than a call to one
+  that indexes the whole panel;
+* `share_shape` is kept for comparability with R12's record and **flagged** when it leaves [0, 1],
+  with the covariance reported beside it;
+* **`share_shape_bounded` = `Var(shape) / (Var(shape) + Var(log s))`** is added — in [0, 1] by
+  construction, and it answers what the share was meant to answer: is the between-cell dynamic
+  range the latent's or the size factor's;
+* Moran's I is rank-normalised, and reported **both** over all kept genes and over the
+  `metric_marker_genes` most structured genes of the real section — the second being the quantity
+  comparable to a marker-panel figure.
+
+#### Re-pre-registration, and what I have already seen
+
+⚠️ **Stated after seeing one run.** What I have seen: `share_shape` 1.21/1.22 (unbounded, void),
+`sd_log_mu` 0.304, and near-zero median Moran's I on both sides. I have **not** seen
+`share_shape_bounded`, the rank-normalised figures, or anything restricted to the kept pool — the
+statistics the criteria below are stated on did not exist when the run was made. That is the
+honest position; a reader should discount accordingly and the alternative — quietly restating
+thresholds — is worse.
+
+On **`share_shape_bounded`**, over the kept pool, both folds, and on `retention_top` (the
+structured-gene retention, the panel-comparable one):
+
+* **SOUND** — `share_shape_bounded` ≥ 0.70 on every fold **and** `retention_top` ≥ 0.50 on every
+  fold. The latent carries the dynamic range and the emission keeps half the structure of the
+  genes that have any.
+* **STILL BROKEN** — `share_shape_bounded` < 0.40 anywhere, **or** `retention_top` < 0.25
+  anywhere. R12's expression half stays open and the emission model is a live candidate for the
+  negatives.
+* **PARTIAL** — anything between, or the folds disagreeing across a band.
+
+The 0.70 / 0.40 bounds are set from the *decomposition's* own arithmetic rather than transferred:
+`var_shape` 0.1148 against `var_logsize` 0.0164 is a bounded share of **0.875**, so a decoder
+whose dynamic range is genuinely latent-driven should sit high, and 0.40 is the point below which
+the size factor is carrying a comparable amount. **These are not R12's 15.1% / 61.4% thresholds
+and must not be reported as continuous with them** — that statistic is `share_shape`, which is
+void here.
+
+⚠️ **Unchanged: no outcome reopens the negatives.** They were fitted under the shipped link.

@@ -53,7 +53,54 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _bench3_paths import add_path_args, resolve, set_torch_threads
 from _starmap_run import embeddings_factory, load_training_volume
 from t09_zeroshot_run import arm_config, build_and_fit, load_split
-from t10_chain_diagnostic import morans_i, mu_variance_decomposition
+from t10_chain_diagnostic import morans_i, rank_normalize
+
+
+def decomposition_on_pool(model, h, cfg, pool) -> dict:
+    """``Var(log mu)`` split into its latent-driven and size-factor parts, **over ``pool`` only**.
+
+    A copy of :func:`t10_chain_diagnostic.mu_variance_decomposition` restricted to a gene pool.
+    That function indexes ``arange(len(vol.gene_names))`` — the whole panel — and a share computed
+    over genes that never entered a batch is not evidence about the shipped configuration. The
+    first version of this script called it directly and claimed the restriction in its docstring;
+    it did not have one.
+
+    ``share_shape`` is kept because it is the statistic R12's 15.1% / 61.4% / 62.2% are on, but it
+    is **not bounded by 1**: ``Var(log mu) = Var(shape) + Var(log s) + 2 Cov``, so a negative
+    covariance makes the total smaller than ``Var(shape)`` and the ratio exceeds one. Measured
+    here at **1.21** on the first run, against thresholds that had assumed a bounded share.
+    ``share_shape_bounded`` — ``Var(shape) / (Var(shape) + Var(log s))`` — drops the covariance
+    and is in [0, 1]; it answers the question the share was meant to answer (is the dynamic range
+    the latent's or the size factor's) and it is the one a threshold may be placed on.
+    """
+    idx = torch.from_numpy(np.asarray(pool, dtype=np.int64))
+    with torch.no_grad():
+        gene_emb = model.embeddings.gene(idx)
+        size_factor = model.size_head(h)
+        features = model.decoder.trunk(h, gene_emb)
+        raw = model.decoder.head_mu(features).squeeze(-1)
+        if cfg.decoder_mu_link == "exp":
+            shape = torch.clamp(raw, min=model.decoder._log_mu_min, max=model.decoder._log_mu_max)
+        else:
+            shape = torch.log(torch.nn.functional.softplus(raw) + float(cfg.zinb_eps))
+        log_s = torch.log(torch.clamp(size_factor, min=float(cfg.zinb_eps)))[:, None]
+    sh, ls = shape.numpy(), np.broadcast_to(log_s.numpy(), shape.shape)
+    v_shape, v_size = sh.var(axis=0), ls.var(axis=0)
+    cov = np.array([np.cov(sh[:, g], ls[:, g])[0, 1] for g in range(sh.shape[1])])
+    total = v_shape + v_size + 2.0 * cov
+    ok = total > 0
+    share = v_shape[ok] / total[ok]
+    bounded = v_shape / np.maximum(v_shape + v_size, 1e-30)
+    return {
+        "n_genes_decomposed": int(sh.shape[1]),
+        "var_shape": float(np.median(v_shape)),
+        "var_logsize": float(np.median(v_size)),
+        "cov": float(np.median(cov)),
+        "share_shape": float(np.median(share)),
+        "share_shape_exceeds_one": bool(np.median(share) > 1.0),
+        "share_shape_bounded": float(np.median(bounded)),
+        "sd_log_mu": float(np.median(np.sqrt(np.maximum(total, 0.0)))),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -105,6 +152,16 @@ def main(argv: list[str] | None = None) -> int:
         real = np.asarray(hidden.counts.todense(), dtype=np.float64)[:, kept]
         real_xy = np.asarray(hidden.coords, dtype=np.float64)
         k = int(cfg.metric_knn_k)
+        # Rank-normalised, as `t10_chain_diagnostic` does before every spatial statistic and as
+        # R12's tissue figure is measured on. The first version passed raw counts.
+        counts_r, real_r = rank_normalize(counts), rank_normalize(real)
+        # ...and over the spatially structured genes as well as all of them. A *median* Moran's I
+        # over a 1017-gene panel is not the same quantity as a median over STARmap's 28-gene
+        # marker panel, which is what R12's 0.4635 is: most genes in a large panel carry no
+        # spatial signal, so the median sits near zero and a retention ratio built on it is two
+        # small numbers divided. Reported both ways rather than transferred.
+        real_i = morans_i(real_xy, real_r, k)
+        top = np.argsort(real_i)[::-1][: int(cfg.metric_marker_genes)]
         # The latent the encoder makes of the *real* fold, which is what
         # `mu_variance_decomposition` decomposes — the same input the pilot used, so the share
         # here is comparable to R12's record rather than to a differently-conditioned one.
@@ -121,18 +178,29 @@ def main(argv: list[str] | None = None) -> int:
             "decoder_mu_link": cfg.decoder_mu_link,
             "config_hash": cfg.content_hash(),
             "n_kept_genes": int(kept.size),
-            **mu_variance_decomposition(model, h, cfg),
-            "counts_morans": float(np.median(morans_i(xy, counts, k))),
-            "real_morans": float(np.median(morans_i(real_xy, real, k))),
+            **decomposition_on_pool(model, h, cfg, kept),
+            "counts_morans": float(np.median(morans_i(xy, counts_r, k))),
+            "real_morans": float(np.median(real_i)),
+            "counts_morans_top": float(np.median(morans_i(xy, counts_r[:, top], k))),
+            "real_morans_top": float(np.median(real_i[top])),
         }
         row["retention"] = (
             row["counts_morans"] / row["real_morans"] if row["real_morans"] else float("nan")
         )
+        row["retention_top"] = (
+            row["counts_morans_top"] / row["real_morans_top"]
+            if row["real_morans_top"]
+            else float("nan")
+        )
         rows.append(row)
         print(
-            f"  {hidden.section_id}: share_shape {row['share_shape']:.1%}  "
-            f"sd(log mu) {row['sd_log_mu']:.3f}  counts I {row['counts_morans']:+.4f}  "
-            f"real I {row['real_morans']:+.4f}  retention {row['retention']:.1%}"
+            f"  {hidden.section_id}: share {row['share_shape']:.1%}"
+            + (" ⚠ >1, cov<0" if row["share_shape_exceeds_one"] else "")
+            + f"  bounded {row['share_shape_bounded']:.1%}  sd(log mu) {row['sd_log_mu']:.3f}\n"
+            f"    all {row['n_genes_decomposed']} kept genes: counts I {row['counts_morans']:+.4f}"
+            f" / real I {row['real_morans']:+.4f} = {row['retention']:.1%}\n"
+            f"    top-{len(top)} structured:   counts I {row['counts_morans_top']:+.4f}"
+            f" / real I {row['real_morans_top']:+.4f} = {row['retention_top']:.1%}"
         )
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
