@@ -3349,3 +3349,74 @@ turned on 0.00432 against a 0.0956 fold spread, is the cheapest thing that can b
 one number the reading is thinnest on. **It is still one seed**, and a spread over four folds of
 one seed is not an envelope; the honest ceiling on what this can establish is a direction and a
 magnitude, not a categorical verdict.
+
+### T09 — the `lookup` arm: one half of the reading confirmed, the other half withdrawn (2026-08-31)
+
+`reports/t09_structured_share_deep_lookup.json`, config `4a47030a2417aada` — the seed-2 `lookup`
+line from the campaign log, `exp` again.
+
+| arm | fold | bounded share | `retention_top` | counts I | `var_shape` | `sd_log_mu` |
+|---|---|---|---|---|---|---|
+| `medcpt` | `section_3` | 0.8681 | 0.2457 | 0.0714 | 0.1077 | 0.2954 |
+| `medcpt` | `section_5` | 0.8499 | 0.3413 | 0.0966 | 0.1043 | 0.2870 |
+| `lookup` | `section_3` | 0.8209 | 0.2858 | 0.0830 | 0.0748 | 0.2201 |
+| `lookup` | `section_5` | 0.8141 | 0.4534 | 0.1283 | 0.0802 | 0.2199 |
+
+**Part 1 confirmed, and it is a decoder property.** `share_shape_bounded` ranges **0.8141–0.8681**
+across two arms and two folds — a spread of **0.0540**, and the two arms are separate trainings
+with different gene embeddings. The between-cell dynamic range of `log mu` is latent-driven, at
+~5–6x the size factor's variance, and it does not depend on the embedding. This is the question
+R12's candidate 2 asked, answered on a current real-data fit.
+
+**Part 2 withdrawn as stated.** I wrote that "the emission loses two thirds to three quarters of
+the structure", as a statement about the emission model. `retention_top` ranges **0.2457–0.4534**,
+a spread of **0.2077** — nearly **4x** the bounded share's — with two systematic effects:
+
+* **fold**: `section_5` > `section_3` in **both** arms (+0.0956 `medcpt`, +0.1676 `lookup`);
+* **arm**: `lookup` > `medcpt` on **both** folds (+0.0401, +0.1121).
+
+So retention is not a property of the emission model alone; it depends on which section is being
+reconstructed and on which fit is doing it. **With one seed the arm effect cannot be separated
+from fit-to-fit variation** — the two arms are different trainings, and +0.04/+0.11 is well inside
+the scale that a seed change moves comparable statistics in this project (the zero-shot campaign's
+`marker_depth_r` across-seed envelope was 0.1273). The direction is robust and the magnitude is
+not: **every one of the four values is below 0.50, and the lowest is 0.246**, so the emission
+loses more than half the structure everywhere — that much stands.
+
+**The verdict is now clearly an artifact of where the cut fell.** STILL BROKEN still fires, and
+still on `0.24568` — the **single lowest of four values**, against a range of **0.2077**. The 0.25
+threshold sits at the very bottom of the observed distribution. Fourth threshold in this session
+placed too close to the data; the difference is that this time the pre-registration named the
+statistic before the range was known, which is the failure mode itself and not a lapse in applying
+it.
+
+#### An unexplained observation, stated as one
+
+`lookup` has **lower** `var_shape` (0.0775 against 0.1060) and **lower** `sd_log_mu` (0.2200
+against 0.2912) — a narrower dynamic range in `log mu` — and **higher** retention on both folds. A
+narrower mean retaining *more* spatial structure is counterintuitive and I have no mechanism for
+it. Recorded as an observation, following the same rule as the per-arm envelope asymmetry
+(`specs/10` §4.2a): what can be claimed is the measurement, not a cause.
+
+⚠️ It is, however, **consistent with an established negative measured by a different instrument**:
+in the zero-shot campaign `lookup` beat `medcpt` on `morans_pearson` over the **kept** genes at
+0.62–0.65 against 0.48–0.52, 5.8x the shared envelope. Two independent measurements, same
+direction — the `lookup` arm emits more spatially structured counts on genes it was fitted on.
+That strengthens the established negative rather than adding a new claim.
+
+#### R12's status, restated
+
+**Expression half OPEN.** Retention 0.25–0.45 against a real section's own structure. **Not** the
+size factor (bounded share 0.81–0.87 across arms), **not** the link (`exp`, confirmed twice by
+config hash). The count draw remains the locus the pilot's chain measurement identified — but
+"the emission model" is an incomplete attribution while retention moves 0.21 across folds and
+fits.
+
+#### The cheap next step, and it is nearly free
+
+Seeds 3 and 4, both arms — **four more script runs, minutes each, no fits**, since those
+checkpoints already exist. That gives 3 seeds x 2 arms x 2 folds = **12 values** and, for the
+first time, an **across-seed envelope for `retention_top`**, which is the one number every reading
+here is thin on. Only then can the fold effect, the arm effect and fit-to-fit variation be told
+apart, and only then is a threshold on this statistic worth placing — after its range is known,
+which is the rule this session has now had to learn four times.
