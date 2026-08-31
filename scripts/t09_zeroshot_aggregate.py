@@ -305,8 +305,25 @@ def main(argv: list[str] | None = None) -> int:
             f"{c['envelope']:.4f} | **{c['ratio']:.2f}x** |"
         )
     supported = primary["verdict"] == "STANDS" and primary["mean"] > 0
-    idea_alive = any(
-        clearances[a]["ratio"] > 1.0 and clearances[a]["over_band"] > 0 for a in ("A1", "A3")
+    # "Clears the band" = above it by more than that arm's OWN across-seed envelope. The two
+    # refutation branches are not complements: the architecture branch needs *both* arms clear
+    # (text works, W.t is redundant), the idea branch needs *neither* (no route works). One arm
+    # clear and the other not satisfies neither, and the pre-registration did not name that
+    # case, so it is reported as unresolved rather than rounded into whichever branch is nearer.
+    clear = {
+        a: clearances[a]["over_band"] > 0 and clearances[a]["ratio"] > 1.0 for a in ("A1", "A3")
+    }
+    architecture_refuted = not supported and all(clear.values())
+    idea_refuted = not any(clear.values())
+    report["verdict"]["clears_band"] = clear
+    report["verdict"]["outcome"] = (
+        "SUPPORT"
+        if supported
+        else "REFUTATION_ARCHITECTURE"
+        if architecture_refuted
+        else "REFUTATION_IDEA"
+        if idea_refuted
+        else "UNRESOLVED"
     )
     a4 = clearances["A4"]
     lines += [
@@ -318,24 +335,43 @@ def main(argv: list[str] | None = None) -> int:
         "",
         "**REFUTATION of the architecture** (text works, `W.t` is redundant) would be A1 - A3 "
         "inside its envelope while *both* clear the band: "
-        + ("**this is the case**" if (not supported and idea_alive) else "**not the case**")
+        + ("**this is the case**" if architecture_refuted else "**not the case**")
         + ".",
         "",
         "**REFUTATION of the idea** (no route from text to an unseen gene) is neither arm "
         "clearing the band by more than the envelope: "
-        + ("**this is the case**" if not idea_alive else "**not the case**")
+        + ("**this is the case**" if idea_refuted else "**not the case**")
         + ".",
         "",
         f"**Void condition** — A4 must sit inside the band. A4 is {a4['over_band']:+.4f} from it "
         f"against its own {a4['envelope']:.4f} envelope ({a4['ratio']:.2f}x): "
         + (
-            "**holds**, no leak detected"
+            # A ratio against a vanishing envelope is arithmetic, not evidence: three seeds that
+            # agree to the fourth decimal make any offset look infinitely significant. Said
+            # rather than divided through.
+            "**cannot be read** — A4's across-seed envelope is ~0, so the ratio is a division "
+            "by noise. Report the offset itself and get more seeds"
+            if a4["envelope"] < 1e-6
+            else "**holds**, no leak detected"
             if a4["ratio"] <= 1.0
             else "**FAILS — the run means nothing**"
         )
         + ".",
         "",
     ]
+    if report["verdict"]["outcome"] == "UNRESOLVED":
+        yes = [a for a in ("A1", "A3") if clear[a]]
+        no = [a for a in ("A1", "A3") if not clear[a]]
+        lines += [
+            "**UNRESOLVED — none of the three pre-registered outcomes applies.** "
+            f"{', '.join(yes)} clears the band and {', '.join(no)} does not, so the architecture "
+            "branch (which needs *both* clear) and the idea branch (which needs *neither*) are "
+            "both false, and support was not met. The pre-registration did not name this case "
+            "and it is recorded as unresolved rather than rounded into the nearer branch. What "
+            "it says substantively: a route from text to an unseen gene may survive through the "
+            f"arm that clears ({', '.join(yes)}), but not through the full architecture.",
+            "",
+        ]
 
     if args.ceiling:
         ceiling = json.loads(Path(args.ceiling).read_text())
