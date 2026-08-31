@@ -52,6 +52,7 @@ from spatialcpav25_gen.train.select import (
     InertGateWarning,
     ScoreCache,
     SelectionError,
+    _normalised,
     capability_tie_break,
     fold_scores,
     incumbent_is_unconverged,
@@ -1412,6 +1413,42 @@ def test_gene_pool_restricts_the_metrics_to_its_own_genes(split):
         "vandalising the off-pool genes changed nothing even unrestricted, so the restriction "
         "test above proves nothing"
     )
+
+
+def test_a_constant_field_normalises_to_bitwise_identical_rows(split):
+    """The exact fact the zero-shot referent analysis rests on, pinned where it can be checked.
+
+    A constant field — every cell given each gene's own global mean — broadcasts one row over
+    every cell. The pool-restricted size factor is then the same number for every row, so the
+    normalised result is **bitwise identical down every column** and holds no variation for any
+    metric to find. That is what makes it degenerate as a referent, and it is exact: there is no
+    threshold, no tolerance and no dataset on which it could come out differently.
+
+    It is asserted here rather than only in `scripts/t09_zeroshot_ceiling.py` because it is a
+    property of ``_normalised``, and the two thresholds that preceded this test both failed by
+    being measured somewhere the suite could not see them. The second failed *because* of the
+    float64 assertion below: a float32 standard deviation over bitwise-identical values returns
+    ~3e-08 rather than zero, and a cut was placed around that artifact.
+    """
+    _, training, _ = split
+    cfg = t09_cfg(train_steps=40)
+    section = selection_folds(training, cfg)[0]
+    counts = np.asarray(section.counts.todense(), dtype=np.float64)
+    pool = np.arange(0, counts.shape[1], 2, dtype=np.int64)
+    flat = np.broadcast_to(counts.mean(axis=0), counts.shape).copy()
+
+    constant = _normalised(flat, cfg, pool).numpy()[:, pool]
+    assert np.all(constant == constant[0]), "the constant field's rows are not bitwise identical"
+    assert float(constant.astype(np.float64).std(axis=0).max()) == 0.0
+
+    # The measurement artifact that sank the previous version of the test, asserted so that
+    # anyone tempted to threshold a float32 spread sees why it is not zero.
+    assert float(constant.std(axis=0).max()) > 0.0
+
+    # And the control: real counts vary, which is what a usable referent's input looks like.
+    real = _normalised(counts, cfg, pool).numpy()[:, pool]
+    assert not np.all(real == real[0])
+    assert float(real.astype(np.float64).std(axis=0).max()) > 0.0
 
 
 def test_fold_scores_passes_physical_coordinates(split):

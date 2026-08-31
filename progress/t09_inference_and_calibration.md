@@ -2823,3 +2823,45 @@ the *absolute* std (7.45e-09 to 2.98e-08), which is float32-epsilon scale but no
 next re-run emits `constant_field_input_cv_max` and `shuffled_input_cv_max` per row, and until it
 does, the deep constant fields' degeneracy rests on the mechanism plus an absolute std, not on the
 scale-free measurement.
+
+### T09 — the referent test, third version: exact, and no threshold at all (2026-08-31)
+
+The deep re-run returned the pre-stated values — constant-field CV 2.39e-07 to 2.95e-07 against
+shuffled 27.7 to 63.7, a ratio of ~1e8, all eight rows flagged degenerate and all eight shuffled
+rows not. **The disconfirming outcome I stated in advance did not occur.** The CVs are also
+identical between the two ceiling files for corresponding rows, which is the consistency check
+passing: `input_information` reads the input, not the metric.
+
+**But the number I thresholded was my own arithmetic.** A constant field's normalised input has
+**bitwise identical rows** — verified directly: `np.all(x == x[0])` is True, the row totals have
+exactly one unique value, and the per-gene std measured in **float64 is exactly 0.0**. The
+2.4e-07 came from computing a standard deviation *in float32* over identical values. The test was
+correct in its verdict and wrong in its instrument, and a cut was being placed around a rounding
+artifact.
+
+**The test is now a boolean**: are all rows of the normalised, pool-restricted input bitwise
+equal? True for the constant field by construction — one row broadcast over every cell, one size
+factor, one result — and False for real counts. No threshold, no tolerance, no dataset on which it
+could differ.
+
+| referent | rows identical | float64 per-gene std | verdict |
+|---|---|---|---|
+| constant field | **yes** | **0.0** | no variation; not a floor |
+| shuffled positions | no | 0.155 | a floor |
+
+`tests/test_select.py::test_a_constant_field_normalises_to_bitwise_identical_rows` pins it in the
+suite, including an assertion that the float32 spread is **non-zero**, so the next person tempted
+to threshold it sees why.
+
+**Three instruments, two of them thresholds, both failed** — and the failures generalise, so they
+are in `specs/10` §4.2c rather than only here: (1) an argument where a measurement was available;
+(2) a precision-drift cut that separated by six orders on the fixture and hit a gapless continuum
+on real data — *a fixture that separates cleanly is not evidence that a threshold transfers*;
+(3) a CV cut around a float32 artifact — *before thresholding a small number, check it is not your
+own arithmetic.*
+
+**No verdict has changed at any point in this sequence.** Primary REFUTATION OF THE IDEA (A1
+0.42x, A3 0.45x against the 0.1273 shared envelope), reported under both the pre-registered
+constant-field band and the shuffled floor; void condition holds; secondary A2 at 2.52x over the
+shuffled floor, 25% of the measured room. What changed three times is the justification, which is
+the part that had to be right.

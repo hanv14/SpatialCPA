@@ -575,46 +575,52 @@ every arm in every future experiment, including the ones this project would rath
 ### 4.2c A referent is not a floor until its input is shown to carry nothing
 
 A no-information referent answers "what does this metric return when there is nothing to find?"
-It answers that only if its input contains nothing to find, and **that is a property of the
-input, measurable without reference to the metric at all**.
+It answers that only if its input contains nothing to find — **a property of the input, decidable
+without reference to the metric, and for the constant field decidable exactly.**
 
-**The test.** The largest per-gene coefficient of variation across cells, over genes with a
-non-zero mean. Scale-free, so it means the same on a fixture and on a 1017-gene panel. Measured
-on the same rows, same run:
+**The test is a boolean.** The constant field broadcasts one row over every cell, so the
+pool-restricted size factor is the same number for every row and the normalised input is
+**bitwise identical down every column**. Measured on the same rows, same run:
 
-| referent | input CV | verdict |
-|---|---|---|
-| constant field | **2.6e-07** — float32 epsilon | no information; not a floor |
-| shuffled positions | **16.1** | the panel's full variation; a floor |
+| referent | rows bitwise identical | per-gene std (float64) | verdict |
+|---|---|---|---|
+| constant field | **yes** | **exactly 0.0** | no variation; not a floor |
+| shuffled positions | no | 0.155 | the panel's variation; a floor |
 
-Eight orders of magnitude, and **the same for every metric**, because it is the input being
-judged. So the constant field is a floor for no metric — including the profile metrics, where an
-earlier version of this section defended it on the grounds that the bin normalisation makes it a
-real function of cell density.
+No threshold, no tolerance, and no dataset on which it could come out differently — it follows
+from how the referent is constructed. `tests/test_select.py::
+test_a_constant_field_normalises_to_bitwise_identical_rows` pins it.
 
-**Two wrong instruments, recorded because the failures are instructive.** The first was that
-density argument: reasoning where a measurement was available. The second was a **precision-drift
-threshold** — recompute the referent at double precision, call it degenerate above 0.01 drift. It
-separated cleanly on the synthetic fixture (constant field ~1e-2, stable referents ~1e-8) and
-**failed on real data**: `deep_starmap`'s eight constant-field rows drift 0.0042, 0.0092, 0.0092,
-0.0111, 0.0438, 0.0545, 0.0738, 0.1905 — a continuum with no gap, so a fixed cut fell between two
-rows of identical construction and called one stable and the other degenerate. **A threshold that
-separates nothing is a defect in the instrument, not a finding about the data**, and a fixture
-that separates cleanly is not evidence that a threshold will hold on a real panel.
+**Three instruments were tried; the first two were thresholds and both failed.** Recorded because
+the failures generalise.
 
-Drift is still reported, as corroboration and never as the verdict. It also answers the obvious
-objection: `section_5`'s held-out constant field reads +0.5780 at single precision and **+0.3875
-at double** — smaller but nowhere near zero, so "it is round-off" needs the mechanism. Round-off
-in the centring step is one ulp of each value, so its *pattern across genes* tracks expression
-level at every precision, and expression level is what real Moran's I correlates with. Doubling
-the mantissa changes the number without changing what it is.
+1. **An argument, not a measurement.** The constant field was kept as a floor for the profile
+   metrics because `soft_depth_profile`'s bin normalisation makes it track cell density — reasoning
+   where a measurement was available.
+2. **A precision-drift cut** (recompute at float64; degenerate above 0.01 drift). It separated by
+   six orders of magnitude on the synthetic fixture and **failed on `deep_starmap`**, whose eight
+   constant-field rows drift 0.0042, 0.0092, 0.0092, 0.0111, 0.0438, 0.0545, 0.0738, 0.1905 — a
+   continuum with no gap, so the cut fell between two rows of identical construction and called
+   one stable. **A fixture that separates cleanly is not evidence that a threshold transfers.**
+3. **A coefficient-of-variation cut** at 1e-6. It gave the right answer on both datasets — and the
+   quantity it thresholded was **an artifact of the measurement**. A float32 standard deviation
+   over bitwise-identical values returns ~2.4e-07 rather than zero; the same data in float64 gives
+   exactly 0.0. The instrument was reporting its own rounding and a cut was being placed around
+   it. **Before thresholding a small number, check it is not your own arithmetic.**
+
+Drift and the float64 spread are still reported as corroboration and decide nothing. Drift also
+answers the obvious objection: `section_5`'s held-out constant field reads +0.5780 at single
+precision and **+0.3875 at double** — smaller but nowhere near zero, so "it is round-off" needs
+the mechanism. Round-off in the centring step is one ulp of each value, so its *pattern across
+genes* tracks expression magnitude at every precision, and expression magnitude is what real
+Moran's I correlates with. Doubling the mantissa changes the number without changing what it is.
 
 **Why this is a spec rule.** The zero-shot pre-registration wrote "clear the constant-field band"
-into all three of its outcome conditions, and the referent it named turned out to carry no
-information. The verdict survived — both readings give REFUTATION OF THE IDEA, and the aggregator
-prints it under both — but it survived by margin, not by design. Any referent entering a claim
-pays for this test first, and the run reports the stable referent's CV beside it so the comparison
-is on its own rows rather than on another dataset's.
+into all three of its outcome conditions, and the referent it named carries no variation at all.
+The verdict survived — both readings give REFUTATION OF THE IDEA, and the aggregator prints it
+under both — but it survived by margin, not by design. Any referent entering a claim pays for this
+test first, and the run reports the usable referent's figures beside it so the comparison is on
+its own rows rather than another dataset's.
 
 ### 4.3 The boundary holdout (R3) — additive, no new dataset, no new design function
 

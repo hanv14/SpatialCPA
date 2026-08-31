@@ -204,32 +204,36 @@ def autocorr_vector(counts, coords_xy, cfg, pool) -> np.ndarray:
     return np.asarray(values[np.asarray(pool, dtype=np.int64)], dtype=np.float64)
 
 
-INFORMATION_TOL = 1e-6
-"""Largest per-gene coefficient of variation an input may have and still carry no information.
+CONSTANT_FIELD_NOTE = """The constant field is a floor for nothing, and the test needs no threshold.
 
-**This, and not the precision drift, is what decides degeneracy.** A referent answers "what does
-this metric return when there is nothing to find?" only if its input really contains nothing to
-find. The constant field gives every cell the same value for a gene, so its across-cell CV should
-be exactly 0 and in practice sits at the working precision's epsilon (~1e-7 for float32). An input
-whose relative variation is at the level of the arithmetic itself holds no spatial signal, so
-whatever the metric returns for it is the metric's behaviour on a degenerate input — **at any
-magnitude, and whatever the precision drift happens to be**. The tolerance sits an order above
-float32 epsilon and five orders below anything real.
+A referent answers "what does this metric return when there is nothing to find?" only if its input
+contains nothing to find. For the constant field that is **exact**: it broadcasts one row over
+every cell, the pool-restricted size factor is therefore the same number for every row, and the
+normalised result is **bitwise identical down every column**. There is no variation to correlate
+with anything, at any magnitude and whatever the metric returns.
 
-⚠️ **A drift threshold was tried first and was wrong.** The synthetic fixture separated cleanly —
-constant-field drift ~1e-2 against ~1e-8 for referents with real variance — and a 0.01 cut looked
-principled. On `deep_starmap` the eight constant-field rows drift 0.0042, 0.0092, 0.0092, 0.0111,
-0.0438, 0.0545, 0.0738, 0.1905: a **continuum with no gap**, so the cut fell between two rows of
-identical construction and called one stable and the other degenerate. A threshold that separates
-nothing is a defect in the instrument, not a finding about the data.
+So :func:`input_information` reports a boolean — are all rows bitwise equal — and not a statistic
+against a cut. That matters, because the two earlier versions of this test were both **thresholds
+that failed**:
 
-**Why a large float64 value is still round-off.** At double precision `section_5`'s held-out
-constant field reads +0.3875 rather than +0.5780 — smaller, but nowhere near zero, and a reader is
-right to ask why. Round-off in the centring step is proportional to each value's own magnitude
-(one ulp of it), so its *pattern across genes* tracks expression level at **every** precision,
-and expression level is what real Moran's I correlates with. Doubling the mantissa changes the
-number without changing what it is. That is exactly why the input test decides and the drift is
-only corroboration.
+1. A **precision drift** cut (recompute at float64, degenerate above 0.01). It separated by six
+   orders of magnitude on the synthetic fixture and **failed on `deep_starmap`**, where the eight
+   constant-field rows drift 0.0042, 0.0092, 0.0092, 0.0111, 0.0438, 0.0545, 0.0738, 0.1905 — a
+   continuum, so the cut fell between two rows of identical construction and called one stable.
+2. A **coefficient-of-variation** cut at 1e-6. It gave the right answer on both datasets, but the
+   number it thresholded was **an artifact of the measurement**: computing a standard deviation in
+   float32 over bitwise-identical values returns ~2.4e-07 rather than zero. The same data measured
+   in float64 gives **exactly 0.0**. The instrument was reporting its own rounding and a threshold
+   was being placed around it.
+
+Drift and the float64 spread are still reported, as corroboration. Neither decides anything.
+
+**Why a large float64 value is still an artifact.** `section_5`'s held-out constant field reads
++0.5780 at single precision and +0.3875 at double — smaller, but nowhere near zero, and a reader
+is right to ask. Round-off in the centring step is one ulp of each value, so its *pattern across
+genes* tracks expression magnitude at every precision, and expression magnitude is what real
+Moran's I correlates with. Doubling the mantissa changes the number without changing what it is.
+The bitwise test is what settles it: there is nothing in that input to correlate with.
 """
 
 
@@ -293,23 +297,27 @@ def constant_field_probe(counts, coords_xy, cfg, pool, v_target) -> dict:
 
 
 def input_information(values, cfg, pool, name: str) -> dict:
-    """Does this referent's input carry anything to find? ``{name}_input_cv_max``, and the verdict.
+    """Does this referent's input vary at all across cells? An exact answer, not a threshold.
 
-    The largest per-gene coefficient of variation across cells, over genes with a non-zero mean —
-    scale-free, so it means the same thing on a fixture and on a 1017-gene panel, which an
-    absolute standard deviation does not. Genes with a zero mean are excluded: their CV is 0/0 and
-    they carry no information either way.
+    ``{name}_input_rows_identical``
+        Whether every row of the normalised, pool-restricted input is **bitwise** equal to the
+        first. True means the input holds no variation whatever, so nothing downstream of it can
+        be information — this is the verdict, and it is a boolean rather than a statistic.
+    ``{name}_input_std_max``
+        The largest per-gene standard deviation across cells, computed in **float64**. Reported as
+        corroboration and as a scale. It must be measured at double precision: a float32 standard
+        deviation over bitwise-identical values returns ~2.4e-07 rather than 0.0, and an earlier
+        version of this function thresholded exactly that artifact. See
+        :data:`CONSTANT_FIELD_NOTE`.
     """
-    normalised = _normalised(np.asarray(values, dtype=np.float64), cfg, pool).numpy()
-    columns = normalised[:, np.asarray(pool, dtype=np.int64)]
-    mean = np.abs(columns.mean(axis=0))
-    live = mean > 0.0
-    cv = np.zeros_like(mean)
-    cv[live] = columns.std(axis=0)[live] / mean[live]
-    worst = float(cv.max()) if cv.size else 0.0
+    columns = _normalised(np.asarray(values, dtype=np.float64), cfg, pool).numpy()[
+        :, np.asarray(pool, dtype=np.int64)
+    ]
+    identical = bool(np.all(columns == columns[0])) if columns.shape[0] else True
     return {
-        f"{name}_input_cv_max": worst,
-        f"{name}_is_degenerate": bool(worst <= INFORMATION_TOL),
+        f"{name}_input_rows_identical": identical,
+        f"{name}_input_std_max": float(columns.astype(np.float64).std(axis=0).max()),
+        f"{name}_is_degenerate": identical,
     }
 
 
