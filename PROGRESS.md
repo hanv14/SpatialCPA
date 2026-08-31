@@ -74,6 +74,7 @@ deviation from the spec with its reason.
 | R10 | [reports/envelope_synthetic.md](reports/envelope_synthetic.md) — the measured envelope and which gate choices fell inside it |
 | T09 | [progress/t09_inference_and_calibration.md](progress/t09_inference_and_calibration.md) — the joint gate's four cells, the calibration statuses, R1/R3, and the two negative results |
 | R11 | [progress/t05_layout_head.md](progress/t05_layout_head.md#t05-addendum--the-grid-multinomial-position-sampler-2026-08-24) — option D, the closed-form validation, and T05's re-measured numbers |
+| T09 close-out | [progress/t09_inference_and_calibration.md](progress/t09_inference_and_calibration.md) — **assessment**: every comparative capability claim tested on real data is negative or unresolved; the transferable contribution is the evaluation methodology (§4.2a/b/c, the leak taxonomy, ceiling-first discipline). Carries the `morans_pearson` replication pre-registration |
 | E1 | [reports/t09_zeroshot_deep.md](reports/t09_zeroshot_deep.md) — the four-arm zero-shot table. The finding is the **seen/unseen sign flip** (`lookup` wins by 0.133 where it has a row, `medcpt` by 0.300 where it does not); the primary comparison is a refutation, and the unseen half awaits a `morans_pearson` ceiling. `specs/10` §7 |
 | — | [progress/durability_checkpointing.md](progress/durability_checkpointing.md) — fit checkpointing, and the bitwise-identity acceptance test that keeps Convention 3 true |
 | — | [progress/decisions.md](progress/decisions.md) — spec decisions settled with no code change |

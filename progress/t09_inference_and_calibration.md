@@ -2865,3 +2865,250 @@ own arithmetic.*
 constant-field band and the shuffled floor; void condition holds; secondary A2 at 2.52x over the
 shuffled floor, 25% of the measured room. What changed three times is the justification, which is
 the part that had to be right.
+
+## PRE-REGISTRATION — replicating `morans_pearson` on a second dataset (written 2026-08-31, before any number)
+
+### Why this replication is required and not optional
+
+**`morans_pearson` is being promoted to primary because it produced a result.** On `deep_starmap`
+the pre-registered primary was `marker_depth_r` — chosen before any fit, because it was the one
+metric whose held-out ceiling had been measured — and it returned REFUTATION OF THE IDEA. Six
+metrics were reported; the only positive landed on `morans_pearson`, which carried no
+pre-registered threshold at all.
+
+Selecting the best of six after the fact inflates the effective false-positive rate roughly in
+proportion to the number examined, and no correction applied afterwards recovers what
+pre-registration would have given. **A metric promoted because it produced a result is not a
+test.** This replication is the thing that converts the deep observation into a claim, or fails
+to. If it is not run, the correct status of the A2 result in the paper is *observation*, and it
+must be written that way — which is how `specs/10` §7 currently carries it.
+
+### Dataset
+
+**`cosmx_nsclc_3d`** — human NSCLC tumour, 960 genes, `raw_counts`, 18 cell types, ~227 k
+training cells (`specs/10` §5.4).
+
+Chosen because it varies **tissue, species and spatial organisation** while holding the thing the
+metric depends on nearly constant: 960 genes gives ~192 held out against `deep_starmap`'s 204, so
+the per-gene correlation is computed over a comparable number of points. That is what makes it a
+replication rather than a re-run. `deep_starmap` is mouse cortex and the result could be a
+property of laminar organisation; a tumour has none, and if the text channel still places unseen
+genes there, the claim is about genes and text rather than about layers.
+
+**Rejected, with reasons.** `merfish_thick_cortex` (254 genes, ~29 k cells) is 15x cheaper but
+gives only ~51 held-out genes — a correlation over 51 points has a much wider across-seed
+envelope, and it is the same tissue class as `deep_starmap`, so it varies little. It would very
+likely trip uninformative condition (c) below. `exseq_breast_cancer` has 1 979 cells with a
+minimum of 57 per section, far too few for a per-section kNN Moran's I to mean anything.
+`merfish_thick_hypothalamus` gives ~31 held-out genes. **If the cost of `cosmx_nsclc_3d` is
+refused, the honest answer is to run no replication and leave the result labelled an observation
+— not to run a cheaper dataset that cannot answer.**
+
+### Split, arms, referents
+
+* **Split**: `stratified_gene_split`, seed 7, `frac=0.2`, 5x5 strata on mean expression x Moran's I
+  ranked on the volume's largest section — the identical procedure, not the identical genes.
+  Written to `reports/t09_gene_split_cosmx.json` and checksummed into the log.
+* **Arms**: A1 `medcpt`+distill, A2 `medcpt` pure text, A3 `lookup`+distill, A4 `lookup` pure text.
+  Two fits per seed; **all four generated through `ZeroShotView`**, so the only things differing
+  between arms are `use_distill` and the fit.
+* **Referents**: **`shuffled` only.** The constant field is excluded by `specs/10` §4.2c, and the
+  run must confirm on this dataset that its normalised input has bitwise identical rows — if it
+  does not, the referent analysis does not transfer and that is uninformative condition (d).
+  `best_other_section` is context; **no arm may use it.**
+* **Envelope**: the shared envelope of `specs/10` §4.2b — the largest across-seed spread among all
+  four arms and the referents, on this metric and this dataset.
+
+### The contrasts, and which one decides
+
+| role | contrast | what it asks |
+|---|---|---|
+| **PRIMARY** | **A2 − A3** | the two routes to an unseen gene head to head: `W t` against `gamma psi(t)`. Neither reads the free residual, which is zero for a held-out gene either way. |
+| confirmatory | A2 − A4 | does text do anything at all, against an arm that emits one vector for every gene |
+| confirmatory | A1 − A2 | is the distillation head a cost on this dataset too |
+
+A2 − A3 is primary and A2 − A4 is not, deliberately: A4 is degenerate by construction, so beating
+it is the weaker claim, and `specs/10` §7's sentence — "the pure-text path is the contribution and
+the machinery around it is not" — is a statement about A2 against A3. On `deep_starmap` A2 − A3
+was **+0.2514**, 2.7x the envelope, 6/6 signs, but flagged *one fold carries it* (balance 0.02 from
+a single anomalous A3 cell). Pre-registering it as primary sets a test `deep_starmap` only partly
+passed. That is intended.
+
+### SUPPORT — the claim replicates. All of:
+
+1. A2 − A3 > 0 on `morans_pearson`, held-out genes, with signs agreeing at **every seed and every
+   fold**, and fold balance ≥ 0.25 **at every seed**;
+2. |A2 − A3| exceeds the shared envelope;
+3. A2 clears the `shuffled` floor by more than the shared envelope;
+4. the void condition holds: A4 sits within one shared envelope of the `shuffled` floor.
+
+### PARTIAL — text works, the route does not replicate
+
+A2 − A4 meets criteria 1–4 with A3 in place of A4, but A2 − A3 does not. Reading: something in the
+text channel reaches an unseen gene, but `W t` is not distinguishable from `gamma psi(t)` as the
+thing that does it. `specs/10` §7's mechanism sentence would have to be withdrawn and the
+A2 − A4 claim kept.
+
+### REFUTATION — the deep result does not replicate
+
+A2 does not clear the `shuffled` floor by more than the shared envelope. Reading: the
+`deep_starmap` positive was a property of that dataset, or of selecting one metric from six, and
+the paper carries a negative on the zero-shot claim entire.
+
+### UNINFORMATIVE — the run cannot answer, decided by these conditions and no others
+
+* **(a)** the model-free held-out ceiling minus the `shuffled` floor is **< 0.50**. *Checkable
+  before any fit, and it gates the spend.*
+* **(b)** the held-out ceiling is **< 0.80x** the kept ceiling — the stratified draw took
+  systematically harder genes. *Also model-free and pre-fit.*
+* **(c)** the shared envelope on `morans_pearson` held-out **exceeds 0.2514**, the `deep_starmap`
+  A2 − A3 effect. Then the design could not detect an effect the size of the one being replicated
+  even if it were present, and neither support nor refutation may be read from it. *This is the
+  condition the `deep_starmap` primary failed on `marker_depth_r`, where the envelope was 4x the
+  effect, and it is named in advance so it cannot be invoked selectively.*
+* **(d)** any validity check fails: `self` != 1.0 in the ceiling instrument; the four arms' layouts
+  are not identical; the retrieval PCA basis is non-zero on a held-out row; or the constant field's
+  normalised input is not bitwise row-identical on this dataset.
+
+### Order of operations, and the stop points
+
+1. Build the split; run the **model-free ceiling** (`--metric morans_pearson`) and the
+   descriptor-coverage check. **Stop and report if (a) or (b) fires — no fits.**
+2. **One fit, timed**, before the other five. Cost below is an extrapolation, not a promise.
+3. Five more fits; score; aggregate; read the verdict.
+
+### Cost — an extrapolation from two measured points, stated as such
+
+| dataset | training cells | measured per cold fit |
+|---|---|---|
+| `starmap_visual_cortex` | 16.5 k | **62 min** |
+| `deep_starmap` | ~113 k | **3.82–4.09 h** (mean 3.92) |
+| `cosmx_nsclc_3d` | ~227 k | **~8 h — extrapolated, unmeasured** |
+
+Cell count has driven the scaling on both measured points more than gene count. At ~2x
+`deep_starmap`'s cells and 0.94x its genes, six fits project to **~47 core-hours**, ~8 h wall
+six-up, plus scoring. ⚠️ **I have under-estimated fit cost on five consecutive occasions in this
+project.** Treat 47 as a lower bound and let step 2 replace it before the remaining five are
+committed.
+
+## T09 CLOSE-OUT — what is open, and what this project can honestly claim
+
+Written at the request of a direct question: with every capability claim now tested, what is the
+headline? This is an assessment, not a summary.
+
+### The answer, plainly
+
+**This is a negative-results paper with a methods contribution, and the methods contribution is
+the stronger half.**
+
+Every *comparative* claim the method was built to make has been tested on real data and has come
+back negative or unresolved. What survives as positive is two gates measured on a fixture or on a
+reconstruction task, one localised diagnostic finding, and one unreplicated result on a metric
+that was not pre-registered. What is genuinely new and defensible is a body of work about **how to
+evaluate a generative spatial-transcriptomics model** — most of which exists because a measurement
+in this project was wrong first and got caught.
+
+That is a publishable paper. It is not the paper the design documents describe.
+
+### The capability claims, and what happened to each
+
+| claim | status | evidence |
+|---|---|---|
+| Oblique planes reconstruct as well as axis-aligned | **PASSES** | GATE 2: depth-matched parity **0.955**, edge-excluded 0.979, against a ≥ 0.90 criterion |
+| A 3D GRF prior controls per-gene spatial autocorrelation | **PASSES, on the fixture** | GATE 1: error ratio 0.130, per-gene r 0.917, monotone in `ell` |
+| The learned intensity field places cells better than copying | **REFUTED on real data** | R11: `field` 0.6607 / `hybrid` 0.6692 against `resample` 0.7546 and a 0.7765 copy floor; `resample` ships |
+| Generated expression beats copying a real section | **REFUTED, both datasets** | tier-1 `cross-mix` beats `zinb-flow` by 4.6–5.3x the envelope on three metrics; on `deep_starmap` copying wins all five live metrics |
+| Text-grounded embeddings help genes the model was fitted on | **REFUTED, two three-seed negatives** | `lookup` beats `medcpt` on Moran's and Geary's at 4.9x / 2.3x their own envelopes; reproduced a third time on the zero-shot run's kept genes at 5.8x |
+| Text-grounded embeddings place genes the model never saw | **PRIMARY REFUTED; one unreplicated positive** | `marker_depth_r`: neither A1 nor A3 clears the floor (0.42x, 0.45x). `morans_pearson`: A2 at 2.52x, 25% of the measured room — not pre-registered, replication pre-registered above |
+| SEFL improves anything | **UNVERIFIED, ships at zero** | `L_cross` is vacuous by construction in v25 and flattens the field when trained (R6); A7 never run |
+| Metric-aware losses improve the metrics they are made of | **NEGATIVE at the shipped budget** | cost on every metric at 1200 steps; ordering reverses on 4 of 6 at 2400 — slower, not better |
+| The model reproduces gene–gene covariance | **DOWNGRADED to a mechanism claim** | criterion unsatisfiable as stated; 9.316 against an independent-donor 7.783 |
+
+Two things read as positives and should not be oversold. **GATE 2 is a reconstruction result on
+held-in sections**, not a demonstration that the generated expression is right — and the expression
+path is exactly where every comparison since has failed. **GATE 1 is a fixture result**; R12 is the
+same quantity on real data, and there the model carries **15%** of real tissue's structured
+between-cell variance against 62%.
+
+### The one substantive mechanism finding
+
+**R12 / `decoder_mu_link`.** The autocorrelation collapse was localised to a single operation — the
+count draw loses 0.73 of Moran's I where real tissue loses 0.27 — and then to a candidate cause:
+switching the decoder's mean link from `softplus` to `exp` takes the structured share of
+between-cell variance from **15.1% to 61.4%** against tissue's 62.2%, with counts Moran's I
++0.1297 → +0.4782 against tissue's +0.4635. `ZINBDecoder`'s docstring says `exp` while `Config`
+ships `softplus`, so **this may be a defaulting error rather than a design choice.**
+
+This is the most valuable open item in the project, and it is unresolved: it was measured on a
+saved model with caveats (cell count 48 343 against a GT of 4 187; `sd(log mu)` still below
+tissue's) and it has never been carried through a full fit and re-scored. **If `exp` survives a
+proper refit, several of the negatives above were measured on a mis-defaulted decoder and owe a
+re-run.** That possibility has to be stated in the paper whatever the outcome.
+
+### What is genuinely new — the methods contribution
+
+Each of these came out of a measurement that was wrong first, which is why they are stated as
+rules rather than observations.
+
+1. **Reproducibility envelopes are per-metric *and* per-arm, and the worse arm alternates**
+   (`specs/10` §4.2a). A 4.0x range across metrics and up to 22x across arms; a pooled figure errs
+   in both directions depending on which metric is read. Not reported anywhere in this literature.
+   The mechanism is unexplained and is stated as an observation.
+2. **A clearance against a referent takes the worst envelope in the comparison** (§4.2b). Per-arm
+   thresholds make arms' verdicts incomparable and reward the arm that varied least. Found because
+   two arms 0.004 apart landed on opposite sides of a line.
+3. **A referent is not a floor until its input is shown to carry nothing** (§4.2c). Three
+   instruments, two of them thresholds, both failed: a drift cut that separated by six orders on a
+   fixture and met a gapless continuum on real data; and a CV cut placed around a float32
+   artifact. The working test is a boolean.
+4. **A leak taxonomy for held-out-gene experiments.** Five distinct channels, each found by an
+   invariance test and several *after* the obvious fix: training batches; the retrieval PCA basis;
+   the retrieval PCA's **size factor** (zeroing the basis is necessary and not sufficient); the
+   **metric's** size factor; and the copying arm's donor payload. Worth 5.78 standardised units on
+   the conditioning vector.
+5. **Two silent defects that inverted published-shaped results.** Scoring against plane-local
+   coordinates floored three of six metrics while leaving three bitwise identical — half a table
+   moving reads as a modelling result. And a missing exclusion made a LOSO fold's "generated"
+   section an exact copy of itself.
+6. **A seeding bug masquerading as irreducible noise.** `hash(section_id)` is salted per process;
+   the "reproducible only to 0.012" envelope was that bug. Post-fix: 36 of 36 values bitwise
+   identical. **Every "inside the envelope" verdict in this project had been decided against a
+   figure inflated by a defect.**
+7. **Ceiling-first discipline.** Measure what the metric could achieve on these rows before
+   spending fits. It is what showed `deep_starmap`'s reconstruction task is saturated against an
+   oracle copier (0.5x headroom) while tier-1 has 4.6x — so *which dataset a comparison runs on
+   decides whether it can say anything*, and this project spent a campaign learning that.
+8. **R14: the shipped donor rule costs 0.116.** `_resample_layout` picks by `|dz|` alone and on
+   `deep_starmap` pays 0.116 of `marker_depth_r` for 1.4 µm of proximity — so every "copying wins"
+   number is measured against a copier leaving 2.6x the envelope on the table. Note this makes the
+   negatives **stronger**: a better copier would win by more.
+
+### What remains open, in the order I would spend on it
+
+1. **R4 — the likelihood/fidelity inversion.** Four instances across three heads with one shape: a
+   likelihood term reduced by moving explanatory power from the structured component into the
+   unstructured one, with nothing in the objective opposing it. This is the single largest open
+   question and it is a design decision, not a tuning one.
+2. **R12 / `decoder_mu_link`** — cheap to test, and it may invalidate re-runs of several negatives.
+   Arguably should be first on cost alone.
+3. **The `morans_pearson` replication** pre-registered above — the only route by which this project
+   gets a positive capability claim.
+4. **A7 (SEFL's net contribution)** — currently the paper ships three losses at zero weight and
+   cannot say whether the mechanism it is named for does anything.
+5. **R14's donor rule** — deliberately not changed yet, because it would invalidate every number
+   stabilised by the coordinate-frame and layout-leak fixes.
+
+### The honest headline
+
+> A continuous-field formulation reconstructs oblique planes at 95% of axis-aligned quality. On
+> real tissue, every generative component built on top of it — the intensity-field layout, the
+> flow-matching expression head, the text-grounded gene embedding — loses to copying a real
+> section, and the text channel helps only for genes with no training data, on one metric, pending
+> replication. The autocorrelation collapse behind the expression failure is localised to the
+> decoder's mean link and may be a defaulting error. The evaluation methodology developed to
+> establish these results — per-arm envelopes, referent-validity tests, and a leak taxonomy for
+> held-out-gene experiments — is the transferable contribution.
+
+**What would change this assessment**: `decoder_mu_link="exp"` surviving a full refit, which could
+turn several of the negatives into a re-run rather than a result; or the replication above
+returning SUPPORT, which would give the open-vocabulary claim one dataset-independent leg.
