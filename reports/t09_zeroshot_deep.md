@@ -132,21 +132,19 @@ Per-seed fold means, then the arm's own across-seed spread.
 
 **Primary**: `marker_depth_r` on the `held_out` genes, A1 - A3 = **-0.0044**, envelope 0.1273 (0.0x), signs **disagree**, fold balance 0.22 -> **signs disagree**.
 
-**Against the constant-field band** (+0.0017), each arm's own across-seed envelope:
+**Against the constant-field band** (+0.0017), read against the shared envelope **0.1273** — the largest across-seed spread in the comparison, arms and referents together (`specs/10` §4.2b). Each arm's own spread is shown, and does not set its threshold:
 
-| arm | mean | over band | own envelope | over band / envelope |
-|---|---|---|---|---|
-| A1 (medcpt + distill) | +0.0322 | +0.0305 | 0.1273 | **0.24x** |
-| A3 (lookup + distill) | +0.0366 | +0.0349 | 0.0320 | **1.09x** |
-| A4 (lookup, pure text) | +0.0171 | +0.0155 | 0.0710 | **0.22x** |
+| arm | mean | over band | own spread | shared envelope | over band / envelope |
+|---|---|---|---|---|---|
+| A1 (medcpt + distill) | +0.0322 | +0.0305 | 0.1273 | 0.1273 | **0.24x** |
+| A3 (lookup + distill) | +0.0366 | +0.0349 | 0.0320 | 0.1273 | **0.27x** |
+| A4 (lookup, pure text) | +0.0171 | +0.0155 | 0.0710 | 0.1273 | **0.12x** |
 
 **SUPPORT** requires A1 > A3 with signs agreeing, the margin over the envelope and over the fold spread, and A1 clearing the band by more than the envelope: **not met**.
 
 **REFUTATION of the architecture** (text works, `W.t` is redundant) would be A1 - A3 inside its envelope while *both* clear the band: **not the case**.
 
-**REFUTATION of the idea** (no route from text to an unseen gene) is neither arm clearing the band by more than the envelope: **not the case**.
+**REFUTATION of the idea** (no route from text to an unseen gene) is neither arm clearing the band by more than the envelope: **this is the case**.
 
-**Void condition** — A4 must sit inside the band. A4 is +0.0155 from it against its own 0.0710 envelope (0.22x): **holds**, no leak detected.
-
-**UNRESOLVED — none of the three pre-registered outcomes applies.** A3 clears the band and A1 does not, so the architecture branch (which needs *both* clear) and the idea branch (which needs *neither*) are both false, and support was not met. The pre-registration did not name this case and it is recorded as unresolved rather than rounded into the nearer branch. What it says substantively: a route from text to an unseen gene may survive through the arm that clears (A3), but not through the full architecture.
+**Void condition** — A4 must sit inside the band. A4 is +0.0155 from it against the shared 0.1273 envelope (0.12x): **holds**, no leak detected.
 

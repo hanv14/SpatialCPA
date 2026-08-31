@@ -77,9 +77,15 @@ def ruler(target, axis, cfg):
     return bounds, sigma
 
 
-def profile(counts, coords_xy, z_value, axis, markers, cfg, bounds, sigma):
-    """``(n_bins, n_markers)`` on the target's ruler. Mirrors ``section_scores`` exactly."""
-    x = _normalised(np.asarray(counts, dtype=np.float64), cfg)
+def profile(counts, coords_xy, z_value, axis, markers, cfg, bounds, sigma, pool=None):
+    """``(n_bins, n_markers)`` on the target's ruler. Mirrors ``section_scores`` exactly.
+
+    ``pool`` restricts the library-size factor to a gene pool, exactly as ``section_scores`` does
+    when it is given a ``gene_pool``. It has to, or the ceiling and the arms are computed under
+    two different normalisations and the band is not the arms' band. ``None`` — the whole-panel
+    reconstruction ceiling this module was written for — is the shipped behaviour, unchanged.
+    """
+    x = _normalised(np.asarray(counts, dtype=np.float64), cfg, pool)
     xy = np.asarray(coords_xy, dtype=np.float64)[:, :2]
     xyz = torch.from_numpy(
         np.concatenate([xy, np.full((xy.shape[0], 1), float(z_value))], axis=1).astype(np.float32)

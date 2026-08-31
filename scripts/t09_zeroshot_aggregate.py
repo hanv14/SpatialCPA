@@ -282,16 +282,33 @@ def main(argv: list[str] | None = None) -> int:
     primary = report["contrasts"]["A1-A3"][PRIMARY_SIDE][PRIMARY_METRIC]
     band = report["referents"][PRIMARY_SIDE][PRIMARY_METRIC]["constant_field"]
     clearances = {}
+    # specs/10 §4.2b: a clearance against a referent is read against the LARGEST across-seed
+    # envelope in the comparison — every arm plus the referents — and not against the arm's own.
+    # One threshold per metric per experiment, so the arm that clears is the one that scored
+    # highest rather than the one that happened to vary least.
+    shared = max(
+        [report["scores"][PRIMARY_SIDE][PRIMARY_METRIC][a]["spread"] for a in ARMS]
+        + [
+            spread([fold_mean(cells, PRIMARY_SIDE, r, s, folds, PRIMARY_METRIC) for s in seeds])
+            for r in REFERENTS
+        ]
+    )
     for arm in ("A1", "A3", "A4"):
         per_seed = report["scores"][PRIMARY_SIDE][PRIMARY_METRIC][arm]
+        mean = float(np.mean(per_seed["per_seed"]))
         clearances[arm] = {
-            "mean": float(np.mean(per_seed["per_seed"])),
-            "over_band": float(np.mean(per_seed["per_seed"])) - band,
-            "envelope": per_seed["spread"],
-            "ratio": abs(float(np.mean(per_seed["per_seed"])) - band)
-            / max(per_seed["spread"], 1e-12),
+            "mean": mean,
+            "over_band": mean - band,
+            "own_spread": per_seed["spread"],
+            "envelope": shared,
+            "ratio": abs(mean - band) / max(shared, 1e-12),
         }
-    report["verdict"] = {"primary": primary, "band": band, "clearances": clearances}
+    report["verdict"] = {
+        "primary": primary,
+        "band": band,
+        "shared_envelope": shared,
+        "clearances": clearances,
+    }
 
     lines += [
         f"**Primary**: `{PRIMARY_METRIC}` on the `{PRIMARY_SIDE}` genes, A1 - A3 = "
@@ -300,18 +317,21 @@ def main(argv: list[str] | None = None) -> int:
         + ("agree" if primary["signs_agree"] else "**disagree**")
         + f", fold balance {primary['fold_balance']:.2f} -> **{primary['verdict']}**.",
         "",
-        f"**Against the constant-field band** ({band:+.4f}), each arm's own across-seed envelope:",
+        f"**Against the constant-field band** ({band:+.4f}), read against the shared envelope "
+        f"**{shared:.4f}** — the largest across-seed spread in the comparison, arms and "
+        "referents together (`specs/10` §4.2b). Each arm's own spread is shown, and does not "
+        "set its threshold:",
         "",
-        "| arm | mean | over band | own envelope | over band / envelope |",
-        "|---|---|---|---|---|",
+        "| arm | mean | over band | own spread | shared envelope | over band / envelope |",
+        "|---|---|---|---|---|---|",
     ]
     for arm, c in clearances.items():
         lines.append(
             f"| {arm} ({ARM_LABEL[arm]}) | {c['mean']:+.4f} | {c['over_band']:+.4f} | "
-            f"{c['envelope']:.4f} | **{c['ratio']:.2f}x** |"
+            f"{c['own_spread']:.4f} | {c['envelope']:.4f} | **{c['ratio']:.2f}x** |"
         )
     supported = primary["verdict"] == "STANDS" and primary["mean"] > 0
-    # "Clears the band" = above it by more than that arm's OWN across-seed envelope. The two
+    # "Clears the band" = above it by more than the SHARED envelope (§4.2b). The two
     # refutation branches are not complements: the architecture branch needs *both* arms clear
     # (text works, W.t is redundant), the idea branch needs *neither* (no route works). One arm
     # clear and the other not satisfies neither, and the pre-registration did not name that
@@ -350,14 +370,14 @@ def main(argv: list[str] | None = None) -> int:
         + ".",
         "",
         f"**Void condition** — A4 must sit inside the band. A4 is {a4['over_band']:+.4f} from it "
-        f"against its own {a4['envelope']:.4f} envelope ({a4['ratio']:.2f}x): "
+        f"against the shared {a4['envelope']:.4f} envelope ({a4['ratio']:.2f}x): "
         + (
             # A ratio against a vanishing envelope is arithmetic, not evidence: three seeds that
             # agree to the fourth decimal make any offset look infinitely significant. Said
             # rather than divided through.
-            "**cannot be read** — A4's across-seed envelope is ~0, so the ratio is a division "
-            "by noise. Report the offset itself and get more seeds"
-            if a4["envelope"] < 1e-6
+            "**cannot be read** — the shared across-seed envelope is ~0, so the ratio is a "
+            "division by noise. Report the offset itself and get more seeds"
+            if shared < 1e-6
             else "**holds**, no leak detected"
             if a4["ratio"] <= 1.0
             else "**FAILS — the run means nothing**"

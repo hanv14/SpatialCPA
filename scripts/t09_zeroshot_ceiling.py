@@ -50,14 +50,14 @@ import warnings
 from pathlib import Path
 
 import numpy as np
-from spatialcpav25_gen.losses.metric_aware import knn_weight_graph, profile_axis
+from spatialcpav25_gen.losses.metric_aware import knn_weight_graph, morans_i, profile_axis
 from spatialcpav25_gen.train.select import _normalised, selection_folds
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _bench3_paths import add_path_args, resolve, set_torch_threads
 from _gene_split import markers_within, stratified_gene_split
 from _starmap_run import base_config, clamp_config_to_input, load_training_volume
-from t09_depth_ceiling import profile, ruler, score
+from t09_depth_ceiling import profile, ruler, safe_r, score
 
 
 def side_ceiling(target, donors, pool, axis, cfg, rng, splits: int, shuffles: int) -> dict:
@@ -65,17 +65,17 @@ def side_ceiling(target, donors, pool, axis, cfg, rng, splits: int, shuffles: in
     counts = np.asarray(target.counts.todense(), dtype=np.float64)
     xy = np.asarray(target.coords, dtype=np.float64)
     graph = knn_weight_graph(xy, cfg)
-    markers = markers_within(_normalised(counts, cfg), graph, cfg, pool)
+    markers = markers_within(_normalised(counts, cfg, pool), graph, cfg, pool)
     bounds, sigma = ruler(target, axis, cfg)
-    p_target = profile(counts, xy, target.z, axis, markers, cfg, bounds, sigma)
+    p_target = profile(counts, xy, target.z, axis, markers, cfg, bounds, sigma, pool)
 
     halves = []
     for _ in range(splits):
         order = rng.permutation(counts.shape[0])
         a, b = order[: order.size // 2], order[order.size // 2 :]
         r = score(
-            profile(counts[a], xy[a], target.z, axis, markers, cfg, bounds, sigma),
-            profile(counts[b], xy[b], target.z, axis, markers, cfg, bounds, sigma),
+            profile(counts[a], xy[a], target.z, axis, markers, cfg, bounds, sigma, pool),
+            profile(counts[b], xy[b], target.z, axis, markers, cfg, bounds, sigma, pool),
         )
         halves.append(2.0 * r / (1.0 + r) if r > -1.0 else r)
     reliability = float(np.mean(halves))
@@ -93,6 +93,7 @@ def side_ceiling(target, donors, pool, axis, cfg, rng, splits: int, shuffles: in
                         cfg,
                         bounds,
                         sigma,
+                        pool,
                     ),
                     p_target,
                 )
@@ -113,6 +114,7 @@ def side_ceiling(target, donors, pool, axis, cfg, rng, splits: int, shuffles: in
             cfg,
             bounds,
             sigma,
+            pool,
         ),
         p_target,
     )
@@ -133,6 +135,7 @@ def side_ceiling(target, donors, pool, axis, cfg, rng, splits: int, shuffles: in
                         cfg,
                         bounds,
                         sigma,
+                        pool,
                     ),
                     p_target,
                 ),
@@ -152,9 +155,112 @@ def side_ceiling(target, donors, pool, axis, cfg, rng, splits: int, shuffles: in
     }
 
 
+def autocorr_vector(counts, coords_xy, cfg, pool) -> np.ndarray:
+    """Per-gene Moran's I over ``pool``. ``(N, G)``, ``(N, 2)`` -> ``(n_pool,)``.
+
+    The quantity `morans_pearson` correlates, computed exactly as ``section_scores`` computes it:
+    the same pool-restricted normalisation, the same kNN graph on the cells actually present, the
+    same ``metric_eps``. Nothing here is a re-derivation of the metric — a ceiling computed with a
+    different estimator is a ceiling for a different metric.
+    """
+    x = _normalised(np.asarray(counts, dtype=np.float64), cfg, pool)
+    graph = knn_weight_graph(np.asarray(coords_xy, dtype=np.float64)[:, :2], cfg)
+    values = morans_i(x, graph, eps=float(cfg.metric_eps)).numpy()
+    return np.asarray(values[np.asarray(pool, dtype=np.int64)], dtype=np.float64)
+
+
+def side_ceiling_autocorr(target, donors, pool, cfg, rng, splits: int, shuffles: int) -> dict:
+    """Every reference point for `morans_pearson` on one gene ``pool``, one section. Model-free.
+
+    The same design as :func:`side_ceiling`, with the per-gene Moran's I vector in place of the
+    depth profile: split-half reliability of that vector, Spearman-Brown corrected, and its square
+    root as the correlation a perfect independent replicate could reach.
+
+    **The half-section caveat, stated because it decides the direction of the error.** A split
+    half has half the cells, so its kNN graph reaches physically further and its Moran's I is
+    both coarser and noisier than a full section's. Spearman-Brown corrects for length, not for a
+    changed estimator, so the reliability here is if anything **under**-estimated and the ceiling
+    with it. A ceiling that errs low is the safe direction: it cannot manufacture headroom that
+    is not there.
+
+    ``constant_field`` is reported and **labelled degenerate**. A constant field has exactly zero
+    per-gene variance after normalisation, so Moran's I is ``0/0`` and what comes back is float32
+    round-off that scales with the gene's magnitude — measured on the fixture at std 3.5e-8 giving
+    `morans_pearson` +0.22, and on `deep_starmap` +0.53. It is not a floor and must not be quoted
+    as one; the floor for this metric is the shuffled referent (`specs/10` §4.2b's companion note
+    in `progress/`). Reported anyway so the number is on the record beside its status.
+    """
+    counts = np.asarray(target.counts.todense(), dtype=np.float64)
+    xy = np.asarray(target.coords, dtype=np.float64)
+    v_target = autocorr_vector(counts, xy, cfg, pool)
+
+    halves = []
+    for _ in range(splits):
+        order = rng.permutation(counts.shape[0])
+        a, b = order[: order.size // 2], order[order.size // 2 :]
+        r = safe_r(
+            autocorr_vector(counts[a], xy[a], cfg, pool),
+            autocorr_vector(counts[b], xy[b], cfg, pool),
+        )
+        halves.append(2.0 * r / (1.0 + r) if r > -1.0 else r)
+    reliability = float(np.mean(halves))
+
+    shuffled = float(
+        np.mean(
+            [
+                safe_r(
+                    autocorr_vector(counts, xy[rng.permutation(xy.shape[0])], cfg, pool), v_target
+                )
+                for _ in range(shuffles)
+            ]
+        )
+    )
+    constant = safe_r(
+        autocorr_vector(np.broadcast_to(counts.mean(axis=0), counts.shape).copy(), xy, cfg, pool),
+        v_target,
+    )
+    others = [
+        {
+            "donor": donor.section_id,
+            "dz": abs(float(donor.z) - float(target.z)),
+            "r": safe_r(
+                autocorr_vector(
+                    np.asarray(donor.counts.todense(), dtype=np.float64),
+                    np.asarray(donor.coords, dtype=np.float64),
+                    cfg,
+                    pool,
+                ),
+                v_target,
+            ),
+        }
+        for donor in donors
+    ]
+    return {
+        "n_pool": len(pool),
+        "n_markers": len(pool),
+        "marker_names_from_pool": True,
+        "self": safe_r(v_target, v_target),
+        "split_half": reliability,
+        "noiseless_ceiling": float(np.sqrt(reliability)) if reliability > 0 else float("nan"),
+        "shuffled_floor": shuffled,
+        "constant_field": constant,
+        "constant_field_is_degenerate": True,
+        "best_other_section": max((o["r"] for o in others), default=float("nan")),
+        "others": others,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--metric",
+        default="marker_depth_r",
+        choices=["marker_depth_r", "morans_pearson"],
+        help="which metric's ceiling to measure on the held-out genes. `marker_depth_r` is the "
+        "pre-registered primary and the default; `morans_pearson` is the metric the four-arm "
+        "run's only positive landed on, whose ceiling that run could not be read against",
     )
     ap.add_argument("--split-seed", type=int, default=7)
     ap.add_argument("--held-frac", type=float, default=0.2)
@@ -200,14 +306,20 @@ def main(argv: list[str] | None = None) -> int:
         rng = np.random.default_rng(args.seed)
         row = {"target": target.section_id, "dataset": paths.dataset, "holdout": paths.holdout}
         for name, pool in (("held_out", split.held_out), ("kept", split.kept)):
-            row[name] = side_ceiling(
-                target, donors, pool, axis, cfg, rng, args.splits, args.shuffles
+            row[name] = (
+                side_ceiling(target, donors, pool, axis, cfg, rng, args.splits, args.shuffles)
+                if args.metric == "marker_depth_r"
+                else side_ceiling_autocorr(
+                    target, donors, pool, cfg, rng, args.splits, args.shuffles
+                )
             )
             c = row[name]
             print(
                 f"  {target.section_id} [{name:<8}] self {c['self']:+.6f} | R "
                 f"{c['split_half']:+.4f} | ceiling {c['noiseless_ceiling']:.4f} | constant "
-                f"{c['constant_field']:+.6f} | shuffled {c['shuffled_floor']:+.4f} | best copy "
+                f"{c['constant_field']:+.6f}"
+                + (" (degenerate)" if c.get("constant_field_is_degenerate") else "")
+                + f" | shuffled {c['shuffled_floor']:+.4f} | best copy "
                 f"{c['best_other_section']:+.4f}",
                 flush=True,
             )
@@ -230,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _report(rows, split, cfg, volume, paths, args) -> str:
     lines = [
-        "# Can `marker_depth_r` measure anything on the held-out genes?",
+        f"# Can `{args.metric}` measure anything on the held-out genes?",
         "",
         f"Dataset **`{paths.dataset}`**, holdout **`{paths.holdout}`** — {volume.n_cells} cells x "
         f"{volume.n_genes} genes. Split: **{len(split.kept)} kept / {len(split.held_out)} held "
@@ -256,7 +368,12 @@ def _report(rows, split, cfg, volume, paths, args) -> str:
     ratio = float(np.median(held) / np.median(kept)) if np.median(kept) else float("nan")
     worst_const = max(abs(r["held_out"]["constant_field"]) for r in rows)
     worst_shuf = max(abs(r["held_out"]["shuffled_floor"]) for r in rows)
-    room = float(np.median(held)) - worst_const
+    # The floor is whichever referent is *usable* for this metric. For `marker_depth_r` the
+    # constant field is a real (if small) no-information reference; for `morans_pearson` it is
+    # float32 round-off on a zero-variance input and only the shuffled referent is a floor.
+    degenerate = any(r["held_out"].get("constant_field_is_degenerate") for r in rows)
+    floor = worst_shuf if degenerate else max(worst_const, worst_shuf)
+    room = float(np.median(held)) - floor
     lines += [
         "",
         "`self` is 1.000000 on every row or the run aborts — a check on this file, not a result.",
@@ -266,13 +383,23 @@ def _report(rows, split, cfg, volume, paths, args) -> str:
         f"**1. Is the ceiling clear of the floor on the held-out genes?** Median √R "
         f"**{np.median(held):.4f}**; the largest **constant-field** referent is "
         f"{worst_const:.4f} and the largest shuffled floor {worst_shuf:.4f}, so the room "
-        f"available is **{room:.4f}**. "
+        f"available above the **usable** floor is **{room:.4f}**. "
         "A zero-shot arm cannot copy — `cross-mix` reads the full count matrix and would emit "
         "the held-out genes verbatim, so it is excluded from the experiment rather than "
-        "handicapped — which makes the **constant field**, not a copy, the thing every arm must "
-        "beat. ⚠️ That referent is **not zero**: `soft_depth_profile` normalises each bin by the "
-        "weight it received, so a constant field's profile tracks cell density along the depth "
-        "axis and density is laminar. It is measured here, not assumed.",
+        "handicapped.",
+        "",
+        (
+            "⚠️ For this metric the **constant field is degenerate and is not the floor.** It "
+            "has exactly zero per-gene variance after normalisation, so Moran's I is `0/0` and "
+            "what comes back is float32 round-off that scales with the gene's own magnitude — "
+            "which is why it correlates with the real statistic at all. The floor here is the "
+            "**shuffled** referent, and the room above is quoted against that."
+            if degenerate
+            else "⚠️ The constant-field referent is **not zero**: `soft_depth_profile` normalises "
+            "each bin by the weight it received, so a constant field's profile tracks cell "
+            "density along the depth axis and density is laminar. It is measured, not assumed, "
+            "and it is the thing every arm must beat."
+        ),
         "",
         f"**2. Is the split representative?** Held-out ceiling is **{100 * ratio:.0f}%** of the "
         "kept genes' on the same sections. Far from 100% would mean the stratified draw still "

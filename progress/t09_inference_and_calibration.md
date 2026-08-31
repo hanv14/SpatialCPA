@@ -2570,3 +2570,84 @@ until the ceiling exists.
 0.06). Adding `gamma psi(t)` to the text channel *costs* 0.15 on the metric where the text channel
 works. On the kept genes the same contrast is -0.0008 (0.1x, signs disagree) — the head does
 nothing there. The head is not free, and on unseen genes it is actively harmful on this metric.
+
+### T09 — the clearance convention fixed, and the primary re-read under it (2026-08-31)
+
+The ambiguity that made the primary verdict a coin-flip is settled in `specs/10` **§4.2b**, argued
+from comparability rather than from outcome, and the aggregator implements it.
+
+**The rule.** A clearance against a referent is read against the **largest across-seed envelope in
+the comparison** — every arm plus the referents — on that metric and dataset. One threshold per
+metric per experiment. The arm's own spread is reported but does not set its bar.
+
+**Why, and it is not the outcome.** A criterion of this shape is never applied to one arm alone;
+it is applied to every arm against a shared band and the verdicts are read against each other.
+Per-arm thresholds make those verdicts incomparable: the arm that clears becomes the one that
+*varied least*, not the one that scored highest. Here A1 and A3 differ by 0.004 and land on
+opposite sides of the line only because A3's spread is 0.032 and A1's is 0.127 — the experiment
+would have reported that the steadier arm has a capability the higher-scoring one lacks. A rule
+that rewards steadiness over score can be satisfied by being boring. Note also that the new rule
+is **stricter for every arm in every future experiment**, including ones this project would rather
+pass.
+
+**The primary under the fixed rule.** Shared envelope 0.1273; band +0.0017.
+
+| arm | mean | over band | own spread | shared | ratio |
+|---|---|---|---|---|---|
+| A1 `medcpt`+distill | +0.0322 | +0.0305 | 0.1273 | 0.1273 | 0.24x |
+| A3 `lookup`+distill | +0.0366 | +0.0349 | 0.0320 | 0.1273 | 0.27x |
+| A4 `lookup` pure text | +0.0171 | +0.0155 | 0.0710 | 0.1273 | 0.12x |
+
+Neither A1 nor A3 clears: the pre-registered **REFUTATION OF THE IDEA** on `marker_depth_r`. Void
+condition **holds** (A4 at 0.12x, no leak). The earlier UNRESOLVED reading is superseded.
+
+### T09 — the `morans_pearson` ceiling instrument (2026-08-31)
+
+`scripts/t09_zeroshot_ceiling.py` gained `--metric {marker_depth_r,morans_pearson}`; the default
+path is untouched. The autocorrelation branch is the same design with the per-gene Moran's I
+vector in place of the depth profile: split-half reliability, Spearman-Brown, `sqrt(R)`, a shuffled
+floor, and the constant field **reported and labelled degenerate** rather than quoted as a floor.
+
+**It reproduces the metric bitwise.** A ceiling computed with a different estimator is a ceiling
+for a different metric, so this is checked rather than assumed: scoring a donor section against a
+target through `section_scores(gene_pool=...)` and through the instrument gives
+**0.915040537526 both ways, |delta| exactly 0**.
+
+**A consistency defect found on the way, and it touches the published ceiling.**
+`t09_depth_ceiling.profile` normalised with the **whole-panel** size factor while `section_scores`
+now restricts it to the pool. The ceiling and the arms were being computed under two different
+normalisations, which also feeds the marker selection. `profile` now takes `pool` (default `None`
+keeps the reconstruction-ceiling behaviour identical) and the zero-shot ceiling passes it at all
+five call sites, including the marker selection. **`reports/t09_zeroshot_ceiling_deep.json` was
+written before this fix and should be re-run**; the `marker_depth_r` ceiling of 0.9803/0.9854 is
+expected to move slightly.
+
+**Fixture run** (`self` = 1.000000 on every row or the run aborts): held-out ceilings 0.9724–0.9845
+against shuffled floors 0.0569–0.1093, with the constant field at +0.27 to +0.44 — visibly
+degenerate, exactly as the round-off account predicts. The instrument works; **it has not been run
+on `deep_starmap`**, which needs the campaign machine.
+
+### T09 — descriptor coverage: panel-wide measured, split-wise outstanding (2026-08-31)
+
+Run here against `resources/gene_meta.parquet` and `resources/deep_starmap_symbols.txt`:
+
+| | value |
+|---|---|
+| symbols in the panel | 1017 |
+| in the metadata table | 1017 (100%) |
+| with a full name | 1017 (100%) |
+| with a summary | 966 (**95.0%**) |
+| — of which a **human orthologue's** | 805 (**83%**) |
+| bare symbol only | **0** |
+| descriptor length, median / min | 566 / 37 chars |
+
+Two things follow. **The text channel is not thin**: no gene falls back to a bare symbol, and the
+median descriptor is 566 characters. And **83% of the summaries are a human orthologue's biology,
+labelled as such in the descriptor** — so what A2 demonstrates, if the ceiling clears, is that
+MedCPT can place a mouse gene from mostly *human* orthologue text. That belongs in the write-up.
+
+**The split-wise number is still outstanding** and needs `reports/t09_gene_split_deep.json`, which
+is not in this repo. 51 of 1017 genes carry no summary; under a draw blind to metadata the held-out
+204 would contain **10.2 ± 2.8** of them (95% of draws 5–16). A count well outside that range would
+mean the stratified draw picked up a metadata bias and A1/A2 were handicapped for a reason
+unrelated to the text channel. `scripts/t09_zeroshot_text_coverage.py` reports it in seconds.

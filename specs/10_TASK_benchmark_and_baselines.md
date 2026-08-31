@@ -537,6 +537,41 @@ reusing a figure measured in one setting because it is the only one available is
 error this section exists to retire. Each claim-bearing comparison pays for its own envelope, and
 `scripts/t09_seed_claim.py` computes it from the runs.
 
+### 4.2b A clearance against a *referent* takes the worst envelope in the comparison, not the arm's own
+
+§4.2a settles the envelope for a **contrast** between two arms: the arm that carries the variance.
+It says nothing about the other shape of criterion, which the zero-shot experiment needed and
+which had to be settled separately — **"does arm X sit above a referent by more than noise?"**
+There is only one arm in that sentence, so "the worse arm" has no referent, and the obvious
+reading is to use arm X's own across-seed spread.
+
+**That reading is wrong, and the reason is comparability.** A criterion of this shape is never
+applied to one arm in isolation; it is applied to every arm of an experiment against a shared
+band, and the verdicts are then read against each other. Give each arm its own threshold and the
+verdicts stop being comparable: the arm that clears is the one that varied *least* across seeds,
+not the one that scored highest. Two arms 0.004 apart can land on opposite sides of the line
+because one has a spread of 0.032 and the other 0.127 — and the experiment then reports that the
+steadier arm has a capability the higher-scoring one lacks, which is not a statement about
+capability at all. A rule that rewards steadiness over score is a rule that can be satisfied by
+being boring.
+
+**The rule.** A clearance is read against the **largest across-seed envelope among everything the
+comparison contains** on that metric and that dataset: every arm being compared, and the referent
+itself. One threshold per metric per experiment, so every arm's verdict is on the same footing
+and none can be bought with a low variance. On a fixed layout the referent's own envelope is
+exactly zero and the arms decide it; on a design where the referent moves between seeds, it does
+not get to be free.
+
+**Stated before the number it changes.** The zero-shot run's primary comparison had already been
+scored when this ambiguity surfaced, and the two readings give different verdicts, so the rule is
+argued above from comparability alone. Its consequence is then declared rather than discovered:
+under the arm's-own reading A3 clears at 1.09x and A1 at 0.24x, giving a case the pre-registration
+never named; under the rule above the shared threshold is 0.1273 and **neither** arm clears
+(A1 0.24x, A3 0.27x), which is the pre-registered **REFUTATION OF THE IDEA**. Anyone who thinks
+the rule was chosen for that outcome should note that it also makes the criterion *harder* for
+every arm in every future experiment, including the ones this project would rather pass.
+
+
 ### 4.3 The boundary holdout (R3) — additive, no new dataset, no new design function
 
 **Open risk R3, raised at T04, re-surfaced at T09.** The T04 probe reconstructed the two **edge**
@@ -1091,6 +1126,51 @@ One catch: markers and layer genes come from `uns['paper_protocol']`, so a split
 makes `paper_marker_*` unavailable on that arm. **Run two gene splits** — markers-held-out and
 markers-seen — so the marker family is reportable either way, and say which split each number is
 from.
+
+### ⚠️ RESULT — E1's finding is the **seen/unseen sign flip**, not the primary comparison
+
+Measured on `deep_starmap`, `paper_2_4_6`, three seeds x two fits x four arms x two folds x two
+gene pools, 2026-08-31. Full table `reports/t09_zeroshot_deep.md`; the arms are A1 `medcpt`+distill,
+A2 `medcpt` pure text, A3 `lookup`+distill, A4 `lookup` pure text (`norm(0)`, one vector for every
+gene).
+
+**The headline is a sign reversal between seen and unseen genes, within the same fits and the same
+run:**
+
+| gene pool | which embedding wins on `morans_pearson` | margin | envelope | signs |
+|---|---|---|---|---|
+| **kept** (the model was fitted on them) | `lookup` — a free per-gene table | **−0.1330** (A1−A3) | 0.0230 | 5.8x, 6/6 |
+| **held out** (never in a batch) | `medcpt` — text alone | **+0.2999** (A2−A4) | 0.0532 | 5.6x, 6/6 |
+
+A free lookup table wins where it has a row and loses where it does not. That is the
+open-vocabulary claim stated as a measurement rather than as a motivation, and it is the first
+within-run evidence for it in this project: one set of weights, one scoring pass, the sign of the
+text channel's value flipping with nothing changing but which genes are being scored. The kept
+half also reproduces the two established three-seed negatives on a third gene pool, so the losing
+direction is not new — what is new is that the same comparison reverses on unseen genes.
+
+⚠️ **The unseen half rests on one metric whose ceiling on those genes is being measured now.**
+`marker_depth_r` was named primary precisely because its held-out ceiling is known (0.9803 /
+0.9854); `morans_pearson`'s is not, so +0.2999 against a shuffled floor of +0.0382 could be most
+of the available room or a tenth of it. `scripts/t09_zeroshot_ceiling.py --metric morans_pearson`
+answers it model-free and without a fit. **Until that number exists this is an observation, not a
+claim, and must not be written as one.**
+
+**The primary comparison found nothing.** `marker_depth_r` on the held-out genes: A1 − A3 =
+−0.0044 against a 0.1273 envelope, signs disagreeing across seeds *and* folds. Read against the
+shared envelope (§4.2b) neither A1 (0.24x) nor A3 (0.27x) clears the constant-field band, which is
+the pre-registered **REFUTATION OF THE IDEA** on that metric. The void condition holds — A4 sits
+0.12x from the band, so no leak. And the measurement is **underpowered on its own terms**: A1's
+across-seed envelope is 4x its own distance above the band, and a range over three draws does not
+shrink fast enough for a few more seeds to fix it.
+
+**The distillation head is a cost, not a contribution.** A1 − A2 on held-out `morans_pearson` =
+**−0.1533** (3.3x the envelope, 6/6 signs): adding `gamma psi(t)` to the text channel makes it
+*worse* on the one metric where the text channel works. On the kept genes the same contrast is
+−0.0008 (0.1x, signs disagree) — it does nothing there either. If the ceiling clears, the reading
+is that **the pure-text path `W t` is the contribution and the machinery around it is not**, which
+is a smaller and more defensible claim than the architecture was designed to make.
+
 
 ### E1 runs on the campaign machine only
 
