@@ -85,6 +85,11 @@ FLOOR_NOTE = {
 
 PRIMARY_METRIC = "marker_depth_r"
 PRIMARY_SIDE = "held_out"
+SECONDARY_METRIC = "morans_pearson"
+"""The metric the four-arm run's only positive landed on. Reported *after* the primary and
+labelled secondary, because it was not the pre-registered one — a metric promoted to primary
+because it produced a result is not a test. Its floor is `shuffled`; its constant field is
+degenerate (see VALID_FLOOR)."""
 FOLD_BALANCE_MIN = 0.25
 """``min|diff| / max|diff|`` across folds. Below this the gap is carried by one fold."""
 
@@ -125,13 +130,54 @@ def spread(values: list[float]) -> float:
     return float(max(values) - min(values))
 
 
+def _room(path: str, metric: str, arms: dict, floor: float) -> list[str]:
+    """Place the arms against the model-free ceiling: what fraction of the room is being used.
+
+    The ceiling and the floor bracket what any method could achieve on these genes, so a score
+    means little until it is read against them. ``0.27`` is a strong result against a ceiling of
+    0.30 and a weak one against 0.995, and only the second of those is a statement about the
+    method rather than about the metric.
+    """
+    ceiling = json.loads(Path(path).read_text())
+    held = [c["held_out"]["noiseless_ceiling"] for c in ceiling]
+    top = float(np.median(held))
+    room = top - floor
+    best_arm, best = max(arms.items(), key=lambda kv: kv[1]["mean"])
+    lines = [
+        f"**Against the room actually available** (`{path}`): the model-free ceiling on these "
+        f"genes is **{top:.4f}** and the floor {floor:+.4f}, so the room is **{room:.4f}**. "
+        f"The best arm, {best_arm}, reaches {best['mean']:+.4f} — "
+        f"**{100 * (best['mean'] - floor) / room:.0f}%** of it.",
+        "",
+    ]
+    copy = float(np.median([c["held_out"]["best_other_section"] for c in ceiling]))
+    lines += [
+        f"For scale on the same rows, copying a whole real section scores {copy:.4f}, or "
+        f"{100 * (copy - floor) / room:.0f}% of the room — **context only; no zero-shot arm "
+        "may copy.**",
+        "",
+    ]
+    return lines
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("seed_files", nargs="+")
     ap.add_argument("--out", default=None, help="destination .md (a .json is written beside it)")
-    ap.add_argument("--ceiling", default=None, help="the t09_zeroshot_ceiling .json, for context")
+    ap.add_argument(
+        "--ceiling",
+        default=None,
+        help=f"the `--metric {PRIMARY_METRIC}` ceiling .json, to place the primary result "
+        "against the room actually available",
+    )
+    ap.add_argument(
+        "--ceiling-secondary",
+        default=None,
+        help=f"the `--metric {SECONDARY_METRIC}` ceiling .json. With it, the secondary result "
+        "is reported as a fraction of the room above that metric's usable floor",
+    )
     args = ap.parse_args(argv)
 
     rows = load(args.seed_files)
@@ -400,15 +446,55 @@ def main(argv: list[str] | None = None) -> int:
         ]
 
     if args.ceiling:
-        ceiling = json.loads(Path(args.ceiling).read_text())
-        held = [c["held_out"] for c in ceiling]
-        best = float(np.mean([h["noiseless_ceiling"] for h in held]))
-        lines += [
-            f"**For scale**: the model-free ceiling on these genes is **{best:.4f}** "
-            f"(`{args.ceiling}`). The best arm reaches "
-            f"{max(c['mean'] for c in clearances.values()):+.4f}.",
-            "",
+        lines += _room(args.ceiling, PRIMARY_METRIC, clearances, band)
+
+    # ---------------------------------------------------------------- the secondary metric
+    floor_name = VALID_FLOOR[SECONDARY_METRIC][0]
+    floor = report["referents"][PRIMARY_SIDE][SECONDARY_METRIC][floor_name]
+    shared2 = max(
+        [report["scores"][PRIMARY_SIDE][SECONDARY_METRIC][a]["spread"] for a in ARMS]
+        + [
+            spread([fold_mean(cells, PRIMARY_SIDE, r, s, folds, SECONDARY_METRIC) for s in seeds])
+            for r in REFERENTS
         ]
+    )
+    secondary = {}
+    for arm in ARMS:
+        mean = float(np.mean(report["scores"][PRIMARY_SIDE][SECONDARY_METRIC][arm]["per_seed"]))
+        secondary[arm] = {
+            "mean": mean,
+            "over_floor": mean - floor,
+            "envelope": shared2,
+            "ratio": abs(mean - floor) / max(shared2, 1e-12),
+        }
+    report["secondary"] = {
+        "metric": SECONDARY_METRIC,
+        "floor_name": floor_name,
+        "floor": floor,
+        "shared_envelope": shared2,
+        "arms": secondary,
+    }
+    lines += [
+        f"## Secondary — `{SECONDARY_METRIC}` on the `{PRIMARY_SIDE}` genes",
+        "",
+        "⚠️ **Not the pre-registered primary.** It is reported because the four-arm run's only "
+        "positive landed here, and a metric promoted to primary *because* it produced a result "
+        "is not a test. Read it as an observation with its own arithmetic shown.",
+        "",
+        f"Floor is `{floor_name}` ({floor:+.4f}) — the constant field is degenerate on this "
+        f"metric. Shared envelope **{shared2:.4f}** (`specs/10` §4.2b).",
+        "",
+        "| arm | mean | over floor | shared envelope | vs it |",
+        "|---|---|---|---|---|",
+    ]
+    for arm, c in secondary.items():
+        lines.append(
+            f"| {arm} ({ARM_LABEL[arm]}) | {c['mean']:+.4f} | {c['over_floor']:+.4f} | "
+            f"{c['envelope']:.4f} | **{c['ratio']:.2f}x** |"
+        )
+    lines.append("")
+    if args.ceiling_secondary:
+        lines += _room(args.ceiling_secondary, SECONDARY_METRIC, secondary, floor)
 
     text = "\n".join(lines)
     print(text)

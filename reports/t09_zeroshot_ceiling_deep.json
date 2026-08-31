@@ -1,0 +1,124 @@
+[
+  {
+    "target": "section_3",
+    "dataset": "deep_starmap",
+    "holdout": "paper_2_4_6",
+    "held_out": {
+      "n_pool": 204,
+      "n_markers": 32,
+      "marker_names_from_pool": true,
+      "self": 1.0,
+      "split_half": 0.9620493178075039,
+      "noiseless_ceiling": 0.9808411277100405,
+      "shuffled_floor": 0.012013123014695473,
+      "constant_field": -0.0188015622521902,
+      "best_other_section": 0.9458992781472798,
+      "others": [
+        {
+          "donor": "section_1",
+          "dz": 42.7,
+          "r": 0.9458992781472798
+        },
+        {
+          "donor": "section_5",
+          "dz": 42.0,
+          "r": 0.9405782369477873
+        },
+        {
+          "donor": "section_7",
+          "dz": 82.6,
+          "r": 0.7599901823222773
+        }
+      ]
+    },
+    "kept": {
+      "n_pool": 813,
+      "n_markers": 32,
+      "marker_names_from_pool": true,
+      "self": 1.0,
+      "split_half": 0.9897043604990884,
+      "noiseless_ceiling": 0.9948388615746212,
+      "shuffled_floor": 0.007764727744740255,
+      "constant_field": -0.03965071441658487,
+      "best_other_section": 0.9815732393585428,
+      "others": [
+        {
+          "donor": "section_1",
+          "dz": 42.7,
+          "r": 0.9815732393585428
+        },
+        {
+          "donor": "section_5",
+          "dz": 42.0,
+          "r": 0.9598776375426774
+        },
+        {
+          "donor": "section_7",
+          "dz": 82.6,
+          "r": 0.7864746725891555
+        }
+      ]
+    }
+  },
+  {
+    "target": "section_5",
+    "dataset": "deep_starmap",
+    "holdout": "paper_2_4_6",
+    "held_out": {
+      "n_pool": 204,
+      "n_markers": 32,
+      "marker_names_from_pool": true,
+      "self": 1.0,
+      "split_half": 0.9677713481178303,
+      "noiseless_ceiling": 0.9837537029754095,
+      "shuffled_floor": 0.0011873333676188016,
+      "constant_field": 0.012384227811884942,
+      "best_other_section": 0.9499344765449399,
+      "others": [
+        {
+          "donor": "section_1",
+          "dz": 84.7,
+          "r": 0.9176554328443417
+        },
+        {
+          "donor": "section_3",
+          "dz": 42.0,
+          "r": 0.9499344765449399
+        },
+        {
+          "donor": "section_7",
+          "dz": 40.599999999999994,
+          "r": 0.82218029517685
+        }
+      ]
+    },
+    "kept": {
+      "n_pool": 813,
+      "n_markers": 32,
+      "marker_names_from_pool": true,
+      "self": 1.0,
+      "split_half": 0.9873847848893904,
+      "noiseless_ceiling": 0.9936723730130522,
+      "shuffled_floor": 0.03562448341137055,
+      "constant_field": -0.015606058545710358,
+      "best_other_section": 0.971857033846556,
+      "others": [
+        {
+          "donor": "section_1",
+          "dz": 84.7,
+          "r": 0.9532157843887026
+        },
+        {
+          "donor": "section_3",
+          "dz": 42.0,
+          "r": 0.971857033846556
+        },
+        {
+          "donor": "section_7",
+          "dz": 40.599999999999994,
+          "r": 0.8413351105190134
+        }
+      ]
+    }
+  }
+]

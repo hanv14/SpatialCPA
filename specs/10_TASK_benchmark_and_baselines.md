@@ -1149,27 +1149,52 @@ text channel's value flipping with nothing changing but which genes are being sc
 half also reproduces the two established three-seed negatives on a third gene pool, so the losing
 direction is not new — what is new is that the same comparison reverses on unseen genes.
 
-⚠️ **The unseen half rests on one metric whose ceiling on those genes is being measured now.**
-`marker_depth_r` was named primary precisely because its held-out ceiling is known (0.9803 /
-0.9854); `morans_pearson`'s is not, so +0.2999 against a shuffled floor of +0.0382 could be most
-of the available room or a tenth of it. `scripts/t09_zeroshot_ceiling.py --metric morans_pearson`
-answers it model-free and without a fit. **Until that number exists this is an observation, not a
-claim, and must not be written as one.**
+**The ceiling is now measured and the gain survives it.** `morans_pearson`'s model-free ceiling
+on the held-out genes is **0.9956** against a shuffled floor of +0.0382 — room **0.9574** — so
++0.2729 is **25% of what any method could reach**, and A2 clears that floor by **2.52x** the
+shared envelope. Not most of the room, and not a rounding error either: the task is nowhere near
+saturated (copying a real section reaches 98% of it), so there is three quarters of a capability
+still unclaimed. `reports/t09_zeroshot_ceiling_morans_deep.json`.
 
-**The primary comparison found nothing.** `marker_depth_r` on the held-out genes: A1 − A3 =
-−0.0044 against a 0.1273 envelope, signs disagreeing across seeds *and* folds. Read against the
-shared envelope (§4.2b) neither A1 (0.24x) nor A3 (0.27x) clears the constant-field band, which is
-the pre-registered **REFUTATION OF THE IDEA** on that metric. The void condition holds — A4 sits
-0.12x from the band, so no leak. And the measurement is **underpowered on its own terms**: A1's
-across-seed envelope is 4x its own distance above the band, and a range over three draws does not
-shrink fast enough for a few more seeds to fix it.
+⚠️ **It is still not the pre-registered primary, and that matters.** `marker_depth_r` was named
+primary before any fit; `morans_pearson` is reported because the run's only positive landed there,
+and a metric promoted to primary *because* it produced a result is not a test. The right status
+for this number is a strong observation with its arithmetic shown, and a **pre-registered
+replication on `morans_pearson`** — ideally on a second dataset — before it is written as a claim.
 
-**The distillation head is a cost, not a contribution.** A1 − A2 on held-out `morans_pearson` =
-**−0.1533** (3.3x the envelope, 6/6 signs): adding `gamma psi(t)` to the text channel makes it
-*worse* on the one metric where the text channel works. On the kept genes the same contrast is
-−0.0008 (0.1x, signs disagree) — it does nothing there either. If the ceiling clears, the reading
-is that **the pure-text path `W t` is the contribution and the machinery around it is not**, which
-is a smaller and more defensible claim than the architecture was designed to make.
+**The primary comparison found nothing, and not because the metric could not tell.**
+`marker_depth_r` on the held-out genes: A1 − A3 = −0.0044 against a 0.1273 envelope, signs
+disagreeing across seeds *and* folds. Read against the shared envelope (§4.2b) neither A1 (0.24x)
+nor A3 (0.27x) clears the constant-field band — the pre-registered **REFUTATION OF THE IDEA** on
+that metric. The void condition holds (A4 at 0.12x), so no leak.
+
+That metric's ceiling is **0.9823** with room **0.9806**, and the best arm uses **4%** of it while
+copying a real section uses 96%. So this is not the saturation that sank the `deep_starmap`
+reconstruction comparison: the room is there and the arms cannot reach it. The measurement is also
+**underpowered on its own terms** — A1's across-seed envelope is 4x its own distance above the
+band, and a range over three draws does not shrink fast enough for a few more seeds to fix.
+
+**The distillation head is a cost, not a contribution — and it is what breaks the claim.**
+A1 − A2 on held-out `morans_pearson` = **−0.1533** (3.3x the envelope, 6/6 signs): adding
+`gamma psi(t)` to the text channel makes it *worse* on the one metric where the text channel
+works. On the kept genes the same contrast is −0.0008 (0.1x, signs disagree) — it does nothing
+there either. Against the measured floor this is decisive rather than cosmetic: **A2 clears at
+2.52x and A1 at 0.87x**, so the head takes the arm from clearing to not clearing.
+
+The reading, now that the ceiling is in: **the pure-text path `W t` is the contribution and the
+machinery around it is not.** That is a smaller claim than the architecture was designed to make
+and a better-supported one, and it points at a specific change — either drop the residual path for
+unseen entities or gate it on something that knows when it is unreliable, rather than adding it
+unconditionally.
+
+**The split is not the explanation.** Descriptor coverage on the two sides is the same: 192/204
+held-out genes carry a summary (94.1%) against 774/813 kept (95.2%), a gap of −1.1 points, with
+**zero** bare symbols on either side and median descriptors of 546 vs 572 characters. Twelve
+held-out genes lack a summary where a metadata-blind draw predicts 10.2 ± 2.8. So A1/A2 were not
+handicapped by a thin text channel, and — worth stating in the methods — **83% of the summaries
+are a human orthologue's, labelled as such in the descriptor**, so what A2 demonstrates is that
+MedCPT places a *mouse* gene from mostly *human* text.
+`reports/t09_zeroshot_text_coverage_deep.json`.
 
 
 ### E1 runs on the campaign machine only

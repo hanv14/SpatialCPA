@@ -148,3 +148,24 @@ Per-seed fold means, then the arm's own across-seed spread.
 
 **Void condition** — A4 must sit inside the band. A4 is +0.0155 from it against the shared 0.1273 envelope (0.12x): **holds**, no leak detected.
 
+**Against the room actually available** (`reports/t09_zeroshot_ceiling_deep.json`): the model-free ceiling on these genes is **0.9823** and the floor +0.0017, so the room is **0.9806**. The best arm, A3, reaches +0.0366 — **4%** of it.
+
+For scale on the same rows, copying a whole real section scores 0.9479, or 96% of the room — **context only; no zero-shot arm may copy.**
+
+## Secondary — `morans_pearson` on the `held_out` genes
+
+⚠️ **Not the pre-registered primary.** It is reported because the four-arm run's only positive landed here, and a metric promoted to primary *because* it produced a result is not a test. Read it as an observation with its own arithmetic shown.
+
+Floor is `shuffled` (+0.0382) — the constant field is degenerate on this metric. Shared envelope **0.0930** (`specs/10` §4.2b).
+
+| arm | mean | over floor | shared envelope | vs it |
+|---|---|---|---|---|
+| A1 (medcpt + distill) | +0.1196 | +0.0813 | 0.0930 | **0.87x** |
+| A2 (medcpt, pure text) | +0.2729 | +0.2347 | 0.0930 | **2.52x** |
+| A3 (lookup + distill) | +0.0215 | -0.0167 | 0.0930 | **0.18x** |
+| A4 (lookup, pure text) | -0.0270 | -0.0653 | 0.0930 | **0.70x** |
+
+**Against the room actually available** (`reports/t09_zeroshot_ceiling_morans_deep.json`): the model-free ceiling on these genes is **0.9956** and the floor +0.0382, so the room is **0.9574**. The best arm, A2, reaches +0.2729 — **25%** of it.
+
+For scale on the same rows, copying a whole real section scores 0.9748, or 98% of the room — **context only; no zero-shot arm may copy.**
+

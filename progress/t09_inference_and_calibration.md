@@ -2651,3 +2651,53 @@ is not in this repo. 51 of 1017 genes carry no summary; under a draw blind to me
 204 would contain **10.2 ± 2.8** of them (95% of draws 5–16). A count well outside that range would
 mean the stratified draw picked up a metadata bias and A1/A2 were handicapped for a reason
 unrelated to the text channel. `scripts/t09_zeroshot_text_coverage.py` reports it in seconds.
+
+### T09 — the ceiling clears: the pure-text channel is the contribution (2026-08-31)
+
+Three model-free runs on `deep_starmap`, no fits. `reports/t09_zeroshot_ceiling_morans_deep.json`,
+`reports/t09_zeroshot_ceiling_deep.json`, `reports/t09_zeroshot_text_coverage_deep.json`, all
+folded into `reports/t09_zeroshot_deep.md` by the aggregator so no number here is transcribed.
+
+**1. `morans_pearson` has room, and A2 uses a quarter of it.** Ceiling **0.9956** (held-out;
+`self` 1.0 or 0.9999999999999998, i.e. float, on every row), shuffled floor **+0.0382**, room
+**0.9574**. Against it:
+
+| arm | mean | over floor | vs the 0.0930 shared envelope |
+|---|---|---|---|
+| A1 `medcpt` + distill | +0.1196 | +0.0813 | 0.87x — **does not clear** |
+| **A2 `medcpt`, pure text** | **+0.2729** | **+0.2347** | **2.52x — clears** |
+| A3 `lookup` + distill | +0.0215 | −0.0167 | 0.18x |
+| A4 `lookup`, pure text | −0.0270 | −0.0653 | 0.70x, *below* the floor — correct for a
+gene-blind arm |
+
+A2 reaches **25%** of the room; copying a whole real section reaches 98%. So the capability is
+real and three quarters of it is unclaimed — the opposite of the saturation that sank the
+`deep_starmap` reconstruction comparison.
+
+**2. The primary's failure is not the metric's fault.** `marker_depth_r`'s held-out ceiling is
+**0.9823** with room **0.9806**, and the best arm uses **4%** of it against copying's 96%. The
+room is there; the arms cannot reach it. REFUTATION OF THE IDEA stands on that metric.
+
+**3. The distillation head is what breaks the claim.** A2 clears at 2.52x and A1 at 0.87x. The
+head does not merely cost 0.1533 on this metric — it takes the arm from clearing the floor to not
+clearing it. On kept genes it does nothing (−0.0008, signs disagree). **`W t` is the contribution;
+`gamma psi(t)` is not.**
+
+**4. The split is clean, so the result is not an artifact of it.** Held-out 192/204 with a summary
+(94.1%) against kept 774/813 (95.2%) — gap −1.1 points, zero bare symbols either side, median
+descriptor 546 vs 572 chars. Twelve held-out genes lack a summary where a metadata-blind draw
+predicts **10.2 ± 2.8** — dead centre. And 83% of the summaries are a **human orthologue's**, so
+A2's demonstration is MedCPT placing a *mouse* gene from mostly *human* text.
+
+**5. The normalisation fix was real, and the two instruments now agree.** Re-running
+`marker_depth_r`'s ceiling with the pool-restricted size factor moves the ceiling barely
+(0.9803 → 0.9808, 0.9854 → 0.9838) but moves the constant field a lot (+0.0416 → −0.0188,
++0.0299 → +0.0124). The instrument's held-out constant field and the *scorer's* band were
+**0.0341** apart before the fix and are **0.0049** apart after — a 7x reduction, which is the
+independent check that the two were computed under one normalisation rather than two.
+
+**Status of the positive.** It is a **strong observation, not a claim.** `marker_depth_r` was
+pre-registered as primary before any fit; `morans_pearson` is reported because the run's only
+positive landed there, and a metric promoted to primary because it produced a result is not a
+test. What would make it a claim is a **pre-registered replication on `morans_pearson`**, ideally
+on a second dataset. That is now the cheapest high-value thing left in E1.
