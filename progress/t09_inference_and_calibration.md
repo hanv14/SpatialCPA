@@ -2432,3 +2432,29 @@ either side of the fix: **−0.1596 → −0.1808** on the held-out genes (seen 
 Both are far below the 0.4 the test asks for and it stays a strict xfail, so the fix changes no
 verdict — but the direction is the one the leak predicts, and −0.16 was the number with held-out
 genes in the conditioning. 382 fast tests pass; `ruff` and `mypy --strict` clean.
+
+### T09 — the zero-shot fits: six clean cold fits on `deep_starmap` (2026-08-31)
+
+Six cold fits, three seeds x two `text_emb_mode` arms, 2400 steps, one thread each, six-up.
+
+| seed | `medcpt` config | s | `lookup` config | s |
+|---|---|---|---|---|
+| 2 | `2a947e26e6310658` | 13737 | `4a47030a2417aada` | 14712 |
+| 3 | `4ceac85c7eba8d80` | 13907 | `9061b48fc78368b7` | 14113 |
+| 4 | `c86cb080be73ac87` | 14020 | `40c90b6e4b71dd04` | 14126 |
+
+**Six distinct config hashes**, so seed and `text_emb_mode` both took and no fit was silently
+reused. **One split in all six runs** — 813 kept / 204 held out, seed 7, 5x5 strata on
+`section_1` — so the ceiling measured on that split applies to these fits. **The text channel is
+identical across arms**: 1017/1017 genes with metadata, 0 bare, 966 with a summary, byte-identical
+`A2M` example, so `lookup` differs by having the channel zeroed and not by seeing different text.
+The pre-fit basis assertion exits before the model is built, so six completed fits is its evidence
+— though it prints nothing on success, and it should print the count of non-zero held-out basis
+rows it actually found rather than leaving the reader to infer the check from the absence of a
+crash.
+
+**Cost: 84 615 s = 23.5 core-hours**, 3.82–4.09 h per fit (mean 3.92), ~4.1 h wall six-up. I
+quoted 3.3–3.8 h from the previous deep campaign and this is over it: **the fifth consecutive
+low estimate**. The measured record is now unambiguous and is what to quote — a `deep_starmap`
+cold fit at 2400 steps has never come in under **3.8 h** on this box, and 6 fits cost ~23.5
+core-hours, not the ~21 approved.
