@@ -3278,3 +3278,74 @@ and must not be reported as continuous with them** — that statistic is `share_
 void here.
 
 ⚠️ **Unchanged: no outcome reopens the negatives.** They were fitted under the shipped link.
+
+### T09 — R12's structured share on a current fit: the latent carries the range, the emission still loses it (2026-08-31)
+
+`reports/t09_structured_share_deep.json`, `medcpt`, seed 2, both folds, `decoder_mu_link="exp"`,
+config `2a947e26e6310658` — the seed-2 line from the campaign log. `n_genes_decomposed: 813`
+confirms the kept-pool restriction is now real.
+
+| fold | bounded share | `retention_top` | counts I (top-32) | real I (top-32) |
+|---|---|---|---|---|
+| `section_3` | **0.8681** | **0.2457** | 0.0714 | 0.2906 |
+| `section_5` | **0.8499** | **0.3413** | 0.0966 | 0.2830 |
+
+#### The pre-registered verdict, and why the bin is not the finding
+
+By the letter: **STILL BROKEN**. `retention_top` on `section_3` is **0.24568** against the 0.25
+cut — it fires by **0.00432, 1.7% of the threshold**, on one fold of one seed, against a
+**between-fold spread of 0.0956** on the same statistic. The spread is **22x the margin**. I will
+not defend that bin, and reporting it as a categorical result would be the fourth threshold
+failure in this session rather than a finding.
+
+The pre-registration also has a structural gap the run exposed: SOUND **ANDs** its two components
+while STILL BROKEN **ORs** them, so a split verdict — one component emphatic on the sound side,
+the other on the broken side — lands in BROKEN by construction. That is exactly what happened, and
+it flattens a two-part answer into one word.
+
+**The substantive reading is the same under any bin, and it is a two-part answer:**
+
+1. **The decoder's between-cell dynamic range is latent-driven, decisively.**
+   `share_shape_bounded` is **0.85–0.87** — the latent shape carries ~six times the variance of
+   the size factor (`var_shape` 0.104–0.108 against `var_logsize` 0.016–0.018). This confirms on a
+   **current real-data fit** what R12 had ruled out on a saved model: the size factor is not the
+   problem. The covariance is negative (−0.018), which is why the unbounded `share_shape` reads
+   1.21 and why it is void as a statistic.
+2. **The emission still loses two thirds to three quarters of the spatial structure.** Over the 32
+   most structured kept genes, the model emits Moran's I of **0.071–0.097** where the real section
+   has **0.283–0.291**. R12's expression half is **open**, and now localised further: not the size
+   factor, not the link — `exp` is in place and confirmed by the fit's own config hash — but the
+   **count draw itself**, which is where the pilot's chain measurement put it.
+
+#### ⚠️ The saved-model `exp` result does not reproduce here
+
+R12's record has `exp` taking counts Moran's I to **+0.4782** against tissue's **+0.4635** — a
+retention of **~103%**. On this fit it is **25–34%**. Two candidate explanations and no
+measurement separating them yet:
+
+* **Dataset.** The 0.4782/0.4635 pair is tier-1 STARmap's **28-gene marker panel**, where every
+  gene is spatially structured; this is `deep_starmap`'s top 32 of 813, a different selection on a
+  different tissue. The panel-transfer problem that voided the previous run applies to the
+  *record's* numbers too, not only to mine.
+* **The saved model's own caveats**, recorded at the time: 48 343 emitted cells against a ground
+  truth of 4 187, and `sd(log mu)` 0.777 against tissue's 1.213. Here `sd_log_mu` is **0.287–0.295**
+  — lower still.
+
+**Until one of those is established, R12's "candidate 1 recovered it" must not be quoted as a
+property of the shipped decoder.** It is a property of one saved model on one panel.
+
+#### What is measured next, and why
+
+The `lookup` arm on the same seed and folds. It shares the decoder architecture and differs only
+in the gene embedding, so:
+
+* if `share_shape_bounded` and `retention_top` land close to `medcpt`'s, they are **decoder
+  properties** and the two-part reading above stands as a statement about the emission model;
+* if they differ materially, retention depends on the embedding, and "the emission loses the
+  structure" is the wrong attribution.
+
+It also doubles the `retention_top` sample from two fold-values to four — which, given the verdict
+turned on 0.00432 against a 0.0956 fold spread, is the cheapest thing that can be done about the
+one number the reading is thinnest on. **It is still one seed**, and a spread over four folds of
+one seed is not an envelope; the honest ceiling on what this can establish is a direction and a
+magnitude, not a categorical verdict.
