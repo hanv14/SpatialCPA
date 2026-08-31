@@ -3036,14 +3036,20 @@ between-cell variance against 62%.
 count draw loses 0.73 of Moran's I where real tissue loses 0.27 — and then to a candidate cause:
 switching the decoder's mean link from `softplus` to `exp` takes the structured share of
 between-cell variance from **15.1% to 61.4%** against tissue's 62.2%, with counts Moran's I
-+0.1297 → +0.4782 against tissue's +0.4635. `ZINBDecoder`'s docstring says `exp` while `Config`
-ships `softplus`, so **this may be a defaulting error rather than a design choice.**
++0.1297 → +0.4782 against tissue's +0.4635.
 
-This is the most valuable open item in the project, and it is unresolved: it was measured on a
-saved model with caveats (cell count 48 343 against a GT of 4 187; `sd(log mu)` still below
-tissue's) and it has never been carried through a full fit and re-scored. **If `exp` survives a
-proper refit, several of the negatives above were measured on a mis-defaulted decoder and owe a
-re-run.** That possibility has to be stated in the paper whatever the outcome.
+⚠️ **Two sentences that stood here were wrong and are corrected below** (2026-08-31). They said
+the `softplus`/`exp` mismatch "may be a defaulting error" and that `exp` "has never been carried
+through a full fit and re-scored". **`Config.decoder_mu_link` has defaulted to `exp` since
+2026-08-21**, and every real-data audit in this project is dated **2026-08-25 or later**. The
+defaulting error was found and fixed before the campaign; the campaign fits used `exp`. See the
+close-out addendum.
+
+What is genuinely open is narrower: **the structured share has never been read off a current
+real-data fit.** The 15.1% is a tier-1 *pilot* number under `softplus`; the 61.4% came from a
+saved model with caveats stated at the time (48 343 emitted cells against a ground truth of
+4 187, `sd(log mu)` 0.777 against tissue's 1.213). Neither describes what the shipped decoder does
+on the fits the negatives were actually measured from.
 
 ### What is genuinely new — the methods contribution
 
@@ -3089,8 +3095,8 @@ rules rather than observations.
    likelihood term reduced by moving explanatory power from the structured component into the
    unstructured one, with nothing in the objective opposing it. This is the single largest open
    question and it is a design decision, not a tuning one.
-2. **R12 / `decoder_mu_link`** — cheap to test, and it may invalidate re-runs of several negatives.
-   Arguably should be first on cost alone.
+2. **R12's structured share, read off the existing fits** — see the addendum; it needs no refit
+   and it is the cheapest open item in the project.
 3. **The `morans_pearson` replication** pre-registered above — the only route by which this project
    gets a positive capability claim.
 4. **A7 (SEFL's net contribution)** — currently the paper ships three losses at zero weight and
@@ -3109,6 +3115,83 @@ rules rather than observations.
 > establish these results — per-arm envelopes, referent-validity tests, and a leak taxonomy for
 > held-out-gene experiments — is the transferable contribution.
 
-**What would change this assessment**: `decoder_mu_link="exp"` surviving a full refit, which could
-turn several of the negatives into a re-run rather than a result; or the replication above
-returning SUPPORT, which would give the open-vocabulary claim one dataset-independent leg.
+**What would change this assessment**: the replication above returning SUPPORT, which would give
+the open-vocabulary claim one dataset-independent leg. (An earlier version of this sentence also
+named a `decoder_mu_link` refit; that was based on the two mistaken claims corrected above.)
+
+## ⚠️ CLOSE-OUT ADDENDUM — the `exp` refit is not owed, because it already happened (2026-08-31)
+
+The close-out above put `decoder_mu_link` second on the spend list and said the negatives might
+have been fitted under a mis-defaulted decoder. Asked to plan that refit first — correctly, on the
+close-out's own logic — I checked the code before planning around it. **The premise does not
+hold**, and it was my close-out that put it there.
+
+**What the code and history say.**
+
+* `Config.decoder_mu_link` is **`"exp"`** (`config.py:942`), and `ZINBDecoder`'s docstring records
+  it as "**`exp` by default since T10**". There is no docstring/config mismatch to find.
+* The default changed in commit `1968c09`, **2026-08-21**: *"decoder_mu_link defaults to exp:
+  T06's own revisit condition, met by T10"*.
+* Every real-data audit is later: `layout_mode` ships as `resample` **2026-08-25**; the tier-1
+  audits **2026-08-26**; the `deep_starmap` audits **2026-08-27**; the envelope re-measurement
+  **2026-08-27**; the zero-shot campaign **2026-08-31**.
+* `scripts/_starmap_run.BENCH3_KEYS` sets only the four dataset key names and does **not** override
+  the link, so every campaign fit took the default.
+
+So the layout comparison, both expression comparisons and the text results were fitted under
+`exp`. **No refit is owed and nothing in the close-out's negative column is attributable to a
+`softplus` decoder.**
+
+**That is an argument from dates and defaults, and it is settled by measurement, not by me.**
+`decoder_mu_link` is inside `Config.content_hash()` — `b6fb1c71844ffe7f` against `079785968f93ec11`
+on an otherwise identical config — and `FitCheckpoint` stores the writing run's hash.
+`scripts/t09_checkpoint_config.py` rebuilds the campaign config both ways and reports which the
+checkpoint matches, or **NEITHER**, in which case the link cannot be read off the hash and the
+script says so instead of guessing.
+
+### What is actually open, and it costs no fits
+
+**R12's headline number is stale on both sides.** The **15.1%** structured share is a *tier-1
+pilot* measurement under `softplus`; the **61.4%** is from a saved model under `exp` with caveats
+recorded at the time (48 343 emitted cells against a ground truth of 4 187; `sd(log mu)` 0.777
+against tissue's 1.213). Neither is a measurement of what the **shipped** decoder does on a
+**current** real-data fit — and six such fits exist on the campaign machine.
+
+`scripts/t09_structured_share.py` reads it off them: load a zero-shot checkpoint (11–12 s, the
+scorer's measured reload), generate each fold, and report `share_shape`, `sd_log_mu`, the emitted
+counts' median Moran's I and the real section's, on `t10_chain_diagnostic`'s own estimators so the
+numbers are comparable to the record. **Restricted to the kept genes**, because a share computed
+over genes that never entered a batch is not evidence about the shipped configuration.
+
+### Pre-registered before the run — what "the shipped decoder is sound" means
+
+Stated now, with the same discipline as the replication, and against R12's own numbers.
+
+**SOUND** — the emission model is not the bottleneck the pilot measured, and R12's expression half
+closes: **`share_shape` ≥ 0.50 on every fold and every arm** (tissue 62.2%; the pilot's failing
+value 15.1%), **and** retention — the emitted counts' median Moran's I over the real section's —
+**≥ 0.50 on every fold**.
+
+**STILL BROKEN** — `share_shape` < 0.30 anywhere. The `exp` link did not carry its saved-model
+result into a real fit, R12's expression half stays open, and the emission model is a live
+candidate for the negatives after all. **This is the only outcome that would owe a refit**, and it
+would be a refit of the *decoder design*, not of the link.
+
+**PARTIAL** — between 0.30 and 0.50, or the two folds disagreeing across that band. R12 stays open
+with a sharper number than it has now, and the next step is the decoder design question T06 is
+owed rather than another link sweep.
+
+⚠️ **Whatever it returns, it does not reopen the negatives.** They were fitted under the shipped
+link; a low share would mean the shipped link is *insufficient*, not that the comparisons used the
+wrong one. Those are different claims and the report must not blur them.
+
+### Cost
+
+| step | cost |
+|---|---|
+| `t09_checkpoint_config.py` over all six checkpoints | seconds, no generation |
+| `t09_structured_share.py`, one arm x one seed | one checkpoint load (~12 s) + 2 fold generations |
+| the same over three seeds x two arms, if the first disagrees across arms | still minutes |
+
+**No fits. Compare with the 47 core-hours the replication needs**, which is the reason to do this
+first — not the reason I gave in the close-out, which was wrong.
