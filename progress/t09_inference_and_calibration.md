@@ -2775,3 +2775,51 @@ mechanism decisively; the deep numbers are the ones in the write-up, and their d
 until the two ceiling commands are re-run. **Until that re-run the degeneracy of the deep constant
 fields is inference from a mechanism, not a measurement on those rows**, and the write-up should
 not claim otherwise.
+
+### T09 — ⚠️ the drift threshold failed on real data; the test is now the input (2026-08-31)
+
+The precision probe ran on `deep_starmap` and **did not reproduce the fixture's clean separation.**
+The eight constant-field rows drift, sorted:
+
+`0.0042  0.0092  0.0092  0.0111  0.0438  0.0545  0.0738  0.1905`
+
+A **continuum with no gap.** The 0.01 threshold fell between `morans s3 kept` (0.0092, called
+stable) and `morans s3 held_out` (0.0111, called degenerate) — two rows of identical construction
+on the same section. The flag came back mixed, 5 of 8, and that is a defect in my instrument, not
+a property of the data. The fixture's six-order separation (1e-2 against 1e-8) was real and was
+**not evidence that a fixed cut would hold on a real panel**; I generalised from it and should not
+have.
+
+**The sound test needs no threshold on the output, because it is a test of the input.** A
+referent answers "what does this metric return when there is nothing to find?" only if its input
+contains nothing to find — measurable without reference to the metric. `input_information` reports
+the largest per-gene coefficient of variation across cells, scale-free, with the `shuffled`
+referent measured beside it as the control **on the same rows**:
+
+| referent | input CV | verdict |
+|---|---|---|
+| constant field | **2.609e-07** (float32 epsilon) | no information; not a floor |
+| shuffled positions | **1.614e+01** | the panel's full variation; a floor |
+
+Eight orders of magnitude, and **identical for `marker_depth_r` and `morans_pearson`**, as it must
+be — it is the input being judged, not the metric. `INFORMATION_TOL = 1e-6` sits an order above
+float32 epsilon and seven below anything real, so unlike the drift cut it is not near either side.
+
+**The objection this has to answer, and does.** At double precision `section_5`'s held-out
+constant field reads **+0.3875**, not zero — against A2's +0.2147 on that fold. So "it is
+round-off" is not established by the value shrinking. The mechanism is that round-off in the
+centring step is **one ulp of each value**, so its pattern across genes tracks expression
+magnitude at *every* precision, and expression magnitude is what real Moran's I correlates with.
+Changing the mantissa changes the number without changing what it is. The input CV is what settles
+it: there is no variation in that input to correlate with anything.
+
+**Verdicts unchanged, and now reported under both referents.** Primary against `shuffled`
+(−0.0212): A1 0.42x, A3 0.45x, neither above the 0.1273 envelope — REFUTATION OF THE IDEA, the
+same as under the pre-registered constant-field band. Void condition holds (A4 0.30x). Secondary
+unchanged: A2 at 2.52x over the shuffled floor, 25% of the measured room.
+
+⚠️ **The input CV has been measured on the fixture, not on `deep_starmap`.** The deep run reported
+the *absolute* std (7.45e-09 to 2.98e-08), which is float32-epsilon scale but not scale-free. The
+next re-run emits `constant_field_input_cv_max` and `shuffled_input_cv_max` per row, and until it
+does, the deep constant fields' degeneracy rests on the mechanism plus an absolute std, not on the
+scale-free measurement.

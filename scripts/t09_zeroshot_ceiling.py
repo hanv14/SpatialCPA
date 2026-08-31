@@ -146,7 +146,6 @@ def side_ceiling(target, donors, pool, axis, cfg, rng, splits: int, shuffles: in
         _profile_f64(flat, xy, target.z, axis, markers, cfg, bounds, sigma, pool),
         _profile_f64(counts, xy, target.z, axis, markers, cfg, bounds, sigma, pool),
     )
-    normalised_flat = _normalised(flat, cfg, pool).numpy()
     others = []
     for donor in donors:
         d_counts = np.asarray(donor.counts.todense(), dtype=np.float64)
@@ -181,10 +180,11 @@ def side_ceiling(target, donors, pool, axis, cfg, rng, splits: int, shuffles: in
         "constant_field": constant,
         "constant_field_float64": constant_f64,
         "constant_field_precision_drift": abs(constant - constant_f64),
-        "constant_field_input_std_max": float(
-            normalised_flat[:, np.asarray(pool, dtype=np.int64)].std(axis=0).max()
-        ),
-        "constant_field_is_degenerate": bool(abs(constant - constant_f64) > DEGENERACY_TOL),
+        **input_information(flat, cfg, pool, "constant_field"),
+        # The stable-referent control, on these rows rather than on another dataset: `shuffled`
+        # keeps the real counts and only moves the positions, so its input carries the panel's
+        # full variation and it is what "not degenerate" looks like here.
+        **input_information(counts, cfg, pool, "shuffled"),
         "best_other_section": max((o["r"] for o in others), default=float("nan")),
         "others": others,
     }
@@ -204,13 +204,32 @@ def autocorr_vector(counts, coords_xy, cfg, pool) -> np.ndarray:
     return np.asarray(values[np.asarray(pool, dtype=np.int64)], dtype=np.float64)
 
 
-DEGENERACY_TOL = 0.01
-"""How far a referent may move between float32 and float64 before it is called degenerate.
+INFORMATION_TOL = 1e-6
+"""Largest per-gene coefficient of variation an input may have and still carry no information.
 
-A referent that means something is a *function of the data* and is precision-stable: recomputing
-it at double precision moves it by ~1e-6. A referent that is round-off on a ``0/0`` is a function
-of summation order, and doubling the mantissa moves it by O(0.1-1). The threshold sits two orders
-above the first and one below the second, so the two cases are not close to each other.
+**This, and not the precision drift, is what decides degeneracy.** A referent answers "what does
+this metric return when there is nothing to find?" only if its input really contains nothing to
+find. The constant field gives every cell the same value for a gene, so its across-cell CV should
+be exactly 0 and in practice sits at the working precision's epsilon (~1e-7 for float32). An input
+whose relative variation is at the level of the arithmetic itself holds no spatial signal, so
+whatever the metric returns for it is the metric's behaviour on a degenerate input — **at any
+magnitude, and whatever the precision drift happens to be**. The tolerance sits an order above
+float32 epsilon and five orders below anything real.
+
+⚠️ **A drift threshold was tried first and was wrong.** The synthetic fixture separated cleanly —
+constant-field drift ~1e-2 against ~1e-8 for referents with real variance — and a 0.01 cut looked
+principled. On `deep_starmap` the eight constant-field rows drift 0.0042, 0.0092, 0.0092, 0.0111,
+0.0438, 0.0545, 0.0738, 0.1905: a **continuum with no gap**, so the cut fell between two rows of
+identical construction and called one stable and the other degenerate. A threshold that separates
+nothing is a defect in the instrument, not a finding about the data.
+
+**Why a large float64 value is still round-off.** At double precision `section_5`'s held-out
+constant field reads +0.3875 rather than +0.5780 — smaller, but nowhere near zero, and a reader is
+right to ask why. Round-off in the centring step is proportional to each value's own magnitude
+(one ulp of it), so its *pattern across genes* tracks expression level at **every** precision,
+and expression level is what real Moran's I correlates with. Doubling the mantissa changes the
+number without changing what it is. That is exactly why the input test decides and the drift is
+only corroboration.
 """
 
 
@@ -260,21 +279,37 @@ def constant_field_probe(counts, coords_xy, cfg, pool, v_target) -> dict:
     failure this function exists to remove.
     """
     constant = np.broadcast_to(counts.mean(axis=0), counts.shape).copy()
-    normalised = _normalised(constant, cfg, pool).numpy()
     f32 = safe_r(autocorr_vector(constant, coords_xy, cfg, pool), v_target)
     f64 = safe_r(
         _autocorr_vector_f64(constant, coords_xy, cfg, pool),
         _autocorr_vector_f64(counts, coords_xy, cfg, pool),
     )
-    drift = abs(f32 - f64)
     return {
         "constant_field": f32,
         "constant_field_float64": f64,
-        "constant_field_precision_drift": drift,
-        "constant_field_input_std_max": float(
-            normalised[:, np.asarray(pool, dtype=np.int64)].std(axis=0).max()
-        ),
-        "constant_field_is_degenerate": bool(drift > DEGENERACY_TOL),
+        "constant_field_precision_drift": abs(f32 - f64),
+        **input_information(constant, cfg, pool, "constant_field"),
+    }
+
+
+def input_information(values, cfg, pool, name: str) -> dict:
+    """Does this referent's input carry anything to find? ``{name}_input_cv_max``, and the verdict.
+
+    The largest per-gene coefficient of variation across cells, over genes with a non-zero mean —
+    scale-free, so it means the same thing on a fixture and on a 1017-gene panel, which an
+    absolute standard deviation does not. Genes with a zero mean are excluded: their CV is 0/0 and
+    they carry no information either way.
+    """
+    normalised = _normalised(np.asarray(values, dtype=np.float64), cfg, pool).numpy()
+    columns = normalised[:, np.asarray(pool, dtype=np.int64)]
+    mean = np.abs(columns.mean(axis=0))
+    live = mean > 0.0
+    cv = np.zeros_like(mean)
+    cv[live] = columns.std(axis=0)[live] / mean[live]
+    worst = float(cv.max()) if cv.size else 0.0
+    return {
+        f"{name}_input_cv_max": worst,
+        f"{name}_is_degenerate": bool(worst <= INFORMATION_TOL),
     }
 
 
@@ -350,6 +385,9 @@ def side_ceiling_autocorr(target, donors, pool, cfg, rng, splits: int, shuffles:
         "noiseless_ceiling": float(np.sqrt(reliability)) if reliability > 0 else float("nan"),
         "shuffled_floor": shuffled,
         **probe,
+        # The stable-referent control on these same rows: `shuffled` keeps the real counts and
+        # moves only the positions, so its input carries the panel's full variation.
+        **input_information(counts, cfg, pool, "shuffled"),
         "best_other_section": max((o["r"] for o in others), default=float("nan")),
         "others": others,
     }

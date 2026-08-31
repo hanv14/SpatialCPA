@@ -74,33 +74,39 @@ VALID_FLOOR: dict[str, tuple[str, ...]] = {
 }
 """Which referents mean something for which metric.
 
-⚠️ **`constant_field` is a floor for nothing, on any metric.** An earlier version of this table
-kept it for the two profile metrics on the argument that `soft_depth_profile`'s bin normalisation
-makes a constant field's profile track cell density — a real, if small, no-information reference —
-while `morans_pearson` mapped the same input to `0/0`. **That argument was wrong, and the
-correction came from measuring instead of reasoning.** The precision probe in
-`t09_zeroshot_ceiling.py` recomputes each referent at double precision; a referent that is a
-function of the data does not move, and one that is a function of summation order does. On the
-fixture:
+⚠️ **`constant_field` is a floor for nothing, on any metric.** A referent answers "what does this
+metric return when there is nothing to find?" only if its input contains nothing to find. The
+constant field gives every cell the same value for a gene, so its across-cell coefficient of
+variation should be zero and measures **2.6e-07** — float32 epsilon — against **16.1** for the
+`shuffled` referent on the same rows. Eight orders of magnitude, and identical for both metrics,
+because it is a property of the input rather than of the metric. An input with no variation holds
+no spatial signal, so whatever a metric returns for it is that metric's behaviour on a degenerate
+input, at any magnitude.
 
-| referent, metric | drift f32 -> f64 |
-|---|---|
-| constant field, `marker_depth_r` | **4.8e-2** |
-| constant field, `morans_pearson` | **1.7e-2** |
-| shuffled, `morans_pearson` | 5.9e-8 |
-| shuffled, `marker_depth_r` | 3.7e-9 |
-| a real donor section, `morans_pearson` | 2.2e-8 |
+⚠️ **Two earlier versions of this note were wrong, in different ways.** The first kept the
+constant field for the two profile metrics, arguing that `soft_depth_profile`'s bin normalisation
+makes it a real function of cell density; that was reasoning where a measurement was available.
+The second replaced it with a **precision-drift threshold** — recompute at float64, call a
+referent degenerate if it moves more than 0.01 — which separated cleanly on the synthetic fixture
+(1e-2 against 1e-8) and **failed on real data**: `deep_starmap`'s eight constant-field rows drift
+0.0042, 0.0092, 0.0092, 0.0111, 0.0438, 0.0545, 0.0738, 0.1905, a continuum with no gap, so the
+cut fell between two rows of identical construction and called one stable and the other not. Drift
+is now reported as corroboration and decides nothing.
 
-Six orders of magnitude separate the constant field from every input carrying real variance — and
-it is *worse* on the profile metric the earlier argument defended. `shuffled` is the floor for the
-four gene-dependent metrics. `umap_mixing` has none: `_mixing` reads no coordinates, so shuffling
-returns the arm's own score."""
+The reason a large float64 value is still round-off: the error in the centring step is one ulp of
+each value, so its *pattern across genes* tracks expression level at every precision, and
+expression level is what real Moran's I correlates with. `section_5`'s +0.5780 reads +0.3875 at
+double precision — a different number, the same artifact.
+
+`shuffled` is the floor for the four gene-dependent metrics: real counts, permuted positions, so
+the pairing is destroyed and both marginals survive. `umap_mixing` has none — `_mixing` reads no
+coordinates, so shuffling returns the arm's own score."""
 
 FLOOR_NOTE = {
-    "morans_pearson": "constant field is precision-unstable, not a floor",
-    "gearys_pearson": "constant field is precision-unstable, not a floor",
-    "marker_field_r": "constant field is precision-unstable, not a floor",
-    "marker_depth_r": "constant field is precision-unstable, not a floor",
+    "morans_pearson": "constant field carries no variation in its input, so it is not a floor",
+    "gearys_pearson": "constant field carries no variation in its input, so it is not a floor",
+    "marker_field_r": "constant field carries no variation in its input, so it is not a floor",
+    "marker_depth_r": "constant field carries no variation in its input, so it is not a floor",
     "umap_mixing": "shuffled is the arm's own score (`_mixing` reads no coordinates); "
     "constant field is degenerate like every other. No usable floor.",
     "celltype_localization": "gene-free and constant across arms and seeds; not a contrast",
