@@ -2458,3 +2458,41 @@ quoted 3.3–3.8 h from the previous deep campaign and this is over it: **the fi
 low estimate**. The measured record is now unambiguous and is what to quote — a `deep_starmap`
 cold fit at 2400 steps has never come in under **3.8 h** on this box, and 6 fits cost ~23.5
 core-hours, not the ~21 approved.
+
+### T09 — two of my referents are not floors, and the aggregator now refuses them (2026-08-31)
+
+The scored seed files came back and the first thing they say is about the **referents**, not the
+arms. Both defects are mine, both were established by reproduction rather than by argument, and
+both would have turned an unusable band into a published claim.
+
+**The constant field is float32 round-off on `morans_pearson` and `gearys_pearson`.** A constant
+field has *exactly* zero per-gene variance after normalisation, so Moran's I and Geary's C are
+`0/0`. What comes back is round-off — and it is not random, because it scales with the gene's own
+magnitude and therefore correlates with the real per-gene statistic. Measured on the fixture:
+normalised per-gene std **exactly 0.0**, generated Moran's I std **3.5e-8**, `morans_pearson`
+**+0.2207**. On `deep_starmap` the same referent reads **+0.5326** (`section_3`) and **+0.5073**
+(`section_5`), with `gearys_pearson` at **−0.4659** / **−0.4883**. Read naively, every arm "fails
+to beat a constant field" on Moran's — a sentence about float32, not about the model.
+
+**The shuffled referent is a no-op on `umap_mixing`.** `_mixing` never sees a coordinate — two
+clouds are mixed in expression space — so permuting positions returns the arm's own score. In the
+seed files it agrees with A1 to every printed digit *because it is A1*; on the fixture,
+`_mixing(gen, real)` and `_mixing(gen[shuffled], real)` are both 0.000444.
+
+So the usable floors are: `shuffled` for the two autocorrelation metrics, `constant_field` **and**
+`shuffled` for the two profile metrics, and **none at all** for `umap_mixing`. The primary metric
+`marker_depth_r` is one of the two with a working band, so the pre-registration's primary
+criterion is unaffected. `scripts/t09_zeroshot_aggregate.py` encodes the mapping and prints
+"**none** — …" with the reason rather than a number, so the invalid bands cannot be quoted by
+accident.
+
+**`celltype_localization` carries no information here and is excluded from every contrast.** It is
+gene-free, and under `layout_mode=resample` the generated layout is identical across all four arms
+*and* all three seeds — `0.6743207385784847` on `section_3` and `0.5313570018082987` on
+`section_5` in every cell of the design. That is a useful fact in its own right: all across-seed
+variation in these runs comes from the expression path, so the envelopes measured here are
+**narrower than a full envelope** and should not be quoted as one.
+
+The aggregator's verdict logic was exercised on two fabricated seed sets with known answers before
+it saw a real one — a positive (A1 beating A3 by 0.30 at every seed and fold: reports SUPPORT) and
+a null (every arm on the band: reports REFUTATION OF THE IDEA, void condition holds).
