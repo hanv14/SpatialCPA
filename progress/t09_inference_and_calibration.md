@@ -2496,3 +2496,77 @@ variation in these runs comes from the expression path, so the envelopes measure
 The aggregator's verdict logic was exercised on two fabricated seed sets with known answers before
 it saw a real one — a positive (A1 beating A3 by 0.30 at every seed and fold: reports SUPPORT) and
 a null (every arm on the band: reports REFUTATION OF THE IDEA, void condition holds).
+
+### T09 — the four-arm zero-shot result on `deep_starmap` (2026-08-31)
+
+Three seeds x two fits x four arms x two folds x two gene pools = 72 scored cells,
+`reports/t09_zeroshot_deep.md`. The pre-registration applied exactly as written, plus the one
+case it did not name.
+
+#### The primary comparison is UNRESOLVED, and the reason is power, not category
+
+`marker_depth_r` on the held-out genes, **A1 - A3 = -0.0044** against a 0.1273 envelope (0.0x),
+signs disagreeing across seeds *and* folds (+0.0444, -0.1161, -0.0155, -0.0622, +0.0222, +0.1010).
+Support fails at the first clause and is not close.
+
+| arm | mean | over the +0.0017 band | own across-seed envelope | ratio |
+|---|---|---|---|---|
+| A1 `medcpt` + distill | +0.0322 | +0.0305 | 0.1273 | 0.24x |
+| A3 `lookup` + distill | +0.0366 | +0.0349 | 0.0320 | **1.09x** |
+| A4 `lookup`, pure text | +0.0171 | +0.0155 | 0.0710 | 0.22x |
+
+A3 clears the band, A1 does not, so **neither refutation branch applies**: the architecture branch
+needs both clear, the idea branch needs neither. Recorded as **UNRESOLVED** rather than rounded
+into the nearer branch.
+
+**And that verdict is a coin-flip on a convention.** A1 and A3 sit within 0.004 of each other;
+what separates them is that A3's across-seed spread is 0.032 and A1's is 0.127. Under the
+worse-arm envelope convention this project uses for every *contrast* (specs/10 §4.2a), A3's
+clearance would be 0.0349/0.1273 = **0.27x** and the verdict would read REFUTATION OF THE IDEA.
+The pre-registration wrote "that metric's own per-arm across-seed envelope" and did not say which
+arm's for a single-arm clearance; 1.09 against a threshold of 1.0 does not survive that ambiguity.
+
+The honest headline is **underpowered**: on the primary metric A1's across-seed envelope is
+**4x its own distance above the band**. Three seeds cannot resolve this question, and a range
+over three draws does not shrink fast enough for a few more to fix it.
+
+#### The one positive, and it is not on the primary metric
+
+**`morans_pearson` on the held-out genes, A2 - A4 = +0.2999**, envelope 0.0532, **5.6x**, signs
+agreeing at 6 of 6 seed-fold cells, fold balance 0.38: **STANDS**. Against the *usable* floor for
+that metric (`shuffled`, +0.0382) A2's +0.2729 clears by 5.0x its own envelope.
+
+A2 is `norm(W t)` and A4 is `norm(0)` — one vector for every gene. So MedCPT text alone
+reproduces the per-gene Moran's I ordering of genes the model never saw, far above an arm that
+cannot tell two genes apart. Head to head against the other route, **A2 - A3 = +0.2514** (2.7x,
+6/6 signs) — flagged "one fold carries it" because of a single anomalous cell (seed 2,
+`section_5`, where A3 scores +0.1493 against its own range of -0.065..+0.063 elsewhere); 5 of the
+6 cells show the full gap.
+
+**The caveat that stops this being a claim**: `morans_pearson`'s ceiling on the held-out genes was
+never measured. The pre-registration named `marker_depth_r` primary *because* it is the one metric
+whose ceiling on these genes is known (0.9803/0.9854). +0.27 against a floor of +0.04 might be
+most of the available room or a tenth of it, and nothing here says which.
+
+#### The sign of the text channel's value flips between seen and unseen genes
+
+Within the same fits, in the same run:
+
+* **kept (seen) genes**: `lookup` beats `medcpt` — A1 - A3 = -0.1330 (5.8x, 6/6 signs, balance
+  0.83) and A2 - A4 = -0.1312 (8.3x) on `morans_pearson`, with `gearys_pearson`, `umap_mixing`
+  and `marker_field_r` all STANDS in the same direction. The two established three-seed negatives
+  reproduce on a third gene pool.
+* **held-out (unseen) genes**: `medcpt` pure text beats `lookup` pure text by +0.2999 on the same
+  metric.
+
+That is the paper's thesis stated as a measurement — a free lookup table wins where it has a row
+and loses where it does not — and it is the first within-run evidence for it in this project. It
+rests on one metric with an unmeasured ceiling, and should not be written up as more than that
+until the ceiling exists.
+
+#### What the distillation head does
+
+`A1 - A2` on held-out `morans_pearson` = **-0.1533** (3.3x, 6/6 signs, flagged on fold balance
+0.06). Adding `gamma psi(t)` to the text channel *costs* 0.15 on the metric where the text channel
+works. On the kept genes the same contrast is -0.0008 (0.1x, signs disagree) — the head does
+nothing there. The head is not free, and on unseen genes it is actively harmful on this metric.

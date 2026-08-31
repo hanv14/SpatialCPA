@@ -53,7 +53,13 @@ ARM_LABEL = {
 
 CONTRASTS: tuple[tuple[str, str, str], ...] = (
     ("A1", "A3", "PRIMARY — does W.t add anything over a distillation head that sees the text?"),
-    ("A2", "A4", "pure text vs no text at all: the text channel with the residual out of the way"),
+    (
+        "A2",
+        "A3",
+        "the two routes to an unseen gene, head to head: text alone vs distillation alone. "
+        "Neither reads the free residual, which is zero for a held-out gene either way",
+    ),
+    ("A2", "A4", "pure text vs no text at all: the text channel against a gene-blind arm"),
     ("A1", "A2", "what the distillation head does to the text arm"),
     ("A3", "A4", "the distillation head with no text channel to help it"),
 )
