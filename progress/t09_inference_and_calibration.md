@@ -2701,3 +2701,77 @@ pre-registered as primary before any fit; `morans_pearson` is reported because t
 positive landed there, and a metric promoted to primary because it produced a result is not a
 test. What would make it a claim is a **pre-registered replication on `morans_pearson`**, ideally
 on a second dataset. That is now the cheapest high-value thing left in E1.
+
+### T09 — ⚠️ CORRECTION: the degeneracy flag was an assertion, and it was wrong about which metric (2026-08-31)
+
+Raised in review: the JSON carries `constant_field_is_degenerate: true` while `section_5`'s
+held-out constant field scores **+0.5780** against A2's **+0.2147** on the same fold — a null model
+outscoring the arm. Three questions, answered from the code rather than from memory.
+
+**1. What set the flag?** A hardcoded literal. `side_ceiling_autocorr` returned
+`"constant_field_is_degenerate": True` unconditionally, on the strength of a fixture reproduction I
+ran by hand. It was never computed per run, so in the JSON it was **indistinguishable from a
+measurement** to anyone reading it. That is the defect, and it is mine.
+
+**2. Where was the exclusion written down?** In `VALID_FLOOR` in the aggregator and in the
+progress entry of the same day — **not in `specs/10`, and not in the pre-registration**, which
+still says "clear the constant-field band" in all three of its outcome conditions. So the record
+carried a rule the pre-registration did not know about.
+
+**3. Is there an UNINFORMATIVE condition?** **No.** The pre-registration has SUPPORT, two
+REFUTATION branches, the void conditions, and (added later) UNRESOLVED. "Uninformative" is used
+elsewhere in this project — `progress/fixture_limitations.md`, R11 — but it is not a condition of
+this experiment, so `section_5` cannot trigger it. Stated plainly because the review asked
+directly.
+
+#### The flag is now measured, and the measurement contradicts what I wrote
+
+`constant_field_probe` recomputes each referent end to end at **double precision**. A referent that
+is a function of the data does not move; one that is a function of summation order does. Both arms
+of the probe are genuine recomputations — the first version cast a float32 profile to float64,
+which compares a number with itself and would have called everything stable.
+
+| referent, metric | f32 | f64 | drift |
+|---|---|---|---|
+| constant field, `marker_depth_r` | −0.004104 | +0.043830 | **4.8e-2** |
+| constant field, `morans_pearson` | +0.393130 | +0.376074 | **1.7e-2** |
+| shuffled, `morans_pearson` | −0.273051 | −0.273050 | 5.9e-8 |
+| shuffled, `marker_depth_r` | +0.031811 | +0.031811 | 3.7e-9 |
+| a real donor section, `morans_pearson` | +0.963204 | +0.963204 | 2.2e-8 |
+
+**Six orders of magnitude** separate the constant field from every input carrying real variance.
+The normalised constant field's largest per-gene std is 7.45e-09, i.e. numerically zero — it holds
+no spatial information at all, so whatever the metric returns for it is the metric's behaviour on
+a degenerate input.
+
+**And it is worse on `marker_depth_r` (4.8e-2) than on `morans_pearson` (1.7e-2).** My earlier
+account had the constant field valid for the profile metrics — "a real, if small, function of cell
+density via the bin normalisation" — and invalid only for the autocorrelation ones. **That was
+reasoning where a measurement was available, and the measurement says the opposite.**
+`VALID_FLOOR` now lists `constant_field` as a floor for **nothing**, on any metric, and `shuffled`
+as the floor for the four gene-dependent metrics.
+
+#### What this does and does not change
+
+**It does not change either verdict, and the report now says so under both referents.** The
+primary re-read against the `shuffled` floor (−0.0212): A1 clears by +0.0534 (**0.42x**), A3 by
++0.0578 (**0.45x**), neither above the 0.1273 shared envelope — **REFUTATION OF THE IDEA**, the
+same outcome as under the pre-registered constant-field band, and the aggregator prints both so
+the reader can see the verdict does not hinge on the referent. Void condition holds either way
+(A4 at 0.30x). The reason it is robust is arithmetic, not luck: the band's instability (~0.05) is
+a quarter of the envelope the clearance is judged against.
+
+**The secondary is unaffected in value** — A2's 2.52x was already computed against the shuffled
+floor — **but its justification changes**. It rested on "the constant field is degenerate *for
+this metric*"; it now rests on "the constant field is degenerate for every metric, measured", and
+the shuffled referent is the floor because it is precision-stable at 1e-8, not because it is what
+was left over.
+
+**`section_5`'s +0.5780 is excluded from every floor computation and reported with its drift.** It
+is not a null model beating an arm; it is the metric's output on an input with no variance in it.
+
+⚠️ **The probe has run on the fixture, not on `deep_starmap`.** The fixture establishes the
+mechanism decisively; the deep numbers are the ones in the write-up, and their drift is unmeasured
+until the two ceiling commands are re-run. **Until that re-run the degeneracy of the deep constant
+fields is inference from a mechanism, not a measurement on those rows**, and the write-up should
+not claim otherwise.

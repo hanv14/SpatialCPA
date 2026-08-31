@@ -25,11 +25,11 @@ Per-seed fold means, then the arm's own across-seed spread.
 
 | metric | constant field | shuffled | usable floor |
 |---|---|---|---|
-| `morans_pearson` | +0.5199 | +0.0382 | `shuffled` (constant field is float32 round-off on a zero-variance input, not a floor) |
-| `gearys_pearson` | -0.4771 | -0.0008 | `shuffled` (constant field is float32 round-off on a zero-variance input, not a floor) |
-| `umap_mixing` | +0.0021 | +0.1101 | **none** — shuffled is the arm's own score (`_mixing` reads no coordinates); constant field is a degenerate cloud. No usable floor. |
-| `marker_field_r` | +0.1649 | +0.0451 | `constant_field`, `shuffled` |
-| `marker_depth_r` | +0.0017 | -0.0212 | `constant_field`, `shuffled` |
+| `morans_pearson` | +0.5199 | +0.0382 | `shuffled` (constant field is precision-unstable, not a floor) |
+| `gearys_pearson` | -0.4771 | -0.0008 | `shuffled` (constant field is precision-unstable, not a floor) |
+| `umap_mixing` | +0.0021 | +0.1101 | **none** — shuffled is the arm's own score (`_mixing` reads no coordinates); constant field is degenerate like every other. No usable floor. |
+| `marker_field_r` | +0.1649 | +0.0451 | `shuffled` (constant field is precision-unstable, not a floor) |
+| `marker_depth_r` | +0.0017 | -0.0212 | `shuffled` (constant field is precision-unstable, not a floor) |
 
 ## Scores — `kept` genes
 
@@ -47,11 +47,11 @@ Per-seed fold means, then the arm's own across-seed spread.
 
 | metric | constant field | shuffled | usable floor |
 |---|---|---|---|
-| `morans_pearson` | +0.1393 | +0.0023 | `shuffled` (constant field is float32 round-off on a zero-variance input, not a floor) |
-| `gearys_pearson` | -0.1521 | -0.0051 | `shuffled` (constant field is float32 round-off on a zero-variance input, not a floor) |
-| `umap_mixing` | +0.0010 | +0.5890 | **none** — shuffled is the arm's own score (`_mixing` reads no coordinates); constant field is a degenerate cloud. No usable floor. |
-| `marker_field_r` | +0.1128 | +0.0651 | `constant_field`, `shuffled` |
-| `marker_depth_r` | -0.0140 | -0.0330 | `constant_field`, `shuffled` |
+| `morans_pearson` | +0.1393 | +0.0023 | `shuffled` (constant field is precision-unstable, not a floor) |
+| `gearys_pearson` | -0.1521 | -0.0051 | `shuffled` (constant field is precision-unstable, not a floor) |
+| `umap_mixing` | +0.0010 | +0.5890 | **none** — shuffled is the arm's own score (`_mixing` reads no coordinates); constant field is degenerate like every other. No usable floor. |
+| `marker_field_r` | +0.1128 | +0.0651 | `shuffled` (constant field is precision-unstable, not a floor) |
+| `marker_depth_r` | -0.0140 | -0.0330 | `shuffled` (constant field is precision-unstable, not a floor) |
 
 ## `A1` - `A3` — PRIMARY — does W.t add anything over a distillation head that sees the text?
 
@@ -132,13 +132,13 @@ Per-seed fold means, then the arm's own across-seed spread.
 
 **Primary**: `marker_depth_r` on the `held_out` genes, A1 - A3 = **-0.0044**, envelope 0.1273 (0.0x), signs **disagree**, fold balance 0.22 -> **signs disagree**.
 
-**Against the constant-field band** (+0.0017), read against the shared envelope **0.1273** — the largest across-seed spread in the comparison, arms and referents together (`specs/10` §4.2b). Each arm's own spread is shown, and does not set its threshold:
+**Against the `shuffled` floor** (-0.0212) — the pre-registration named the constant field, which measures +0.0017 here and is **precision-unstable on every metric**, so the justified referent is used instead and the pre-registered one is shown beside it. The verdict is reported under both. Read against the shared envelope **0.1273** — the largest across-seed spread in the comparison, arms and referents together (`specs/10` §4.2b). Each arm's own spread is shown, and does not set its threshold:
 
 | arm | mean | over band | own spread | shared envelope | over band / envelope |
 |---|---|---|---|---|---|
-| A1 (medcpt + distill) | +0.0322 | +0.0305 | 0.1273 | 0.1273 | **0.24x** |
-| A3 (lookup + distill) | +0.0366 | +0.0349 | 0.0320 | 0.1273 | **0.27x** |
-| A4 (lookup, pure text) | +0.0171 | +0.0155 | 0.0710 | 0.1273 | **0.12x** |
+| A1 (medcpt + distill) | +0.0322 | +0.0534 | 0.1273 | 0.1273 | **0.42x** |
+| A3 (lookup + distill) | +0.0366 | +0.0578 | 0.0320 | 0.1273 | **0.45x** |
+| A4 (lookup, pure text) | +0.0171 | +0.0383 | 0.0710 | 0.1273 | **0.30x** |
 
 **SUPPORT** requires A1 > A3 with signs agreeing, the margin over the envelope and over the fold spread, and A1 clearing the band by more than the envelope: **not met**.
 
@@ -146,11 +146,13 @@ Per-seed fold means, then the arm's own across-seed spread.
 
 **REFUTATION of the idea** (no route from text to an unseen gene) is neither arm clearing the band by more than the envelope: **this is the case**.
 
-**Void condition** — A4 must sit inside the band. A4 is +0.0155 from it against the shared 0.1273 envelope (0.12x): **holds**, no leak detected.
+**Void condition** — A4 must sit inside the band. A4 is +0.0383 from it against the shared 0.1273 envelope (0.30x): **holds**, no leak detected.
 
-**Against the room actually available** (`reports/t09_zeroshot_ceiling_deep.json`): the model-free ceiling on these genes is **0.9823** and the floor +0.0017, so the room is **0.9806**. The best arm, A3, reaches +0.0366 — **4%** of it.
+**Under the pre-registered constant-field band** (+0.0017) the outcome is **refutation idea** — the same, so the verdict does not depend on the referent that turned out to be degenerate.
 
-For scale on the same rows, copying a whole real section scores 0.9479, or 96% of the room — **context only; no zero-shot arm may copy.**
+**Against the room actually available** (`reports/t09_zeroshot_ceiling_deep.json`): the model-free ceiling on these genes is **0.9823** and the floor -0.0212, so the room is **1.0035**. The best arm, A3, reaches +0.0366 — **6%** of it.
+
+For scale on the same rows, copying a whole real section scores 0.9479, or 97% of the room — **context only; no zero-shot arm may copy.**
 
 ## Secondary — `morans_pearson` on the `held_out` genes
 

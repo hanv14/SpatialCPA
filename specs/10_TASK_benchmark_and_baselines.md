@@ -572,6 +572,45 @@ the rule was chosen for that outcome should note that it also makes the criterio
 every arm in every future experiment, including the ones this project would rather pass.
 
 
+### 4.2c A referent is not a floor until its precision stability is measured
+
+A no-information referent is supposed to answer "what does this metric return when there is
+nothing to find?". It only answers that if what it returns is a **function of the data**. The
+constant field — every cell given each gene's own global mean — has numerically zero per-gene
+variance after normalisation (largest per-gene std 7.45e-09), so it carries no spatial information
+at all, and whatever the metric returns for it is the metric's behaviour on a degenerate input
+rather than a level any method has to beat.
+
+**The test is a change of precision, and it must be a real recomputation.** Recompute the referent
+end to end at double precision. A quantity that is a function of the data does not move; one that
+is a function of summation order does. Casting a single-precision result to double compares a
+number with itself and calls everything stable — that mistake was made and caught here.
+
+Measured on the synthetic fixture:
+
+| referent, metric | drift f32 -> f64 |
+|---|---|
+| constant field, `marker_depth_r` | **4.8e-2** |
+| constant field, `morans_pearson` | **1.7e-2** |
+| shuffled positions, `morans_pearson` | 5.9e-8 |
+| shuffled positions, `marker_depth_r` | 3.7e-9 |
+| a real donor section, `morans_pearson` | 2.2e-8 |
+
+Six orders of magnitude, with no middle ground to argue about. **The constant field is a floor for
+no metric**, including — against the argument that had been written down for it — the profile
+metrics, where it is the *less* stable of the two. The floor for the four gene-dependent metrics
+is the **shuffled** referent: real counts, permuted positions, so the pairing is destroyed and both
+marginals survive. `umap_mixing` has no floor at all, because `_mixing` reads no coordinates and
+shuffling returns the arm's own score.
+
+**Why this is a spec rule and not a footnote.** The zero-shot pre-registration wrote "clear the
+constant-field band" into all three of its outcome conditions, and the referent it named turned
+out to be arithmetic. The verdict survived — the band's instability was a quarter of the envelope
+the clearance was judged against, and both readings give the same outcome, which is why the
+aggregator now prints the verdict under **both** referents. It survived by margin, not by design.
+Any referent entering a claim pays for this probe first.
+
+
 ### 4.3 The boundary holdout (R3) — additive, no new dataset, no new design function
 
 **Open risk R3, raised at T04, re-surfaced at T09.** The T04 probe reconstructed the two **edge**

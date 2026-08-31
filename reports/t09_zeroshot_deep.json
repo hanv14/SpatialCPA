@@ -1106,36 +1106,37 @@
       "fold_balance": 0.21937616509660288,
       "verdict": "signs disagree"
     },
-    "band": 0.0016913492079283308,
+    "band": -0.021158625532894826,
     "shared_envelope": 0.12732827646162606,
     "clearances": {
       "A1": {
         "mean": 0.03219754392746663,
-        "over_band": 0.030506194719538304,
+        "over_band": 0.05335616946036146,
         "own_spread": 0.12732827646162606,
         "envelope": 0.12732827646162606,
-        "ratio": 0.23958696031460222
+        "ratio": 0.4190441506246402
       },
       "A3": {
         "mean": 0.03660014290261543,
-        "over_band": 0.0349087936946871,
+        "over_band": 0.057758768435510255,
         "own_spread": 0.032009865234333475,
         "envelope": 0.12732827646162606,
-        "ratio": 0.27416371810552104
+        "ratio": 0.453620908415559
       },
       "A4": {
         "mean": 0.017143215621620984,
-        "over_band": 0.015451866413692653,
+        "over_band": 0.038301841154515806,
         "own_spread": 0.07097499926055845,
         "envelope": 0.12732827646162606,
-        "ratio": 0.12135455566579907
+        "ratio": 0.30081174597583704
       }
     },
     "clears_band": {
       "A1": false,
       "A3": false
     },
-    "outcome": "REFUTATION_IDEA"
+    "outcome": "REFUTATION_IDEA",
+    "outcome_under_preregistered_band": "REFUTATION_IDEA"
   },
   "secondary": {
     "metric": "morans_pearson",

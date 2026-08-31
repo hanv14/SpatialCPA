@@ -50,7 +50,13 @@ import warnings
 from pathlib import Path
 
 import numpy as np
-from spatialcpav25_gen.losses.metric_aware import knn_weight_graph, morans_i, profile_axis
+import torch
+from spatialcpav25_gen.losses.metric_aware import (
+    knn_weight_graph,
+    morans_i,
+    profile_axis,
+    soft_depth_profile,
+)
 from spatialcpav25_gen.train.select import _normalised, selection_folds
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -58,6 +64,30 @@ from _bench3_paths import add_path_args, resolve, set_torch_threads
 from _gene_split import markers_within, stratified_gene_split
 from _starmap_run import base_config, clamp_config_to_input, load_training_volume
 from t09_depth_ceiling import profile, ruler, safe_r, score
+
+
+def _profile_f64(counts, coords_xy, z_value, axis, markers, cfg, bounds, sigma, pool):
+    """:func:`~t09_depth_ceiling.profile` end to end in float64. The precision arm of the probe.
+
+    A genuine recomputation, not a cast: ``_normalised`` returns float32 and casting its output
+    afterwards would compare a number with itself and call the referent stable whatever it is.
+    The whole chain — the size factor, the coordinates, the axis and the Gaussian binning — runs
+    at double precision here.
+    """
+    dense = np.asarray(counts, dtype=np.float64)
+    sized = dense[:, np.asarray(pool, dtype=np.int64)]
+    totals = np.clip(sized.sum(axis=1, keepdims=True), float(cfg.metric_eps), None)
+    x = torch.from_numpy(dense / totals)
+    xy = np.asarray(coords_xy, dtype=np.float64)[:, :2]
+    xyz = torch.from_numpy(np.concatenate([xy, np.full((xy.shape[0], 1), float(z_value))], axis=1))
+    return soft_depth_profile(
+        x.index_select(1, markers),
+        xyz,
+        axis.to(torch.float64),
+        int(cfg.profile_n_bins),
+        sigma,
+        bounds=bounds,
+    ).numpy()
 
 
 def side_ceiling(target, donors, pool, axis, cfg, rng, splits: int, shuffles: int) -> dict:
@@ -104,20 +134,19 @@ def side_ceiling(target, donors, pool, axis, cfg, rng, splits: int, shuffles: in
     # The constant field: every cell gets that gene's own global mean. NOT zero — the bin
     # normalisation makes a constant field's profile track cell density along the depth axis,
     # and density is laminar. Computed rather than asserted, which is how that was found.
-    constant = score(
-        profile(
-            np.broadcast_to(counts.mean(axis=0), counts.shape).copy(),
-            xy,
-            target.z,
-            axis,
-            markers,
-            cfg,
-            bounds,
-            sigma,
-            pool,
-        ),
-        p_target,
+    #
+    # The same precision probe the autocorrelation branch runs, for the same reason: a referent
+    # whose value survives a change of precision is a function of the data, and one that does not
+    # is a function of summation order. This branch is *expected* to pass — the density signal is
+    # real arithmetic on a real quantity — and it is measured rather than assumed, because
+    # "expected to pass" is how the hand-written flag got into the other branch.
+    flat = np.broadcast_to(counts.mean(axis=0), counts.shape).copy()
+    constant = score(profile(flat, xy, target.z, axis, markers, cfg, bounds, sigma, pool), p_target)
+    constant_f64 = score(
+        _profile_f64(flat, xy, target.z, axis, markers, cfg, bounds, sigma, pool),
+        _profile_f64(counts, xy, target.z, axis, markers, cfg, bounds, sigma, pool),
     )
+    normalised_flat = _normalised(flat, cfg, pool).numpy()
     others = []
     for donor in donors:
         d_counts = np.asarray(donor.counts.todense(), dtype=np.float64)
@@ -150,6 +179,12 @@ def side_ceiling(target, donors, pool, axis, cfg, rng, splits: int, shuffles: in
         "noiseless_ceiling": float(np.sqrt(reliability)) if reliability > 0 else float("nan"),
         "shuffled_floor": shuffled,
         "constant_field": constant,
+        "constant_field_float64": constant_f64,
+        "constant_field_precision_drift": abs(constant - constant_f64),
+        "constant_field_input_std_max": float(
+            normalised_flat[:, np.asarray(pool, dtype=np.int64)].std(axis=0).max()
+        ),
+        "constant_field_is_degenerate": bool(abs(constant - constant_f64) > DEGENERACY_TOL),
         "best_other_section": max((o["r"] for o in others), default=float("nan")),
         "others": others,
     }
@@ -167,6 +202,80 @@ def autocorr_vector(counts, coords_xy, cfg, pool) -> np.ndarray:
     graph = knn_weight_graph(np.asarray(coords_xy, dtype=np.float64)[:, :2], cfg)
     values = morans_i(x, graph, eps=float(cfg.metric_eps)).numpy()
     return np.asarray(values[np.asarray(pool, dtype=np.int64)], dtype=np.float64)
+
+
+DEGENERACY_TOL = 0.01
+"""How far a referent may move between float32 and float64 before it is called degenerate.
+
+A referent that means something is a *function of the data* and is precision-stable: recomputing
+it at double precision moves it by ~1e-6. A referent that is round-off on a ``0/0`` is a function
+of summation order, and doubling the mantissa moves it by O(0.1-1). The threshold sits two orders
+above the first and one below the second, so the two cases are not close to each other.
+"""
+
+
+def _float64_graph(coords_xy, cfg):
+    """``knn_weight_graph`` with its values promoted to float64. Same graph, same neighbours."""
+    graph = knn_weight_graph(np.asarray(coords_xy, dtype=np.float64)[:, :2], cfg)
+    return torch.sparse_coo_tensor(
+        graph.indices(), graph.values().to(torch.float64), graph.shape
+    ).coalesce()
+
+
+def _autocorr_vector_f64(counts, coords_xy, cfg, pool) -> np.ndarray:
+    """:func:`autocorr_vector` end to end in float64. The precision arm of the probe.
+
+    Deliberately a second implementation of the same arithmetic rather than a parameter on the
+    first: the point is to run the computation in a different precision, and a shared code path
+    that quietly upcast would answer a different question.
+    """
+    dense = np.asarray(counts, dtype=np.float64)
+    sized = dense[:, np.asarray(pool, dtype=np.int64)]
+    totals = np.clip(sized.sum(axis=1, keepdims=True), float(cfg.metric_eps), None)
+    x = torch.from_numpy(dense / totals)
+    values = morans_i(x, _float64_graph(coords_xy, cfg), eps=float(cfg.metric_eps)).numpy()
+    return np.asarray(values[np.asarray(pool, dtype=np.int64)], dtype=np.float64)
+
+
+def constant_field_probe(counts, coords_xy, cfg, pool, v_target) -> dict:
+    """Is the constant-field referent information, or is it arithmetic? Measured, not asserted.
+
+    A constant field has **exactly zero** per-gene variance after normalisation — it is the same
+    number in every cell — so it carries no spatial information whatever. That alone does not
+    make a non-zero referent invalid: `marker_depth_r` maps a constant input to a real, stable
+    function of **cell density**, because ``soft_depth_profile`` divides each bin by the weight it
+    received. `morans_pearson` maps it to ``0/0``, which the hardware resolves with round-off.
+
+    The two cases are told apart by **precision stability**, which is a measurement:
+
+    * ``input_std_max`` — the largest per-gene std of the normalised constant field. Zero confirms
+      the input really is constant, so anything downstream is the metric's own behaviour.
+    * ``float32`` / ``float64`` — the referent computed both ways. A stable value is a function of
+      the data; a value that moves by O(0.1-1) is a function of summation order.
+
+    ``is_degenerate`` is the verdict of that comparison against :data:`DEGENERACY_TOL`, and it
+    replaces a hand-written ``True``. The earlier version of this file asserted the flag as a
+    literal on the strength of a fixture reproduction; an assertion in the output of an instrument
+    is indistinguishable from a measurement to anyone reading the JSON, which is exactly the
+    failure this function exists to remove.
+    """
+    constant = np.broadcast_to(counts.mean(axis=0), counts.shape).copy()
+    normalised = _normalised(constant, cfg, pool).numpy()
+    f32 = safe_r(autocorr_vector(constant, coords_xy, cfg, pool), v_target)
+    f64 = safe_r(
+        _autocorr_vector_f64(constant, coords_xy, cfg, pool),
+        _autocorr_vector_f64(counts, coords_xy, cfg, pool),
+    )
+    drift = abs(f32 - f64)
+    return {
+        "constant_field": f32,
+        "constant_field_float64": f64,
+        "constant_field_precision_drift": drift,
+        "constant_field_input_std_max": float(
+            normalised[:, np.asarray(pool, dtype=np.int64)].std(axis=0).max()
+        ),
+        "constant_field_is_degenerate": bool(drift > DEGENERACY_TOL),
+    }
 
 
 def side_ceiling_autocorr(target, donors, pool, cfg, rng, splits: int, shuffles: int) -> dict:
@@ -215,10 +324,7 @@ def side_ceiling_autocorr(target, donors, pool, cfg, rng, splits: int, shuffles:
             ]
         )
     )
-    constant = safe_r(
-        autocorr_vector(np.broadcast_to(counts.mean(axis=0), counts.shape).copy(), xy, cfg, pool),
-        v_target,
-    )
+    probe = constant_field_probe(counts, xy, cfg, pool, v_target)
     others = [
         {
             "donor": donor.section_id,
@@ -243,8 +349,7 @@ def side_ceiling_autocorr(target, donors, pool, cfg, rng, splits: int, shuffles:
         "split_half": reliability,
         "noiseless_ceiling": float(np.sqrt(reliability)) if reliability > 0 else float("nan"),
         "shuffled_floor": shuffled,
-        "constant_field": constant,
-        "constant_field_is_degenerate": True,
+        **probe,
         "best_other_section": max((o["r"] for o in others), default=float("nan")),
         "others": others,
     }

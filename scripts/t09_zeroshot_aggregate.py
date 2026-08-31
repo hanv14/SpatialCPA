@@ -68,18 +68,41 @@ VALID_FLOOR: dict[str, tuple[str, ...]] = {
     "morans_pearson": ("shuffled",),
     "gearys_pearson": ("shuffled",),
     "umap_mixing": (),
-    "marker_field_r": ("constant_field", "shuffled"),
-    "marker_depth_r": ("constant_field", "shuffled"),
+    "marker_field_r": ("shuffled",),
+    "marker_depth_r": ("shuffled",),
     "celltype_localization": (),
 }
-"""Which referents mean something for which metric. See the module docstring for the two
-exclusions and how each was established."""
+"""Which referents mean something for which metric.
+
+⚠️ **`constant_field` is a floor for nothing, on any metric.** An earlier version of this table
+kept it for the two profile metrics on the argument that `soft_depth_profile`'s bin normalisation
+makes a constant field's profile track cell density — a real, if small, no-information reference —
+while `morans_pearson` mapped the same input to `0/0`. **That argument was wrong, and the
+correction came from measuring instead of reasoning.** The precision probe in
+`t09_zeroshot_ceiling.py` recomputes each referent at double precision; a referent that is a
+function of the data does not move, and one that is a function of summation order does. On the
+fixture:
+
+| referent, metric | drift f32 -> f64 |
+|---|---|
+| constant field, `marker_depth_r` | **4.8e-2** |
+| constant field, `morans_pearson` | **1.7e-2** |
+| shuffled, `morans_pearson` | 5.9e-8 |
+| shuffled, `marker_depth_r` | 3.7e-9 |
+| a real donor section, `morans_pearson` | 2.2e-8 |
+
+Six orders of magnitude separate the constant field from every input carrying real variance — and
+it is *worse* on the profile metric the earlier argument defended. `shuffled` is the floor for the
+four gene-dependent metrics. `umap_mixing` has none: `_mixing` reads no coordinates, so shuffling
+returns the arm's own score."""
 
 FLOOR_NOTE = {
-    "morans_pearson": "constant field is float32 round-off on a zero-variance input, not a floor",
-    "gearys_pearson": "constant field is float32 round-off on a zero-variance input, not a floor",
+    "morans_pearson": "constant field is precision-unstable, not a floor",
+    "gearys_pearson": "constant field is precision-unstable, not a floor",
+    "marker_field_r": "constant field is precision-unstable, not a floor",
+    "marker_depth_r": "constant field is precision-unstable, not a floor",
     "umap_mixing": "shuffled is the arm's own score (`_mixing` reads no coordinates); "
-    "constant field is a degenerate cloud. No usable floor.",
+    "constant field is degenerate like every other. No usable floor.",
     "celltype_localization": "gene-free and constant across arms and seeds; not a contrast",
 }
 
@@ -326,7 +349,9 @@ def main(argv: list[str] | None = None) -> int:
     # ---------------------------------------------------------------- the verdict
     lines += ["## The pre-registered verdict", ""]
     primary = report["contrasts"]["A1-A3"][PRIMARY_SIDE][PRIMARY_METRIC]
-    band = report["referents"][PRIMARY_SIDE][PRIMARY_METRIC]["constant_field"]
+    band_name = VALID_FLOOR[PRIMARY_METRIC][0]
+    band = report["referents"][PRIMARY_SIDE][PRIMARY_METRIC][band_name]
+    degenerate_band = report["referents"][PRIMARY_SIDE][PRIMARY_METRIC]["constant_field"]
     clearances = {}
     # specs/10 §4.2b: a clearance against a referent is read against the LARGEST across-seed
     # envelope in the comparison — every arm plus the referents — and not against the arm's own.
@@ -363,7 +388,11 @@ def main(argv: list[str] | None = None) -> int:
         + ("agree" if primary["signs_agree"] else "**disagree**")
         + f", fold balance {primary['fold_balance']:.2f} -> **{primary['verdict']}**.",
         "",
-        f"**Against the constant-field band** ({band:+.4f}), read against the shared envelope "
+        f"**Against the `{band_name}` floor** ({band:+.4f}) — the pre-registration named the "
+        f"constant field, which measures {degenerate_band:+.4f} here and is **precision-"
+        "unstable on every metric**, so the justified referent is used instead and the "
+        "pre-registered one is shown beside it. The verdict is reported under both. Read "
+        "against the shared envelope "
         f"**{shared:.4f}** — the largest across-seed spread in the comparison, arms and "
         "referents together (`specs/10` §4.2b). Each arm's own spread is shown, and does not "
         "set its threshold:",
@@ -431,6 +460,37 @@ def main(argv: list[str] | None = None) -> int:
         + ".",
         "",
     ]
+    # The pre-registration named the constant field. It is degenerate, so the verdict above uses
+    # the justified floor — and is then re-derived under the pre-registered one, because a
+    # verdict that depends on which referent was chosen is a verdict about the referent.
+    alt = {
+        a: (
+            clearances[a]["mean"] - degenerate_band > 0
+            and abs(clearances[a]["mean"] - degenerate_band) / max(shared, 1e-12) > 1.0
+        )
+        for a in ("A1", "A3")
+    }
+    alt_outcome = (
+        "REFUTATION_IDEA"
+        if not any(alt.values())
+        else "REFUTATION_ARCHITECTURE"
+        if all(alt.values())
+        else "UNRESOLVED"
+    )
+    report["verdict"]["outcome_under_preregistered_band"] = alt_outcome
+    lines += [
+        f"**Under the pre-registered constant-field band** ({degenerate_band:+.4f}) the outcome "
+        f"is **{alt_outcome.replace('_', ' ').lower()}** — "
+        + (
+            "the same, so the verdict does not depend on the referent that turned out to be "
+            "degenerate."
+            if alt_outcome == report["verdict"]["outcome"]
+            else "**different**, so the verdict does depend on a degenerate referent and cannot "
+            "be reported without saying which floor produced it."
+        ),
+        "",
+    ]
+
     if report["verdict"]["outcome"] == "UNRESOLVED":
         yes = [a for a in ("A1", "A3") if clear[a]]
         no = [a for a in ("A1", "A3") if not clear[a]]
