@@ -3420,3 +3420,69 @@ first time, an **across-seed envelope for `retention_top`**, which is the one nu
 here is thin on. Only then can the fold effect, the arm effect and fit-to-fit variation be told
 apart, and only then is a threshold on this statistic worth placing — after its range is known,
 which is the rule this session has now had to learn four times.
+
+### T09 — 12 values, an envelope at last, and R12's stated mechanism contradicted (2026-08-31)
+
+3 seeds x 2 arms x 2 folds, all `exp`, all config hashes matching the campaign log.
+`reports/t09_structured_share_deep*.json`.
+
+| statistic | 12 values | medcpt | lookup | across-seed envelope | arm effect |
+|---|---|---|---|---|---|
+| `share_shape_bounded` | 0.7545–0.8681 | 0.8453–0.8681 | 0.7545–0.8209 | medcpt **0.0026**, lookup 0.0584 | **−0.0718**, 6/6, **1.23x**, balance 0.76 → **STANDS** |
+| `retention_top` | 0.2375–0.5266 | 0.2375–0.3413 | 0.2858–0.5266 | medcpt **0.0138**, lookup 0.0847 | **+0.0952**, 6/6, **1.12x**, balance 0.36 → **STANDS** |
+
+**Part 1 holds, robustly.** `share_shape_bounded` is **≥ 0.70 on 12 of 12** and `medcpt`'s
+across-seed envelope is **0.0026** — three seeds agreeing to the third decimal. The dynamic range
+of `log mu` is latent-driven and the size factor is not the problem. R12's candidate 2 is closed
+on a current fit.
+
+**Part 2: the emission retains a quarter to a half, never more.** 11 of 12 values are below 0.50;
+the single exception is `lookup` seed 4 `section_5` at 0.5266. The pre-registered SOUND condition
+(≥ 0.50 on **every** fold) fails by a wide margin, not a hair.
+
+**The verdict, and why the bin still does not matter.** STILL BROKEN fires on **2 of 12**
+(0.2375, 0.2457) — both `medcpt`/`section_3`, a cell whose own across-seed range is **0.0186**, so
+it straddles the 0.25 cut inside its own noise. But this time the *SOUND* side fails decisively,
+and my two remaining bins say nearly the same thing: STILL BROKEN says "R12's expression half
+stays open and the decoder design is the next question"; PARTIAL says "R12 stays open and the next
+step is the decoder design question T06 is owed". **The bin does not change the action**, and the
+finding below is what the run is actually for.
+
+#### ⚠️ R12's stated mechanism does not survive this measurement
+
+R12 records the mechanism as: *"`mu` is spatially smooth but too flat in **amplitude** for its
+structure to survive sampling."* If amplitude is what binds, a larger `sd(log mu)` should retain
+more. **The opposite holds, 6 of 6 by seed and fold:**
+
+| | `sd(log mu)` | `retention_top` |
+|---|---|---|
+| `lookup` (lower amplitude) | 0.189–0.220 | 0.286–0.527, mean **0.3811** |
+| `medcpt` (higher amplitude) | 0.283–0.297 | 0.238–0.341, mean **0.2859** |
+
+The arm with **half** the latent-shape variance (`var_shape` 0.053–0.080 against 0.100–0.108) and
+the **narrower** mean retains **more** spatial structure, at 1.12x the shared envelope with signs
+agreeing everywhere. **The amplitude account predicts the wrong sign.**
+
+That does not refute R12 outright — the two arms differ in more than amplitude, and this is one
+dataset — but the simple version of the mechanism is contradicted by the first measurement that
+could test it. **R12's mechanism sentence should be marked as unsupported rather than repeated**,
+and the question it was answering is back open: if not amplitude, what does determine whether
+`mu`'s structure survives the count draw?
+
+⚠️ **Stated as an observation.** I have no mechanism for why less variance in the structured mean
+buys more spatial fidelity, and the rule this project has adopted for exactly this situation
+(`specs/10` §4.2a) is to claim the measurement and not a cause.
+
+**It is connected to R4's shape** — a model putting more variance into its structured component
+and getting less structure out of it is the same trade R4 names, seen from the emission side — but
+it is not a fifth instance of R4: R4 is about a *likelihood* improving while fidelity degrades,
+and nothing here measures a likelihood. The connection is worth a sentence in the paper and not a
+claim.
+
+#### The third independent measurement of the same arm ordering
+
+`lookup` > `medcpt` on emitted spatial structure now appears in three instruments: the tier-1 and
+`deep_starmap` `text_emb_mode` audits, the zero-shot campaign's kept-gene `morans_pearson`
+(0.62–0.65 against 0.48–0.52, 5.8x), and now `retention_top` (+0.0952, 1.12x). Different
+statistics, same direction, three times. **The established negative on the text channel for seen
+genes is as well supported as anything in this project.**
