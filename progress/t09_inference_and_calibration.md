@@ -3771,3 +3771,74 @@ the standing agreement not to chain measurements unasked; it is recorded so the 
 available and so the 2.7x is not quoted as a finding about the mean's quality. What can be said
 without it: the generated mean is smoother than noisy real data, and the loss at the draw is real
 and large.
+
+### T09 — step 1, all 12 cells: IDENTIFIED fires, and it does not justify step 2 (2026-08-31)
+
+`Spearman(s, retention_top) = +0.9720` over 12 cells, arms ordered the same way by both. **The
+pre-registered IDENTIFIED condition is met.** I am not treating that as a licence to spend, for
+two independent reasons.
+
+#### 1. The test had almost no power to fail
+
+| quantity | value |
+|---|---|
+| Spearman(`s`, `retention_top`) — the pre-registered test | **+0.9720** |
+| Spearman(`s`, `draw_retention`) — the arithmetic identity | **+0.9650** |
+| `draw/s` ratio across 12 cells | 0.961 ± 0.047, max abs difference 0.0149 |
+| spread of `mean_vs_real` | **7.0%** of its own mean (2.6517–2.8456) |
+
+`retention = mean_vs_real x draw`, `draw ≈ s` by the law of total variance for any correct
+sampler, and `mean_vs_real` varies by 7%. So **`retention ≈ 2.75 x s` by construction** and a high
+Spearman was near-guaranteed. The criterion I wrote tests that the ZINB sampler obeys the law of
+total variance — which is worth confirming once, and is not the question.
+
+**Fifth instance of the same error**, and the clearest: a criterion placed on a quantity whose
+properties were not established first. The previous four were thresholds too close to the data;
+this one is a correlation that could barely have come out otherwise. The rule that would have
+caught it: *before pre-registering a test, ask what would have to be true for it to fail.*
+
+#### 2. The premise step 2 rests on is unmeasured, and plausibly false
+
+Step 2 is a **moment-matched `theta`**. Its whole logic is: retention ∝ `s`; `s` is small because
+`E[Var(count | cell)]` is large; the `mu^2/theta` term dominates that; so constraining `theta`
+raises `s`. **The middle link is not measured anywhere in this run.**
+
+```
+E[Var(count|cell)] / mu^2  ~  1/mu  +  1/theta  +  pi
+                              ^^^^     ^^^^^^^     ^^
+                          Poisson   overdispersion  zero-inflation
+```
+
+From `s` and `sd(log mu)` that sum is **~0.68 (medcpt)** and **~0.30 (lookup)** — but nothing here
+says which term carries it. **If per-gene means are of order 1, `1/mu` alone accounts for the
+whole thing and `theta` is not a lever at all**; the 24 core-hours would buy nothing measurable.
+R12's "means in the thousands" was tier-1 STARmap's **28-gene** panel; `deep_starmap` spreads
+comparable tissue over **1017** genes, so its per-gene means are plausibly small enough for the
+Poisson floor to dominate.
+
+**The check that decides it**: report the three terms of `E[Var(count|cell)]` separately. Same
+checkpoints, same forward pass, one more array reduction — minutes, no fits. It is the difference
+between a 24-core-hour experiment that can work and one that cannot.
+
+Per the standing agreement I am **not chaining measurements unasked** — this is put as a decision
+rather than a plan, because it governs whether an already-approved spend is worth making.
+
+#### What is newly established, under both envelope constructions
+
+**The generated conditional mean is 2.65–2.85x more autocorrelated than the real section's
+counts**, on all 12 cells, and the arm difference in that overshoot is the one arm effect in this
+analysis that survives both constructions:
+
+| effect | (a) fold-mean | (b) per-fold | ranges | verdict |
+|---|---|---|---|---|
+| `mean_vs_real`, arm | +0.1307, **4.22x** | **2.16x** | medcpt 2.6517–2.7285, lookup 2.7962–2.8456 | **NON-OVERLAPPING — stands** |
+| `s`, arm | +0.0297, 1.11x | **0.57x** | overlap 0.0226 | not established |
+
+So `lookup`'s generated mean is *systematically the smoother of the two*, while its `s` advantage
+is not established — consistent with the retention arm effect being withdrawn earlier, and it
+means the established arm difference in the emission path is about the **mean**, not the draw.
+
+⚠️ The `mean_vs_real` caveat stands and is not resolved by having 12 cells: its numerator is
+noiseless and its denominator carries the tissue's own sampling noise, so a ratio above 1 is
+expected and the *level* is not interpretable as mean quality. What the arm comparison uses is the
+**difference between two arms against the same denominator**, which is unaffected by that.
