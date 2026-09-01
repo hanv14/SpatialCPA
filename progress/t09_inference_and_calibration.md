@@ -3998,3 +3998,46 @@ correlates with `s` — which is not measured, and is the one way the 2.25x–4.
 Recorded as a limitation of the projection, not proposed as another measurement.
 
 Awaiting the three `lookup` files before anything further.
+
+### T09 — the `lookup` decomposition files, reviewed; the LEVER verdict is arm-independent (2026-08-31)
+
+**1. Reproduction, with a wrinkle worth stating.** For `lookup`, **4 of 6** `s` medians moved from
+the pre-decomposition run, by **3.7e-09 to 7.5e-09**; `medcpt` had **0 of 6** move (one `s_max`
+did). Same cause — regrouping the conditional variance into three summed terms — and the
+difference is only which gene happens to sit at each median. Across all 12 cells **5 values moved,
+none by more than 7.5e-09**, and nothing changes at the precision anything is reported to. Every
+other field (`retention_top`, `mean_vs_real`, `draw_retention`, the Moran's figures, `s_min`,
+`s_max`) is bitwise identical.
+
+**2. `f_overdispersion` is arm-independent, and that strengthens the verdict.**
+
+| | mean | range |
+|---|---|---|
+| `medcpt` | 0.6003 | 0.5866–0.6140 |
+| `lookup` | 0.5961 | 0.5677–0.6143 |
+| difference | **−0.0041** | ranges overlap almost entirely |
+
+The two arms are separate trainings with different gene embeddings and they put the *same
+fraction* of their conditional variance in overdispersion. **The overdispersion share is a
+property of the decoder, not of the embedding** — so THETA IS A LEVER is not an artefact of one
+arm, and step 2 can be run on either.
+
+**3. `lookup` lifts the floor, not just the median.** Its per-gene `s` spans **26x–65x** against
+`medcpt`'s **46x–119x**, and its `s_min` is **0.0052–0.0157** against `medcpt`'s 0.0036–0.0093 —
+roughly 2x higher. So `lookup`'s *worst-retained* genes are meaningfully better retained, which is
+a different fact from its higher median and was not visible in any earlier statistic.
+
+**4. A fold effect in `f_overdispersion`: `section_5` higher by +0.0207, 6/6.** `section_5` also
+has the higher `s` and the higher retention, and `Spearman(s, f_overdispersion)` across the 12
+cells is **+0.4965**.
+
+⚠️ **That correlation is not the one I flagged as a threat to the projection.** The concern
+recorded for the `medcpt` files is a **per-gene** correlation *within* a cell, which would make a
+median-of-parameters projection wrong. This is an **across-cell** association, and each cell's
+projection uses its own `s` and its own `f_od`, so it is harmless. Stated explicitly so the
++0.4965 is not later misread as the defect. And there is no contradiction in `section_5` having
+both a higher `f_od` and a higher `s`: `f_od` is a fraction *within* the sampling variance, `s`
+compares that variance to the structured one — independent dimensions.
+
+**Nothing here disturbs THETA IS A LEVER.** All 12 cells sit at `f_overdispersion` 0.5677–0.6143,
+the minimum clears 0.50 by 1.5x the across-cell spread, and the fraction is the same in both arms.
