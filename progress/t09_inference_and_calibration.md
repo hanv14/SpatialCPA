@@ -3486,3 +3486,178 @@ claim.
 (0.62–0.65 against 0.48–0.52, 5.8x), and now `retention_top` (+0.0952, 1.12x). Different
 statistics, same direction, three times. **The established negative on the text channel for seen
 genes is as well supported as anything in this project.**
+
+### ⚠️ T09 — CORRECTION: the retention arm effect does not stand, and my table hid which envelope it used (2026-08-31)
+
+Raised in review, and correct on both counts.
+
+**The presentation defect.** My table's "across-seed envelope" column showed `medcpt`'s **0.0138**
+beside a ratio of **1.12x**. The ratio was computed against the *worse arm's* 0.0847, which is the
+right convention — but the table reads as though 0.0138 were the denominator. The arithmetic was
+right and the presentation was misleading, which for a number this marginal is the same thing.
+
+**The substantive defect.** There are two defensible constructions of an across-seed spread and I
+used one without saying so:
+
+| | effect | (a) fold-mean env | vs it | (b) per-fold env | vs it | verdict |
+|---|---|---|---|---|---|---|
+| `retention_top`, arm | +0.0952 | 0.0847 | 1.12x | **0.1268** | **0.75x** | **NOT ESTABLISHED** |
+| `share_shape_bounded`, arm | −0.0718 | 0.0584 | 1.23x | 0.0596 | 1.20x | stands under both |
+
+`lookup`/`section_5`'s across-seed range is **0.1268** — 9x `medcpt`'s fold-mean spread. Under
+construction (b) the retention arm effect is **0.75x and does not stand**. A result that clears
+one aggregation of its own noise and not the other is a result about the aggregation.
+**`retention_top`'s arm effect is withdrawn.** The rule is now `specs/10` **§4.2d**: build the
+envelope at the effect's own aggregation level, report both, and treat disagreement as not
+established.
+
+The bounded-share arm effect survives both (1.23x, 1.20x) **and its arm ranges do not overlap at
+all** (medcpt 0.8453–0.8681, lookup 0.7545–0.8209). That is what an established difference looks
+like beside one that is not.
+
+#### What this does to the amplitude finding — weakened, not withdrawn
+
+I wrote that R12's amplitude account is *contradicted*. That was too strong, because it rested on
+the arm effect in retention. What survives, and does not depend on any envelope:
+
+* **`sd(log mu)` separates the arms perfectly**: medcpt 0.2827–0.2972, lookup 0.1893–0.2201, a gap
+  of **+0.0626** with **no overlap**.
+* **`retention_top` does not separate**: medcpt 0.2375–0.3413, lookup 0.2858–0.5266, with an
+  overlap of 0.0555 containing **6 of the 12 values**.
+* The sign of the association is **6/6 opposite** to what the amplitude account predicts.
+
+A predictor that separates two groups perfectly, while the outcome it is supposed to govern
+overlaps across half the sample, **is not sufficient to explain that outcome** — and the residual
+association runs backwards. So: **amplitude does not determine retention.** What cannot be said,
+and what I did say, is that lower amplitude *causes* higher retention; that is the arm effect, and
+the arm effect is not established.
+
+R12's mechanism sentence — *"too flat in amplitude for its structure to survive sampling"* — is
+**unsupported** and should be marked so rather than repeated. The question it answered is open.
+
+### T09 — the three-instrument result, stated plainly (2026-08-31)
+
+**`lookup` emits more spatially structured counts than `medcpt` on genes the model was fitted on.
+Three instruments, three different statistics, same direction.**
+
+| instrument | statistic | measurement |
+|---|---|---|
+| tier-1 STARmap + `deep_starmap` `text_emb_mode` audits | `morans_pearson`, `gearys_pearson` | `lookup` wins at 4.9x and 2.3x their own envelopes, three seeds |
+| zero-shot campaign, **kept** genes | `morans_pearson` | 0.62–0.65 against 0.48–0.52, **5.8x** the shared envelope, 6/6 signs, fold balance 0.83 |
+| structured-share run, **kept** genes | `retention_top` | +0.0952, 6/6 signs — **1.12x / 0.75x**, not established on its own |
+
+The third is the weakest and is reported as not established; it agrees in direction and adds
+nothing to the strength. **The first two are what carry it**, and they are independent
+measurements on two datasets and two gene pools. This is the best-supported negative result in the
+project: **the text-grounded embedding costs spatial fidelity on genes with training data.**
+
+## HANDOFF TO T06 — R12's expression half: what is known, what governs retention, and what would test it
+
+Ordering decision (2026-08-31): **R12 goes to T06 before the `morans_pearson` replication.** The
+amplitude account failing is upstream of every expression result in the campaign; the replication
+tests one observation on one metric for 47 core-hours. The replication stays held.
+
+### What R12 now says
+
+Established, on `deep_starmap`, 12 measurements over 3 seeds x 2 arms x 2 folds, all under the
+shipped `decoder_mu_link="exp"` and all with config hashes matching the campaign log:
+
+1. **`mu`'s spatial pattern is not the problem.** The pilot measured Moran's I of **0.861** at the
+   decoded mean, *above* real tissue's own latent at 0.745.
+2. **The emitted counts retain a quarter to a half of it.** `retention_top` — emitted median
+   Moran's I over the 32 most structured kept genes, against the real section's — is
+   **0.2375–0.5266**, with 11 of 12 below 0.50.
+3. **The size factor is not the cause.** `share_shape_bounded` is **0.7545–0.8681**, 12/12 above
+   0.70, with `medcpt`'s across-seed envelope at **0.0026**. The dynamic range of `log mu` is
+   latent-driven at roughly 5x the size factor's variance.
+4. **The mean link is not the cause.** `exp` has shipped since 2026-08-21 and every real-data
+   audit postdates it; confirmed per checkpoint by `config_hash`.
+5. **Amplitude is not sufficient.** `sd(log mu)` separates the two arms with **no overlap**
+   (0.1893–0.2201 against 0.2827–0.2972) while `retention_top` overlaps across half the sample,
+   and the residual association runs **backwards**, 6/6.
+
+### What R12 does not say
+
+* **It does not say what governs retention.** The recorded mechanism — *"`mu` is spatially smooth
+  but too flat in amplitude for its structure to survive sampling"* — is **unsupported** by (5)
+  and must be marked so, not repeated.
+* **The saved-model recovery does not reproduce.** The record's `exp` result reads retention
+  **~103%** (counts I +0.4782 against tissue's +0.4635); here it is **24–53%**. Unresolved between
+  a panel difference (that pair is STARmap's 28-gene marker panel; this is 32 of `deep_starmap`'s
+  813) and the saved model's own recorded caveats. **"Candidate 1 recovered it" must not be quoted
+  as a property of the shipped decoder.**
+* The **arm effect** in retention is **not established** (§4.2d: 1.12x / 0.75x).
+
+### The candidate mechanism, and why it is the next thing to test
+
+For a ZINB draw the emitted counts' spatial autocorrelation is diluted by sampling noise in
+proportion to how much of the **count** variance is structured:
+
+```
+I(counts)  ~  I(mu) * Var_cells(mu) / ( Var_cells(mu) + E_cells[ Var(count | mu, theta, pi) ] )
+```
+
+`I(mu)` is already near-perfect (1), so retention is governed by that **ratio** — which depends on
+the learned **dispersion `theta`** and **zero-inflation `pi`** as much as on `Var(mu)`. That is
+exactly why amplitude alone fails to predict it: a model can widen `theta` and lose structure at
+any `sd(log mu)`.
+
+**This is R4's shape seen from the emission side** — the ZINB NLL at means in the thousands can be
+reduced by widening dispersion rather than sharpening `mu`, with nothing in the objective opposing
+the trade. R4 is the project's largest open question; this would be its first *measured* instance
+in the decoder rather than an inferred one.
+
+### Step 1 — identify the governing quantity. **No fits.**
+
+Compute, per gene and per cell, the structured share of **count** variance
+
+```
+s_g = Var_cells(mu_g) / ( Var_cells(mu_g) + mean_cells[ Var(count | mu_g, theta_g, pi_g) ] )
+```
+
+median over the top-32 structured kept genes, for each of the **12** existing arm x seed x fold
+cells. Then ask whether `s` predicts `retention_top` across those 12.
+
+**Pre-registered, before the measurement:**
+
+* **IDENTIFIED** — Spearman |r(s, retention_top)| ≥ **0.7** across the 12 cells, **and** `s`
+  orders the two arms in the same direction `retention_top` does. The governing quantity is the
+  structured share of count variance, and step 2 is justified.
+* **NOT IDENTIFIED** — |r| < **0.4**. Dispersion and zero-inflation do not explain retention
+  either; step 2 is **not** justified and the next move is another measurement, not a refit.
+* **AMBIGUOUS** — between 0.4 and 0.7. Report and do not spend.
+
+Cost: a decoder forward pass per fold on checkpoints that already exist. **Minutes.**
+
+### Step 2 — test it causally. Only if step 1 says IDENTIFIED.
+
+**The change**: fix `theta_g` per gene to a **moment-matched** value from the training counts
+instead of learning it — one `Config` field, one branch in `ZINBDecoder`. This removes the
+optimiser's freedom to make the trade R4 names, which is the cleanest causal test available; a
+`theta` *floor* is the softer alternative if moment-matching destabilises the fit.
+
+**Pre-registered, before the change is written:**
+
+* **ANSWERED** — `retention_top` rises by more than the shared across-seed envelope under **both**
+  constructions of §4.2d, with signs agreeing on every seed and every fold. Dispersion governs
+  retention, and R4 has its first measured instance in the emission model.
+* **NOT ANSWERED** — the rise is inside either envelope, or retention falls. Dispersion is not the
+  lever; R12's expression half stays open with one more candidate eliminated.
+* **UNINFORMATIVE, and checked first** — `I(mu)` on the constrained fit drops below **0.90x** the
+  baseline's, or the reconstruction NLL degrades by more than the across-seed spread of the
+  baseline's own NLL. Either means the change broke the thing that was already working rather than
+  testing what survives it, and no retention number from it may be read.
+
+**Cost.** The six existing checkpoints are **gene-split** fits and are not a clean full-panel
+baseline, so this needs its own: **3 baseline + 3 variant fits**, one arm (`lookup`, the selected
+config), full panel, `deep_starmap`. At the measured 3.82–4.09 h per cold fit that is
+**~24 core-hours**, ~4 h wall six-up — **about half the replication**. ⚠️ Extrapolated from the
+same two measured points, and **one timed fit gates the other five**, as with every estimate in
+this project since five consecutive ones came in low.
+
+### Why this ordering
+
+Step 1 costs minutes and can stop step 2 entirely. Step 2 costs half the replication and, if it
+answers, gives R4 — the project's largest open question — its first measured instance in the
+decoder. The replication gives one observation on one metric a second dataset. Both are worth
+doing; this one is worth doing first, and step 1 is worth doing before either.

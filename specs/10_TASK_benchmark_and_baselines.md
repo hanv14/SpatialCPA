@@ -622,6 +622,44 @@ under both — but it survived by margin, not by design. Any referent entering a
 test first, and the run reports the usable referent's figures beside it so the comparison is on
 its own rows rather than another dataset's.
 
+### 4.2d The envelope is built at the same aggregation level as the effect — and if the two constructions disagree, nothing is established
+
+§4.2a settles *which arm's* variance an envelope is measured on. §4.2b settles which envelope a
+*clearance* takes. Neither says **how the across-seed spread is constructed**, and there are two
+constructions that give different answers:
+
+* **(a) fold-mean**: average the folds within a seed, then take the spread across seeds. This is
+  what `scripts/t09_zeroshot_aggregate.py` computes and what every seed claim in this project has
+  used.
+* **(b) per-fold**: take the spread across seeds *within* each fold, then the worst fold.
+
+**The rule: match the estimator.** An effect reported as a fold-average takes (a); an effect
+reported per fold takes (b). Comparing a fold-averaged effect against a single-fold envelope
+mismatches the quantity with its noise scale, and comparing a per-fold effect against a
+fold-averaged envelope flatters it.
+
+**The rule that matters more: report both, and if they disagree the result is not established.**
+Construction (b) is always ≥ (a) — averaging folds removes variance — so a result that clears (a)
+and not (b) is one whose verdict is a property of the aggregation choice. Measured on
+`deep_starmap`'s `retention_top`, 3 seeds x 2 arms x 2 folds:
+
+| | effect | envelope (a) | vs it | envelope (b) | vs it | verdict |
+|---|---|---|---|---|---|---|
+| `retention_top`, arm effect | +0.0952 | 0.0847 | 1.12x | **0.1268** | **0.75x** | **not established** |
+| `share_shape_bounded`, arm effect | −0.0718 | 0.0584 | 1.23x | 0.0596 | 1.20x | stands under both |
+
+The first was reported as STANDS on construction (a) alone. It is not: the same numbers give
+0.75x under (b), and a claim that survives only one of two defensible aggregations of its own
+noise is a claim about the aggregation. The second clears both and its arm ranges do not overlap
+at all, which is what an established difference looks like.
+
+**Why this is the fourth envelope rule in this section.** §4.2a (which arm), §4.2b (which
+comparison), §4.2c (which referent) and now §4.2d (which aggregation) each exist because a verdict
+in this project turned on a choice nobody had written down. The pattern is the finding: *an
+evaluation whose conclusions depend on unstated conventions is not reporting its uncertainty, and
+the remedy is to state the convention and report the verdict under every defensible alternative.*
+
+
 ### 4.3 The boundary holdout (R3) — additive, no new dataset, no new design function
 
 **Open risk R3, raised at T04, re-surfaced at T09.** The T04 probe reconstructed the two **edge**
