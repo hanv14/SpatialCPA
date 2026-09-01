@@ -71,6 +71,7 @@ from spatialcpav25_gen.model.expression import (
     ZIGammaDecoder,
     ZINBDecoder,
     build_decoder,
+    gene_theta_moments,
     sample_counts,
     sample_zigamma,
 )
@@ -530,8 +531,29 @@ class CTFFlow(nn.Module):
 
         self.encoder = ExpressionEncoder(cfg)
         self.flow = LatentFlow(cfg, self.cond_dim)
+        # A per-gene vector, so it is data and not a Config constant, and it is computed only
+        # when the mode reads it: under "learned" the default path is untouched.
+        gene_theta = (
+            gene_theta_moments(
+                data.counts,
+                data.total_counts,
+                cfg,
+                reference_total=self.stats.median_total,
+                # Cell type, in the same stack order `TrainingData.build` pooled the counts in.
+                # Conditioning on it is what makes this the *conditional* dispersion; the
+                # marginal form is measurably the wrong quantity (see the estimator's docstring).
+                groups=np.concatenate(
+                    [np.asarray(s.cell_type, dtype=np.int64) for s in data.vol.sections]
+                ),
+            )
+            if cfg.decoder_theta_mode == "moment_matched"
+            else None
+        )
         self.decoder: ZINBDecoder | ZIGammaDecoder = build_decoder(
-            cfg, int(cfg.gene_emb_dim), init_mean_expression=self.stats.mean_expression
+            cfg,
+            int(cfg.gene_emb_dim),
+            init_mean_expression=self.stats.mean_expression,
+            gene_theta=gene_theta,
         )
         self.size_head = SizeFactorHead(cfg, reference_total=self.stats.median_total)
 
@@ -689,11 +711,12 @@ class CTFFlow(nn.Module):
             mask,
         )
 
-        gene_emb = self.embeddings.gene(torch.from_numpy(batch.gene_idx.astype(np.int64)))
+        gene_rows = torch.from_numpy(batch.gene_idx.astype(np.int64))
+        gene_emb = self.embeddings.gene(gene_rows)
         h1 = self.encoder(batch.counts, gene_emb, batch.size_factor)
         h0 = self.prior_latent(xyz_grf, seed=int(batch.rows[0]))
 
-        mu, theta, pi = self.decoder(h1, gene_emb, batch.size_factor)
+        mu, theta, pi = self.decoder(h1, gene_emb, batch.size_factor, gene_rows)
         nll = zigamma_nll if self.cfg.decoder == "zigamma" else zinb_nll
         terms: dict[str, Tensor] = {
             "recon": nll(batch.counts, mu, theta, pi, self.cfg),
@@ -710,12 +733,14 @@ class CTFFlow(nn.Module):
         with torch.no_grad():
             terms[f"{DIAG_PREFIX}attention_entropy"] = attention_entropy(weights).mean()
             terms[f"{DIAG_PREFIX}gene_variance"] = mu.var(dim=0).mean()
-            drawn = self._generated_counts(h0, cond, gene_emb, batch)
+            drawn = self._generated_counts(h0, cond, gene_emb, batch, gene_rows)
             terms[f"{DIAG_PREFIX}gene_variance_gen"] = drawn.var(dim=0).mean()
             terms[f"{DIAG_PREFIX}gene_variance_real"] = batch.counts.var(dim=0).mean()
         return terms
 
-    def _generated_counts(self, h0: Tensor, cond: Tensor, gene_emb: Tensor, batch: Batch) -> Tensor:
+    def _generated_counts(
+        self, h0: Tensor, cond: Tensor, gene_emb: Tensor, batch: Batch, gene_idx: Tensor
+    ) -> Tensor:
         """Return a draw down the **generation** path, on the batch's own cells. ``(N, G')``.
 
         Prior latent -> flow -> decoder -> a count draw: :meth:`generate` minus the layout, at
@@ -738,7 +763,7 @@ class CTFFlow(nn.Module):
         batch (Convention 3).
         """
         h = self.flow.sample(h0, cond, int(self.cfg.ode_steps))
-        mu, theta, pi = self.decoder(h, gene_emb, self.size_head.size_factor(h))
+        mu, theta, pi = self.decoder(h, gene_emb, self.size_head.size_factor(h), gene_idx)
         gen = np.random.default_rng([int(batch.rows[0]), batch.n_genes])
         draw = sample_zigamma if self.cfg.decoder == "zigamma" else sample_counts
         return draw(mu, theta, pi, gen)

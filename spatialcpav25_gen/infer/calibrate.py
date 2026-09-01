@@ -1187,8 +1187,9 @@ def _decode_hidden(model: CTFFlow, hidden: Section, cfg: Config, *, seed: int) -
         cond, _ = model.conditioning(points, points, cell_type, region, tokens, mask)
         h0 = model.prior_latent(xyz, seed=int(seed))
         h = model.flow.sample(h0, cond, int(cfg.ode_steps))
-        gene_emb = model.embeddings.gene(torch.arange(model.stats.n_genes, dtype=torch.long))
-        mu, theta, pi = model.decoder(h, gene_emb, model.size_head.size_factor(h))
+        gene_rows = torch.arange(model.stats.n_genes, dtype=torch.long)
+        gene_emb = model.embeddings.gene(gene_rows)
+        mu, theta, pi = model.decoder(h, gene_emb, model.size_head.size_factor(h), gene_rows)
         expected, variance = draw_mean_variance(mu, theta, pi, cfg)
     real = np.asarray(hidden.counts[rows].todense(), dtype=np.float64)
     del expected
@@ -1416,8 +1417,9 @@ def _draw_counts(model: CTFFlow, h: Tensor, cfg: Config, gen: np.random.Generato
     from spatialcpav25_gen.model.expression import sample_counts, sample_zigamma
 
     with torch.no_grad():
-        gene_emb = model.embeddings.gene(torch.arange(model.stats.n_genes, dtype=torch.long))
-        mu, theta, pi = model.decoder(h, gene_emb, model.size_head.size_factor(h))
+        gene_rows = torch.arange(model.stats.n_genes, dtype=torch.long)
+        gene_emb = model.embeddings.gene(gene_rows)
+        mu, theta, pi = model.decoder(h, gene_emb, model.size_head.size_factor(h), gene_rows)
     draw = sample_zigamma if cfg.decoder == "zigamma" else sample_counts
     return draw(mu, theta, pi, gen)
 

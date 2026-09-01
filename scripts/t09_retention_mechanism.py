@@ -124,7 +124,7 @@ def structured_share(model, h, cfg, genes) -> tuple[np.ndarray, np.ndarray, dict
     idx = torch.from_numpy(np.asarray(genes, dtype=np.int64))
     with torch.no_grad():
         gene_emb = model.embeddings.gene(idx)
-        mu, theta, pi = model.decoder(h, gene_emb, model.size_head.size_factor(h))
+        mu, theta, pi = model.decoder(h, gene_emb, model.size_head.size_factor(h), idx)
     mu, theta, pi = mu.numpy(), theta.numpy(), pi.numpy()
     conditional_mean = (1.0 - pi) * mu
     # The three additive terms of the ZINB conditional variance, kept separate: which one

@@ -4041,3 +4041,178 @@ compares that variance to the structured one — independent dimensions.
 
 **Nothing here disturbs THETA IS A LEVER.** All 12 cells sit at `f_overdispersion` 0.5677–0.6143,
 the minimum clears 0.50 by 1.5x the across-cell spread, and the fraction is the same in both arms.
+
+### T09 — step 2 built: `Config.decoder_theta_mode`, and three things recorded first (2026-09-01)
+
+#### 1. The closure question was a reader's error, not an instrument defect
+
+I had raised the three fraction medians summing to 0.983–1.002 rather than to 1 and the user had
+classed it with the drift threshold of §4.2c. **It does not belong there and the record should say
+so.** §4.2c's threshold was a *defect in an instrument I built*: a cut placed at 0.01 that
+separated by six orders of magnitude on the fixture, failed on real data, and fell between two
+identically-constructed rows — the instrument was wrong and had to be replaced twice. The closure
+question is the opposite: the instrument is correct and the reading of it was not. `f_poisson`,
+`f_overdispersion` and `f_zero_inflation` sum to 1 **per gene**, to 1.8e-06 on the fixture check;
+the reported numbers are per-gene *medians*, and a median of a sum is not the sum of the medians.
+Nothing was wrong with the decomposition, the JSON, or the code that produced them.
+
+The distinction matters for the write-up because the two failures have different remedies. A
+defective instrument has to be rebuilt and the numbers it produced discarded. A misread output has
+to be labelled — which is done: the summary prints the fractions as medians, and this paragraph is
+the note a reader needs. **Filed as a reader's error. It is not a fifth entry in §4.2's list, and
+the four envelope rules plus the fifth (ask what would have to be true for the test to fail) stand
+at five, not six.**
+
+#### 2. Per-gene `s` spans 46–119x within a single cell — an open question in its own right
+
+Not a footnote to the aggregate. `retention_top` and every projection built on it use
+`median_g(s)`, and that median summarises a distribution whose ends differ by **two orders of
+magnitude**: `medcpt` spans 46x–119x per cell (`s_min` 0.0036–0.0093 against `s_max` up to 0.43),
+`lookup` 26x–65x with an `s_min` roughly 2x higher.
+
+**"The draw retains ~10%" is therefore false of almost every individual gene.** Some genes come
+through the emission with 43 % of their between-cell structure intact and some with 0.4 %, and
+**nothing measured in this campaign says which genes, or why.** The obvious candidates — mean
+expression, detection rate, the learned `theta`, the gene's own real-tissue Moran's I — are all
+unmeasured against `s`. That is a question about what the decoder does to a gene, and it may
+matter more than the aggregate: a method that retains structure for the 30 genes an atlas is read
+on and loses it for the other 800 is a different method from one that loses 90 % of everything,
+and the two are indistinguishable in every number reported so far.
+
+It is recorded here as **R12's second open question**, alongside the amplitude account's failure,
+and not as a proposed measurement. Whether to spend on it is a separate decision from step 2.
+
+#### 3. `f_overdispersion`'s arm-independence is the strongest form of R4 the project has
+
+R4 — likelihood improving while distributional fidelity degrades — has had four inferred
+instances. Step 1 gave it a decomposed one: the decoder pays for its ZINB likelihood by widening
+dispersion rather than by sharpening the mean, and `mu^2/theta` carries 57–61 % of the conditional
+variance that then destroys the spatial structure `mu` had almost perfectly.
+
+**The arm-independence is what makes it a claim about the decoder rather than about a fit.**
+`medcpt` 0.6003 (0.5866–0.6140) against `lookup` 0.5961 (0.5677–0.6143): two separate trainings,
+different gene embeddings, different text channels — one of which works and one of which is a
+`norm(0)` void — and the same fraction of conditional variance in the same term. An arm-dependent
+number would have been a property of one embedding and would have supported nothing general. This
+one says the trade is structural to the ZINB emission model under this objective, which is R4's
+own claim, stated for the first time about a named term with a measured share.
+
+⚠️ **Two arms is two, and both are `deep_starmap` at one `decoder_mu_link`.** The claim is
+"arm-independent", not "dataset-independent" or "objective-independent", and the write-up must not
+round the first up to the others.
+
+#### 4. What was built
+
+`Config.decoder_theta_mode` (`"learned"` default | `"moment_matched"`), one branch in
+`ZINBDecoder`, and `scripts/t09_theta_mode.py`.
+
+**The plumbing decision, because it touched seven call sites.** A fixed per-gene dispersion has to
+be *indexed* by gene, and `ZINBDecoder.forward` receives gene **embeddings**, not panel columns —
+that is the open-vocabulary property and it is deliberate. Three options: thread an optional
+`gene_idx` through every decoder call; derive `theta` from the embedding through a frozen map; or
+impose a penalty instead of a fixed value. The second is indirect enough that a null result would
+be uninterpretable and the third is not what was pre-registered, so `gene_idx` is threaded — an
+optional trailing argument, **ignored under `"learned"`** (a test asserts the two calls are
+bitwise equal) and **required under `"moment_matched"`**, where its absence raises rather than
+reaching for a default.
+
+**`head_theta` is still constructed under `"moment_matched"` even though nothing reads it.** Not
+an oversight: `_init_linear` consumes the generator in a fixed order, so removing the head would
+shift the draw for `head_pi` and the two modes would differ by more than the dispersion. A test
+asserts `mu` and `pi` are **bitwise identical** between the two modes on the same inputs.
+
+**What is under test is not the value, it is the freedom.** The mechanism is the removal of the
+*per-cell* degree of freedom — the learned head can widen dispersion cell by cell to absorb
+structure it failed to predict, and a single dispersion per gene cannot, so any cell-to-cell
+variation then has to be carried by `mu`.
+
+#### 5. The estimator was wrong, the fixture said so, and the correction runs the way I wanted
+
+The obvious estimator is the **marginal** moment `theta_g = m_g^2 / (v_g - m_g)` on
+size-factor-normalised counts, and that is what I wrote first. Its bias is elementary and I
+recorded it in the field's docstring **before running anything**: `v_g` marginally contains every
+between-cell difference the model is supposed to *predict*, so it over-states the variance and
+under-states `theta`.
+
+The synthetic fixture then measured what that costs. Median `theta` over the 200-gene panel:
+
+| estimator | median `theta` | 10-90% |
+|---|---|---|
+| marginal | **0.213** | 0.092-0.446 |
+| pooled within cell type | **0.469** | 0.197-0.900 |
+| the learned head, at 40 steps | 0.371 | 0.296-0.542 |
+
+**The marginal estimate is 1.7x *more* over-dispersed than what the head had already learned.**
+Pinning `theta` there does not remove the trade under test, it *deepens* it — and a decoder pinned
+there emits a median per-gene detection rate of **0.286** against the training sections' 0.522,
+tripping `assert_detection_rate` on a path that had nothing to do with this change. That guard,
+written for a different failure at T06, is what turned an argument into a measurement.
+
+The estimator is now the same moment match **pooled within cell type** —
+`theta_g = sum_k n_k m_gk^2 / sum_k n_k (v_gk - m_gk)`, which reduces *exactly* to the marginal
+form when there is one group, so the two are one function rather than two. It lands at 1.27x
+*less* over-dispersed than the learned head: a constraint rather than a handicap.
+
+⚠️ **The correction runs in the direction that flatters the hypothesis, and that has to be said
+first, not buried.** What makes it a correction and not a thumb on the scale:
+
+1. the direction was derived from the estimator's algebra and **written down before** the fixture
+   measured it — it is a prediction that came true, not a rationalisation offered afterwards;
+2. the pooled form is simply closer to the quantity `theta` denotes — the dispersion of counts
+   *given the cell's state* — and conditioning on cell type is the coarsest honest approximation
+   to that state available without a model;
+3. it is **still a lower bound**: within-type spatial variation stays in the estimate, so the
+   fixed value is if anything still too over-dispersed;
+4. the first fit's diagnostic **reports both vectors** against the learned head, so the size of
+   the choice sits in the same table as the result it feeds. A test asserts the model uses the
+   conditional one and that the two differ.
+
+A referee is entitled to read this as the estimator being chosen for its answer. The record above
+is what I have against that reading, and it is deliberately stated as a defence rather than as a
+settled point.
+
+**The diagnostic is reported, not thresholded.** The first fit prints `within_gene_sd_log` (how
+much per-cell freedom the constraint removes), `log_ratio_median` (how far the learned dispersion
+sits from the moment estimate) and their Spearman. If both are near zero the constraint is a no-op
+and a null result is a null *change*, not a null *effect*. **It is not a gate**: the
+pre-registration said A LEVER justifies the spend, that was pre-accepted, and adding a condition
+now — after a result that flattered the plan — is the threshold-after-the-fact failure this
+campaign has recorded five times.
+
+**Tests** (`tests/test_expression.py`, all fast): the moment estimator recovers a known dispersion
+(4.0 drawn, 3.2–5.0 accepted) and pins an under-dispersed column at `zinb_theta_max` rather than at
+an `inf` or a `nan`; a Poisson column gets a huge but *finite* value, which is why the guard cannot
+be an equality test; `"learned"` ignores `gene_idx` bitwise; `"moment_matched"` `theta` is constant
+across cells and equals the clamped table while `mu` and `pi` stay bitwise identical; and every way
+of reaching `"moment_matched"` without a real per-gene value raises — no vector at construction,
+a vector under `"learned"`, no `gene_idx`, a mis-sized `gene_idx`, an out-of-range `gene_idx`, and
+an unknown mode string.
+
+#### 6. The UNINFORMATIVE clause is amended — before any fit, and the fifth rule is why
+
+As pre-registered, UNINFORMATIVE fired on either of two conditions: `I(mu)` below 0.90x the
+baseline's, **or** reconstruction NLL degrading by more than the baseline's own across-seed spread.
+
+Applying the fifth rule to my own criterion — *before pre-registering a test, ask what would have
+to be true for it to fail* — the NLL clause fails almost by construction. A constraint that removes
+a degree of freedom will cost some likelihood; the baseline's across-seed NLL spread is a few
+thousandths; and **a likelihood that gets slightly worse while spatial fidelity improves is R4's
+signature.** That is not a broken fit. It is precisely the outcome the experiment exists to find.
+The clause as written would have thrown the finding away and called it a null.
+
+**Replaced with `assert_detection_rate`**, which is a genuine breakage test on the same side of the
+model, is already enforced in code, and is the guard that caught the marginal estimator two hours
+earlier in this same session. **NLL is still measured and reported on every fit; it is no longer a
+criterion.** The driver catches the detection failure and records it as an outcome rather than
+dying, so a broken fit produces a row saying so instead of a missing file.
+
+⚠️ **Amended before any fit ran, and the trigger was a dry run of `--summarise` on fabricated
+rows** — deliberately fabricated so that a criterion could be exercised without a measurement being
+seen first. Nothing from the real experiment has been looked at. The `ANSWERED` / `NOT ANSWERED`
+criteria are **unchanged**. If the original NLL clause is preferred it is one line to restore, and
+that is the user's call, not mine — but it should be settled now rather than after a number exists.
+
+**Full panel, no gene split.** The six zero-shot checkpoints are gene-split fits and are not a
+clean baseline. It is also the only honest configuration for this field: a gene held out of the
+panel has no legitimate per-gene dispersion, and inventing one is exactly the silent fallback
+Convention 6 forbids.

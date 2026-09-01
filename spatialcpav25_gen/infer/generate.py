@@ -419,8 +419,9 @@ def _decode(
     keeps it a property of *generation* — a correction fitted on LOSO reconstructions is not
     a parameter of the model and must not reach a training step.
     """
-    gene_emb = model.embeddings.gene(torch.arange(model.stats.n_genes, dtype=torch.long))
-    mu, theta, pi = model.decoder(h, gene_emb, model.size_head.size_factor(h))
+    gene_rows = torch.arange(model.stats.n_genes, dtype=torch.long)
+    gene_emb = model.embeddings.gene(gene_rows)
+    mu, theta, pi = model.decoder(h, gene_emb, model.size_head.size_factor(h), gene_rows)
     if calibration is not None:
         mu, theta, pi = calibration.apply(mu, theta, pi, cfg)
     return mu, theta, pi

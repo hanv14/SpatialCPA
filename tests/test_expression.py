@@ -63,6 +63,7 @@ from spatialcpav25_gen.model.expression import (
     build_decoder,
     cross_mix_counts,
     detection_rate,
+    gene_theta_moments,
     sample_counts,
     time_embedding,
 )
@@ -608,6 +609,105 @@ def test_decoder_guards_and_shapes():
         ZIGammaDecoder(cfg, 16, init_mean_expression=1.0)(h, genes, torch.ones((7,)))
     with pytest.raises(ExpressionError, match="ablation A6"):
         build_decoder(cfg.replace(decoder="gaussian"), 16, init_mean_expression=1.0)
+
+
+def test_gene_theta_moments_recovers_a_known_dispersion():
+    """The marginal moment estimator returns the dispersion an NB panel was drawn at.
+
+    Drawn at one library size so ``total_counts`` is flat and the size-factor division is a
+    no-op: this test is about the moment algebra, not about the normalisation. Two genes with no NB
+    dispersion to recover check the other end. A Poisson draw's *sample* variance sits either
+    side of its mean by chance, so it gets a huge but finite ``theta`` — correct, and the reason
+    the guard cannot be a test for exact equality. An under-dispersed column (constant, so
+    ``v < m``) has no finite estimate at all and must land on ``zinb_theta_max`` rather than on
+    an ``inf``, a ``nan``, or a silently dropped column.
+    """
+    cfg = Config()
+    rng = np.random.default_rng(SEED)
+    n, theta_true = 40_000, 4.0
+    mean = 6.0
+    p = theta_true / (theta_true + mean)
+    over = rng.negative_binomial(theta_true, p, size=n).astype(np.float64)
+    poisson = rng.poisson(mean, size=n).astype(np.float64)
+    flat = np.full(n, 3.0)
+    counts = sparse.csr_matrix(np.stack([over, poisson, flat], axis=1))
+    totals = np.full(n, 100.0)
+
+    theta = gene_theta_moments(counts, totals, cfg, reference_total=100.0)
+    assert theta.shape == (3,)
+    assert theta_true * 0.8 < theta[0] < theta_true * 1.25, theta[0]
+    assert theta[1] > 100.0 * theta_true, theta[1]
+    assert theta[2] == pytest.approx(float(cfg.zinb_theta_max))
+
+
+def test_moment_matched_theta_is_fixed_per_gene_and_changes_nothing_else():
+    """``decoder_theta_mode`` moves ``theta`` alone, and ``learned`` stays bitwise as it was.
+
+    Three properties, and the third is the reason ``head_theta`` is still constructed under
+    ``moment_matched`` even though nothing reads it: it keeps the initialisation stream — and
+    therefore ``head_mu`` and ``head_pi`` — identical, so a difference between two fits of the
+    two modes is attributable to the dispersion and not to a different draw of weights.
+    """
+    cfg = Config().replace(latent_dim=8, gene_emb_dim=16, decoder_hidden=32)
+    fixed = cfg.replace(decoder_theta_mode="moment_matched")
+    gen = torch.Generator().manual_seed(SEED)
+    h = torch.randn((16, 8), generator=gen)
+    genes = torch.randn((20, 16), generator=gen)
+    size = torch.rand((16,), generator=gen) + 0.5
+    idx = torch.arange(20)
+    table = np.linspace(0.5, 9.0, 20)
+
+    learned = ZINBDecoder(cfg, 16, init_mean_expression=0.5)
+    matched = ZINBDecoder(fixed, 16, init_mean_expression=0.5, gene_theta=table)
+
+    # 1. `learned` ignores gene_idx, bitwise.
+    assert all(
+        torch.equal(a, b)
+        for a, b in zip(learned(h, genes, size), learned(h, genes, size, idx), strict=True)
+    )
+
+    # 2. `moment_matched` theta is the clamped table, identical in every cell.
+    mu_f, theta_f, pi_f = matched(h, genes, size, idx)
+    assert torch.equal(theta_f, theta_f[:1].expand_as(theta_f))
+    expected = np.clip(table, fixed.zinb_theta_min, fixed.zinb_theta_max)
+    assert np.allclose(theta_f[0].numpy(), expected, atol=1e-6)
+
+    # 3. mu and pi are bitwise what the learned decoder produces.
+    mu_l, theta_l, pi_l = learned(h, genes, size, idx)
+    assert torch.equal(mu_f, mu_l)
+    assert torch.equal(pi_f, pi_l)
+    assert not torch.equal(theta_f, theta_l), "the fixture would not test anything if it did"
+
+
+def test_moment_matched_refuses_to_invent_a_dispersion():
+    """Every way of reaching ``moment_matched`` without a real per-gene value raises.
+
+    Convention 6: a zero-shot gene has no panel column, so a decoder asked to decode one under
+    a fixed per-gene dispersion has to fail rather than reach for a default. That failure is
+    the reason the zero-shot arms stay on ``learned``.
+    """
+    cfg = Config().replace(latent_dim=8, gene_emb_dim=16, decoder_hidden=32)
+    fixed = cfg.replace(decoder_theta_mode="moment_matched")
+    gen = torch.Generator().manual_seed(SEED)
+    h = torch.randn((4, 8), generator=gen)
+    genes = torch.randn((3, 16), generator=gen)
+    size = torch.ones((4,))
+
+    with pytest.raises(ExpressionError, match="gene_theta_moments"):
+        ZINBDecoder(fixed, 16, init_mean_expression=0.5)
+    with pytest.raises(ExpressionError, match="would ignore it"):
+        ZINBDecoder(cfg, 16, init_mean_expression=0.5, gene_theta=np.ones(3))
+
+    decoder = ZINBDecoder(fixed, 16, init_mean_expression=0.5, gene_theta=np.ones(3))
+    with pytest.raises(ExpressionError, match="needs gene_idx"):
+        decoder(h, genes, size)
+    with pytest.raises(ExpressionError, match="gene_idx is"):
+        decoder(h, genes, size, torch.arange(2))
+    with pytest.raises(ExpressionError, match="fixed dispersion vector"):
+        decoder(h, genes, size, torch.tensor([0, 1, 7]))
+
+    with pytest.raises(ConfigError, match="decoder_theta_mode"):
+        cfg.replace(decoder_theta_mode="moments")
 
 
 def test_size_factor_head_starts_at_the_median():
@@ -1312,6 +1412,70 @@ def test_trainer_forwards_the_gene_pool(volume: Volume):
     outside = residual[pool.size :]
     assert float(outside.abs().max()) == 0.0, float(outside.abs().max())
     assert float(inside.abs().max()) > 0.0, float(inside.abs().max())
+
+
+def test_moment_matched_theta_reaches_every_decoder_path(volume: Volume):
+    """The fixed dispersion survives training **and** generation, on the whole wiring.
+
+    ``gene_idx`` had to be threaded through seven decoder call sites — the training step, the
+    generation diagnostic inside it, SEFL's branch evaluation, LOSO's fold decode, two in
+    calibration and one in ``generate`` — and a decoder that raised on any of them under
+    ``moment_matched`` would raise only when that path ran. The unit tests above check the
+    decoder in isolation, which is exactly the thing that would still pass.
+
+    So this drives the real object: build ``CTFFlow`` under the mode, take training steps, and
+    generate a section. The assertion is on the property the mode exists for — ``theta`` is one
+    value per gene and equal to the estimate the training volume produced — read back through
+    the *generation* path's decode, which is the one the retention measurement uses.
+    """
+    cfg = expression_cfg().replace(decoder_theta_mode="moment_matched")
+    training, _ = split_holdout(volume, "alternating", 0, cfg)
+    data = TrainingData.build(training, cfg)
+    model = CTFFlow(cfg, data, build_embeddings(cfg, volume), grf_seed=11)
+
+    groups = np.concatenate([np.asarray(s.cell_type, dtype=np.int64) for s in training.sections])
+    expected = gene_theta_moments(
+        data.counts,
+        data.total_counts,
+        cfg,
+        reference_total=data.stats.median_total,
+        groups=groups,
+    )
+    assert np.allclose(model.decoder.gene_theta.numpy(), expected, rtol=1e-5)
+
+    # The model must use the **conditional** estimate. Asserting the vector matches would pass
+    # against the marginal one too if the two happened to agree, so the contrast is asserted:
+    # marginal is the more over-dispersed estimate, which is the wrong direction, and the
+    # estimator's docstring carries the measurement.
+    marginal = gene_theta_moments(
+        data.counts, data.total_counts, cfg, reference_total=data.stats.median_total
+    )
+    assert np.median(marginal) < np.median(expected)
+    assert not np.allclose(model.decoder.gene_theta.numpy(), marginal, rtol=1e-3)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", BBoxClampWarning)
+        train_ctfflow(model, cfg, steps=2, seed=SEED)
+
+    rows = torch.arange(int(data.stats.n_genes), dtype=torch.long)
+    with torch.no_grad():
+        h = model.prior_latent(to_xyz(training.sections[0])[:16].astype(np.float64), seed=SEED)
+        _, theta, _ = model.decoder(
+            h, model.embeddings.gene(rows), model.size_head.size_factor(h), rows
+        )
+    assert torch.equal(theta, theta[:1].expand_as(theta)), "theta varies across cells"
+    assert np.allclose(theta[0].numpy(), expected, rtol=1e-5), "training moved the fixed theta"
+
+    # And the emission path's own call site. `_decode` is private, and called directly for the
+    # same reason `t09_retention_mechanism` patches `_flow_counts`: it is the single point every
+    # generated count's parameters pass through, and re-implementing it here would test a
+    # near-relative. Going through `generate_section` instead would put this behind
+    # `assert_detection_rate`, which a two-step model fails for reasons of its own.
+    from spatialcpav25_gen.infer.generate import _decode
+
+    with torch.no_grad():
+        _, gen_theta, _ = _decode(model, h, cfg, None)
+    assert np.allclose(gen_theta[0].numpy(), expected, rtol=1e-5)
 
 
 def test_training_data_refuses_heldout(volume: Volume):

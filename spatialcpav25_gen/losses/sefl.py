@@ -366,8 +366,9 @@ def evaluate_branch(
         h0 = module.prior_latent(xyz_grf, seed=seed)
         h = module.flow.sample(h0, cond, int(cfg.ode_steps))
         size_factor = module.size_head.size_factor(h)
-        gene_emb = module.embeddings.gene(torch.from_numpy(gene_idx.astype(np.int64)))
-        mu, theta, pi = module.decoder(h, gene_emb, size_factor)
+        gene_rows = torch.from_numpy(gene_idx.astype(np.int64))
+        gene_emb = module.embeddings.gene(gene_rows)
+        mu, theta, pi = module.decoder(h, gene_emb, size_factor, gene_rows)
         lam = module.intensity(data_points, module.field(model_points), region=region)
 
     eps = float(cfg.zinb_eps)

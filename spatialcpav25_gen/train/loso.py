@@ -319,8 +319,9 @@ def reconstruct_hidden(
     # The generation path, at the real positions: prior -> flow -> decoder.
     h0 = model.prior_latent(xyz, seed=int(seed))
     h = model.flow.sample(h0, cond, int(cfg.ode_steps))
-    gene_emb = model.embeddings.gene(torch.from_numpy(gene_idx.astype(np.int64)))
-    mu, theta, pi = model.decoder(h, gene_emb, _matched_size_factor(hidden, rows, model))
+    gene_rows = torch.from_numpy(gene_idx.astype(np.int64))
+    gene_emb = model.embeddings.gene(gene_rows)
+    mu, theta, pi = model.decoder(h, gene_emb, _matched_size_factor(hidden, rows, model), gene_rows)
     expected, variance = draw_mean_variance(mu, theta, pi, cfg)
     dispersed = _reparameterised_draw(expected, variance, seed=int(seed))
     sampler = sample_zigamma if cfg.decoder == "zigamma" else sample_counts

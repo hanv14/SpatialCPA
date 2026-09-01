@@ -39,6 +39,7 @@ __all__ = [
     "SUMMARY_FALLBACKS",
     "TEXT_EMB_MODES",
     "TEXT_POOLINGS",
+    "THETA_MODES",
     "Config",
     "ConfigError",
 ]
@@ -52,6 +53,7 @@ LAYOUT_MODES: Final[frozenset[str]] = frozenset({"field", "hybrid", "resample"})
 LAYOUT_SAMPLERS: Final[frozenset[str]] = frozenset({"grid", "rejection"})
 SUMMARY_FALLBACKS: Final[frozenset[str]] = frozenset({"none", "ortholog"})
 MU_LINKS: Final[frozenset[str]] = frozenset({"exp", "softplus"})
+THETA_MODES: Final[frozenset[str]] = frozenset({"learned", "moment_matched"})
 ROTATION_BIASES: Final[frozenset[str]] = frozenset({"uniform", "axial"})
 PRIOR_MODES: Final[frozenset[str]] = frozenset({"correlated", "iid"})
 POTTS_UPDATES: Final[frozenset[str]] = frozenset({"gibbs", "icm"})
@@ -1003,6 +1005,56 @@ class Config:
     ``softplus`` remains selectable and is the right choice for a fixture-like panel — modest
     means, real zeros — where the compression costs little and the extra freedom buys noise."""
 
+    decoder_theta_mode: str = "learned"
+    """One of ``THETA_MODES``: where the ZINB dispersion comes from.
+
+    ``"learned"`` (the default, and everything measured up to here) is a per-*(cell, gene)*
+    ``theta`` produced by the decoder's own head. ``"moment_matched"`` replaces it with a
+    **fixed per-gene vector**, estimated once from the training volume and never updated;
+    ``head_theta`` is still constructed — so the parameter initialisation stream, and hence
+    ``head_pi``, is untouched and the two modes differ *only* in ``theta`` — but its output is
+    unused and receives no gradient.
+
+    **Why the mode exists.** T09's conditional-variance decomposition measured
+    ``f_overdispersion = (1-pi) mu^2 / theta`` at **57-61 %** of the ZINB conditional variance
+    on both zero-shot arms, so the sampling noise that dilutes a generated section's Moran's I
+    is carried by ``theta`` rather than by the Poisson floor. That makes ``theta`` the only
+    lever the decomposition identifies.
+
+    **What the constraint removes.** The mechanism under test is the removal of the **per-cell
+    degree of freedom**: the learned head can inflate dispersion cell by cell to absorb
+    structure it failed to predict, and a single dispersion per gene cannot, so any cell-to-cell
+    variation has to be carried by ``mu`` instead. The value it is fixed at is a moment match on
+    size-factor-normalised training counts, **pooled within cell type**
+    (:func:`~spatialcpav25_gen.model.expression.gene_theta_moments`), clamped to
+    ``[zinb_theta_min, zinb_theta_max]``.
+
+    ⚠️ **The obvious estimator — the marginal moment ``m_g^2 / (v_g - m_g)`` — was written
+    first, and is measurably the wrong quantity.** ``v_g`` marginally contains every between-cell
+    difference the model is supposed to *predict*, so it over-states the variance and
+    under-states ``theta``. Its bias was recorded in writing before anything ran; the synthetic
+    fixture then measured the consequence. Median ``theta`` on the fixture: **marginal 0.213,
+    pooled within cell type 0.469, the learned head 0.371.** The marginal estimate is 1.7x *more*
+    over-dispersed than what the head had already learned — the opposite of the direction the
+    hypothesis needs — and a decoder pinned there emits a median per-gene detection rate of 0.286
+    against the training sections' 0.522, tripping ``assert_detection_rate``. Conditioning on
+    cell type moves it to 1.27x *less* over-dispersed than the learned head, which is a
+    constraint rather than a handicap.
+
+    ⚠️ **That correction runs in the direction that flatters the hypothesis, and a referee should
+    be told so plainly.** What makes it a correction and not a thumb on the scale is that the
+    direction was predicted from the estimator's algebra and written down *before* the fixture
+    measured it, and that the pooled form is simply closer to the quantity ``theta`` denotes —
+    the dispersion of counts given the cell's state. It is still an approximation: within-type
+    spatial variation stays in the estimate, which keeps it a *lower* bound on the conditional
+    dispersion, just a much less biased one. The first fit reports both vectors against the
+    learned head so the reader can see the size of the choice.
+
+    ⚠️ **The constraint may not bind.** If the learned ``theta`` is already near-constant
+    within a gene and near ``theta_g``, this mode changes nothing. That is what the
+    ``theta_learned`` vs ``theta_moment_matched`` diagnostic on the first fit is for, and it is
+    the gate on spending the remaining fits — not a threshold to move afterwards."""
+
     latent_encoder_hidden: int = 256
     """Hidden width of the expression encoder producing the data-side latent ``h1``."""
 
@@ -1737,6 +1789,7 @@ class Config:
             ("rotation_bias", self.rotation_bias, ROTATION_BIASES),
             ("potts_update", self.potts_update, POTTS_UPDATES),
             ("decoder_mu_link", self.decoder_mu_link, MU_LINKS),
+            ("decoder_theta_mode", self.decoder_theta_mode, THETA_MODES),
             ("gene_summary_fallback", self.gene_summary_fallback, SUMMARY_FALLBACKS),
             ("section_granularity", self.section_granularity, GRANULARITIES),
             ("metric_distribution_kind", self.metric_distribution_kind, METRIC_DISTRIBUTION_KINDS),

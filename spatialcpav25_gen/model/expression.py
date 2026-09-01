@@ -66,6 +66,7 @@ __all__ = [
     "cross_mix_counts",
     "detection_rate",
     "draw_mean_variance",
+    "gene_theta_moments",
     "sample_counts",
     "sample_zigamma",
     "time_embedding",
@@ -433,6 +434,87 @@ class _GeneConditionedTrunk(nn.Module):
         return out
 
 
+def gene_theta_moments(
+    counts: Any,
+    total_counts: FloatArray,
+    cfg: Config,
+    *,
+    reference_total: float,
+    groups: IntArray | None = None,
+) -> FloatArray:
+    """Per-gene NB dispersion by moment matching, pooled within ``groups``. ``(G,)`` float64.
+
+    ``counts`` is the ``(N, G)`` CSR of raw training counts and ``total_counts`` the ``(N,)``
+    per-cell library size; both are divided through by ``total / reference_total`` first, so the
+    estimate is on the same size-factor-normalised scale the decoder's ``mu`` predicts.
+
+    ``groups`` is ``(N,)`` integer labels — cell types in the pipeline — and is what makes this
+    an estimate of the **conditional** dispersion rather than the marginal one::
+
+        theta_g = sum_k n_k m_gk^2  /  sum_k n_k (v_gk - m_gk)
+
+    with ``m_gk`` and ``v_gk`` gene ``g``'s mean and variance inside group ``k``. Groups of
+    fewer than two cells carry no variance and are dropped. **With ``groups=None`` this reduces
+    exactly to the marginal estimator** ``m_g^2 / (v_g - m_g)``, which is why the two are one
+    function rather than two.
+
+    ⚠️ **The marginal form is measurably wrong for this purpose and is kept only for
+    comparison.** ``v_g`` marginally contains every between-cell difference the model is
+    supposed to *predict*, so it over-states the variance and under-states ``theta``. On the
+    synthetic fixture the marginal estimate lands at median **0.213** against the learned head's
+    **0.371** — 1.7x *more* over-dispersed, the opposite of the direction the hypothesis needs —
+    and a decoder pinned there emits a median per-gene detection rate of 0.286 against the
+    training sections' 0.522, tripping :func:`assert_detection_rate`. Conditioning on cell type
+    removes the largest component of that between-cell structure. It is still an approximation:
+    within-type spatial variation stays in ``v_gk`` and keeps this a *lower* bound on the
+    conditional dispersion, just a much less biased one.
+
+    A gene at or below Poisson in every group has no NB dispersion to estimate and is pinned at
+    ``zinb_theta_max``: the least over-dispersed value the guards allow, not a silent drop.
+    """
+    scale = np.asarray(total_counts, dtype=np.float64) / float(reference_total)
+    scale = np.maximum(scale, float(cfg.zinb_eps))
+    scaled = counts.multiply((1.0 / scale)[:, None]).tocsr()
+    n_genes = int(scaled.shape[1])
+    labels = (
+        np.zeros(int(scaled.shape[0]), dtype=np.int64)
+        if groups is None
+        else np.asarray(groups, dtype=np.int64)
+    )
+    if labels.shape != (int(scaled.shape[0]),):
+        raise ExpressionError(
+            f"gene_theta_moments: groups must be ({scaled.shape[0]},), got {labels.shape}"
+        )
+    numerator = np.zeros(n_genes, dtype=np.float64)
+    denominator = np.zeros(n_genes, dtype=np.float64)
+    for label in np.unique(labels):
+        block = scaled[labels == label]
+        n = float(block.shape[0])
+        if n < 2.0:
+            continue
+        mean = np.asarray(block.sum(axis=0), dtype=np.float64).reshape(-1) / n
+        second = np.asarray(block.multiply(block).sum(axis=0), dtype=np.float64).reshape(-1) / n
+        var = np.maximum(second - mean * mean, 0.0) * (n / (n - 1.0))
+        numerator += n * mean * mean
+        denominator += n * (var - mean)
+    if not np.any(denominator > 0.0) and groups is not None:
+        raise ExpressionError(
+            "gene_theta_moments: no gene is over-dispersed within any group, so every dispersion "
+            "would be pinned at zinb_theta_max. That is a degenerate input, not an estimate; "
+            f"check that groups ({len(np.unique(labels))} distinct) are cell types and not "
+            "per-cell identifiers."
+        )
+    theta = np.where(
+        denominator > 0.0,
+        numerator / np.maximum(denominator, float(cfg.zinb_eps)),
+        np.inf,
+    )
+    out = np.clip(theta, float(cfg.zinb_theta_min), float(cfg.zinb_theta_max))
+    if cfg.debug_shapes:
+        assert out.shape == (n_genes,), out.shape
+    return cast(FloatArray, out.astype(np.float64))
+
+
 def _check_decoder_inputs(h: Tensor, gene_emb: Tensor, size_factor: Tensor, name: str) -> None:
     """Raise :class:`ExpressionError` unless the three decoder inputs agree in shape."""
     if h.ndim != 2 or gene_emb.ndim != 2 or size_factor.ndim != 1:
@@ -475,9 +557,23 @@ class ZINBDecoder(nn.Module):
         express that the same gene is over-dispersed in one region and not in another, and T09
         calibrates ``log theta`` per gene *on top of* this — a shift of a distribution the model
         still has to produce.
+
+        ⚠️ **That freedom is exactly what ``Config.decoder_theta_mode="moment_matched"``
+        removes**, and it is a hypothesis T09 raised against this paragraph, not a refutation of
+        it: the same per-cell dispersion that expresses genuine regional over-dispersion can
+        also absorb between-cell structure the model failed to predict, and T09's decomposition
+        put 57-61 % of the conditional variance in that term. Whether the freedom is worth its
+        cost is what the two modes measure. ``"learned"`` remains the default.
     """
 
-    def __init__(self, cfg: Config, gene_emb_dim: int, *, init_mean_expression: float) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        gene_emb_dim: int,
+        *,
+        init_mean_expression: float,
+        gene_theta: FloatArray | None = None,
+    ) -> None:
         super().__init__()
         self.cfg = cfg
         self.trunk = _GeneConditionedTrunk(cfg, gene_emb_dim)
@@ -499,6 +595,27 @@ class ZINBDecoder(nn.Module):
             )
             self.head_theta.bias.fill_(_softplus_inverse(1.0))
             self.head_pi.bias.zero_()
+        # Registered unconditionally so a checkpoint from either mode loads into either
+        # decoder; empty under "learned", where nothing reads it.
+        if cfg.decoder_theta_mode == "moment_matched":
+            if gene_theta is None:
+                raise ExpressionError(
+                    "Config.decoder_theta_mode='moment_matched' needs the per-gene dispersion "
+                    "vector, and ZINBDecoder(gene_theta=...) was not given one. Compute it with "
+                    "expression.gene_theta_moments(data.counts, data.total_counts, cfg, "
+                    "reference_total=data.stats.median_total)."
+                )
+            vector = np.asarray(gene_theta, dtype=np.float64)
+            if vector.ndim != 1:
+                raise ExpressionError(f"gene_theta must be (G,), got {vector.shape}")
+            self.register_buffer("gene_theta", torch.from_numpy(vector.astype(np.float32)))
+        else:
+            if gene_theta is not None:
+                raise ExpressionError(
+                    "ZINBDecoder was given gene_theta but Config.decoder_theta_mode="
+                    f"{cfg.decoder_theta_mode!r}, which would ignore it."
+                )
+            self.register_buffer("gene_theta", torch.zeros(0))
 
     @property
     def gene_emb_dim(self) -> int:
@@ -509,8 +626,25 @@ class ZINBDecoder(nn.Module):
         """``(N, d_h)``, ``(G', d_e)``, ``(N,)`` -> three ``(N, G')``; see :meth:`forward`."""
         return cast(DecoderOutput, super().__call__(*args, **kwargs))
 
-    def forward(self, h: Tensor, gene_emb: Tensor, size_factor: Tensor) -> DecoderOutput:
-        """``(N, d_h)``, ``(G', d_e)``, ``(N,)`` -> ``mu``, ``theta``, ``pi`` each ``(N, G')``."""
+    def forward(
+        self,
+        h: Tensor,
+        gene_emb: Tensor,
+        size_factor: Tensor,
+        gene_idx: Tensor | None,
+    ) -> DecoderOutput:
+        """``(N, d_h)``, ``(G', d_e)``, ``(N,)`` -> ``mu``, ``theta``, ``pi`` each ``(N, G')``.
+
+        ``gene_idx`` is ``(G',)`` panel columns naming the genes ``gene_emb`` stands for. Its
+        value is **ignored** under ``decoder_theta_mode="learned"``; under ``"moment_matched"``
+        it indexes the fixed per-gene dispersion and ``None`` raises. **The argument has no
+        default even though one mode ignores it**, so that ``mypy --strict`` proves every call
+        site in the package supplies it: a site that quietly fell back to ``None`` would raise
+        hours into a fit, on whichever path happened to run first. A zero-shot
+        embedding has no panel column, so a run holding genes out has to stay on ``"learned"``
+        — the alternative would be to invent a dispersion for a gene never seen, which is the
+        silent fallback Convention 6 forbids.
+        """
         _check_decoder_inputs(h, gene_emb, size_factor, "ZINBDecoder")
         features = self.trunk(h, gene_emb)
         eps = float(self.cfg.zinb_eps)
@@ -523,7 +657,10 @@ class ZINBDecoder(nn.Module):
         else:
             mu = torch.nn.functional.softplus(raw) * scale
         mu = torch.clamp(mu, min=float(self.cfg.zinb_mu_min), max=float(self.cfg.zinb_mu_max))
-        theta = torch.nn.functional.softplus(self.head_theta(features).squeeze(-1)) + eps
+        if self.cfg.decoder_theta_mode == "moment_matched":
+            theta = self._fixed_theta(gene_idx, gene_emb.shape[0]).expand(h.shape[0], -1)
+        else:
+            theta = torch.nn.functional.softplus(self.head_theta(features).squeeze(-1)) + eps
         theta = torch.clamp(
             theta, min=float(self.cfg.zinb_theta_min), max=float(self.cfg.zinb_theta_max)
         )
@@ -534,6 +671,26 @@ class ZINBDecoder(nn.Module):
             assert theta.shape == shape, theta.shape
             assert pi.shape == shape, pi.shape
         return mu, theta, pi
+
+    def _fixed_theta(self, gene_idx: Tensor | None, n_genes: int) -> Tensor:
+        """``(1, G')`` row of the fixed per-gene dispersion, for the genes ``gene_idx`` names."""
+        table = cast(Tensor, self.gene_theta)
+        if gene_idx is None:
+            raise ExpressionError(
+                "Config.decoder_theta_mode='moment_matched' needs gene_idx: the fixed dispersion "
+                "is per gene and the decoder is given embeddings, not panel columns. Pass the "
+                "same indices the gene embedding was looked up with."
+            )
+        if gene_idx.ndim != 1 or int(gene_idx.shape[0]) != n_genes:
+            raise ExpressionError(
+                f"ZINBDecoder: gene_idx is {tuple(gene_idx.shape)} but gene_emb has {n_genes} rows"
+            )
+        if int(gene_idx.max()) >= int(table.shape[0]) or int(gene_idx.min()) < 0:
+            raise ExpressionError(
+                f"ZINBDecoder: gene_idx spans [{int(gene_idx.min())}, {int(gene_idx.max())}] "
+                f"but the fixed dispersion vector has {int(table.shape[0])} genes."
+            )
+        return table[gene_idx.to(torch.long)][None, :]
 
 
 class ZIGammaDecoder(nn.Module):
@@ -551,10 +708,19 @@ class ZIGammaDecoder(nn.Module):
     :mod:`spatialcpav25_gen.losses.reconstruction`.
     """
 
-    def __init__(self, cfg: Config, gene_emb_dim: int, *, init_mean_expression: float) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        gene_emb_dim: int,
+        *,
+        init_mean_expression: float,
+        gene_theta: FloatArray | None = None,
+    ) -> None:
         super().__init__()
         self.cfg = cfg
-        self.zinb = ZINBDecoder(cfg, gene_emb_dim, init_mean_expression=init_mean_expression)
+        self.zinb = ZINBDecoder(
+            cfg, gene_emb_dim, init_mean_expression=init_mean_expression, gene_theta=gene_theta
+        )
 
     @property
     def gene_emb_dim(self) -> int:
@@ -565,13 +731,23 @@ class ZIGammaDecoder(nn.Module):
         """``(N, d_h)``, ``(G', d_e)``, ``(N,)`` -> three ``(N, G')``; see :meth:`forward`."""
         return cast(DecoderOutput, super().__call__(*args, **kwargs))
 
-    def forward(self, h: Tensor, gene_emb: Tensor, size_factor: Tensor) -> DecoderOutput:
+    def forward(
+        self,
+        h: Tensor,
+        gene_emb: Tensor,
+        size_factor: Tensor,
+        gene_idx: Tensor | None,
+    ) -> DecoderOutput:
         """``(N, d_h)``, ``(G', d_e)``, ``(N,)`` -> ``mu``, ``theta`` (shape), ``pi``."""
-        return self.zinb.forward(h, gene_emb, size_factor)
+        return self.zinb.forward(h, gene_emb, size_factor, gene_idx)
 
 
 def build_decoder(
-    cfg: Config, gene_emb_dim: int, *, init_mean_expression: float
+    cfg: Config,
+    gene_emb_dim: int,
+    *,
+    init_mean_expression: float,
+    gene_theta: FloatArray | None = None,
 ) -> ZINBDecoder | ZIGammaDecoder:
     """Construct the decoder ``Config.decoder`` names.
 
@@ -579,9 +755,13 @@ def build_decoder(
     raises here rather than silently decoding counts through the ZINB head (Convention 6).
     """
     if cfg.decoder == "zinb":
-        return ZINBDecoder(cfg, gene_emb_dim, init_mean_expression=init_mean_expression)
+        return ZINBDecoder(
+            cfg, gene_emb_dim, init_mean_expression=init_mean_expression, gene_theta=gene_theta
+        )
     if cfg.decoder == "zigamma":
-        return ZIGammaDecoder(cfg, gene_emb_dim, init_mean_expression=init_mean_expression)
+        return ZIGammaDecoder(
+            cfg, gene_emb_dim, init_mean_expression=init_mean_expression, gene_theta=gene_theta
+        )
     raise ExpressionError(
         f"Config.decoder={cfg.decoder!r} is not built yet. 'zinb' and 'zigamma' are T06; "
         "'gaussian' is ablation A6 and is owed by T10, which owns the ablation table."

@@ -257,6 +257,43 @@ independent-donor baseline's **7.783** on the default holdout **and** holding at
 is downgraded to a mechanism claim and `specs/10` §2 frames it that way — a decision to record, not to
 drift into.
 
+#### (v) The emission model, T09 (2026-09-01) — the first instance with a named term and a measured share
+
+The four instances above are *inferences*: a likelihood improved while a fidelity number degraded,
+and the trade was the only explanation left. T09's conditional-variance decomposition names the
+term and measures it.
+
+Decomposing the ZINB conditional variance `Var(X | cell) = (1-pi) mu (1 + mu/theta + pi mu)` on the
+generated cells of six `deep_starmap` fits, 12 arm x seed x fold cells:
+
+| term | share of conditional variance |
+|---|---|
+| overdispersion, `(1-pi) mu^2/theta` | **0.5677-0.6143** |
+| Poisson floor, `(1-pi) mu` | 0.2896-0.3359 |
+| zero inflation, `(1-pi) pi mu^2` | 0.0795-0.1014 |
+
+Sampling noise is spatially independent, so it dilutes the conditional mean's autocorrelation in
+proportion to the structured share `s`; `mu`'s spatial pattern is *fine* (the generated conditional
+mean is 2.65-2.85x more autocorrelated than the real section's counts) and only 9-19% of the
+emitted count variance survives as between-cell structure. **The term that eats it is
+overdispersion**, i.e. the decoder reduces its NLL by widening `theta` rather than by sharpening
+`mu` — R4's trade, in the emission model, with the responsible term isolated.
+
+**Why the arm-independence is the strong part.** `medcpt` 0.6003 (0.5866-0.6140) against `lookup`
+0.5961 (0.5677-0.6143), a difference of -0.0041 with almost entirely overlapping ranges. These are
+two separate trainings with different gene embeddings and different text channels — one that works
+and one that is a `norm(0)` void — putting the *same fraction* of conditional variance in the same
+term. An arm-dependent number would have been a property of one embedding and would have supported
+nothing general. This one says the trade is structural to the ZINB emission under this objective.
+
+⚠️ **Two arms is two.** Both are `deep_starmap`, at one `decoder_mu_link`, on one panel. The claim
+is arm-independence, not dataset- or objective-independence, and it must not be rounded up.
+
+**Under test, not resolved.** `Config.decoder_theta_mode="moment_matched"` fixes `theta` per gene
+and removes the per-cell freedom the trade needs; T09 step 2 measures whether retention recovers.
+Pre-registration and the estimator's own bias are in
+`progress/t09_inference_and_calibration.md`.
+
 ### R3 — the boundary is a different regime, and it is not a fixture artefact
 
 Every serial-section dataset has two ends, and a cell at either of them has training sections and
