@@ -3958,3 +3958,43 @@ The expression half is now localised as far as measurement without a refit can t
 ZINB likelihood by widening dispersion rather than sharpening the mean, and the spatial structure
 that the mean carries almost perfectly is then thrown away by the draw. R4 has had four inferred
 instances; this is the first where the mechanism is decomposed and the responsible term named.
+
+### T09 — the `medcpt` decomposition files, reviewed (2026-08-31)
+
+Three files, six cells. They reproduce the summary table exactly. Two things the summary does not
+show.
+
+**1. The re-run is a reproduction check, and it passes.** 29 of 30 previously-reported values are
+**bitwise identical** to the pre-decomposition run. The single difference is `s_max` on seed 4
+`section_5`: `0.4272283911705017 -> 0.4272284209728241`, **delta 3.0e-08**. Cause: adding the
+decomposition regrouped the arithmetic from `(1-pi)·mu·(1 + mu/theta + pi·mu)` to the three terms
+summed separately — algebraically identical, so only the last bits of one gene's share moved.
+Every reported figure is unchanged at the precision it is quoted to. `real_morans_top` is also
+identical across all six cells per fold (0.2906032145674943 / 0.28304612687800995), as it must be:
+it is a property of the real data and a fixed gene selection.
+
+**2. The per-gene `s` spans two orders of magnitude, and the median hides it.**
+
+| seed | fold | `s_min` | median | `s_max` | ratio |
+|---|---|---|---|---|---|
+| 2 | `section_3` | 0.0036 | 0.0934 | 0.4279 | **119x** |
+| 2 | `section_5` | 0.0093 | 0.1304 | 0.4278 | 46x |
+| 3 | `section_3` | 0.0042 | 0.1007 | 0.4208 | **100x** |
+| 3 | `section_5` | 0.0076 | 0.1163 | 0.4266 | 56x |
+| 4 | `section_3` | 0.0040 | 0.1044 | 0.4232 | **106x** |
+| 4 | `section_5` | 0.0077 | 0.1181 | 0.4272 | 55x |
+
+"The draw retains ~10%" is a **median over genes whose structured shares differ by 50–120x**. Some
+genes emerge at `s` 0.43 and some at 0.004. That belongs in any write-up of this result: the
+emission does not lose structure uniformly, it loses nearly all of it for some genes and little
+for others, and nothing here says which genes or why.
+
+**Does the median distort the projection?** Checked rather than assumed. `s' = s/((1-f) + s·f)` is
+**monotone increasing in `s`**, so `median(s') = s'(median s)` *exactly*. The gain `mv·(s' − s)` is
+monotone up to `s = 0.391` and only the handful of genes above that are past the turnover, so
+`median(gain) ≈ gain(median s)` to good accuracy. **The median-based projection is sound in the
+`s` dimension.** It is approximate only insofar as `f_overdispersion` varies across genes *and*
+correlates with `s` — which is not measured, and is the one way the 2.25x–4.23x could be off.
+Recorded as a limitation of the projection, not proposed as another measurement.
+
+Awaiting the three `lookup` files before anything further.
