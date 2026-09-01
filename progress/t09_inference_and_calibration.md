@@ -4216,3 +4216,117 @@ that is the user's call, not mine — but it should be settled now rather than a
 clean baseline. It is also the only honest configuration for this field: a gene held out of the
 panel has no legitimate per-gene dispersion, and inventing one is exactly the silent fallback
 Convention 6 forbids.
+
+### T09 — step 2, fit 1 of 6: the diagnostic stops the other five (2026-09-01)
+
+`lookup`, seed 2, full panel (1017 genes), `deep_starmap`/`paper_2_4_6`, `decoder_theta_mode="learned"`,
+`decoder_mu_link="exp"`, config `9cac532971466d11`. `reports/t09_theta_learned_s2.json`.
+
+#### 1. The cost estimate held — the first one in this project that did not come in low
+
+**3.74 h (13 477 s)** against the 3.82–4.09 h quoted. The remaining five would be **18.7 h**, total
+**22.5 core-hours**, inside the 24 approved. The gate did its job in the cheap direction for once,
+and then the diagnostic closed the spend for a different reason.
+
+#### 2. The diagnostic: the value the variant would be pinned at is 7x too low
+
+| estimator | fixture | `deep_starmap`, this fit |
+|---|---|---|
+| marginal moment | 0.213 | **0.0186** |
+| pooled within cell type | 0.469 | **0.0489** |
+| the learned head | 0.371 | **0.366** |
+
+`log_ratio_median` **1.934** — the learned dispersion is `e^1.934` = **6.9x above** the pooled
+estimate (7.5x on the ratio of medians; 19.7x against the marginal one). `theta_moment_at_max` is
+0.0, so nothing is degenerate: the estimate is well defined on all 1017 genes and simply lands far
+below what the model learned.
+
+**Pinning `theta` there would make the decoder ~7x *more* over-dispersed.** `f_overdispersion`
+rises, `s` falls, retention falls. The variant would test the **opposite** of the hypothesis, and a
+NOT ANSWERED from it would be uninterpretable — indistinguishable from the constraint working
+exactly as the mechanism predicts, in reverse. **The remaining five fits must not run as
+configured.**
+
+#### 3. My defence of the pooled estimator does not transfer, and that is the finding
+
+Earlier today I replaced the marginal estimator with the cell-type-pooled one and defended the
+choice at length: conditioning on cell type removes the between-cell structure that biases `v_g`,
+the direction was predicted before the fixture measured it, and the fixture confirmed it (marginal
+0.213 -> pooled 0.469, crossing the learned 0.371 from below to above).
+
+**On real data the correction moves the same way and is nowhere near enough.** Marginal 0.0186 ->
+pooled 0.0489 is the predicted direction — and still **7x short**. The reason is now obvious and
+should have been argued before the fixture was trusted: on the fixture, expression is largely
+cell-type driven, so grouping by type removes most of the structure from `v_gk`. On real tissue,
+cells of one type span the whole volume, so `v_gk` still contains nearly all the spatial variation
+the model is supposed to *predict*. The bias I named is an order of magnitude larger on real data,
+**and the fixture cannot calibrate it** — it reports the correction as sufficient when it is not.
+Another entry for `progress/fixture_limitations.md`: the fixture agreed with the argument and the
+agreement was worthless.
+
+⚠️ For the record: the direction I was accused-in-advance of choosing — the one that flatters the
+hypothesis — is the direction real data says is *unavailable*. The defence I wrote was sincere and
+the estimator is still wrong.
+
+#### 4. What the fit establishes anyway, and it is not nothing
+
+* **The per-cell freedom is real and large.** `within_gene_sd_log` **0.418** (p90 0.507): the
+  learned `theta` swings **1.52x** across cells within one gene (1.66x at the 90th percentile). The
+  constraint would bind. This is the number that separates "a null effect" from "a null change",
+  and it says the change would not have been null.
+* **`log_ratio_spearman` = 0.068 — the learned dispersion is essentially *uncorrelated* with the
+  data's own.** Across 1017 genes, how over-dispersed the head makes a gene has almost no relation
+  to how over-dispersed that gene is within its cell type (IQR of the log ratio 1.891, a 6.6x
+  spread between the quartiles). **This is a second, independent statement of R4's trade, and a
+  stronger one than "theta is too wide": `theta` is not a dispersion estimate at all.** It is
+  absorbing mean variation the model failed to predict, and the fact that it does so
+  gene-indiscriminately is what a moment-matched value was never going to fix.
+* **THETA IS A LEVER reproduces outside the configuration it was measured in.**
+  `f_overdispersion` **0.611 / 0.630** here, against 0.5677–0.6143 on the six gene-split fits —
+  full panel instead of an 813-gene pool, a new config hash, one arm. The verdict does not depend
+  on the gene split.
+* **The law of total variance holds on real data at full panel.** `s` 0.1605 against
+  `draw_retention` 0.1614 (`section_3`), 0.2016 against 0.1999 (`section_5`) — within ~1 %. The
+  identity the whole step-1 argument rests on is now checked on the object it is used on.
+* `mean_vs_real` **2.64 / 2.76** reproduces step 1's 2.65–2.85, with the noiseless-numerator caveat
+  unchanged.
+
+#### 5. ⚠️ A side effect of the field I should have flagged when I added it
+
+`Config.content_hash()` hashes **every** field, so adding `decoder_theta_mode` changed the hash of
+every config, and `CheckpointState.require_compatible` refuses a resume on a mismatch. **The six
+existing zero-shot `deep_starmap` checkpoints (23.5 core-hours) can no longer be resumed at HEAD.**
+Nothing measured is lost — their JSON reports are written and reviewed — but re-scoring them now
+requires checking out the pre-change commit. This is a general property of adding any `Config`
+field and it will recur; it belongs in the record so the next person does not discover it with a
+stranded checkpoint.
+
+#### 6. The decision, which is not mine
+
+**Option A — stop.** Record what is established: the mechanism is localised to `theta`
+(57–63 % of the conditional variance, arm-independent and split-independent), the per-cell freedom
+is real (1.52x), and the learned dispersion is uncorrelated with the data's own. Then state that
+**no data-derived fixed value exists that would test it in the right direction**, so the causal
+test is unavailable and the paper says so. This is Option 3's honest open state, reached
+deliberately.
+
+**Option B — remove the per-cell freedom without choosing the value**: `theta` **per gene, still
+learned**. The optimiser picks `theta_g`; it cannot vary it cell to cell. Same five fits, same
+~18.7 h, and the ANSWERED / NOT ANSWERED criteria stay **exactly** as pre-registered because
+nothing about the outcome changes. The pre-registration's own sentence named this as the mechanism
+— *"removes the optimiser's freedom to make the trade R4 names"* — and moment-matching was the
+means, not the target.
+
+⚠️ **Option B is weaker in one specific way and it must be named before anyone chooses it.** It
+removes only the **per-cell** half of the freedom. If the trade also runs at the per-gene level —
+the optimiser simply picking a low `theta_g` for every gene — the constraint does not stop it, and
+`log_ratio_spearman` = 0.068 is consistent with exactly that. `within_gene_sd_log` = 0.418 says
+there *is* per-cell freedom to remove; **nothing measured says it is the half that matters.**
+
+⚠️ **Is switching to B a design moved after a result?** The case that it is not: the diagnostic was
+pre-registered as *reported, not thresholded*, precisely so a null could be told apart from a null
+change; it fired **before any variant fit existed**; and what it found is that the experiment as
+configured tests the opposite of its hypothesis. That is a mis-specification caught before
+spending, not a threshold moved after a disliked result. The case that it is: I am changing the
+intervention after seeing a number, and the replacement happens to be the one that can still
+produce a positive. **Both readings are on the record and the choice is the user's.**
