@@ -3711,3 +3711,63 @@ not the structured share of count variance; the mechanism is unidentified"* — 
 eliminated by measurement, with the elimination itself being the contribution. **I will not
 propose a fifth measurement without being asked**, and a paper that names an unexplained effect
 precisely is worth more than one that attributes it to the first surviving candidate.
+
+### T09 — step 1, `medcpt` (6 of 12 cells): the draw dilutes by `s`, and the mean is 2.7x too smooth (2026-08-31)
+
+| seed | fold | `s` | `draw` | `s − draw` | `mean/real` | I(mean) | I(real) | retention |
+|---|---|---|---|---|---|---|---|---|
+| 2 | `section_3` | 0.0934 | 0.0916 | +0.0019 | 2.6835 | 0.7798 | 0.2906 | 0.2457 |
+| 2 | `section_5` | 0.1304 | 0.1251 | +0.0053 | 2.7285 | 0.7723 | 0.2830 | 0.3413 |
+| 3 | `section_3` | 0.1007 | 0.0952 | +0.0055 | 2.6883 | 0.7812 | 0.2906 | 0.2560 |
+| 3 | `section_5` | 0.1163 | 0.1173 | −0.0009 | 2.6681 | 0.7552 | 0.2830 | 0.3129 |
+| 4 | `section_3` | 0.1044 | 0.0895 | +0.0149 | 2.6517 | 0.7706 | 0.2906 | 0.2375 |
+| 4 | `section_5` | 0.1181 | 0.1193 | −0.0012 | 2.6984 | 0.7638 | 0.2830 | 0.3219 |
+
+**No verdict yet** — the pre-registered test is over all 12 cells with the arm-ordering condition,
+and `lookup` is outstanding.
+
+#### 1. The dilution relation holds, and that is weaker evidence than it looks
+
+`s` tracks `draw_retention` to a maximum absolute difference of **0.0149** and a mean ratio of
+**0.960**. `I(counts) ≈ I(conditional mean) × s` describes the sampler to about one part in ten.
+
+⚠️ **But this is close to arithmetic, not discovery.** Given spatially-independent sampling noise,
+the law of total variance *makes* the draw dilute autocorrelation by the structured share — it
+would hold for any correct ZINB sampler. And because `mean_vs_real` turns out to be nearly
+constant here (2.65–2.73, a 2.8% spread), `retention_top` is proportional to `draw_retention`,
+which is ≈ `s`. So the pre-registered Spearman test is **close to tautological**: its positive
+outcome was near-guaranteed if the sampler is correct.
+
+**That is a defect in my pre-registration**, and it is the same one this session has now produced
+five times: a criterion placed on a quantity whose properties I had not established first. The
+Spearman number will still be reported, and it should be read as *"the sampler behaves as the
+theory says"* rather than as *"the mechanism is identified"*.
+
+**The non-tautological content is the magnitude.** `s` is **0.09–0.13**: only about a tenth of the
+emitted count variance is between-cell structure. That is what a 90% loss at the draw *is*, and it
+locates the question precisely — in the ZINB conditional variance
+`(1−π)μ(1 + μ/θ + πμ)`, whose `μ²/θ` term dominates at these means. **Small `θ` — high learned
+overdispersion — is what makes `s` small**, which is exactly what step 2 was designed to test, so
+the chain to a causal experiment survives.
+
+#### 2. The generated mean is **2.7x more autocorrelated than the real section**
+
+`mean_vs_real` is **2.65–2.73** on all six cells: I(generated conditional mean) 0.755–0.781
+against I(real counts) 0.283–0.291. Not "smooth enough" — **far too smooth**. And `retention_top`
+at 0.24–0.34 is the product of a 2.7x overshoot and a 0.09–0.13 draw: **two large errors in
+opposite directions that the single retention number had been hiding.**
+
+⚠️ **The first factor is not interpretable as "how good is the generated mean", and I built it
+that way.** Its numerator is a **noiseless** quantity — the conditional mean is a smooth function
+of the latent, with no cell-level draw in it — and its denominator is **real counts, which carry
+the tissue's own sampling noise and are depressed by it**. A ratio above 1 is therefore expected
+and says little on its own. The pilot's 0.861-vs-0.745 comparison was between two *latents* and
+did not have this problem; mine does.
+
+The referent that would make it interpretable is the real section's **noise-free** Moran's I —
+estimable model-free by split-half plus Spearman–Brown, the same construction
+`t09_zeroshot_ceiling.py` already uses for the correlation. **I am not proposing to run it**, per
+the standing agreement not to chain measurements unasked; it is recorded so the decision is
+available and so the 2.7x is not quoted as a finding about the mean's quality. What can be said
+without it: the generated mean is smoother than noisy real data, and the loss at the draw is real
+and large.
