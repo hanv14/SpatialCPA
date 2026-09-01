@@ -3661,3 +3661,53 @@ Step 1 costs minutes and can stop step 2 entirely. Step 2 costs half the replica
 answers, gives R4 — the project's largest open question — its first measured instance in the
 decoder. The replication gives one observation on one metric a second dataset. Both are worth
 doing; this one is worth doing first, and step 1 is worth doing before either.
+
+### T09 — step 1 built, and what NOT IDENTIFIED would rule out (2026-08-31)
+
+`scripts/t09_retention_mechanism.py`. Two things verified before it touches the campaign, because
+either would have silently measured the wrong quantity:
+
+* **The latent capture is the real one.** `s` must be computed on the *generated* cells or it
+  cannot predict a retention measured there. Rather than re-deriving the chain, `_flow_counts` —
+  the single point every emitted count passes through — is patched for one call and the capture
+  checked against the emitted counts. On the fixture: **1500 latent rows against 1500 emitted
+  cells**, and the run aborts if the count is not exactly one or the shapes disagree.
+* **The ZINB variance formula matches the sampler.** `Var(X) = (1-pi) mu (1 + mu/theta + pi mu)`
+  against a 60-draw Monte-Carlo of `sample_counts` on the same parameters: **correlation
+  0.999862**, median ratio 0.984 (the Monte-Carlo low at 60 draws, as expected).
+
+**Retention is reported as the product it is.** `retention_top = mean_vs_real x draw_retention`,
+where the first factor is the *generated* conditional mean's Moran's I over the real section's and
+the second is what the count draw then costs. This was added before running, and it matters more
+than the correlation: **R12's 0.861 — "`mu` is spatially smooth" — was measured on the ENCODER's
+latent for a real section, never on the flow's latent at generated positions.** If `mean_vs_real`
+comes back low, retention was never a sampling problem and the whole account has been looking at
+the wrong stage. One Moran's call, so the run answers something whichever way the correlation goes.
+
+#### Pre-committed: what NOT IDENTIFIED would rule out, stated before the run
+
+Asked for, and right to ask for. If |Spearman r| < 0.4:
+
+**Ruled out.** The dilution account — that retention is governed by the fraction of *count*
+variance that is between-cell structure. Under the law of total variance that is the **only**
+route by which spatially-independent sampling noise can reduce autocorrelation, so ruling it out
+removes dispersion and zero-inflation as explanations, not just as parameters to tune. Combined
+with what is already eliminated — the size factor (12/12 latent-driven at 0.75–0.87), the mean
+link (`exp`, confirmed per checkpoint), and amplitude (a perfectly separating predictor with an
+overlapping outcome and a backwards sign) — **nothing in the emission model's own parameterisation
+would remain as a candidate.**
+
+**What would still stand, and it is not a mechanism.** Two possibilities that are not about the
+decoder: (a) the generated conditional mean is itself less structured than the real section, which
+`mean_vs_real` measures directly in the same run and which would relocate the problem to the flow
+or the conditioning; (b) a metric artifact — rank-normalising a sparse integer count vector with
+many ties is not the same operation as rank-normalising a continuous mean, and ties can depress
+Moran's I independently of any variance share.
+
+**And then the honest answer is that we do not know what governs retention, and the paper says
+so.** That is a legitimate result: R12 would be *"the emission loses more than half the spatial
+structure of the structured genes; it is not the size factor, not the link, not the amplitude, and
+not the structured share of count variance; the mechanism is unidentified"* — four candidates
+eliminated by measurement, with the elimination itself being the contribution. **I will not
+propose a fifth measurement without being asked**, and a paper that names an unexplained effect
+precisely is worth more than one that attributes it to the first surviving candidate.

@@ -485,6 +485,39 @@ largest difference exactly 0**. The original 0.0120 was that defect, not run-to-
 the envelope it helped justify was inflated by a bug. The sentences above are kept because the
 *rule* they motivate survives; the number does not.
 
+### 4.2* ⚠️ THE FINDING: four verdicts turned on conventions nobody had written down
+
+**State this in the paper's methods, as one finding.** §4.2a–d below are not four housekeeping
+rules; they are four instances of one thing, and the pattern is more transferable than any of them.
+
+Every claim-bearing comparison in this literature is of the form *"the margin exceeds the noise"*.
+That sentence hides four independent choices, and **in this project each one silently decided a
+verdict before anyone noticed it was a choice**:
+
+| choice | §  | the verdict it decided |
+|---|---|---|
+| **which arm's** variance is the noise | 4.2a | a pooled envelope was too lenient on three metrics and too strict on two; the worse arm **alternates by metric**, so it cannot be reasoned about in advance |
+| **which comparison's** envelope a clearance takes | 4.2b | two arms 0.004 apart landed on opposite sides of the line, because one varied less; the steadier arm was being credited with a capability |
+| **which referent** is a floor at all | 4.2c | the pre-registered "constant-field band" had bitwise-identical input — no variation for any metric to find — and three instruments were needed to establish it, two of them thresholds that failed |
+| **how the spread is aggregated** | 4.2d | an arm effect read 1.12x under fold-averaged noise and 0.75x under per-fold noise; it was reported as standing and is withdrawn |
+
+**None of these is exotic.** Each is the kind of choice made once, in code, without comment,
+because at the time only one option was in view. Each survived review until a number happened to
+land near the boundary it controlled. That is the mechanism: **an unstated convention is invisible
+until a result is marginal, and by then it has already been applied to every result that was not.**
+
+**The rule that generalises**, and the one to state in the methods: *report every claim under every
+defensible alternative for each of these four choices, and treat disagreement between them as not
+established.* This project now does that — the zero-shot verdict prints under both referents,
+the arm effects under both aggregations — and it costs nothing but the discipline of writing the
+alternatives down.
+
+The corollary is uncomfortable and belongs in the paper too: **verdicts published before a
+convention was written down were decided by it.** In this project that includes every "inside the
+envelope" call made before the seeding bug was found (R10) and every clearance read against the
+constant field. They were re-derived; most did not move, and the two that did are recorded as
+withdrawn.
+
 ### 4.2a The envelope is per-metric **and per-arm** — a methods finding, not a caveat
 
 **State this in the paper's methods. It is not reported anywhere in this literature, and it
