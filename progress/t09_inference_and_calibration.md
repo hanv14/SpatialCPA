@@ -3900,3 +3900,61 @@ Anything else — including cells falling on both sides of either threshold. Rep
 **What I will do on NOT A LEVER**: state what it rules out, and stop. **No substitute experiment
 will be proposed in that message.** Option 3's open state is an acceptable ending and reaching it
 deliberately is better than reaching it after one more measurement.
+
+### T09 — the decomposition: THETA IS A LEVER, and what that verdict does and does not say (2026-08-31)
+
+| | 12 cells | threshold |
+|---|---|---|
+| `f_overdispersion` | **0.5677–0.6143** | ≥ 0.50 on every cell — **met, minimum clears by +0.0677 = 1.5x the across-cell spread** |
+| `f_poisson` | 0.2896–0.3359 | — the floor I expected might dominate. It does not. |
+| `f_zero_inflation` | 0.0795–0.1014 | — |
+| idealised gain if `theta -> inf` | **0.2848–0.5364** | **2.25x–4.23x** the strict per-fold envelope |
+
+**Verdict: THETA IS A LEVER.** No cell is near the boundary and the reported gain reproduces
+independently (medcpt seed 2 `section_3`: `s'` 0.1995, gain 0.2847 against the script's 0.2848).
+
+The medians of the three fractions sum to 0.983–1.002 rather than exactly 1. That is the median
+operation, not an error — a median of sums is not a sum of medians; per gene they sum to 1 to
+**1.8e-06** (fixture check).
+
+**My stated worry is disconfirmed.** I argued the Poisson floor might account for the whole
+sampling variance if `deep_starmap`'s per-gene means were of order 1, in which case `theta` would
+be no lever and step 2 would buy nothing. `f_poisson` is **0.29–0.34**. The means are high enough
+that overdispersion dominates, and the concern is answered by measurement rather than left as a
+caveat.
+
+#### ⚠️ What A LEVER does **not** say, and the asymmetry is in my own design
+
+The criterion is an **upper bound**: it assumes overdispersion is removed *entirely*
+(`theta -> inf`) and the conditional mean is unchanged. That construction was chosen so a
+**negative would be rigorous** — "even in the ideal case the gain is undetectable" rules the
+experiment out. **The positive is therefore only permissive**: it says the experiment is *not
+ruled out*, with a gain somewhere in `[0, 2.25x–4.23x the envelope]`.
+
+A moment-matched `theta` reaches `theta -> inf` nowhere. What it actually buys depends on how far
+the *learned* `theta` sits from the moment-matched one — and if the model has already learned
+something close to it, the change does nothing. **That comparison belongs inside step 2 as a
+diagnostic it reports on the first fit, not as a new gate before it**: the pre-registration said A
+LEVER justifies the spend, the user pre-accepted that, and adding a condition now — after a result
+I like — would be the same discipline failure as a threshold moved after seeing the data, in the
+direction that flatters the plan.
+
+So: **step 2 is justified as pre-registered, and its first fit should report `theta_learned` vs
+`theta_moment_matched` so a null result can be told apart from a null change.**
+
+#### R12's state after step 1
+
+The expression half is now localised as far as measurement without a refit can take it:
+
+* `mu`'s spatial pattern is **not** the problem — the generated conditional mean is 2.65–2.85x
+  *more* autocorrelated than the real section's counts (with the noiseless-numerator caveat).
+* The loss is at the **count draw**, which retains only 9–19% — because only 9–19% of the emitted
+  count variance is between-cell structure.
+* That share is small **because of learned overdispersion**: `mu^2/theta` carries **57–61%** of the
+  conditional variance, against 29–34% for the Poisson floor and 8–10% for zero-inflation.
+* Eliminated by measurement: the size factor, the mean link, and amplitude.
+
+**This is R4's trade, measured in the emission model for the first time.** The decoder reduces its
+ZINB likelihood by widening dispersion rather than sharpening the mean, and the spatial structure
+that the mean carries almost perfectly is then thrown away by the draw. R4 has had four inferred
+instances; this is the first where the mechanism is decomposed and the responsible term named.
