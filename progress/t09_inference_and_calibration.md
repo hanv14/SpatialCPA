@@ -2993,6 +2993,12 @@ committed.
 
 ## T09 CLOSE-OUT — what is open, and what this project can honestly claim
 
+> ⚠️ **SUPERSEDED 2026-09-01 by the FINAL CLOSE-OUT at the end of this file.** Kept in place
+> because its assessment was right and its spend list is the record of what was chosen; four
+> of its five open items have since been resolved or withdrawn, and its headline paragraph
+> still carries the `decoder_mu_link` "may be a defaulting error" claim that the addendum
+> below it corrects. **Read the final one for current state.**
+
 Written at the request of a direct question: with every capability claim now tested, what is the
 headline? This is an assessment, not a summary.
 
@@ -4330,3 +4336,200 @@ configured tests the opposite of its hypothesis. That is a mis-specification cau
 spending, not a threshold moved after a disliked result. The case that it is: I am changing the
 intervention after seeing a number, and the replacement happens to be the one that can still
 produce a positive. **Both readings are on the record and the choice is the user's.**
+
+---
+
+## R12 CLOSE-OUT — `theta` is not a dispersion estimate (2026-09-01)
+
+R12 opened as "spatial autocorrelation collapses in the expression path on real data" and is closed
+here as far as measurement can take it without a design change. **Step 2's first fit is where it
+ends, and the number that ends it is a diagnostic that was never meant to be the finding.**
+
+### 1. The finding: `log_ratio_spearman` = 0.068
+
+Across **1017 genes** on a full-panel `deep_starmap` fit, how over-dispersed the decoder's `theta`
+head makes a gene has **almost no relation** to how over-dispersed that gene actually is within its
+own cell type. Spearman **+0.068**; the IQR of the log ratio is 1.891, a **6.6x spread** between
+the quartile genes; the median ratio is 6.9x with essentially no ordering agreement underneath it.
+
+**`theta` is not estimating dispersion.** It is absorbing mean variation the model failed to
+predict, and it does so **gene-indiscriminately** — not preferentially on the genes that are
+genuinely noisy. That is a stronger and more specific statement than the one R12 carried for two
+weeks ("`mu` is spatially smooth but too flat in amplitude", and later "`theta` is too wide"),
+and it is what makes the whole moment-matching family of fixes unavailable: **there is no
+data-derived value to match to, because the quantity the head produces is not the quantity the
+data defines.**
+
+It also explains, after the fact, why the two estimators failed in the direction they did. A
+marginal or cell-type-pooled moment is a real dispersion; the learned `theta` is a residual
+absorber; the two are different quantities and their disagreement is not an error to be corrected
+by a better estimator.
+
+### 2. Beside it: the freedom is real, and the mechanism reproduces
+
+* **`within_gene_sd_log` = 0.418** (p90 0.507). The learned `theta` swings **1.52x** across cells
+  within one gene, 1.66x at the 90th percentile. The per-cell degree of freedom is not vestigial —
+  it is used, substantially, and a constraint removing it would have bound. This is the number
+  that would have separated a null *effect* from a null *change*, and it says the change would not
+  have been null.
+* **`f_overdispersion` = 0.611 / 0.630** on a full-panel `lookup` fit at a new config hash,
+  against **0.5677–0.6143** across the six gene-split fits of both arms. THETA IS A LEVER
+  reproduces **outside the configuration it was measured in** — different gene set, different
+  panel width, different config. Together with the earlier arm-independence (`medcpt` 0.6003 vs
+  `lookup` 0.5961), the overdispersion share is now shown independent of the embedding, the text
+  channel, the gene split and the panel width. It is a property of the ZINB emission under this
+  objective.
+* **The law of total variance holds on the object it is used on.** `s` 0.1605 against
+  `draw_retention` 0.1614, and 0.2016 against 0.1999 — within ~1 % on real data at full panel. The
+  identity every step-1 conclusion rests on is now checked, not assumed.
+
+### 3. What R12 is, finally
+
+The chain is fully localised and the responsible term is named:
+
+| stage | median Moran's I |
+|---|---|
+| GRF prior | 0.9714 |
+| after the flow | 0.9015 |
+| decoded `mu` | 0.8607 (2.64–2.76x the real section's counts, on this fit) |
+| **sampled counts** | **0.13–0.16** |
+
+The count draw loses it, and it loses it because only 16–20 % of the emitted count variance is
+between-cell structure, and **57–63 % of the rest is overdispersion**. Eliminated by measurement
+along the way: the length-scale, the layout head, the step budget, `text_emb_mode`, the size
+factor (0.2 % of `Var(log mu)`), calibration (retention 14.4 % -> 14.6 %), and amplitude as a
+sufficient account (`sd(log mu)` separates the arms with no overlap while retention overlaps, and
+the residual association runs backwards 6/6).
+
+**The remaining gap is a design decision, not a measurement.** The ZINB objective admits a
+degenerate trade — the same marginal variance is reachable by structured `mu` or by unstructured
+`theta`, and nothing in the loss prefers the first. Removing that requires changing the objective
+or the emission model, and this project has established which term to change and that no fixed
+value derived from the data can substitute for the change.
+
+### 4. R12's two open questions, stated as questions
+
+1. **Per-gene `s` spans 46–119x within one cell** (`s_min` 0.0049–0.0093, `s_max` 0.401–0.420 on
+   this fit). "The draw retains ~16 %" is a median over a distribution two orders of magnitude
+   wide, and nothing measured says which genes are retained or why. It may matter more than the
+   aggregate.
+2. **Why is the learned `theta` uncorrelated with the data's?** 0.068 is the finding; the
+   mechanism behind it — whether the head is capacity-limited, whether the trade is gene-specific,
+   whether a different likelihood would break it — is untouched.
+
+---
+
+## ⚠️ STANDING HAZARD — any new `Config` field invalidates every existing checkpoint's resume
+
+`Config.content_hash()` is `sha256` over the YAML of **every** field, and
+`CheckpointState.require_compatible` refuses a resume when it differs. **Adding one field with a
+default therefore strands every checkpoint ever written**, whether or not the field affects the
+fit.
+
+Measured cost so far: adding `decoder_theta_mode` — a field that is a no-op under its own default
+— stranded the **six zero-shot `deep_starmap` checkpoints, 23.5 core-hours**. Nothing measured was
+lost, because their JSON reports were already written and reviewed; what was lost is the ability to
+re-score them at HEAD. Recovering that means checking out the pre-change commit.
+
+**It will recur, on every field this project adds from here.** Stated as a hazard rather than
+fixed, because the fix is a design decision with real trade-offs: hashing only fit-affecting
+fields needs a per-field classification that will drift and whose errors are silent resumes of
+incompatible checkpoints — which is the failure the hash exists to prevent, and it is worse than
+the one it would cure. The cheap mitigation is procedural: **add `Config` fields in batches, and
+re-run anything that must stay resumable before adding the next one.**
+
+---
+
+## T09 FINAL CLOSE-OUT (2026-09-01)
+
+Supersedes the close-out above. That one was written before the structured-share audit, step 1,
+the variance decomposition, and step 2's first fit; four of its five open items are now resolved or
+withdrawn, and its headline still carried a `decoder_mu_link` claim its own addendum corrects.
+
+### What changed since it was written
+
+| item | then | now |
+|---|---|---|
+| R12's structured share on a current fit | "the cheapest open item in the project" | **done** — 16–20 %, and the mechanism localised to `theta` |
+| R4 | four *inferred* instances | **a fifth, measured**: `f_od` 0.57–0.63, arm-, split- and panel-independent |
+| `decoder_mu_link` refit | second on the spend list | **not owed** — `exp` shipped 2026-08-21, before every real-data audit |
+| a moment-matched `theta` as the causal test | pre-registered, 24 core-hours approved | **stopped after one fit** — `theta` is not a dispersion estimate, so no data-derived value exists to match to |
+| the `morans_pearson` replication | third on the spend list | **the only live decision left** |
+
+### The honest headline, corrected
+
+> A continuous-field formulation reconstructs oblique planes at **95 %** of axis-aligned quality.
+> On real tissue, every generative component built on top of it — the intensity-field layout, the
+> flow-matching expression head, the text-grounded gene embedding — **loses to copying a real
+> section**, and the text channel helps only for genes with no training data, on one metric,
+> pending replication. The expression failure is localised to the count draw and, within it, to the
+> decoder's dispersion: `theta` carries 57–63 % of the conditional variance and is **uncorrelated
+> with the data's own dispersion** (Spearman 0.068 over 1017 genes), so it is absorbing unpredicted
+> mean variation rather than estimating noise. That is a property of the ZINB objective, not a
+> tuning error, and no data-derived value can substitute for changing it. The evaluation
+> methodology developed to establish these results — per-arm envelopes, referent-validity tests,
+> aggregation-level rules, and a five-channel leak taxonomy for held-out-gene experiments — is the
+> transferable contribution.
+
+The assessment is unchanged and is now better supported: **this is a negative-results paper with a
+methods contribution, and the methods contribution is the stronger half.** What the last week added
+is that the largest negative is no longer an unexplained collapse — it is a named, reproduced,
+mechanism-level finding about the ZINB emission model, which is a considerably better thing to
+publish than "the expression head underperforms".
+
+### What remains open
+
+1. **R4 / the ZINB trade** — now with a measured instance and a named term, and a design change
+   (objective or emission model) as the only route. The largest open question, and the one a
+   follow-up paper is built on rather than a follow-up measurement.
+2. **R12's two questions** — the 46–119x per-gene spread in `s`, and why `theta` is uncorrelated
+   with the data's dispersion.
+3. **The `morans_pearson` replication** — the only route to a positive capability claim. Decision
+   below.
+4. **A7 (SEFL's net contribution)** — three losses ship at zero weight and the paper cannot say
+   whether the mechanism it is named for does anything. ⚠️ This is a hole in the *method's own
+   identity*, not just an unrun ablation: SEFL is in the title.
+5. **R14's donor rule** — costs 0.116 of `marker_depth_r`; deliberately unchanged because fixing
+   it makes the negatives **stronger**, not weaker.
+
+### The replication: my recommendation is **spend it**
+
+⚠️ **The case against, first, because it is real.** `morans_pearson` was promoted to primary
+*because it produced a result* — the textbook forking path. The metric chosen in advance,
+`marker_depth_r`, **refuted** the claim (neither A1 nor A3 clears the floor: 0.42x, 0.45x). This
+campaign's base rate on real-data capability tests is close to zero. And ~47 core-hours — now
+~8 h/fit on ~227 k cells, extrapolated from a `deep_starmap` anchor that for the first time did
+**not** come in low (3.74 h against 3.82–4.09 h quoted) — buys one observation.
+
+**The case for, which I find decisive.**
+
+1. **The current value of the 2.52x result is approximately zero.** A single unreplicated positive
+   on a post-hoc metric is a result a referee discounts entirely, and correctly. Replication is not
+   an enhancement of that result; it is the difference between having it and not.
+2. **A pre-registered replication on a second dataset is the standard, correct remedy for a
+   post-hoc metric.** It does not erase the selection, and the paper must still say the metric was
+   chosen after the fact — but it converts "we found this while looking" into "we found this while
+   looking and then tested it".
+3. **It tests the seen/unseen sign flip at no extra cost**, and that is the more interesting claim.
+   `lookup` wins by 0.133 where it has a learned row; `medcpt` wins by 0.300 where it does not.
+   That is coherent, mechanistically interpretable, and already recorded as E1's finding in
+   `specs/10` §7 **before** this decision — so testing it again is confirmation, not another
+   forking path. The same six fits score it.
+4. **Both outcomes are publishable and the pre-registration already commits to reporting either.**
+   Unlike the mechanism hunts of the last week, this has a defined stopping point and cannot
+   generate a follow-on measurement.
+
+**Conditions I would attach.**
+
+* The `morans_pearson` criteria stay **exactly** as pre-registered. Nothing about them moves.
+* **The sign-flip criterion must be written down before the fits run**, in the same document, or
+  it does not count — the same rule that has governed everything else here. It is not yet written.
+* The staged gate holds: build the split, run the model-free ceiling and the descriptor-coverage
+  check, and **stop with no fits** if either fires. Then **one timed fit** before the other five.
+* ~47 core-hours is a lower bound. One favourable extrapolation does not undo five unfavourable
+  ones.
+
+**If the answer is no, that is also a defensible ending** and it should be recorded as a decision
+rather than an omission: the paper reports the 2.52x as an observation with its pre-registration
+attached and states that the replication was scoped, costed and declined. That is honest. It is
+just weaker than doing it, and the difference is one dataset.
