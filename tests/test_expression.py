@@ -567,9 +567,9 @@ def test_decoder_is_gene_set_agnostic():
     genes = torch.randn((20, 16), generator=gen)
     size = torch.rand((16,), generator=gen) + 0.5
 
-    full = decoder(h, genes, size)
+    full = decoder(h, genes, size, None)
     order = torch.tensor([5, 1, 19, 0])
-    subset = decoder(h, genes[order], size)
+    subset = decoder(h, genes[order], size, None)
     for whole, part in zip(full, subset, strict=True):
         assert torch.allclose(whole[:, order], part, atol=1e-6)
 
@@ -592,7 +592,7 @@ def test_decoder_guards_and_shapes():
     # A latent far outside anything training would produce, to drive the heads to their rails.
     h = torch.randn((8, 8), generator=gen) * 1e3
     genes = torch.randn((5, 16), generator=gen) * 1e3
-    mu, theta, pi = decoder(h, genes, torch.full((8,), 1e6))
+    mu, theta, pi = decoder(h, genes, torch.full((8,), 1e6), None)
     assert mu.shape == theta.shape == pi.shape == (8, 5)
     # The clamps hold to float32 resolution: `torch.clamp` at 1e-8 in float32 lands within a
     # part in 1e7 of it, and asserting exact equality would be asserting a property of float32.
@@ -604,9 +604,9 @@ def test_decoder_guards_and_shapes():
     assert float(pi.max()) < 1.0
 
     with pytest.raises(ExpressionError):
-        decoder(h, genes, torch.ones((7,)))
+        decoder(h, genes, torch.ones((7,)), None)
     with pytest.raises(ExpressionError):
-        ZIGammaDecoder(cfg, 16, init_mean_expression=1.0)(h, genes, torch.ones((7,)))
+        ZIGammaDecoder(cfg, 16, init_mean_expression=1.0)(h, genes, torch.ones((7,)), None)
     with pytest.raises(ExpressionError, match="ablation A6"):
         build_decoder(cfg.replace(decoder="gaussian"), 16, init_mean_expression=1.0)
 
@@ -660,10 +660,15 @@ def test_moment_matched_theta_is_fixed_per_gene_and_changes_nothing_else():
     learned = ZINBDecoder(cfg, 16, init_mean_expression=0.5)
     matched = ZINBDecoder(fixed, 16, init_mean_expression=0.5, gene_theta=table)
 
-    # 1. `learned` ignores gene_idx, bitwise.
+    # 0. The argument has no default: `mypy --strict` is what proves the seven call sites in
+    # the package supply it, and this is that guarantee's runtime half.
+    with pytest.raises(TypeError):
+        learned(h, genes, size)  # type: ignore[call-arg]
+
+    # 1. `learned` ignores gene_idx's value, bitwise.
     assert all(
         torch.equal(a, b)
-        for a, b in zip(learned(h, genes, size), learned(h, genes, size, idx), strict=True)
+        for a, b in zip(learned(h, genes, size, None), learned(h, genes, size, idx), strict=True)
     )
 
     # 2. `moment_matched` theta is the clamped table, identical in every cell.
@@ -700,7 +705,7 @@ def test_moment_matched_refuses_to_invent_a_dispersion():
 
     decoder = ZINBDecoder(fixed, 16, init_mean_expression=0.5, gene_theta=np.ones(3))
     with pytest.raises(ExpressionError, match="needs gene_idx"):
-        decoder(h, genes, size)
+        decoder(h, genes, size, None)
     with pytest.raises(ExpressionError, match="gene_idx is"):
         decoder(h, genes, size, torch.arange(2))
     with pytest.raises(ExpressionError, match="fixed dispersion vector"):
