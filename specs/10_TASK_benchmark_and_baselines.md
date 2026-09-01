@@ -501,6 +501,20 @@ verdict before anyone noticed it was a choice**:
 | **which referent** is a floor at all | 4.2c | the pre-registered "constant-field band" had bitwise-identical input — no variation for any metric to find — and three instruments were needed to establish it, two of them thresholds that failed |
 | **how the spread is aggregated** | 4.2d | an arm effect read 1.12x under fold-averaged noise and 0.75x under per-fold noise; it was reported as standing and is withdrawn |
 
+**A fifth, and it is a different failure.** The four above are all *thresholds placed too close to
+the data* — the cut decided the verdict because nobody had checked where the data would fall. The
+fifth is the opposite mistake and it is worse, because it produces a **positive** result:
+
+| choice | the verdict it decided |
+|---|---|
+| **what would have to be true for the test to fail** | a pre-registered Spearman criterion returned **+0.9720** and read as confirming a mechanism. The quantity tested is `retention = mean_vs_real x draw`, where `draw ≈ s` by the law of total variance for *any* correct sampler and `mean_vs_real` varied by 7%. The correlation was **near-guaranteed by arithmetic**; the test confirmed that the sampler obeys a conservation law, not that the mechanism was identified |
+
+**The rule: before pre-registering a test, ask what would have to be true for it to fail.** A
+criterion that cannot fail is not a weak test, it is not a test — and unlike a badly placed
+threshold it does not announce itself, because it produces a clean, decisive-looking number. The
+four threshold failures were caught when a value landed near a boundary. This one was caught only
+by asking, after the fact, what the alternative outcome would have looked like. **Ask before.**
+
 **None of these is exotic.** Each is the kind of choice made once, in code, without comment,
 because at the time only one option was in view. Each survived review until a number happened to
 land near the boundary it controlled. That is the mechanism: **an unstated convention is invisible

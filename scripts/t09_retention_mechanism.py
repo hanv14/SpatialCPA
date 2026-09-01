@@ -66,6 +66,20 @@ from t10_chain_diagnostic import morans_i, rank_normalize
 IDENTIFIED_R = 0.7
 NOT_IDENTIFIED_R = 0.4
 
+LEVER_F = 0.50
+NO_LEVER_F = 0.20
+RETENTION_ENVELOPE_B = 0.1268
+"""Thresholds for the conditional-variance decomposition, set from the *envelope* and not from
+where the answer is expected to fall.
+
+`RETENTION_ENVELOPE_B` is `retention_top`'s measured across-seed per-fold spread (§4.2d's stricter
+construction) over the 12 `deep_starmap` cells. Removing overdispersion entirely takes `s` to
+`s / (s + (1-s)(1-f_od))`; at the `medcpt` baseline the resulting retention gain crosses that
+envelope between `f_od` 0.2 and 0.3, so 0.20 brackets "undetectable even in the ideal case" and
+0.50 brackets "comfortably detectable" (1.9x). Because the calculation assumes overdispersion is
+removed *completely*, it is an upper bound: **a NOT A LEVER verdict rules the real experiment out,
+not merely in doubt.**"""
+
 
 def generate_capturing_latent(model, hidden, volume, cfg, seed):
     """Generate a fold and return ``(adata, h)`` — the latent the counts were actually drawn from.
@@ -105,19 +119,31 @@ def generate_capturing_latent(model, hidden, volume, cfg, seed):
     return adata, h
 
 
-def structured_share(model, h, cfg, genes) -> tuple[np.ndarray, np.ndarray]:
-    """``(s_g, E[X|cell])`` for ``genes``, on the generated cells. See the module docstring."""
+def structured_share(model, h, cfg, genes) -> tuple[np.ndarray, np.ndarray, dict]:
+    """``(s_g, E[X|cell], variance fractions)`` for ``genes``, on the generated cells."""
     idx = torch.from_numpy(np.asarray(genes, dtype=np.int64))
     with torch.no_grad():
         gene_emb = model.embeddings.gene(idx)
         mu, theta, pi = model.decoder(h, gene_emb, model.size_head.size_factor(h))
     mu, theta, pi = mu.numpy(), theta.numpy(), pi.numpy()
     conditional_mean = (1.0 - pi) * mu
-    conditional_var = (1.0 - pi) * mu * (1.0 + mu / theta + pi * mu)
+    # The three additive terms of the ZINB conditional variance, kept separate: which one
+    # carries it decides whether `theta` is a lever on retention at all. If the Poisson floor
+    # `(1-pi) mu` dominates, constraining theta cannot move the structured share.
+    poisson = (1.0 - pi) * mu
+    overdispersion = (1.0 - pi) * mu * mu / theta
+    zero_inflation = (1.0 - pi) * pi * mu * mu
+    conditional_var = poisson + overdispersion + zero_inflation
     structured = conditional_mean.var(axis=0)
     sampling = conditional_var.mean(axis=0)
     s = np.asarray(structured / np.maximum(structured + sampling, 1e-30), dtype=np.float64)
-    return s, conditional_mean
+    total = np.maximum(sampling, 1e-30)
+    fractions = {
+        "f_poisson": poisson.mean(axis=0) / total,
+        "f_overdispersion": overdispersion.mean(axis=0) / total,
+        "f_zero_inflation": zero_inflation.mean(axis=0) / total,
+    }
+    return s, conditional_mean, fractions
 
 
 def summarise(paths: list[str]) -> int:
@@ -146,6 +172,49 @@ def summarise(paths: list[str]) -> int:
         print("  ⚠️ If that first factor is low, retention is not a sampling problem and R12's")
         print("     framing — 'mu is spatially smooth, the draw loses it' — is looking at the")
         print("     wrong stage. The 0.861 behind it was the ENCODER's latent on a real section.")
+    # --- the conditional-variance decomposition: is `theta` a lever at all? -----------------
+    if all("f_overdispersion" in row for row in rows):
+        fod = np.array([row["f_overdispersion"] for row in rows])
+        print(
+            f"\n{'arm':<8}{'seed':<6}{'fold':<11}{'f_poisson':>11}{'f_overdisp':>12}"
+            f"{'f_zeroinfl':>12}{'idealised gain':>16}"
+        )
+        gains = []
+        for row in sorted(rows, key=lambda x: (x["arm"], x["seed"], x["fold"])):
+            f = row["f_overdispersion"]
+            sv, mvr = row["s"], row["mean_vs_real"]
+            # theta -> inf removes the overdispersion term entirely. An UPPER BOUND on what a
+            # moment-matched theta could buy, holding the conditional mean fixed.
+            s_prime = sv / (sv + (1.0 - sv) * (1.0 - f))
+            gain = mvr * (s_prime - sv)
+            gains.append(gain)
+            print(
+                f"{row['arm']:<8}{row['seed']:<6}{row['fold']:<11}{row['f_poisson']:>11.4f}"
+                f"{f:>12.4f}{row['f_zero_inflation']:>12.4f}{gain:>16.4f}"
+            )
+        verdict = (
+            "THETA IS A LEVER"
+            if fod.min() >= LEVER_F
+            else "THETA IS NOT A LEVER"
+            if fod.max() < NO_LEVER_F
+            else "AMBIGUOUS"
+        )
+        print(f"\n  f_overdispersion over {len(fod)} cells: {fod.min():.4f}-{fod.max():.4f}")
+        print(f"  idealised retention gain if theta -> inf: {min(gains):.4f}-{max(gains):.4f}")
+        print(
+            f"  against the strict per-fold envelope {RETENTION_ENVELOPE_B:.4f}: "
+            f"{min(gains) / RETENTION_ENVELOPE_B:.2f}x-{max(gains) / RETENTION_ENVELOPE_B:.2f}x"
+        )
+        print(f"\n  -> **{verdict}**")
+        if verdict == "THETA IS A LEVER":
+            print("     Step 2's 24 core-hours are justified.")
+        elif verdict == "THETA IS NOT A LEVER":
+            print("     Even removing overdispersion entirely moves retention by less than the")
+            print("     envelope it would have to clear. Step 2 cannot produce a detectable")
+            print("     effect and must not be run.")
+        else:
+            print("     Between the pre-registered bounds. Report and do not spend.")
+
     arms = sorted({row["arm"] for row in rows})
     order = {}
     for name, values in (("s", s), ("retention_top", ret)):
@@ -236,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
         top = np.argsort(real_i)[::-1][: int(cfg.metric_marker_genes)]
         counts_top = float(np.median(morans_i(xy, rank_normalize(counts)[:, top], k)))
         real_top = float(np.median(real_i[top]))
-        shares, conditional_mean = structured_share(model, h, cfg, kept[top])
+        shares, conditional_mean, fractions = structured_share(model, h, cfg, kept[top])
         # Retention is a PRODUCT of two factors and R12's account assumes the first is ~1. The
         # 0.861 behind "mu is spatially smooth" was measured on the ENCODER's latent for a real
         # section — never on the flow's latent at generated positions. One Moran's call separates
@@ -258,6 +327,7 @@ def main(argv: list[str] | None = None) -> int:
             # retention_top = mean_vs_real * draw_retention, exactly.
             "mean_vs_real": mean_top / real_top if real_top else float("nan"),
             "draw_retention": counts_top / mean_top if mean_top else float("nan"),
+            **{k: float(np.median(v)) for k, v in fractions.items()},
         }
         rows.append(row)
         print(

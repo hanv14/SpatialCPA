@@ -3842,3 +3842,61 @@ means the established arm difference in the emission path is about the **mean**,
 noiseless and its denominator carries the tissue's own sampling noise, so a ratio above 1 is
 expected and the *level* is not interpretable as mean quality. What the arm comparison uses is the
 **difference between two arms against the same denominator**, which is unaffected by that.
+
+## PRE-REGISTRATION — the conditional-variance decomposition (written 2026-08-31, before the run)
+
+**The question**: is `theta` a lever on retention at all, or does the Poisson floor account for the
+sampling variance? This decides whether step 2's 24 core-hours can produce a detectable effect.
+
+**The quantity.** For each of the 32 structured kept genes, split the ZINB conditional variance
+into its three additive terms and report each as a fraction of the total:
+
+```
+E[Var(count|cell)] = E[(1-pi) mu]  +  E[(1-pi) mu^2/theta]  +  E[(1-pi) pi mu^2]
+                     f_poisson         f_overdispersion         f_zero_inflation
+```
+
+median over the 32 genes, for each of the 12 arm x seed x fold cells.
+
+**The criterion is an upper bound, deliberately.** Removing overdispersion *entirely*
+(`theta -> inf`) would take the structured share from `s` to `s' = s / (s + (1-s)(1-f_od))`, and
+retention to `mean_vs_real x s'`. A moment-matched `theta` cannot do better than that, so **if the
+idealised gain is undetectable, the real experiment certainly is.** It assumes the mean is
+unchanged, which is what "is `theta` the lever" means at first order and is stated as the
+assumption it is.
+
+Calibrated against the measured across-seed envelopes for `retention_top` — (a) 0.0847,
+(b) 0.1268 — at the `medcpt` baseline (`s` 0.1106, `mean_vs_real` 2.70, retention 0.2986):
+
+| `f_overdispersion` | `s'` | retention' | gain | vs the strict (b) envelope |
+|---|---|---|---|---|
+| 0.10 | 0.1214 | 0.3278 | +0.0292 | 0.23x |
+| **0.20** | 0.1345 | 0.3632 | +0.0646 | **0.51x** |
+| 0.30 | 0.1508 | 0.4073 | +0.1087 | 0.86x |
+| **0.50** | 0.1992 | 0.5378 | +0.2391 | **1.89x** |
+| 0.70 | 0.2930 | 0.7912 | +0.4926 | 3.88x |
+
+The idealised gain crosses the strict envelope between `f_od` 0.2 and 0.3, so the two thresholds
+below bracket *"undetectable even if `theta` were removed entirely"* and *"comfortably
+detectable"*. **The thresholds are set from the envelope, not from where the answer is expected to
+fall** — which is the failure the previous four pre-registrations made.
+
+### THETA IS A LEVER
+
+`f_overdispersion` >= **0.50** on **every** cell. Constraining `theta` targets the majority of the
+sampling variance, and the idealised gain is ~1.9x the strict envelope, so a real moment-matched
+fit has room to produce a detectable effect. **Step 2's 24 core-hours are justified.**
+
+### THETA IS NOT A LEVER
+
+`f_overdispersion` < **0.20** on **every** cell. Then even eliminating overdispersion completely
+moves retention by less than **0.51x** the envelope it would have to clear. Step 2 **cannot**
+produce a detectable effect and must not be run.
+
+### AMBIGUOUS
+
+Anything else — including cells falling on both sides of either threshold. Report and do not spend.
+
+**What I will do on NOT A LEVER**: state what it rules out, and stop. **No substitute experiment
+will be proposed in that message.** Option 3's open state is an acceptable ending and reaching it
+deliberately is better than reaching it after one more measurement.
