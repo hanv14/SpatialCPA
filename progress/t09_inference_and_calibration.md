@@ -5657,3 +5657,121 @@ It also means the two terms cannot be separated: both were starved before and bo
   the field and expression path.
 * `provenance.source = "defaults"` and `AssumedThicknessWarning` on every run.
 * Still no `fit_seconds` in any artifact.
+
+---
+
+## A7 — COMPLETE. Three seeds, both arms. SEFL is harmful on real tissue (2026-09-01)
+
+`reports/t10_a7_{off,on}_s{1,2,3}.{md,json}`. Tier-1 `starmap_visual_cortex`/`paper_2_4_6`,
+`w_cross = 0` in both arms, `w_thick = w_prog = 0.2` in the `on` arm, all six fits at
+`sefl_rejection_max_rounds = 96`. `claim_min_seeds = 3` **satisfied**.
+
+### 1. The collapse reproduces on every seed
+
+| | seed 1 | seed 2 | seed 3 |
+|---|---|---|---|
+| **ON** `i_gen` as % of its own target | **1.61 %** | **2.38 %** | **1.35 %** |
+| **ON** largest \|module `I_gen`\| (4 modules) | 0.0057 | 0.0059 | 0.0028 |
+| **ON** `status` / `ell_z_status` | `target_unreachable` both, **0 iterations** | same | same |
+| **OFF** `i_gen` as % of target | 97.5 % | 95.6 % | 94.1 % |
+| **OFF** `status` | `converged`, 3 it. | `converged`, 2 it. | `converged`, 3 it. |
+
+**Three independent fits, three dead fields.** Every gene module's generated Moran's I is under
+0.006 in absolute value against real values of 0.16–0.49. The length-scale search reports it the
+only way it can, and the `ell_xy` it returns when it fails is **56.5, 20.1, 163.3** across the three
+seeds — an **8.1x** spread, which is precisely the "whichever grid point tied first" that
+`apply_lengthscale`'s refusal exists to keep out of a shipped config. The refusal worked.
+
+### 2. The verdict, under §4.2's own construction
+
+Medians across seeds, min–max spread per arm, effect against the **worse arm's** spread (§4.2b):
+
+| metric | OFF median | OFF spread | ON median | ON spread | worst | signs | median Δ | vs worst |
+|---|---|---|---|---|---|---|---|---|
+| `paper_umap_mixing` | 0.8493 | 0.0528 | 0.5090 | 0.0632 | 0.0632 | **3/3** | +0.2957 | **4.68x** |
+| `paper_marker_field_r` | 0.5316 | 0.1040 | 0.1171 | 0.0450 | 0.1040 | **3/3** | +0.3904 | **3.76x** |
+| `paper_gene_mean_spearman` | 0.9797 | 0.0033 | 0.6546 | 0.1193 | 0.1193 | **3/3** | +0.3279 | **2.75x** |
+| `paper_celltype_localization` | 0.7499 | 0.0181 | 0.4167 | 0.2210 | 0.2210 | **3/3** | +0.3424 | **1.55x** |
+| `paper_marker_depth_r` | 0.6973 | 0.0812 | 0.2154 | 0.3168 | 0.3168 | **3/3** | +0.4135 | **1.31x** |
+| `paper_gearys_pearson` | 0.4205 | 0.2685 | 0.1135 | 0.3687 | 0.3687 | 2/3 | +0.3070 | 0.83x |
+| `paper_morans_pearson` | 0.4179 | 0.2684 | 0.1375 | 0.3607 | 0.3607 | 2/3 | +0.2804 | 0.78x |
+
+(positive Δ = SEFL **off** is better)
+
+**Five of seven metrics: SEFL costs, signs agreeing on every seed, at 1.31x–4.68x the worse arm's
+own spread.** The two autocorrelation metrics do **not** clear (0.78x, 0.83x) and their signs
+disagree 2/3 — exactly as predicted once the field is dead, and the reason is in §3.
+
+**A7's answer: SEFL, as specified at `w_thick = w_prog = 0.2`, is harmful on real tissue. It ships
+at zero because it should.** The paper's SEFL section can now be written, and it is a negative.
+
+### 3. The seed-1 reading was a trap and the full set proves it
+
+`morans_pearson` delta by seed: **−0.0519, +0.2804, +0.5772.** Seed 1 said SEFL helps; seeds 2 and
+3 say it hurts, by ten times as much. `gearys_pearson` does the same: −0.0671, +0.3070, +0.5701.
+
+These are **correlations across genes, not amplitudes**. On a field whose `I_gen` is 0.003–0.006
+they correlate noise, so they wander over a 0.63-wide range and their arm spread (0.36–0.37) is
+**seven times** the other five metrics'. R12 recorded the trap; A7 demonstrates it three times over.
+
+⚠️ **This is the reporting lesson of the whole ablation.** A single-seed six-metric table said
+"SEFL improves autocorrelation and hurts everything else". Two of those seven numbers were
+unreadable, and the two were the ones a reader would have led with.
+
+### 4. What the budget fix did, and why A7 could not have been run before it
+
+Every fit here used `sefl_rejection_max_rounds = 96`. At the shipped 16, `L_thick` returned exact
+zeros on ~97 % of planes and `L_prog` was starved by the same loop at the same rate. **A7 at the old
+budget would have compared two nearly identical models and reported "SEFL does nothing" — a false
+negative invisible in every number the run produces.** The fix is what made this a real experiment,
+and the real experiment returns a strong negative.
+
+It also means **the two terms cannot be separated**: both were starved before, both are active now,
+and A7 tests them jointly. `w_thick` alone and `w_prog` alone are unmeasured.
+
+### 5. R6's scope, corrected
+
+R6 recorded field flattening for **`w_cross`** and cleared the other two: *"`w_thick` and `w_prog`
+— these two are **not** broken."* That was a fixture result. On real tissue at the spec's own 0.2
+they flatten the field as thoroughly as `w_cross` did, on three seeds out of three. **R6 is a
+property of the SEFL consistency block as a whole.**
+
+### 6. Two findings that are not A7's
+
+**The collapse alarm cannot see this.** `check_collapse` compares the per-gene **variance of drawn
+counts** to the real cells'. That is variance *across cells*, not spatial structure: a field
+uniform in **position** but not in **value** passes untouched. Three collapsed fits and — as far as
+the artifacts show — no `CollapseWarning`. **The alarm watches the wrong axis for this failure
+mode**, which is a T07 defect that only real data could expose. Worth confirming from a console log.
+
+**The calibrated `ell` is seed-unstable, and that belongs to R1.** On the healthy `off` arm the
+**fitted** `ell_xy` (a property of the data) is 116.3 / 125.6 / 116.3 — within **7 %** — while the
+**applied** value is 77.0 / 41.4 / 56.5, a **1.86x** spread, and `ell_z` 48.0 / 26.9 / 23.3, a
+**2.06x** spread. **The bisection amplifies seed noise by an order of magnitude relative to the fit
+it starts from.** A shipped `ell` is far less determinate than one run's `converged` suggests, and
+this is part of why `morans_pearson`'s off-arm spread is 0.27.
+
+### 7. ⚠️ Standing caveats on A7's own verdict
+
+* **The arms are confounded on `ell`.** `off` generates at a calibrated length-scale, `on` at the
+  `Config` defaults (100/100), because `apply_lengthscale` correctly refuses a non-converged axis.
+  Not fixable — no `ell` gives structure to a flat field, and the calibrator failed *because of* the
+  collapse — but the comparison is **SEFL-on-at-defaults vs SEFL-off-at-calibrated**, and the
+  write-up must say so.
+* **`provenance.source = "defaults"`** on all six fits: this is SEFL at `Config`'s 1200-step budget,
+  not against a selected configuration.
+* **`AssumedThicknessWarning`** on all six: tier-1's 22 µm thickness is defaulted from median
+  spacing, and `L_thick` is a thickness loss. Every A7 number rests on that default.
+* The layout is identical across all six fits (`n_pred` 4073/4169/4110), so the entire difference is
+  in the field and expression path, not in cell placement.
+* No `fit_seconds` in any artifact — the runs predate the persistence fix.
+
+### 8. The fixture envelope, measured wrong by 8x
+
+The report footer quotes **0.0335** from `reports/envelope_synthetic.md` and says a difference
+smaller than that is a tie. Measured here on tier-1, per arm: spreads run **0.0033 to 0.3687**, a
+**112x** range across metric and arm, and `morans_pearson`'s off-arm spread alone is **0.2684 — 8x
+the fixture figure**. §4.2a said an envelope is per-metric and per-arm; this is the direct
+measurement, and it also shows the worse arm **alternating** (`off` worse on `field`; `on` worse on
+the other six). ⚠️ **The `t09_ship_starmap.py` footer should stop quoting a fixture envelope for a
+real-data run** — it invites exactly the comparison §4.2a forbids.
