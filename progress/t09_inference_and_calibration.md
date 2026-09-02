@@ -5775,3 +5775,91 @@ the fixture figure**. §4.2a said an envelope is per-metric and per-arm; this is
 measurement, and it also shows the worse arm **alternating** (`off` worse on `field`; `on` worse on
 the other six). ⚠️ **The `t09_ship_starmap.py` footer should stop quoting a fixture envelope for a
 real-data run** — it invites exactly the comparison §4.2a forbids.
+
+---
+
+## Replication — the staged gate is CLEARED. Every pre-registered condition met (2026-09-01)
+
+`reports/t09_text_coverage_cosmx_human.json`, against
+`resources/gene_meta.cosmx_human.parquet` with `--species human`.
+
+### 1. The coverage thresholds, written before this run existed
+
+| criterion | threshold | measured | |
+|---|---|---|---|
+| held-out summary rate | >= 0.80 | **0.9843** | **PASS** |
+| held-out bare-symbol fraction | <= 0.10 | **0.0157** (3/191) | **PASS** |
+| held-out median descriptor | >= 200 chars | **709** | **PASS** |
+| differential, held-out vs kept | metadata-blind | gap **−0.0014** | **PASS** |
+| species: human / 9606 | required | enforced — the run could not have produced output otherwise | **PASS** |
+
+⚠️ **The species check is only half-enforced by this artifact.** `t09_zeroshot_text_coverage.py`
+refuses a taxid mismatch, so the run completing *is* the taxid half of the check. The `ENSG`
+Ensembl-prefix half rests on the **build's** console report, not on this file. Stated so the
+provenance of each half is clear.
+
+Together with the ceiling gate already passed — room **0.9563**, held-out/kept ceiling ratio
+**~1.00**, `self` = 1.0 on every row, constant field degenerate by §4.2c's boolean test — **the
+replication is cleared to run.** Both criteria (Part 1 `morans_pearson` A2−A3, Part 2 the sign flip
+on A2−A3 across both pools) were written before any cosmx number existed and are unchanged.
+
+### 2. The 11 unresolved symbols are one biological family, and the split is benign
+
+| | held-out | kept |
+|---|---|---|
+| unresolved | **3** (1.57 %) | **8** (1.04 %) |
+| symbols | `HLA.DPA1`, `HLA.DRB1`, `HLA.DRB5` | `HLA.A`, `HLA.B`, `HLA.C`, `HLA.DPB1`, `HLA.DQA1`, `HLA.DQB1`, `HLA.DRA`, `HLA.E` |
+
+**All eleven are HLA genes, and all eleven fail for one reason: the panel writes a dot where a
+hyphen belongs** (`HLA.A` for `HLA-A`). Nothing about the metadata table is wrong — the symbols are
+mangled at source.
+
+The numbers clear the threshold comfortably, and the split across sides is even (1.6 % vs 1.0 %).
+⚠️ **But these are not a random eleven.** They are the MHC class I and II loci, and on an NSCLC
+tumour panel that is the family whose spatial structure — immune infiltration, antigen-presentation
+zoning — is most likely to be strong. If those three held-out genes carry high real Moran's I, A1
+and A2 are handicapped on genes that contribute disproportionately to `morans_pearson`. Three of
+191 is small; being a coherent, plausibly high-signal family is not the same as being three random
+genes, and the write-up should name them rather than report "1.6 % bare symbols".
+
+**Cheap to fix, and worth doing before the fits, not after.** A symbol repair — if a symbol fails to
+resolve and replacing `.` with `-` resolves it, use that — recovers all eleven. It costs a metadata
+rebuild and a coverage re-run, minutes; recovering them after six ~8-hour fits costs the fits.
+**This is a judgement call, not a gate**: the gate passes either way, and it is the user's decision
+whether to spend the minutes. Not implemented.
+
+### 3. ⚠️ cosmx's text channel is *stronger* than `deep_starmap`'s, in two independent ways
+
+| | `deep_starmap` (where the effect was found) | `cosmx_nsclc_3d` |
+|---|---|---|
+| held-out summary rate | 0.941 | **0.984** |
+| held-out bare symbols | 0 | 3 |
+| median descriptor | 546 chars | **709 chars** |
+| summaries that are an **orthologue's** | **83 %** | **0 % — all native human** |
+
+`deep_starmap`'s A2 demonstrates *"MedCPT places a **mouse** gene from mostly **human** orthologue
+prose"*. cosmx's would demonstrate *"MedCPT places a **human** gene from **native human** prose"*,
+with descriptors 30 % longer. **These are not the same demonstration and the paper must not let the
+second silently stand in for the first.**
+
+**The asymmetry has a consequence for how each outcome reads**, and it is worth fixing in advance:
+
+* A **REFUTATION** on cosmx is the **more informative** outcome. The text channel there is
+  unambiguously richer, so failing with better text is a stronger negative than failing with worse
+  text would have been.
+* A **SUPPORT** is correspondingly **weaker than it looks**. Part of any success could be the better
+  descriptors rather than the mechanism transferring, and nothing in the design separates those.
+  The honest write-up of a SUPPORT says "replicated on a dataset whose text channel is richer",
+  not "replicated".
+
+Recorded now, before the fits, so it cannot be read as a post-hoc discount of an unwelcome result
+or a post-hoc inflation of a welcome one.
+
+### 4. Where the replication stands
+
+**Cleared, costed, not launched.** ~47 core-hours for 6 fits on 225 981 cells — extrapolated from
+`deep_starmap`'s measured 3.74 h at 113 k cells and 1017 genes, against cosmx's 2x the cells and
+0.94x the genes. The staged gate's remaining step is unchanged: **one timed fit before the other
+five.** ⚠️ That gate has been bypassed twice now (step 2's and A7's), both times because the runs
+went out before a duration was reported. `fit_seconds` is persisted in the run JSON since the A7
+review; it will only help if the fits use an updated tree.
