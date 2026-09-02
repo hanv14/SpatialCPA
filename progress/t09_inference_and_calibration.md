@@ -5187,3 +5187,124 @@ comparison is valid, but A7 then measures SEFL's contribution **at `Config` defa
 selected configuration. The gates match what ships (`resample` / `correlated` / `zinb-flow` /
 `medcpt`), so this is a caveat on the wording rather than on the comparison — the result is "SEFL
 adds nothing at the default budget of 1200 steps", not "SEFL adds nothing to the shipped model".
+
+---
+
+## Replication — the cosmx staged gate: conditions pass, the text channel does not (2026-09-01)
+
+`reports/t09_zeroshot_ceiling_morans_cosmx.{md,json}`, `reports/t09_text_coverage_cosmx.json`.
+`cosmx_nsclc_3d`, holdout `paper_2_4`, 225 981 cells x 960 genes, split **769 kept / 191 held
+out**, seed 7. No fits.
+
+### 1. Every pre-registered stop condition passes, cleanly
+
+| condition | threshold | measured | |
+|---|---|---|---|
+| **(a)** held-out ceiling − shuffled floor | >= 0.50 | ceiling **0.9960**, floor **0.0397**, room **0.9563** | pass |
+| **(b)** held-out ceiling / kept ceiling | >= 0.80 | 0.9955/0.9969 and 0.9965/0.9972 = **~1.00** | pass |
+| **(d)** `self` = 1.0 | exact | 1.0 on all four rows | pass |
+| **(d)** constant field's normalised input bitwise row-identical | required | `input_rows_identical: true`, `input_std_max: 0.0`, all four rows | pass |
+
+**§4.2c's instrument transferred to a new dataset and gave the same answer.** The constant field
+is degenerate here too — exact zero per-gene variance, Moran's I is `0/0`, and what comes back is
+float32 round-off (`precision_drift` **0.0758–0.1509**, and float64 disagrees with float32 by more
+than the value itself on `section_5/kept`: 0.2929 vs 0.1595). The **boolean** test settles it
+where the two thresholds that failed on `deep_starmap` would have been guesswork again. The
+shuffled floor is justified by measurement on this dataset, not inherited.
+
+The room, 0.9563, is within 0.001 of `deep_starmap`'s 0.9574 — which is what the pre-registration
+wanted when it chose this dataset for holding the metric's geometry nearly constant. Split-half R
+is **0.991–0.994**, higher than deep's, so the envelope should be no worse.
+
+### 2. The split is clean by the criterion I wrote
+
+Held-out summary rate **13.6 %** against kept **12.0 %** — gap **1.6 points**. The pre-registered
+coverage check was about a *differential*: "a count well outside [the metadata-blind range] would
+mean the stratified draw picked up a metadata bias and A1/A2 were handicapped for a reason
+unrelated to the text channel." There is no differential. **By the check I actually wrote, this
+split passes.**
+
+### 3. ⚠️ And the dataset fails a check I never wrote. The replication cannot run.
+
+| | `deep_starmap` (where the effect was found) | `cosmx_nsclc_3d` |
+|---|---|---|
+| held-out genes | 204 | 191 |
+| in the metadata table | **1017 / 1017 (100 %)** | **121 / 960 (12.6 %)** |
+| held-out with a summary | **192 (94.1 %)** | **26 (13.6 %)** |
+| held-out bare-symbol-only | **0** | **163 (85.3 %)** |
+| descriptor length, median | **546 chars** | **6 chars** |
+
+**Six characters is the gene symbol.** For 85 % of the held-out genes there is no text at all.
+
+**Why that is fatal rather than merely weakening.** A2 is `medcpt` pure text; on a bare symbol it
+is MedCPT encoding a *symbol string*. `specs/10` §7 already names this exact condition — "every
+prior STARmap number was produced with embeddings built from zeros or from a bare symbol, so
+`text_emb_mode=medcpt` was `lookup` in all but name (ablation A3)."
+
+**And the failure mode is the dangerous one: a false SUPPORT.** A2 on a bare symbol still yields a
+consistent, gene-specific vector — a hash of the string — while A4 is `norm(0)`, a void. "An
+arbitrary but consistent per-gene vector beats a void" would clear **every** pre-registered
+criterion, including the sign flip's, while supporting a claim far weaker than *"text places genes
+the model never saw"*. **The criteria as written cannot tell the two apart.** Running this would
+have produced a number that looked like the replication and was not.
+
+⚠️ **This is a hole in my pre-registration and it is mine.** I put the coverage check in the order
+of operations and wrote thresholds only for (a) and (b). The only coverage criterion I set was the
+differential one — because `deep_starmap` had 100 % absolute coverage and it did not occur to me to
+bound it. A check without a threshold is a step in a recipe, not a gate.
+
+### 4. The cause is a resource mismatch, not a property of the dataset
+
+`resources/gene_meta.parquet` is **2 155 rows, every one `species_resolved = 10090` (mouse)**.
+`cosmx_nsclc_3d` is **human NSCLC**. The table does not contain the panel.
+
+It is worse than absent for the 121 that do hit. **1 020 of the table's rows carry ALL-UPPERCASE
+(human-style) symbols with `ENSMUSG` Ensembl ids** — mouse genes fetched under uppercase spellings,
+`species_requested: mouse` on every one. Symbol lookup is case-insensitive
+(`text.py`'s `match_symbol` compares `casefold()`), so a cosmx symbol like `A2M` resolves to the
+**mouse** gene `A2m`'s record: mouse `full_name`, mouse `ensembl_id`.
+
+Stated fairly, because it cuts both ways: for **807** of those 1 020 the *summary text* is already
+the **human orthologue's** (`summary_source_taxid: 9606`), so the biology prose would be roughly
+right for a human panel by accident. For **161** it is native mouse text attached to a human gene.
+Either way the table is declared mouse, keyed to mouse genes, and is not the panel's table.
+
+`deep_starmap` is unaffected: its symbols are title-case mouse symbols and matched title-case rows,
+which is why its coverage was 1017/1017 with zero bare symbols.
+
+### 5. What this costs, and what it does not
+
+**The replication is blocked on a metadata fetch, not on 47 core-hours.** The dataset is fine — the
+ceiling, the floor, the split balance and the referent validity all pass, and its geometry matches
+`deep_starmap`'s to within 0.001. What is missing is a human gene-metadata table.
+
+`scripts/build_gene_meta.py` is the project's one sanctioned online step, and its own docstring
+fixes the constraint: **"One organism per table."** A human table must be built **separately** and
+`Config.gene_meta_path` pointed at it for cosmx runs — merging human symbols into the mouse table
+would let one symbol resolve to two genes, which is the thing that rule exists to prevent.
+
+    python scripts/build_gene_meta.py --species human --symbols-from <cosmx panel .h5ad> \
+        --out resources/gene_meta.cosmx_human.parquet
+
+Then re-run the coverage check with `--gene-meta resources/gene_meta.cosmx_human.parquet` and
+**stop again** to read it.
+
+### 6. Pre-registered NOW, before the rebuilt numbers exist
+
+Absolute coverage, on the **held-out** side, anchored on `deep_starmap`'s measured values with
+slack, and written before any rebuild has run:
+
+* **PROCEED** — all of: summary rate **>= 0.80** (deep: 0.941); bare-symbol-only **<= 0.10** of
+  held-out genes (deep: 0.000); median held-out descriptor **>= 200 characters** (deep: 546).
+* **STOP** — any of those fails. The text channel is then too thin for A2 to be a statement about
+  text, and a positive would be uninterpretable in the specific way described in §3.
+* **Unchanged**: the differential check. Held-out and kept summary rates must not differ by more
+  than a metadata-blind draw predicts.
+* **NEW, and it is the defect found here** — a **species check**: every row used must resolve to
+  **human (9606)** with an `ENSG` Ensembl prefix. A rebuilt table that still returns mouse rows for
+  a human panel means the text channel is describing the wrong organism, and the run does not
+  happen regardless of how good the coverage looks.
+
+200 characters is roughly one sentence of description — far below `deep_starmap`'s 546 and far
+above a 6-character symbol. The thresholds are set from the dataset where the effect was found, not
+from what a rebuild is expected to produce, and they are on the record before it runs.
