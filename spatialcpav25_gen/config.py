@@ -847,10 +847,42 @@ class Config:
     distances (``specs/07`` §2, step 2). Below it the sampled points are all inside one
     cell's neighbourhood and the agreement they assert is trivially satisfied."""
 
-    sefl_rejection_max_rounds: int = 16
-    """Rounds of rejection sampling ``Plane.sample_points`` may use to fill its request
-    before it raises. Each round proposes four times the shortfall, so a slab covering a
-    tenth of the bounding box fills in one or two."""
+    sefl_rejection_max_rounds: int = 96
+    """Rounds of rejection sampling ``Plane.sample_points`` and ``sefl._slab_sample`` may use
+    to fill a request before they raise.
+
+    ⚠️ **Raised 16 -> 96 on 2026-09-01, and the old docstring's arithmetic was wrong.** It said
+    "each round proposes four times the shortfall, so a slab covering a tenth of the bounding
+    box fills in one or two". Four times the *shortfall* means ``remaining`` shrinks by
+    ``(1 - 4a)`` per round at acceptance ``a``, so the rounds needed scale as
+    ``log(n) / -log(1 - 4a)`` — **1/a, not O(1)**. At a tenth it is 17 rounds, not one or two,
+    which the shipped budget of 16 already missed.
+
+    **Measured on tier-1 STARmap** (`reports/t10_a7_thick_binding_tier1.json`, 32 probes): an
+    oblique ``3h`` slab accepts **2.8-18.5 %** of its proposals, median **3.7 %**, so 50 rounds
+    are needed at the median and **68** at the worst plane. At 16, **only 2 of 32 draws
+    reached ``n``** — `L_thick` returned exact zeros on ~97 % of planes and the loss simply read
+    low, with nothing in any output saying so. 96 covers every plane observed, with margin.
+
+    **The geometry was never the problem.** Nothing is starved: the slab genuinely intersects
+    the tissue, it just occupies a small fraction of its own bounding window because the
+    volume is a 4-section pancake (``3h`` is **0.75** of the z-extent on both real datasets,
+    against **0.18** on the synthetic fixture, where acceptance is 0.237 and 4 rounds suffice).
+    Both SEFL constants were set against the fixture and neither was stressed there.
+
+    **This is a budget, not a definition.** It changes how a fixed integral is estimated, never
+    what a loss compares, and the guard still guards — a plane that truly misses the tissue
+    (acceptance ~0.001) needs ~2000 rounds and still raises. It invalidates nothing measured:
+    both call sites are reachable only through ``thick_terms`` and ``prog_terms``, which
+    ``sefl_terms`` skips entirely at zero weight, and **all three SEFL weights ship at 0**.
+
+    ⚠️ **The better fix, declined.** ``4 x (n - found)`` is what makes convergence geometric. A
+    schedule proposing ``(n - found) / a_observed`` would converge in two or three rounds at
+    **any** acceptance, and would not need this constant tuned per dataset at all. It is a
+    larger change to shipped sampling code and raising the budget is sufficient to unblock A7,
+    so it is deliberately not taken here. **If an A7 result turns on sampler behaviour, this is
+    the first place to look** — the budget makes the failure rarer, it does not remove the
+    ``1/a`` scaling, and a denser panel or a thinner volume can walk back into it."""
 
     sefl_mmd_n_bandwidths: int = 5
     """Bandwidths in ``L_prog``'s multi-bandwidth RBF kernel. Odd, so the ladder is centred

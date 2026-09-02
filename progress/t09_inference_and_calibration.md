@@ -4952,10 +4952,16 @@ reach `n`. The crippling is a property of the real volumes, and T07 never saw on
 
 * T07's `w_cross` finding (generated per-gene variance 0.067 against 0.711) **stands**.
 * T07's `w_thick = w_prog = 0.2` finding (three of T06's acceptance tests failing) **stands**, and
-  is **not** reattributable to `L_prog` alone as I had begun to reason. `_slab_sample` is called
-  **only** by `thick_terms` — `cross_terms` and `prog_terms` draw planes but not slab points — so a
-  crippled sampler would have isolated the damage to `L_thick`; but on the fixture it was not
-  crippled, so there is nothing to reattribute.
+  is **not** reattributable to `L_prog` alone as I had begun to reason — because on the fixture
+  nothing was crippled, so there is nothing to reattribute.
+
+  ⚠️ **The reason I gave for that was also wrong, and is corrected below**: I wrote that
+  `_slab_sample` is called only by `thick_terms` and that "`cross_terms` and `prog_terms` draw
+  planes but not slab points", so a crippled sampler would have isolated the damage to `L_thick`.
+  The first clause is true of `_slab_sample` specifically; **the inference is not.** `prog_terms`
+  calls `Plane.sample_points`, a different function running the *same* rejection loop off the
+  *same* constant. The conclusion survives — the fixture is not starved — but it survives for one
+  reason, not two.
 
 The corrected sentence is patched in place above rather than deleted.
 
@@ -4999,3 +5005,91 @@ a fix that would invalidate every layout number in the project.
   discrepancy.
 * `AssumedThicknessWarning` is still on. If the budget is raised and A7 runs, **every A7 number
   rests on a thickness defaulted from median spacing**, and the result has to say so.
+
+---
+
+## `sefl_rejection_max_rounds` 16 -> 96 — applied, with two corrections to the record (2026-09-01)
+
+`Config.sefl_rejection_max_rounds` is now **96**. The field's docstring carries the measurement,
+the arithmetic, and the fix that was declined.
+
+### The old docstring's arithmetic was wrong, and that is the whole bug
+
+> "Each round proposes four times the shortfall, so a slab covering a tenth of the bounding box
+> fills in one or two."
+
+Four times the **shortfall** means `remaining` shrinks by `(1 - 4a)` per round, so the rounds needed
+scale as `log(n) / -log(1 - 4a)` — **`1/a`, not `O(1)`**. At a tenth acceptance that is **17**
+rounds, not one or two, which the shipped budget of 16 already missed by one. The constant was set
+against a sentence that did not hold, on a fixture where acceptance is 0.237 and the error never
+showed.
+
+### ⚠️ Correction 1 — restated, because the wrong version has been said more often than the right one
+
+The claim **"every T07 SEFL measurement was taken on a broken sampler"** is **false**. I wrote it
+once as a conditional flag, the user repeated it back twice as a finding, and it was then in the
+record three times against one correction. Stating it plainly here so the count runs the other way:
+
+* **T07 measured on the synthetic fixture** (CLAUDE.md Convention 7 — tests run without real data).
+* **On the fixture the sampler is healthy**: acceptance **0.237** median (0.187–0.458), 3–4 rounds
+  needed against a budget of 16, and **100 %** of draws reach `n`.
+* **The starvation is a property of the real volumes only.** T07 never saw one.
+* Therefore T07's `w_cross` result (generated per-gene variance 0.067 against 0.711) and its
+  `w_thick = w_prog = 0.2` result (three of T06's acceptance tests failing) **both stand,
+  unqualified.**
+
+What *is* true, and is the useful version of the claim: **A7 on real data would have trained with
+its SEFL terms starved on ~97 % of steps, and nothing in its output would have said so.** That is a
+statement about an experiment that had not run, not about measurements already in the record.
+
+### ⚠️ Correction 2 — `prog_terms` uses the same rejection loop, so `L_prog` was starved too
+
+I wrote that `_slab_sample` is called only by `thick_terms` and that "`cross_terms` and `prog_terms`
+draw planes but not slab points". The first clause is true of `_slab_sample` *specifically*. **The
+inference drawn from it is wrong**: `prog_terms` (and `prog_wrong_terms`) call
+`Plane.sample_points`, a different function running the *same* rejection loop off the *same*
+constant, at `n = sefl_patch_cells = 2000`.
+
+| call site | `n` | rounds at the observed tier-1 median (a = 0.037) | at the worst plane (a = 0.028) |
+|---|---|---|---|
+| `thick_terms` MC | 4096 | 51.6 | **70.0** |
+| `thick_terms` state | 512 | 38.7 | 52.5 |
+| `prog_terms` patch | 2000 | 47.2 | **64.0** |
+
+Three consequences:
+
+1. **`L_prog` is subject to the identical failure**, less severely only because `n` is smaller. Its
+   planes are also thinner (`h`, not `3h`), which should *raise* acceptance — **unmeasured**: the
+   binding check probes the thick path only, so `L_prog`'s real-data acceptance is an open number.
+2. **"A7 on `L_prog` alone" was never a viable fallback.** The pre-registration offered it as the
+   different experiment the user could choose if `L_thick` did not bind. At budget 16 `L_prog`
+   would have been starved too, so that fallback was measuring nothing either. It is only viable
+   *after* this change.
+3. **Correction 1's conclusion survives but loses a leg.** I gave two reasons the T07 numbers stand
+   — "the fixture is not starved" and "a crippled sampler would have isolated the damage to
+   `L_thick`". The second is void. The first is sufficient and is the one that carries it.
+
+96 covers `thick_terms` at the worst observed plane (70 rounds) with margin, and `prog_terms` (64)
+with more.
+
+### The better fix, declined, and where to look if A7 turns on it
+
+`4 x (n - found)` is what makes convergence geometric. A schedule proposing
+`(n - found) / a_observed` — estimating `a` from the first round — converges in **two or three
+rounds at any acceptance**, and would not need this constant tuned per dataset at all. It is a
+larger change to shipped sampling code, and raising the budget is sufficient to unblock A7, so it
+is deliberately not taken.
+
+**If an A7 result turns on sampler behaviour, this is the first place to look.** The budget makes
+the failure rarer; it does **not** remove the `1/a` scaling. A denser panel, a thinner volume, or a
+larger `thickness_ratio` walks straight back into it, and the next person will meet it as
+"`L_thick` mysteriously reads low" rather than as an error.
+
+### ⚠️ The standing hazard fires again
+
+`content_hash` covers every field, so this change strands **step 2's `learned` baseline checkpoint
+(3.74 h)** against `require_compatible`, on top of the six zero-shot checkpoints already stranded by
+`decoder_theta_mode`. Nothing measured is lost — that fit's JSON is written and reviewed, and step 2
+is stopped — but the hazard has now cost **27.2 core-hours of resumability across two fields**, and
+the procedural mitigation (batch the fields, re-run what must stay resumable first) was not applied
+here because the alternative was leaving A7 blocked.
