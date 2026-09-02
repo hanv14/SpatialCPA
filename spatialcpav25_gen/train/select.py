@@ -2138,6 +2138,13 @@ def calibration_chunks(
             "module equally. It is not a target, and a poor table is evidence for the "
             "per-channel-group escalation, which is a design change to be decided explicitly.",
             "",
+            "⚠️ **`mean |I_gen - I_real|` is a per-gene mean of absolute differences, and does "
+            "NOT equal the difference of the two columns beside it.** `I_gen` and `I_real` are "
+            "means over the module's genes; a module whose genes miss in both directions has a "
+            "small column difference and a large mean absolute one. Measured on tier-1 at "
+            "module 1: the columns differ by 0.0114 and the per-gene mean by **0.1639**, 14x "
+            "apart. The old header read `|diff|`, which invited exactly the wrong subtraction.",
+            "",
             _table(
                 [
                     [
@@ -2149,7 +2156,7 @@ def calibration_chunks(
                     ]
                     for row in modules
                 ],
-                ["module", "genes", "I_gen", "I_real", "|diff|"],
+                ["module", "genes", "mean I_gen", "mean I_real", "mean |I_gen - I_real|"],
             ),
         ]
     return chunks

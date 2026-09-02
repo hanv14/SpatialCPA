@@ -5093,3 +5093,97 @@ larger `thickness_ratio` walks straight back into it, and the next person will m
 is stopped — but the hazard has now cost **27.2 core-hours of resumability across two fields**, and
 the procedural mitigation (batch the fields, re-run what must stay resumable first) was not applied
 here because the alternative was leaving A7 blocked.
+
+---
+
+## A7 — the SEFL-off arm, seed 1 of 3 (2026-09-01). Timing gate NOT satisfied.
+
+`reports/t10_a7_off_s1.{md,json}`, tier-1 `starmap_visual_cortex`/`paper_2_4_6`, config
+`19cf1544f0cc5fcc`, defaults, `w_cross = w_thick = w_prog = 0`, `sefl_rejection_max_rounds = 96`.
+
+**This is the baseline arm only.** A7 is a two-arm comparison and nothing about SEFL can be read
+until the `w_thick = w_prog = 0.2` arm exists.
+
+### ⚠️ The timing gate cannot be evaluated from what was sent
+
+The gate was "one fit before the other five". **Neither artifact carries a duration.**
+`t09_ship_starmap.py` has timed the fit since T09 and prints `fit: N steps in Xs` — to the
+console, which is not what gets sent. My instruction ("send the measured minutes") assumed a
+number that no artifact contained.
+
+**Fixed**: `fit_seconds` is now persisted into the run's JSON (`null` when a fit is reused, which
+is not the same as free). The wall clock for this run has to come off the console line.
+
+### The numbers, single seed, uncalibrated (the shipped arm)
+
+| metric | uncalibrated | detection-calibrated | delta |
+|---|---|---|---|
+| `paper_morans_pearson` | +0.2340 | +0.3316 | **+0.0976** |
+| `paper_gearys_pearson` | +0.2357 | +0.3365 | **+0.1008** |
+| `paper_umap_mixing` | +0.7976 | +0.7765 | −0.0211 |
+| `paper_marker_field_r` | +0.4472 | +0.4677 | +0.0205 |
+| `paper_marker_depth_r` | +0.6289 | +0.6431 | +0.0142 |
+| `paper_celltype_localization` | +0.7591 | +0.7601 | +0.0010 |
+| `paper_gene_mean_spearman` | +0.9825 | +0.9611 | −0.0214 |
+| `paper_cell_count_ratio` | 0.988 | 0.988 | — |
+
+Consistent with the established negative: `morans_pearson` +0.234 against tier-1's **best
+available copy at 0.713–0.784** and a noiseless ceiling of 0.927–0.939. The model is far below the
+model-free floor, which is what every real-data comparison in this project has said.
+
+**Internal consistency checked** rather than assumed: every `matched` figure is the median of its
+three per-section values, and `raw == matched` exactly on `gearys`, `umap_mixing` and
+`marker_field_r` because those medians land on `section_2` or `section_6`, where `n_pred < n_gt`
+and the density match is a no-op. Not a bug.
+
+### ⚠️ A reporting defect in the per-module table, and it is not small
+
+The `|diff|` column is **`mean_g |I_gen(g) − I_real(g)|`** over the module's genes, while `I_gen`
+and `I_real` beside it are **means over the same genes**. A mean of absolute differences is not the
+absolute difference of the means, so subtracting the two displayed columns — which is what the
+header `|diff|` invites — gives a different number:
+
+| module | \|columns\| | reported | apart |
+|---|---|---|---|
+| 0 | 0.1315 | 0.1694 | 1.3x |
+| **1** | **0.0114** | **0.1639** | **14.4x** |
+| 2 | 0.0354 | 0.0364 | 1.0x |
+| 3 | 0.1253 | 0.1369 | 1.1x |
+
+Module 1's genes miss in **both directions** and nearly cancel in the mean: the module looks
+almost perfectly calibrated by the columns and is the second-worst by the per-gene statistic. The
+computation is correct; the header was wrong.
+
+**Fixed**: the columns are now `mean I_gen` / `mean I_real` / `mean |I_gen - I_real|`, with a note
+carrying module 1's 14x as the worked example. This diagnostic feeds the per-channel-group `ell`
+escalation (SPEC_QUESTIONS A2), so a reader who subtracts the columns would under-state the case
+for a design change by an order of magnitude on the module where it is strongest.
+
+### An observation that is not A7's, and must not be read as a result
+
+**Detection calibration moves the two autocorrelation metrics by ~+0.10 on tier-1** while costing
+`gene_mean_spearman` 0.0214 and `umap_mixing` 0.0211. The project ships it **off**, on a T09
+finding that it had **no headroom** — a fixture measurement, later reproduced on `deep_starmap`
+where it moved retention 14.4 % -> 14.6 %.
+
+⚠️ **This is one seed and I am not calling it anything.** The right envelope for it is per-metric
+and per-arm on *this* dataset (§4.2a) and has never been measured on tier-1; the 0.0335 in the
+report's own footer is the **fixture** envelope and using it here would be exactly the
+cross-dataset envelope substitution §4.2a exists to forbid. What is fair to say: the shipped
+decision to leave detection calibration off rests on two measurements, **neither on tier-1**, and
+this run is a reason to check that before the paper states it as settled. Recorded as an
+observation with its own caveat, not as a finding, and **not** as a new experiment.
+
+### What A7 still needs
+
+The five remaining fits: seeds 2 and 3 off, seeds 1–3 with `--w-thick 0.2 --w-prog 0.2`. Plus the
+wall clock for this one, which decides whether they run at all.
+
+⚠️ **`AssumedThicknessWarning` is on**: tier-1's 22 µm thickness is defaulted from median spacing,
+not measured, so every A7 number rests on it and the write-up says so.
+
+⚠️ **`provenance.source = "defaults"`, not a selection.** Both arms will share it, so the
+comparison is valid, but A7 then measures SEFL's contribution **at `Config` defaults**, not to a
+selected configuration. The gates match what ships (`resample` / `correlated` / `zinb-flow` /
+`medcpt`), so this is a caveat on the wording rather than on the comparison — the result is "SEFL
+adds nothing at the default budget of 1200 steps", not "SEFL adds nothing to the shipped model".

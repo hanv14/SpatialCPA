@@ -512,6 +512,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         model.load_state_dict(checkpoint["state_dict"])
         model.eval()
+        fit_seconds = None
         print(f"  reused the fit at {model_path}")
     else:
         fit_ckpt = workdir / f"fit_seed{args.seed}.pt"
@@ -525,7 +526,8 @@ def main(argv: list[str] | None = None) -> int:
             train_ctfflow(
                 model, cfg, steps=int(cfg.train_steps), seed=args.seed, checkpoint=str(fit_ckpt)
             )
-        print(f"  fit: {cfg.train_steps} steps in {time.time() - t0:.0f}s")
+        fit_seconds = time.time() - t0
+        print(f"  fit: {cfg.train_steps} steps in {fit_seconds:.0f}s ({fit_seconds / 3600:.2f} h)")
         torch.save({"config": cfg.to_dict(), "state_dict": model.state_dict()}, model_path)
         print(f"  saved {model_path}")
 
@@ -640,6 +642,10 @@ def main(argv: list[str] | None = None) -> int:
                 "arms": rows,
                 "referents": referents,
                 "calibration": cal_record,
+                # The console has printed this since T09; persisting it is what makes a
+                # timing gate ("one fit before the other five") checkable from the artifact
+                # rather than from a scrollback. `null` means the fit was reused, not free.
+                "fit_seconds": fit_seconds,
                 "provenance": provenance,
                 "config": gen_cfg.to_dict(),
             },
