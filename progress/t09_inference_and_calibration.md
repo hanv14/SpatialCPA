@@ -5385,3 +5385,73 @@ balanced. The dataset is good and its geometry matches `deep_starmap`'s to withi
 missing is still a resolved human gene-metadata table, and the pre-registered thresholds stand
 unchanged for the next attempt — they have now been applied once and stopped a run, which is what
 they were written for.
+
+---
+
+## Replication — the human table resolves, and the coverage check gains `--species` (2026-09-01)
+
+**The rebuild worked once `mygene` was installed**, which confirms the leading hypothesis recorded
+above: the failure was the missing dependency, degrading silently to symbol-only rows. The
+`MIN_RESOLVED_FRACTION` guard added for it would have caught the bad build at source.
+
+Reported by the user from the build: **949/960 full names, 946/960 summaries (98.5 %), all
+`native` human (0 orthologue), all `ENSG`, taxid 9606.**
+
+⚠️ **That is a better table than `deep_starmap`'s**, and the difference matters for what A2 would
+be demonstrating. `deep_starmap`'s summaries are **83 % human-orthologue** text describing a
+*mouse* gene — so its A2 result is "MedCPT places a mouse gene from mostly human prose". cosmx's
+are **100 % native**: same organism as the panel. **If the replication runs, its A2 is a cleaner
+test than the original**, and the write-up must say the two are not the same demonstration.
+
+### `--species`, added because the guard was right
+
+The check refused the human table:
+
+    GeneMetaError: ... holds rows resolved to species ['9606'] but 'mouse' (taxid 10090) was
+    requested.
+
+`t09_zeroshot_text_coverage.py` took the species from `Config.mygene_species` with no way to say
+otherwise, so a `--gene-meta` pointing at another organism could only fail. **The guard is correct
+and is not relaxed.** What was missing was a way for the caller to state both halves of one
+statement.
+
+* `--species` added, defaulting to `Config.mygene_species`.
+* **Required whenever `--gene-meta` is given.** Inferring the organism from the table would be the
+  silent fallback Convention 6 forbids, so the script refuses and its message names
+  `Config.mygene_species`, the table's actual `species_resolved`, and what to do.
+* A mismatch is caught **before** `load_gene_meta`, so the error names *both arguments the caller
+  passed* rather than only the mismatch it found.
+
+Verified on all four paths: default (mouse table, no flags) **exit 0**; `--gene-meta` without
+`--species` **exit 1**; `--gene-meta` with the wrong `--species` **exit 1**, naming both; correct
+pair **exit 0**.
+
+### The 11 unresolved symbols, and where they land
+
+`HLA.A` for `HLA-A` — **the panel writes a dot where a hyphen belongs**, so a handful of HLA
+symbols are mangled at source and mygene cannot match them.
+
+An unresolved symbol is written as a **symbol-only row**, which is the trap: it counts as "in the
+table" while carrying no text at all. Previously nothing distinguished it from a resolved row with
+a thin description, and nothing said which **side of the split** it landed on — which is the
+question that matters, because a bare symbol on the held-out side is a bare symbol *in the arm
+under test*.
+
+The coverage report now carries `n_unresolved_in_table` and `unresolved_symbols` **per side**, and
+prints them. It is a different quantity from `n_bare_symbol_only`, which counts both causes
+together: a symbol **absent** from the table and a symbol **present but unresolved** produce the
+same empty descriptor and had the same count. Verified against a deliberately built symbol-only
+table.
+
+**The held-out count is not yet known** — the cosmx coverage check has to be re-run under the new
+flag to produce it. If any of the 11 fall in the held-out 191 they are bare symbols in A1/A2's own
+arm, and the number belongs in the report beside the summary rate.
+
+    python scripts/t09_zeroshot_text_coverage.py --split reports/t09_gene_split_cosmx.json \
+        --gene-meta resources/gene_meta.cosmx_human.parquet --species human \
+        --out reports/t09_text_coverage_cosmx_human.json
+
+⚠️ **The pre-registered thresholds are unchanged and are not yet met by a measurement.** 98.5 % is
+a property of the *table*; the criteria are on the **held-out side of the split**, and until that
+run exists there is no number to check them against. On the panel-wide figures they would pass
+comfortably — which is a reason to run the check, not a substitute for it.
