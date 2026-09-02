@@ -5554,3 +5554,106 @@ does not transfer.
 ⚠️ **Timing**: neither JSON carries `fit_seconds`, so the runs predate the persistence fix or ran
 from an un-updated tree. The ON arm ran anyway, so the "one fit before the other five" gate is
 already spent; with 2 of 6 done the remaining question is only the last four.
+
+---
+
+## A7 — seed 2. The collapse reproduces, and the seed-1 "improvement" flips sign (2026-09-01)
+
+`reports/t10_a7_{off,on}_s2.{md,json}`. Both arms at `sefl_rejection_max_rounds = 96`, so **SEFL's
+terms were actually charging** — before that fix `L_thick` was inert on ~97 % of planes and
+`L_prog` starved by the same loop. **Two seeds; `claim_min_seeds` is 3. No verdict.**
+
+### 1. The collapse reproduces exactly
+
+| witness | OFF s2 | ON s2 |
+|---|---|---|
+| `i_gen` against a 0.2577 target | 0.2463 — **95.6 %** | **0.0061 — 2.4 %** |
+| `status` / `ell_z_status` | `converged` / `converged`, 2 iterations | **`target_unreachable` both, 0 iterations** |
+| per-module `mean I_gen` | 0.2488, 0.3098, 0.1983, 0.3705 | **0.0059, 0.0037, −0.0007, 0.0012** |
+| applied `ell_xy` / `ell_z` | 41.4 / 26.9 (calibrated) | **100 / 100 (Config defaults)** |
+
+Seed 1 was 1.6 % of target; seed 2 is 2.4 %. **Two independent fits, same dead field.**
+
+### 2. ⚠️ The seed-1 autocorrelation "gain" does not reproduce — it reverses
+
+| metric | delta seed 1 | delta seed 2 | |
+|---|---|---|---|
+| `morans_pearson` | **−0.0519** (SEFL better) | **+0.2804** (SEFL worse) | **signs differ** |
+| `gearys_pearson` | **−0.0671** (SEFL better) | **+0.3070** (SEFL worse) | **signs differ** |
+| `umap_mixing` | +0.2886 | +0.2957 | agree |
+| `marker_field_r` | +0.3301 | +0.3904 | agree |
+| `marker_depth_r` | +0.4135 | +0.3734 | agree |
+| `celltype_localization` | +0.3424 | +0.2140 | agree |
+| `gene_mean_spearman` | +0.3279 | +0.2206 | agree |
+
+(positive = SEFL off is better)
+
+**This is the demonstration, not the argument.** After seed 1 I said the two autocorrelation
+metrics rising on a collapsed field was R12's documented trap — a correlation *across genes* rather
+than an amplitude, correlating noise at `I_gen ≈ 0.004`. A noise correlation can land anywhere, and
+on the second seed it landed on the other side by 0.28–0.31. **Anyone who had read seed 1's table
+alone and concluded "SEFL helps autocorrelation" would have been refuted by one more fit.**
+
+### 3. The first per-arm across-seed spread measured on tier-1 — and the fixture envelope is 5.5x wrong
+
+⚠️ **Two seeds give a *range*, not an envelope: these are lower bounds** (`claim_min_seeds` = 3).
+
+| metric | OFF range | ON range | worst (§4.2b) | mean delta | vs worst |
+|---|---|---|---|---|---|
+| `morans_pearson` | **0.1839** | 0.1483 | 0.1839 | +0.1143 | 0.6x — **not readable** |
+| `gearys_pearson` | 0.1848 | 0.1893 | 0.1893 | +0.1200 | 0.6x — **not readable** |
+| `umap_mixing` | 0.0517 | 0.0447 | 0.0517 | +0.2921 | **5.6x** |
+| `marker_field_r` | 0.0844 | 0.0241 | 0.0844 | +0.3602 | **4.3x** |
+| `marker_depth_r` | 0.0812 | 0.1212 | 0.1212 | +0.3934 | **3.2x** |
+| `celltype_localization` | 0.0093 | 0.1192 | 0.1192 | +0.2782 | **2.3x** |
+| `gene_mean_spearman` | 0.0033 | 0.1040 | 0.1040 | +0.2742 | **2.6x** |
+
+**The `OFF`-arm `morans_pearson` range alone is 0.1839 — 5.5x the 0.0335 figure the report footer
+quotes.** That footer figure is the **fixture** envelope, and §4.2a says an envelope is per-metric
+and per-arm; this is the first direct measurement of how wrong carrying it across datasets would
+be. It also vindicates §4.2a's other half: the worse arm **alternates by metric** here too — `OFF`
+is worse on `morans`/`umap`/`field`, `ON` on `gearys`/`depth`/`loc`/`gms`.
+
+**Provisionally**: five metrics show SEFL costing, signs agreeing on both seeds, at **2.3x–5.6x**
+the worse arm's spread. The two autocorrelation metrics are **not readable** — their signs disagree
+*and* their effect is inside the spread, which is exactly what an uninterpretable statistic on a
+dead field looks like.
+
+### 4. A finding about the calibration, not about SEFL
+
+The `OFF` arm's **calibrated** `ell` moved a long way between seeds while the **fitted** `ell` — a
+property of the data, identical in both — barely moved:
+
+| | seed 1 | seed 2 | apart |
+|---|---|---|---|
+| fitted `ell_xy` (variogram) | 116.3 | 125.6 | **7 %** |
+| **applied** `ell_xy` (bisection) | 77.0 | 41.4 | **1.86x** |
+| **applied** `ell_z` | 48.0 | 26.9 | **1.78x** |
+
+**The bisection amplifies seed noise by an order of magnitude relative to the fit it starts from**,
+and that is a large part of why the `OFF` arm's `morans`/`gearys` spread is 0.18. It belongs to R1,
+not to A7, and it means a shipped `ell` on tier-1 is a considerably less determinate quantity than
+a single run's "converged" suggests. Recorded here because A7 is where it became visible; it is not
+this experiment's result.
+
+### 5. What the budget fix did to this experiment
+
+Both arms ran with `sefl_rejection_max_rounds = 96`. Before that, `L_thick` returned exact zeros on
+~97 % of planes and `L_prog` was starved by the same loop at the same rate. **So the fix is what
+made A7 a real experiment — and the real experiment says that SEFL, once its terms actually charge,
+destroys the anatomical field.** Had the budget stayed at 16, A7 would have measured two arms that
+barely differed and reported "SEFL does nothing", which would have been wrong for a reason nobody
+could have seen from the six-metric table.
+
+It also means the two terms cannot be separated: both were starved before and both are active now.
+
+### 6. Standing caveats, unchanged
+
+* **Two seeds.** `claim_min_seeds` = 3. Seed 3 outstanding.
+* **The arms remain confounded**: `OFF` generates at a calibrated `ell`, `ON` at the `Config`
+  defaults, because `apply_lengthscale` correctly refuses a non-converged axis. Not fixable — no
+  `ell` produces structure in a flat field — but it means this is not a single-variable comparison.
+* Layout identical across arms (`n_pred` 4073/4169/4110 everywhere), so the whole difference is in
+  the field and expression path.
+* `provenance.source = "defaults"` and `AssumedThicknessWarning` on every run.
+* Still no `fit_seconds` in any artifact.
