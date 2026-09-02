@@ -4533,3 +4533,174 @@ campaign's base rate on real-data capability tests is close to zero. And ~47 cor
 rather than an omission: the paper reports the 2.52x as an observation with its pre-registration
 attached and states that the replication was scoped, costed and declined. That is honest. It is
 just weaker than doing it, and the difference is one dataset.
+
+---
+
+## REPLICATION — PRE-REGISTRATION, PART 2: the seen/unseen sign flip (2026-09-01)
+
+Written **before any `cosmx_nsclc_3d` fit, and before the staged gate has been run.** Part 1 — the
+`morans_pearson` criteria — is above and is **unchanged**; nothing in it moves. This adds the
+second criterion, at the user's instruction that the flip counts only if it is pre-registered:
+*"it is currently in exactly the position `morans_pearson` was in before this replication was
+proposed. If it is not pre-registered it does not count, and I would rather lose it than launder
+it."*
+
+### The finding being replicated
+
+`deep_starmap`, three seeds x two fits x four arms x two folds x two gene pools, on
+`morans_pearson`. Within one run and one scoring pass, the sign of the text channel's value
+reverses with nothing changing but which genes are scored:
+
+| gene pool | winner | margin | envelope | signs |
+|---|---|---|---|---|
+| kept (fitted on) | `lookup` — a free per-gene table | **−0.1330** (A1−A3) | 0.0230 | 5.8x, 6/6 |
+| held out (never in a batch) | `medcpt` — text alone | **+0.2999** (A2−A4) | 0.0532 | 5.6x, 6/6 |
+
+### The contrast, and why it is A2 − A3 on both pools
+
+The table above uses **two different contrasts**, one per pool, which is not a sign flip *within* a
+comparison. The criterion is stated on **A2 − A3** — `medcpt` pure text against `lookup`+distill —
+**on both gene pools**, because:
+
+* it is the one contrast in which **neither arm is degenerate on either pool**. A4 emits `norm(0)`
+  for a held-out gene, so A2 − A4 on the held-out side is a comparison against a void, which
+  `specs/10` §7 and Part 1 both already call the weaker claim;
+* A2 − A3 on held-out genes **is already Part 1's PRIMARY** (+0.2514 on `deep_starmap`), so the
+  flip criterion adds only the kept half — free, on the same fits and the same scoring pass;
+* A3 is the **shipped** lookup configuration, so the flip is stated against what the method
+  actually ships rather than against an arm built to fail.
+
+⚠️ **`deep_starmap`'s kept-pool A2 − A3 is derived, not directly reported.** From the recorded
+A1 − A3 = −0.1330 and A1 − A2 = −0.0008 it is **−0.1322** exactly, and the two directly measured
+neighbours bracket it tightly — A2 − A4 = −0.1312, A1 − A3 = −0.1330, all three inside 0.002. The
+**point estimate** is therefore safe to use as a magnitude scale; the **envelope** for that contrast
+is not derivable and must be read from the run. The `cosmx` scorer reports every pairwise contrast
+directly, so the replication measures both halves without any arithmetic.
+
+### FLIP REPLICATES — all of:
+
+1. **kept** genes: A2 − A3 **< 0**, signs agreeing at every seed and every fold;
+2. **held-out** genes: A2 − A3 **> 0**, signs agreeing at every seed and every fold;
+3. **both** magnitudes exceed the shared envelope computed **on their own gene pool** — the pools
+   are different gene populations and §4.2a's per-metric/per-arm rule extends to them;
+4. fold balance >= 0.25 at every seed, on **both** halves.
+
+### FLIP DOES NOT REPLICATE
+
+Either half's sign disagrees with `deep_starmap`'s, **or** either magnitude sits inside its own
+pool's envelope. Reading: the reversal was a property of `deep_starmap` — mouse cortex, laminar —
+and the open-vocabulary claim has no within-run evidence.
+
+### ONE-SIDED — exactly one half meets 1–4, the other's magnitude is inside its envelope
+
+Not sign-reversed, just undetectable. Report **which** half carries it and read no flip. If the
+**held-out** half is the one that survives, that is Part 1's claim and nothing more; if the **kept**
+half is the one that survives, the flip is not established and the paper keeps only the negative it
+already had three times over.
+
+### UNINFORMATIVE — conditions (a)–(d) of Part 1 apply unchanged, plus:
+
+* **(e)** the **kept**-pool shared envelope on `morans_pearson` exceeds **0.1322** — the design
+  could not detect a kept-half effect the size of the one being replicated. Symmetric with Part 1's
+  condition (c), which does the same on the held-out half against 0.2514. The threshold is robust
+  to the derivation above: the three candidate values span 0.0018.
+
+### ⚠️ Three things this criterion does NOT fix, stated so nobody reads it as more than it is
+
+1. **The flip inherits `morans_pearson`'s selection problem entire.** The *contrast* and its
+   criteria are now fixed in advance; the *metric* was still chosen from six because it produced a
+   result. No replication on that metric erases that, and the paper must say so in the same
+   sentence that reports the flip.
+2. **The kept half is not an independent test.** `lookup` beating `medcpt` on genes with rows has
+   already reproduced three times (tier-1, `deep_starmap`, and the zero-shot run's own kept pool at
+   5.8x). Replicating it is *expected*, and the flip's novelty rests almost entirely on the
+   held-out half — which is the same quantity Part 1's primary tests. **The flip is therefore
+   close to, but not identical with, Part 1**: what it adds is the *reversal* requirement, which is
+   a stronger and more interpretable statement than a clearance against a floor, and which is
+   robust to the floor being wrong.
+3. **The two verdicts can disagree, and neither overrides the other.** The flip can REPLICATE while
+   Part 1 returns REFUTATION (A2 − A3 reverses cleanly but A2 fails to clear the `shuffled` floor
+   by an envelope), and Part 1 can return SUPPORT while the flip is ONE-SIDED (the kept half
+   undetectable). Both are reported, in full, with whichever combination occurs stated plainly.
+
+### Reported beside it, as context and **not** as a criterion
+
+The same flip on **`marker_depth_r`** — the metric that *was* pre-registered. On `deep_starmap` it
+is already null there (held-out A1 − A3 = −0.0044 against a 0.1273 envelope, signs disagreeing), so
+replicating a null is not a test of anything and it carries no threshold. It is reported because a
+reader will ask, and because a flip appearing there would be a genuine surprise worth recording.
+
+---
+
+## A7 — cost, and whether it beats the replication (2026-09-01)
+
+### What A7 is
+
+An **addition** experiment, not an ablation: the shipped model (all three SEFL weights at 0)
+against the same model with `w_thick = w_prog = 0.2`. `w_cross` stays at 0 in both arms — it is
+redundant by construction in v25 (asserted bitwise on an untrained model) and harmful when trained
+(generated per-gene variance 0.067 against 0.711 with SEFL off, R6). The question is **"is SEFL
+used at all"**, and it is currently unanswerable: three losses ship at zero weight, SEFL is in the
+design's title, and T07 established the losses are *correct* — never that they *help*.
+
+### Cost, on the two candidate datasets
+
+Three seeds x two arms = **6 fits**, which is the minimum §4.2 allows for an envelope.
+
+| dataset | measured per cold fit | 6 fits | headroom on the reconstruction task |
+|---|---|---|---|
+| `starmap_visual_cortex` (tier-1, 16.5 k cells) | **62 min** | **~6.2 core-hours** | **4.6x** |
+| `deep_starmap` (~113 k cells) | **3.74–4.09 h** | **~23 core-hours** | **0.5x — saturated** |
+
+**Tier-1 is the right dataset and the reason is this project's own ceiling-first rule.** A7 has to
+*detect an effect*; `deep_starmap`'s reconstruction task is saturated against an oracle copier at
+0.5x headroom, which is what sank the `deep_starmap` reconstruction comparison, and spending 23
+core-hours to ask a detection question on a saturated task is the mistake the rule exists to
+prevent. Tier-1 has 4.6x.
+
+⚠️ **One check must run before committing to tier-1, and it is free.** `L_thick` is a
+thick-section consistency term. If tier-1's sections are too thin for it to bind, the loss charges
+~0 there and A7 on tier-1 tests **`L_prog` alone** — which would make the dataset choice wrong, not
+merely weaker. One forward pass on an untrained model settles it: **does `L_thick` charge a
+non-zero loss on tier-1?** If it does not, A7 goes to `deep_starmap` at ~23 core-hours and the
+saturation caveat is stated in the result.
+
+⚠️ **And a tier-1-only A7 is a weaker claim about the shipped model**, since the negatives that
+define this paper were measured on both datasets. State it as "on the dataset where the effect is
+detectable", not as "on the shipped configuration".
+
+**Possible reuse, unverified**: step 2's `learned` baseline is a full-panel `lookup` `deep_starmap`
+fit at SEFL-off, so it could serve as one of three SEFL-off seeds *if* A7's config matches it
+exactly. That would take a `deep_starmap` A7 from 6 fits to 5 (~19 core-hours). It does not change
+the recommendation and should not be counted on until the hashes are compared.
+
+### Which is the better spend, if only one
+
+**A7 — and it is not close, because it costs 13 % of the replication** (6.2 against 47
+core-hours). Three reasons:
+
+1. **It answers a question about what the method *is*.** The paper cannot currently say whether the
+   mechanism it is named for contributes anything. That is not an unrun ablation, it is a hole in
+   the method's identity, and no amount of evaluation methodology fills it.
+2. **It converts a defaulting decision into a measured one.** SEFL ships at zero weight on the
+   strength of T07 measurements about the losses' *own* criteria and T06's acceptance tests —
+   never about the six target metrics. Right now the paper defends a default with evidence that
+   does not address it.
+3. **Both outcomes are publishable and one is interesting.** If SEFL loses, "a continuous-field
+   model needs less self-supervision than a point-cloud one" is a real finding about the
+   formulation, and it is the finding the by-construction `w_cross` result already points at.
+
+⚠️ **The strongest argument against, stated fairly**: the prior favours SEFL losing — every
+distributional statistic T07 could measure moved the wrong way at 0.2 — so A7 most likely adds
+*another negative* to a negative-results paper, while the replication is the only thing that could
+add a positive. That is true, and it is why the replication is the better spend **per hour of
+result-that-changes-the-headline**. It is not why A7 wins: A7 wins on the ratio.
+
+### ⚠️ The dilemma is probably false, and that is the more useful answer
+
+At 6.2 against 47 core-hours these are not competing for the same budget. Running A7 first costs
+**13 %** of the replication and delays it by well under a day, and its result cannot change what
+the replication measures. **The sequencing that dominates both single choices: run A7 on tier-1
+now, then run the replication.** If the budget genuinely admits only one *large* spend, that spend
+is the replication — and A7 should still be run, because at 6.2 core-hours it is not the thing
+competing with it.
