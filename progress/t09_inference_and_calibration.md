@@ -5308,3 +5308,80 @@ slack, and written before any rebuild has run:
 200 characters is roughly one sentence of description — far below `deep_starmap`'s 546 and far
 above a 6-character symbol. The thresholds are set from the dataset where the effect was found, not
 from what a rebuild is expected to produce, and they are on the record before it runs.
+
+---
+
+## Replication — the human rebuild resolved nothing. STOP, and the numbers are not about the panel (2026-09-01)
+
+`reports/t09_text_coverage_cosmx_human.json`.
+
+### Against the thresholds pre-registered before it ran
+
+| criterion | threshold | measured | |
+|---|---|---|---|
+| held-out summary rate | >= 0.80 | **0.000** | **STOP** |
+| held-out bare-symbol-only | <= 0.10 | **1.000** (191/191) | **STOP** |
+| median held-out descriptor | >= 200 chars | **6** | **STOP** |
+| species check (9606 / `ENSG`) | required | **not evaluable — no resolved rows** | — |
+| differential (kept vs held-out) | metadata-blind | gap **0.000** | pass |
+
+All three fire. **The verdict is STOP and it is not close.**
+
+### ⚠️ But these numbers are a property of the build, not of the panel
+
+**The rebuild went backwards.** The *mouse* table — the wrong organism, matching by accident —
+resolved **121/960** symbols and gave **26** held-out summaries. The purpose-built *human* table
+resolved **0/960**. A correct human table cannot do worse than an accidental mouse one on a human
+panel: human is the best-covered organism in mygene.info.
+
+**`n_full_name` is 0 across all 960 rows.** In every real table in this project a row that exists
+carries a full name (`n_full_name == n_in_table`; the mouse table: 28/28 and 93/93). Zero full
+names over 960 rows does not mean "these genes have no description" — it means **no row resolved
+at all**. `n_in_table: 960/960` is the giveaway read the wrong way: every symbol is present, as a
+**symbol-only row**.
+
+**Reproduced locally.** With `mygene` absent, `build_gene_meta` warns
+`GeneMetaUnavailableWarning: mygene.info lookup for N symbol(s) failed (ModuleNotFoundError: No
+module named 'mygene'); falling back to symbol-only rows`, writes the table, and **exited 0**.
+
+**Leading hypothesis, to be confirmed from the build's console output, not asserted**: `mygene` is
+declared in the `extra` optional-dependency group, **not** in `dev` — so `make install` ("editable
+install with dev extras") does not provide it, and the project's one sanctioned online step is
+unrunnable after a standard install. The string to look for is
+`GeneMetaUnavailableWarning ... No module named 'mygene'`. If instead the warning names a network
+error, the cause is outbound access; if it names unmatched symbols, the cause is `--species`.
+
+    pip install -e '.[extra]'          # what the online step needs, and what dev does not give
+
+⚠️ **I am not moving `mygene` into `dev`.** `dev` is test and lint tooling and `extra` is the right
+group for it semantically; the gap is that nothing says which install the online step needs. Flagged
+for the user's decision, not applied.
+
+### The defect that let this reach a coverage report: a silent fallback (Convention 6)
+
+`build_gene_meta.py` printed `with full_name 0/960` and **returned 0**. Its only failure paths were
+row-count mismatches — an `--overwrite` count, or rows lost in a merge — so a build in which
+*nothing resolved* looked exactly like a success. The table is written, every gene is "in the
+table", and the sole signal is a printed line nobody is obliged to read.
+
+**Fixed.** `MIN_RESOLVED_FRACTION = 0.5`: a build that is not `--offline` and resolves fewer than
+half its rows to a full name now **exits 1** and names the three causes in order — `--offline` not
+passed, outbound access, `--species`. It points at `--dump-raw <SYMBOL>`, which prints mygene's raw
+response for one symbol and writes nothing.
+
+The constant is **a structural-failure detector, not a quality bar**: a panel that reaches
+mygene.info resolves near 100 % (`deep_starmap` 1017/1017, the mouse table 2155/2155), so half is
+far below any real build and far above zero. `--offline` is exempt, because symbol-only rows are
+what it is for.
+
+Verified both ways: `--offline` on three symbols exits **0** with `full_name 0/3`; a non-offline
+build that resolves nothing exits **1** with the diagnostic.
+
+### Where the replication stands
+
+**Not refuted, and not run.** Every scientific gate on `cosmx_nsclc_3d` passed — room 0.9563,
+ceiling ratio ~1.00, `self` = 1.0, constant field degenerate by §4.2c's boolean test, split
+balanced. The dataset is good and its geometry matches `deep_starmap`'s to within 0.001. What is
+missing is still a resolved human gene-metadata table, and the pre-registered thresholds stand
+unchanged for the next attempt — they have now been applied once and stopped a run, which is what
+they were written for.

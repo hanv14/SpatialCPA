@@ -39,6 +39,16 @@ from spatialcpav25_gen.data.text import (
     load_gene_meta,
 )
 
+MIN_RESOLVED_FRACTION = 0.5
+"""Below this fraction of rows carrying a full name, a non-``--offline`` build fails.
+
+**Not a quality bar — a structural-failure detector.** A panel that reaches mygene.info resolves
+near 100 % (`deep_starmap`: 1017/1017; the mouse table: 2155/2155). Under half means something
+categorical went wrong — no network, ``--offline``, or the wrong ``--species`` — and the table
+written in that state is symbol-only rows that every downstream coverage check will report as
+"in the table". Half is far below any real build and far above zero, so it separates the two
+cases without ever firing on a merely thin panel."""
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -206,6 +216,25 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if not args.overwrite and summary["rows"] > len(symbols):
         print(f"  merged: kept {summary['rows'] - len(symbols)} row(s) from other panels")
+
+    # A build where nothing resolved writes a table of symbol-only rows and, before this check,
+    # exited 0. That is a silent fallback (Convention 6): the table looks present, every gene is
+    # "in the table", and the only signal is a printed count nobody is obliged to read. It cost a
+    # cosmx rebuild that came back with 960/960 rows and 0/960 full names, read as a property of
+    # the panel until the previous mouse table was found to have resolved MORE of it.
+    resolved = float(summary["with_full_name"]) / float(max(summary["rows"], 1))
+    if not args.offline and resolved < MIN_RESOLVED_FRACTION:
+        print(
+            f"  !! only {summary['with_full_name']}/{summary['rows']} rows carry a full name "
+            f"({resolved:.1%}); a real panel resolves near 100% (deep_starmap: 1017/1017). "
+            "Nothing was looked up, or nothing matched. Check, in this order: --offline was not "
+            "passed; the machine has outbound access "
+            f"(Config.text_allow_network={cfg.text_allow_network}); "
+            f"--species {args.species!r} is the panel's organism. `--dump-raw <SYMBOL>` prints "
+            "mygene.info's raw response for one symbol and writes nothing.",
+            file=sys.stderr,
+        )
+        return 1
 
     meta = load_gene_meta(cfg.gene_meta_path, species=None if args.offline else args.species)
     for symbol in symbols[:3]:
