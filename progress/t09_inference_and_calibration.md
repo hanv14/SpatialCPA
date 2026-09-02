@@ -5455,3 +5455,102 @@ arm, and the number belongs in the report beside the summary rate.
 a property of the *table*; the criteria are on the **held-out side of the split**, and until that
 run exists there is no number to check them against. On the panel-wide figures they would pass
 comfortably — which is a reason to run the check, not a substitute for it.
+
+---
+
+## A7 — seed 1, both arms. The SEFL arm collapsed the field (2026-09-01)
+
+`reports/t10_a7_off_s1.{md,json}` (`19cf1544f0cc5fcc`, `w_thick = w_prog = 0`) and
+`reports/t10_a7_on_s1.{md,json}` (`9209091d5d27d668`, `w_thick = w_prog = 0.2`, `w_cross = 0` in
+both). Tier-1, seed 1. **Seeds 2 and 3 outstanding — no verdict here.**
+
+### 1. The uncalibrated table, and it is a trap
+
+| metric | SEFL off | SEFL on | delta |
+|---|---|---|---|
+| `paper_morans_pearson` | +0.2340 | **+0.2858** | **+0.0519** |
+| `paper_gearys_pearson` | +0.2357 | **+0.3028** | **+0.0671** |
+| `paper_umap_mixing` | +0.7976 | +0.5090 | **−0.2886** |
+| `paper_marker_field_r` | +0.4472 | +0.1171 | **−0.3301** |
+| `paper_marker_depth_r` | +0.6289 | +0.2154 | **−0.4135** |
+| `paper_celltype_localization` | +0.7591 | +0.4167 | **−0.3424** |
+| `paper_gene_mean_spearman` | +0.9825 | +0.6546 | **−0.3279** |
+
+⚠️ **Reading that table alone gives the wrong answer.** It says SEFL helps the two autocorrelation
+metrics and hurts everything else. What actually happened is that the SEFL arm's **anatomical field
+went flat**, and `paper_morans_pearson` is a *correlation across genes*, not an amplitude — so it
+stays positive on a dead field by correlating noise. R12 recorded exactly this trap: *"the predicted
+values are squashed into a narrow band, so `paper_morans_pearson` is noise about zero and its
+negative sign is meaningless — the interpretable quantity is `morans_median_pred` vs
+`morans_median_gt`."*
+
+### 2. Three independent witnesses to the collapse
+
+| witness | SEFL off | SEFL on |
+|---|---|---|
+| calibration `i_gen` against a target of 0.2611 | 0.2547 — **97.5 %** of target | **0.0042 — 1.6 %** |
+| `status` / `ell_z_status` | `converged` / `converged`, 3 iterations | **`target_unreachable` / `target_unreachable`, 0 iterations** |
+| per-module `mean I_gen` (4 modules) | 0.2556, 0.3243, 0.1968, 0.3646 | **−0.0012, 0.0013, 0.0005, 0.0057** |
+
+against a real `mean I_real` of 0.3871 / 0.3357 / 0.1614 / 0.4899 in both. **Every module's
+generated Moran's I is zero to three decimal places.** The field carries no spatial structure at
+all, and the length-scale search reported it in the only way it can: no `ell` reaches the target,
+because the problem is not the length-scale.
+
+**And the calibrated arm confirms the correlation is noise**: applying detection calibration takes
+the SEFL arm's `morans_pearson` from +0.2858 to **+0.0704** and `gearys_pearson` to **−0.0208**. A
+real signal does not do that; a correlation of near-zero values does.
+
+### 3. ⚠️ The comparison is confounded, and the confound is downstream of the collapse
+
+`apply_lengthscale` applies **only a `converged` axis** — a documented refusal, added after T09
+measured that a non-converged value is "whichever grid point tied first". So:
+
+* SEFL **off** generated at the calibrated `ell_xy = 77.0`, `ell_z = 48.0`;
+* SEFL **on** generated at the `Config` defaults `ell_xy = ell_z = 100.0`.
+
+**The two arms therefore differ in two things, not one.** That is not a clean A7 and the write-up
+cannot claim it is.
+
+It is also not a fixable confound: **no `ell` produces structure in a flat field**, and the
+calibrator failed *because of* the collapse rather than alongside it. The honest statement is that
+the SEFL arm cannot be given a calibrated length-scale, and that this is itself the result.
+
+### 4. ⚠️ T07's collapse alarm cannot see this collapse
+
+`check_collapse` fires when the mean per-gene **variance of drawn counts** falls below
+`sefl_collapse_warn_fraction` of the real cells'. That is variance **across cells**, not spatial
+structure. A field can be **uniform in space while retaining per-cell variance** — flat in
+*position*, not flat in *value* — and passes the alarm untouched.
+
+This run is exactly that shape. **Worth asking whether the fit printed a `CollapseWarning` at all**;
+if it did not, the alarm has a gap that T07 could not have found on the fixture, and the gap is
+that it watches the wrong axis for this failure mode. Recorded as a defect to confirm from the
+console, not asserted.
+
+### 5. R6's scope needs correcting
+
+R6 recorded field flattening for **`w_cross`** and explicitly exonerated the other two: *"`w_thick`
+and `w_prog` — these two are **not** broken."* On real tissue at the spec's own 0.2 they flatten the
+field as thoroughly as `w_cross` did on the fixture. **R6 is a property of the SEFL consistency
+block, not of `L_cross` alone**, and the sentence clearing the other two was a fixture result that
+does not transfer.
+
+### 6. What can and cannot be said yet
+
+* **One seed, and the arms are confounded.** No verdict. Seeds 2 and 3 are outstanding.
+* The deltas on the four interpretable metrics are **8.6x to 12.3x** the 0.0335 figure the report
+  footer quotes — but that is the **fixture** envelope and §4.2a forbids carrying it to tier-1. The
+  right envelope is per-metric and per-arm on this dataset and does not exist. The magnitudes are
+  large enough that this is unlikely to change the direction; it does mean **no clearance may be
+  quoted**.
+* **The layout is identical across arms** (`n_pred` 4073/4169/4110 in both) because
+  `layout_mode="resample"` copies real coordinates. So the entire difference — including
+  `celltype_localization` — is in the **field and expression path**, not in cell placement. That
+  narrows what A7 is measuring and is worth stating in the write-up.
+* Both arms still carry `provenance.source = "defaults"` and `AssumedThicknessWarning`, so the
+  result is about SEFL **at the default 1200-step budget on a defaulted section thickness**.
+
+⚠️ **Timing**: neither JSON carries `fit_seconds`, so the runs predate the persistence fix or ran
+from an un-updated tree. The ON arm ran anyway, so the "one fit before the other five" gate is
+already spent; with 2 of 6 done the remaining question is only the last four.
