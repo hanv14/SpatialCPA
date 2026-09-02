@@ -4873,8 +4873,10 @@ healthy geometry looks like.
 binding constraint. Raising `sefl_rejection_max_rounds` is a **sampler-budget** change — it alters
 how a fixed integral is estimated, not what `L_thick` compares — the same class of fix as R11's
 grid-multinomial sampler replacing the biased rejection one. A7 then runs on tier-1 at ~6.2
-core-hours. ⚠️ It also means **every SEFL measurement in T07 was taken on a sampler that silently
-refused most planes**, which is a finding in its own right.
+core-hours. ⚠️ ~~It also means every SEFL measurement in T07 was taken on a sampler that silently
+refused most planes.~~ **That sentence is wrong and is corrected in the section below**: T07
+measured on the synthetic fixture, where acceptance is 0.237 and every draw reaches `n`. The
+crippling is a real-data property and T07 never saw real data.
 
 **If acceptance is << 0.01**: no budget recovers it. `L_thick`'s random-plane construction is
 **inoperative on 4-section stacks**, which is the shape of every volume this project has. That is
@@ -4890,3 +4892,110 @@ do not tune the ratio to make an experiment runnable.
 would raise the acceptance rate and it would also change what `L_thick` asserts, and changing a
 loss's definition to make its ablation runnable is the tuning-to-enable failure this project has
 recorded five times in other forms.
+
+---
+
+## A7 — the acceptance probe: the sampler is under-budgeted, the geometry is not (2026-09-01)
+
+`reports/t10_a7_thick_binding_tier1.json`, tier-1, seed 2, 32 probes.
+
+| | value |
+|---|---|
+| acceptance, median | **0.0372** |
+| acceptance, min – max | **0.0280 – 0.1848** |
+| draws reaching `n` at the shipped budget | **0.0625** (2/32) |
+| rounds needed, median | **51.7** against a budget of **16** |
+| planes with acceptance >= 0.05 | 0.344 |
+| **fixture control** | **0.237** median, 3 rounds, **1.000** reach `n` |
+
+### The reading
+
+**Nothing is starved.** The lowest acceptance over 32 planes is **2.8 %** — an oblique 66 µm slab
+through an 88 µm-deep box really does intersect the tissue; it just occupies a small fraction of
+its own bounding window. The integral `L_thick` needs is well defined and estimable everywhere.
+**The estimator is impatient, not the geometry empty.**
+
+Simulating `_slab_sample`'s own loop at the observed rates:
+
+| acceptance | rounds needed | proposals | x `n` | |
+|---|---|---|---|---|
+| 0.0280 | **68** | 146 297 | 35.7 | observed **min** |
+| 0.0372 | **50** | 110 112 | 26.9 | observed **median** |
+| 0.1848 | 7 | 22 174 | 5.4 | observed max |
+| 0.2369 | 4 | 17 304 | 4.2 | fixture control |
+
+A budget of **96** covers every plane observed; 16 covers only the top decile. At 5 % acceptance —
+a third of tier-1's planes — 37 rounds are needed and 16 are given, which is why
+`fraction_acceptance_above_0.05` is 0.344 while `fraction_reaching_n` is 0.0625.
+
+### ⚠️ This is my pre-registered middle band, and its stated reading is wrong
+
+I wrote three bands before the numbers: `>= 0.05` budget-bound, `<< 0.01` starved, and **between**
+— *"raising the budget helps some planes and not most. Report and decide."* The median is 0.037, so
+this is the middle band and **the pre-registered action is "report and decide", which is what this
+is.** But the band's *description* is contradicted by the numbers behind it: raising the budget to
+96 helps **every** plane, not some, because the minimum acceptance is 0.028 and 0.028 needs a
+finite 68 rounds.
+
+The threshold was a **proxy** for "is the budget the binding constraint". The probe measures that
+directly, and a direct measurement supersedes a proxy for the thing it stood for. I am not moving
+the threshold to reach a verdict I like — the band's own action was to report — but the distinction
+matters enough to state, because it is the same shape as a threshold moved after a result and a
+reader is entitled to check it.
+
+### ⚠️ A claim I put in the record yesterday is wrong
+
+I flagged in advance that a budget-bound answer *"would also mean every SEFL measurement in T07 was
+taken on a sampler that silently refused most planes."* **It does not.** T07 measured on the
+synthetic fixture — CLAUDE.md Convention 7 — where acceptance is **0.237** and **100 %** of draws
+reach `n`. The crippling is a property of the real volumes, and T07 never saw one. So:
+
+* T07's `w_cross` finding (generated per-gene variance 0.067 against 0.711) **stands**.
+* T07's `w_thick = w_prog = 0.2` finding (three of T06's acceptance tests failing) **stands**, and
+  is **not** reattributable to `L_prog` alone as I had begun to reason. `_slab_sample` is called
+  **only** by `thick_terms` — `cross_terms` and `prog_terms` draw planes but not slab points — so a
+  crippled sampler would have isolated the damage to `L_thick`; but on the fixture it was not
+  crippled, so there is nothing to reattribute.
+
+The corrected sentence is patched in place above rather than deleted.
+
+### What this means for A7
+
+**A7 on real data would have trained with `L_thick` inert on ~97 % of steps**, and no output of it
+would have said so — the term returns exact zeros and the loss simply reads low. **That is what the
+binding check was built to catch, and it caught it.** It is also the first time this project has
+established anything about SEFL on real tissue.
+
+**The unblock is one constant**: `Config.sefl_rejection_max_rounds` 16 -> 96 (or 128 for margin).
+
+* It is a **budget** change: it alters how a fixed integral is estimated, not what `L_thick`
+  compares. The same class as R11's grid-multinomial sampler replacing the biased rejection one.
+* It **invalidates nothing measured**. `_slab_sample` is reached only through `thick_terms`, which
+  `sefl_terms` skips entirely at `w_thick = 0` — and all three SEFL weights ship at 0, so the
+  function is never called in any shipped fit. The fixture's own draws are unaffected because 4
+  rounds are already enough there and the loop breaks on `found >= n`.
+* It **costs** ~146 k uniform proposals per `_slab_sample` call at the worst observed acceptance,
+  against ~50 k already spent failing. Roughly 3x a sampling step that is negligible beside the
+  intensity forward pass on 4096 points.
+* The guard still guards: a plane that genuinely misses the tissue (acceptance ~0.001) needs ~2000
+  rounds and still raises. The threshold moves from "the sampler is impatient" to "the slab does
+  not intersect the volume", which is what the guard was for.
+
+⚠️ **The better fix is not this one, and I am not proposing it now.** The proposal schedule
+`4 x (n - found)` is what makes convergence geometric — `remaining` shrinks by `(1 - 4a)` per round,
+so the rounds needed scale as `1/a`. A schedule that proposed `(n - found) / a_observed` would
+converge in two or three rounds at **any** acceptance. That is a strictly better sampler and a
+larger change to shipped code; raising the budget is sufficient to unblock A7 and is the smaller
+thing to be wrong about.
+
+⚠️ **And `deep_starmap` stays ILL-POSED regardless.** This unblocks tier-1 only. The overlapping
+slabs there are a separate defect with a separate cause (the median-spacing thickness default) and
+a fix that would invalidate every layout number in the project.
+
+### Two smaller notes
+
+* The sweep says 1/32 planes charge; the probe says 2/32 reach `n`. Different plane draws — the two
+  routines consume the generator differently — so this is agreement within one draw, not a
+  discrepancy.
+* `AssumedThicknessWarning` is still on. If the budget is raised and A7 runs, **every A7 number
+  rests on a thickness defaulted from median spacing**, and the result has to say so.
