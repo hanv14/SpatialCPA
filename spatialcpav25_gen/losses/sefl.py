@@ -100,6 +100,7 @@ __all__ = [
     "ConsistencyDominanceWarning",
     "EMATeacher",
     "check_collapse",
+    "check_spatial_collapse",
     "consistency_ratio",
     "cross_terms",
     "evaluate_branch",
@@ -117,6 +118,7 @@ __all__ = [
     "sefl_ramp",
     "sefl_terms",
     "sinkhorn_divergence",
+    "spatial_structure_ratio",
     "thick_terms",
 ]
 
@@ -1330,6 +1332,64 @@ def check_collapse(generated_variance: float, real_variance: float, step: int, c
         f"{cfg.sefl_collapse_warn_fraction}). The consistency losses may have found the "
         "constant field; check that Config.sefl_ema_teacher is on and that the SEFL weights "
         "have not overtaken reconstruction.",
+        CollapseWarning,
+        stacklevel=2,
+    )
+    return True
+
+
+def spatial_structure_ratio(
+    generated: Tensor, real: Tensor, coords: FloatArray, cfg: Config
+) -> float:
+    """Median Moran's I of ``generated`` over that of ``real``, on one shared kNN graph.
+
+    ``(N, G)``, ``(N, G)``, ``(N, 3)`` -> a scalar. Both matrices are counts on the **same
+    cells at the same positions**, so the graph is built once and the ratio is a like-for-like
+    comparison of spatial organisation.
+
+    **The quantity T07's variance alarm cannot see.** ``check_collapse`` compares the per-gene
+    variance of drawn counts across cells; a field that is uniform in *space* while retaining
+    per-cell variance — flat in position, not in value — leaves that statistic untouched. The
+    two are orthogonal, and A7 measured a model that was healthy on one and dead on the other.
+    """
+    points = np.asarray(coords, dtype=np.float64)[:, :2]
+    k = min(int(cfg.sefl_morans_k), points.shape[0] - 1)
+    if k < 1 or points.shape[0] < 3:
+        return float("nan")
+    idx = cKDTree(points).query(points, k=k + 1)[1][:, 1:]
+    neighbours = torch.from_numpy(np.ascontiguousarray(idx.astype(np.int64)))
+
+    def morans(values: Tensor) -> Tensor:
+        centred = values - values.mean(dim=0, keepdim=True)
+        lagged = centred[neighbours].mean(dim=1)
+        denominator = torch.clamp(centred.pow(2).sum(dim=0), min=1e-12)
+        return (centred * lagged).sum(dim=0) / denominator
+
+    i_real = float(morans(real.to(torch.float32)).median())
+    i_gen = float(morans(generated.to(torch.float32)).median())
+    return i_gen / i_real if abs(i_real) > 1e-12 else float("nan")
+
+
+def check_spatial_collapse(ratio: float, step: int, cfg: Config) -> bool:
+    """Fire when the generated field has lost its **spatial** structure. Returns whether it did.
+
+    The second collapse alarm, added at T10 after A7 produced three fits whose anatomical field
+    was flat — `i_gen` at 1.35-2.38 % of its target, every gene module's generated Moran's I
+    under 0.006 — and :func:`check_collapse` did not fire and **could not**, because it watches
+    per-cell variance rather than spatial organisation.
+    """
+    if not math.isfinite(ratio):
+        return False
+    if ratio >= float(cfg.sefl_spatial_collapse_warn_fraction):
+        return False
+    warnings.warn(
+        f"SPATIAL COLLAPSE WARNING at step {step}: the generated field's median Moran's I is "
+        f"{ratio:.4f} of the real cells' on the same positions (alarm at "
+        f"{cfg.sefl_spatial_collapse_warn_fraction}). The field is flat in SPACE — which the "
+        "per-gene variance alarm does not see, because a field can be uniform in position "
+        "while retaining per-cell variance. Any length-scale calibration on this model will "
+        "report target_unreachable, and any Moran's-correlation metric computed on it is "
+        "correlating noise.",
         CollapseWarning,
         stacklevel=2,
     )

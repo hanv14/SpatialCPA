@@ -26,6 +26,7 @@ from spatialcpav25_gen.data.text import (
     gene_meta_summary,
     load_gene_meta,
     region_descriptor,
+    repair_symbol,
     resolve_species,
 )
 from spatialcpav25_gen.model.embeddings import (
@@ -77,6 +78,26 @@ def cache_cfg(tmp_path) -> Config:
 # --------------------------------------------------------------------------------------
 # descriptors
 # --------------------------------------------------------------------------------------
+
+
+def test_repair_symbol_is_dot_for_hyphen_and_only_that():
+    """The repair is general, narrow, and never fires on a symbol that could resolve as written.
+
+    Measured cause: the `cosmx_nsclc_3d` panel writes `HLA.A` for `HLA-A` — what R's
+    `make.names()` does to a column header — and all **11 of 960** unresolved symbols were HLA
+    loci for that one reason. Three fell on the held-out side, so they would have been bare
+    symbols in the arm under test.
+
+    `build_gene_meta` consults this **only** for symbols the first lookup already failed on, so
+    a repair can never displace a genuine hit; the assertion here is that the rule itself is
+    conservative — no dot, no candidate.
+    """
+    assert repair_symbol("HLA.A") == "HLA-A"
+    assert repair_symbol("HLA.DRB1") == "HLA-DRB1"
+    assert repair_symbol("HLA.DQA1") == "HLA-DQA1"
+    # No dot, no repair: the common case must produce no second query at all.
+    for intact in ("Gad1", "A2M", "Slc17a7", "1700057H15Rik", "EPCAM"):
+        assert repair_symbol(intact) is None
 
 
 def test_descriptor_stability():

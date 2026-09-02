@@ -736,6 +736,14 @@ class CTFFlow(nn.Module):
             drawn = self._generated_counts(h0, cond, gene_emb, batch, gene_rows)
             terms[f"{DIAG_PREFIX}gene_variance_gen"] = drawn.var(dim=0).mean()
             terms[f"{DIAG_PREFIX}gene_variance_real"] = batch.counts.var(dim=0).mean()
+            # The axis the variance alarm above cannot see: spatial organisation. Same cells,
+            # same positions, one shared kNN graph — see `spatial_structure_ratio`.
+            from spatialcpav25_gen.losses.sefl import spatial_structure_ratio
+
+            terms[f"{DIAG_PREFIX}spatial_ratio"] = torch.tensor(
+                spatial_structure_ratio(drawn, batch.counts, xyz_data, self.cfg),
+                dtype=torch.float32,
+            )
         return terms
 
     def _generated_counts(
@@ -949,6 +957,14 @@ class TrainHistory:
     (``specs/07`` §5). Empty on a run with the SEFL weights at zero."""
     collapse_alarms: list[int] = dataclass_field(default_factory=list)
     """Steps at which the collapse alarm fired. ``specs/07``'s "collapse-alarm history"."""
+    spatial_ratio: list[float] = dataclass_field(default_factory=list)
+    """Generated median Moran's I over the real cells', per logged step.
+
+    Logged from every run, alarm or not, because
+    ``Config.sefl_spatial_collapse_warn_fraction`` is deliberately set to catch only total
+    collapse and **cannot be tightened until this has been measured on healthy runs**."""
+    spatial_collapse_alarms: list[int] = dataclass_field(default_factory=list)
+    """Steps at which the **spatial** collapse alarm fired."""
     metric_ratio: list[float] = dataclass_field(default_factory=list)
     """``sum(weighted metric-aware) / sum(weighted reconstruction)`` at each step the
     metric-aware block ran (``specs/08``'s "do not weight these losses above reconstruction").
@@ -969,6 +985,9 @@ class TrainHistory:
         real = float(terms[f"{DIAG_PREFIX}gene_variance_real"].detach())
         generated = float(terms[f"{DIAG_PREFIX}gene_variance_gen"].detach())
         self.variance_ratio.append(generated / real if real > 0.0 else float("nan"))
+        spatial = terms.get(f"{DIAG_PREFIX}spatial_ratio")
+        if spatial is not None:
+            self.spatial_ratio.append(float(spatial.detach()))
 
     @property
     def entropy_fraction(self) -> list[float]:
@@ -1319,6 +1338,7 @@ def _log_sefl(
     from spatialcpav25_gen.losses.sefl import (
         ConsistencyDominanceWarning,
         check_collapse,
+        check_spatial_collapse,
         consistency_ratio,
     )
 
@@ -1341,6 +1361,11 @@ def _log_sefl(
         cfg,
     ):
         history.collapse_alarms.append(int(step))
+    # Both alarms run, and both are needed: A7 produced three fits the variance alarm passed
+    # and this one would have caught. They watch orthogonal statistics.
+    spatial = terms.get(f"{DIAG_PREFIX}spatial_ratio")
+    if alarm and spatial is not None and check_spatial_collapse(float(spatial.detach()), step, cfg):
+        history.spatial_collapse_alarms.append(int(step))
 
 
 def flanking_sections(vol: Volume, plane: Plane, *, k: int = 2) -> list[Section]:

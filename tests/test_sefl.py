@@ -54,6 +54,7 @@ from spatialcpav25_gen.losses.sefl import (
     ConsistencyDominanceWarning,
     EMATeacher,
     check_collapse,
+    check_spatial_collapse,
     consistency_ratio,
     cross_terms,
     evaluate_branch,
@@ -69,6 +70,7 @@ from spatialcpav25_gen.losses.sefl import (
     sefl_ramp,
     sefl_terms,
     sinkhorn_divergence,
+    spatial_structure_ratio,
     thick_terms,
 )
 from spatialcpav25_gen.model.embeddings import EntityEmbeddings
@@ -728,6 +730,53 @@ def test_cross_loss_decreases(trained_cross: Built):
 # --------------------------------------------------------------------------------------
 # L_thick
 # --------------------------------------------------------------------------------------
+
+
+def test_spatial_collapse_alarm_catches_what_the_variance_alarm_cannot():
+    """The two alarms watch orthogonal statistics, and A7 produced the field that proves it.
+
+    Constructed rather than fitted, because the point is definitional: a field that is uniform
+    in **space** while retaining full per-cell **variance** is flat in position and not in
+    value. `check_collapse` compares per-gene variance across cells and sees nothing wrong with
+    it; `check_spatial_collapse` compares Moran's I on the same positions and fires.
+
+    Three fits in A7 had exactly this shape — `i_gen` at 1.35-2.38 % of target, every gene
+    module's generated Moran's I under 0.006 — and the variance alarm was silent.
+    """
+    cfg = Config()
+    generator = torch.Generator().manual_seed(SEED)
+    n, genes = 512, 8
+    coords = torch.rand((n, 3), generator=generator).numpy().astype(np.float64) * 1000.0
+
+    # Real: a smooth spatial gradient plus noise, so it has genuine structure.
+    gradient = torch.from_numpy(coords[:, :1].astype(np.float32)) / 1000.0
+    real = gradient * 8.0 + torch.rand((n, genes), generator=generator)
+
+    # Generated: the SAME per-gene variance, spatially scrambled. Flat in position, not value.
+    permutation = torch.randperm(n, generator=generator)
+    scrambled = real[permutation]
+
+    assert torch.allclose(scrambled.var(dim=0), real.var(dim=0)), "the fixture must hold variance"
+
+    # 1. The variance alarm sees nothing — correctly, by its own definition.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert not check_collapse(
+            float(scrambled.var(dim=0).mean()), float(real.var(dim=0).mean()), 500, cfg
+        )
+
+    # 2. The spatial ratio collapses, and the alarm fires.
+    ratio = spatial_structure_ratio(scrambled, real, coords, cfg)
+    assert abs(ratio) < float(cfg.sefl_spatial_collapse_warn_fraction), ratio
+    with pytest.warns(CollapseWarning, match="SPATIAL COLLAPSE"):
+        assert check_spatial_collapse(ratio, 500, cfg)
+
+    # 3. And it does not fire on the structured field itself, whose ratio is 1 by construction.
+    intact = spatial_structure_ratio(real, real, coords, cfg)
+    assert intact == pytest.approx(1.0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert not check_spatial_collapse(intact, 500, cfg)
 
 
 def test_thick_binding_instrument_reads_the_poisson_hinge(built: Built):

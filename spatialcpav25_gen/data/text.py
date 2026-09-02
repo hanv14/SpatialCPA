@@ -64,6 +64,7 @@ __all__ = [
     "load_mygene_client",
     "load_transformer_backend",
     "region_descriptor",
+    "repair_symbol",
 ]
 
 GENE_META_COLUMNS: Final[tuple[str, ...]] = (
@@ -440,6 +441,35 @@ def build_gene_meta(
                 stacklevel=2,
             )
 
+    # Second pass, for symbols the first lookup could not resolve: try a repaired spelling.
+    # Only the unresolved are retried, so a repair can never displace a genuine hit, and the
+    # row is filed under the panel's OWN spelling so every downstream lookup still finds it.
+    repaired: dict[str, str] = {}
+    unresolved = [symbol for symbol in wanted if symbol not in fetched]
+    candidates = {
+        symbol: candidate
+        for symbol in unresolved
+        if (candidate := repair_symbol(symbol)) is not None
+    }
+    if candidates and cfg.text_allow_network:
+        try:
+            second = _query_mygene(sorted(set(candidates.values())), cfg)
+        except Exception:  # a failed repair pass must never lose the first pass's rows
+            second = {}
+        for symbol, candidate in candidates.items():
+            record = second.get(candidate)
+            if record is not None:
+                fetched[symbol] = {**record, "symbol": symbol}
+                repaired[symbol] = candidate
+    if repaired:
+        warnings.warn(
+            f"build_gene_meta: {len(repaired)} symbol(s) resolved only after repairing '.' to "
+            f"'-' (e.g. {next(iter(repaired))!r} -> {next(iter(repaired.values()))!r}). The rows "
+            "are filed under the panel's own spelling; the panel itself is mangled at source.",
+            GeneMetaUnavailableWarning,
+            stacklevel=2,
+        )
+
     rows: list[dict[str, Any]] = []
     degraded: list[str] = []
     for symbol in wanted:
@@ -797,6 +827,27 @@ def _is_exact(hit: dict[str, Any], query: str) -> bool:
 def _hit_rank(hit: dict[str, Any], query: str) -> tuple[int, float]:
     """Sort key for choosing among several hits for one symbol: exact match first, then score."""
     return (1 if _is_exact(hit, query) else 0, _hit_score(hit))
+
+
+def repair_symbol(symbol: str) -> str | None:
+    """Return a second spelling to try for a symbol mygene could not resolve, or ``None``.
+
+    **Dot for hyphen**, which is what `R`'s ``make.names()`` does to a column header and what
+    reaches a panel through any pipeline that has been through a data frame. Measured on the
+    `cosmx_nsclc_3d` panel: **11 of 960 symbols** failed to resolve and **all eleven were HLA
+    loci** written ``HLA.A``, ``HLA.DRB1`` and so on. Nothing was wrong with the metadata table;
+    the symbols were mangled at source.
+
+    Why that mattered enough to repair rather than note: three of the eleven fell on the
+    **held-out** side of the zero-shot split, so they would have been bare symbols *in the arm
+    under test*, and the MHC loci are not eleven arbitrary genes on a tumour panel — they are the
+    family whose spatial organisation is most likely to be strong.
+
+    The rule is general, not an HLA special case, and it is **only** consulted for a symbol the
+    first lookup already failed on, so it can never override a genuine hit.
+    """
+    candidate = symbol.replace(".", "-")
+    return candidate if candidate != symbol else None
 
 
 def _query_mygene(symbols: Sequence[str], cfg: Config) -> dict[str, dict[str, Any]]:

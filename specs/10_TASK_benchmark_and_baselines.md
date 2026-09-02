@@ -485,6 +485,41 @@ largest difference exactly 0**. The original 0.0120 was that defect, not run-to-
 the envelope it helped justify was inflated by a bug. The sentences above are kept because the
 *rule* they motivate survives; the number does not.
 
+### 4.2e ⚠️ WORKED EXAMPLE — why `claim_min_seeds` = 3, in one metric's three numbers
+
+State this in the methods, with the numbers. It is the clearest demonstration this project has
+that a single-seed table can be confidently, legibly wrong.
+
+A7 ran SEFL off against SEFL on, three seeds, tier-1. `paper_morans_pearson`, off minus on:
+
+| seed 1 | seed 2 | seed 3 |
+|---|---|---|
+| **−0.0519** | **+0.2804** | **+0.5772** |
+
+**Seed 1 says SEFL improves spatial autocorrelation. Seeds 2 and 3 say it destroys it, by ten
+times as much.** A reader given only seed 1 would have led with the one number in the table that
+pointed the other way — and `gearys_pearson` did the same thing on the same fits
+(−0.0671, +0.3070, +0.5701).
+
+**The mechanism, which is what makes this a methods point rather than an anecdote.** The SEFL arm's
+anatomical field was *dead*: `i_gen` at **1.35–2.38 %** of its own target across the three seeds,
+every gene module's generated Moran's I under 0.006, both length-scale axes `target_unreachable` at
+0 iterations. `paper_morans_pearson` is a **correlation across genes**, not an amplitude — so on a
+field with no structure it correlates noise, and noise has no sign. Its across-seed spread on that
+arm is **0.36**, seven times the other five metrics'.
+
+Three consequences the methods should state:
+
+1. **`claim_min_seeds` = 3 is not conservatism.** One seed inverted the sign of the headline on two
+   of seven metrics here.
+2. **A correlation-shaped metric needs an amplitude beside it.** `morans_pearson` alone cannot
+   distinguish "the model reproduces the spatial pattern" from "the model has no pattern and the
+   residual noise happens to correlate". Report `morans_median_pred` against `morans_median_gt`
+   with it, always — the same point R12 recorded and this is its demonstration.
+3. **The five metrics that were readable all agreed, 3/3, at 1.31x–4.68x the worse arm's own
+   spread.** The two that disagreed were the two that were uninterpretable. That is not a
+   coincidence to be explained away; it is the signature.
+
 ### 4.2* ⚠️ THE FINDING: four verdicts turned on conventions nobody had written down
 
 **State this in the paper's methods, as one finding.** §4.2a–d below are not four housekeeping
@@ -1314,6 +1349,32 @@ primary before any fit; `morans_pearson` is reported because the run's only posi
 and a metric promoted to primary *because* it produced a result is not a test. The right status
 for this number is a strong observation with its arithmetic shown, and a **pre-registered
 replication on `morans_pearson`** — ideally on a second dataset — before it is written as a claim.
+
+### ⚠️ The `cosmx` replication is not a like-for-like repeat, and its two outcomes are not symmetric
+
+Measured on the split before any fit (`reports/t09_text_coverage_cosmx_human.json`):
+
+| | `deep_starmap`, where the effect was found | `cosmx_nsclc_3d`, the replication |
+|---|---|---|
+| held-out summary rate | 0.941 | **0.984** |
+| held-out bare symbols | 0 | 3 (all HLA, repaired since) |
+| median held-out descriptor | 546 chars | **709 chars** |
+| summaries that are an **orthologue's** | **83 %** | **0 % — all native human** |
+
+`deep_starmap`'s A2 demonstrates *"MedCPT places a **mouse** gene from mostly **human orthologue**
+prose"*. `cosmx`'s would demonstrate *"MedCPT places a **human** gene from **native human**
+prose"*, from descriptors 30 % longer. **The text channel is richer on the replication dataset in
+two independent ways, and nothing in the design separates a richer channel from a transferring
+mechanism.**
+
+So the two outcomes carry different weight, and this is recorded **before the fits** so it cannot
+later read as a convenient discount:
+
+* A **REFUTATION** on `cosmx` is the **stronger negative**. Failing with a better text channel is
+  worse for the claim than failing with a worse one would have been.
+* A **SUPPORT** is **weaker than it looks**, and must be written as **"replicated on a dataset
+  whose text channel is richer"** — not as "replicated". Part of any success could be the
+  descriptors rather than the mechanism.
 
 **The primary comparison found nothing, and not because the metric could not tell.**
 `marker_depth_r` on the held-out genes: A1 − A3 = −0.0044 against a 0.1273 envelope, signs

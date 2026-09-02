@@ -776,10 +776,17 @@ def _report(
         "",
         "**One seed.** `specs/09` §3's repeated-seed rule requires "
         f"`claim_min_seeds` = {cfg.claim_min_seeds} for any measurement that reaches a paper "
-        "claim, and the across-seed envelope measured on the fixture is 0.0335 "
-        "(`reports/envelope_synthetic.md`). Any difference here smaller than that is a tie, "
-        "and this table is a single-seed measurement — admissible as a diagnostic, not as a "
+        "claim. This table is a single-seed measurement — admissible as a diagnostic, not as a "
         "headline.",
+        "",
+        "⚠️ **No envelope is quoted here, deliberately.** This footer used to cite the "
+        "fixture's 0.0335 (`reports/envelope_synthetic.md`) and call smaller differences ties. "
+        "`specs/10` §4.2a says an envelope is **per-metric and per-arm**, and A7 measured what "
+        "carrying a fixture figure to real data costs: on this dataset the per-arm across-seed "
+        "spreads run **0.0033 to 0.3687**, a **112x** range, with `morans_pearson`'s alone at "
+        "**0.2684 — 8x** the fixture number. A tie declared against 0.0335 here would be the "
+        "cross-dataset comparison §4.2a exists to forbid. Measure the envelope on **these** "
+        "arms, on this metric, before calling anything a tie.",
     ]
     return lines
 

@@ -5863,3 +5863,94 @@ or a post-hoc inflation of a welcome one.
 five.** ⚠️ That gate has been bypassed twice now (step 2's and A7's), both times because the runs
 went out before a duration was reported. `fit_seconds` is persisted in the run JSON since the A7
 review; it will only help if the fits use an updated tree.
+
+---
+
+## Six follow-ups from A7 and the cosmx gate, applied (2026-09-01)
+
+### 1. The symbol repair — dot for hyphen, before the fits
+
+`spatialcpav25_gen.data.text.repair_symbol`: a symbol the first lookup failed on is retried with
+`.` replaced by `-`. **General, not an HLA special case**, and consulted **only** for symbols the
+first query already failed on, so it can never displace a genuine hit. The row is filed under the
+**panel's own spelling**, so every downstream lookup still finds it, and a
+`GeneMetaUnavailableWarning` names how many were repaired and with what substitution.
+
+The rule is what R's `make.names()` does to a column header, which is how it reaches a panel. On
+`cosmx_nsclc_3d` it recovers all **11 of 960** — every one an HLA locus, three of them held out.
+**No new column**: `GENE_META_COLUMNS` is unchanged, because adding to it would make every existing
+table "missing" a field and trip the rebuild refusal. The provenance lives in the warning.
+
+⚠️ **The table has not been rebuilt yet.** The repair is code; the numbers are still the 3-held-out
+/ 8-kept ones. Rebuild and re-run coverage before the fits.
+
+### 2. The spatial collapse alarm — the second alarm in this project that could not fire
+
+**Confirmed from code, not from a log**: `check_collapse` reads
+`terms[DIAG_gene_variance_gen]`, which is `drawn.var(dim=0).mean()` — the variance of drawn counts
+**across cells**, averaged over genes. Spatial organisation does not enter it. A field uniform in
+*position* while retaining per-cell variance is invisible to it, definitionally.
+
+⚠️ **The "never fired" half still needs the console log.** I can prove the statistic is blind; I
+cannot prove no warning was printed without seeing the run's output. Send it if it is kept.
+
+Added: `spatial_structure_ratio(generated, real, coords, cfg)` — median Moran's I of the generated
+counts over the real cells' **on the same positions and one shared kNN graph** — plus
+`check_spatial_collapse` and `Config.sefl_spatial_collapse_warn_fraction`. Both alarms now run at
+every logged step and the ratio is recorded in `TrainHistory.spatial_ratio` on every run.
+
+⚠️ **The threshold is 0.05 and is deliberately blunt.** The only anchors are A7's, and they come
+from the *calibration's* construction (0.016 collapsed, ~0.95 healthy), while this field is read in
+a **different** one — generated against real counts on the same batch cells — where no healthy
+value has been measured. R12 is the warning against assuming they agree: a healthy `deep_starmap`
+model carried only **15 %** of real tissue's counts-level Moran's I, so a threshold at the
+calibration's healthy figure would cry wolf on a working model. 0.05 sits an order below the
+healthy anchor and 3x above the collapsed one: **it would have caught A7 and cannot fire on
+anything that still has structure.** Tighten it only once `spatial_ratio` has been logged on
+healthy runs — which is why it is logged unconditionally. Setting it from the two numbers available
+today would be the threshold-without-a-measurement this project has already got wrong twice
+(§4.2c's drift cut and its CV cut).
+
+`tests/test_sefl.py::test_spatial_collapse_alarm_catches_what_the_variance_alarm_cannot` constructs
+the field that separates them — a real spatial gradient, spatially scrambled, so **per-gene variance
+is preserved exactly** — and asserts the variance alarm stays silent while the spatial one fires.
+
+### 3. The timing gate, enforced in code
+
+**A gate you can skip by accident is not a gate.** It has now been bypassed three times: twice
+because runs went out before a duration was reported, once because the loop was started early.
+
+`t09_zeroshot_run.py` gains `timing_gate` / `write_timing`. The fit designated `--first-fit`
+(default `2:medcpt`) runs unconditionally and **writes** `fit_timing.json`; every other fit
+**refuses to start** until that file exists and carries a positive `fit_seconds`. Fit 1 also prints
+the six-fit projection from its own measured time. `--no-timing-gate` exists and prints a refusal
+line naming what was never measured, so a deliberate skip is visible in the artifact rather than
+silent.
+
+Verified on all four paths: fit 1 allowed; fit 2 **refused** with no record; fit 2 allowed once the
+record exists; fit 2 **refused** when the record is present but carries no duration.
+
+### 4. The fixture envelope is out of the real-data footer
+
+`t09_ship_starmap.py` quoted 0.0335 from `reports/envelope_synthetic.md` and called smaller
+differences ties, on every real-data run. Removed, and replaced with the measurement that shows why:
+on tier-1 the per-arm across-seed spreads run **0.0033 to 0.3687**, a **112x** range, and
+`morans_pearson`'s alone is **0.2684 — 8x** the fixture figure. A tie declared against 0.0335 there
+is the cross-dataset comparison §4.2a forbids, printed by the project's own tooling.
+
+### 5. `specs/10` §4.2e — the worked example, in the methods
+
+A7's `morans_pearson` deltas **−0.0519, +0.2804, +0.5772** are now a methods subsection, not a risk
+note: one seed inverted the sign of the headline on two of seven metrics, the mechanism is stated
+(a correlation across genes correlating noise on a dead field, arm spread 0.36 — seven times the
+other five metrics'), and three consequences are drawn — `claim_min_seeds` = 3 is not conservatism;
+a correlation-shaped metric needs an amplitude reported beside it; and the five readable metrics all
+agreed 3/3 while the two that disagreed were the two that were uninterpretable, which is a signature
+rather than a coincidence.
+
+### 6. `specs/10` — the replication's asymmetry, before the fits
+
+Recorded beside E1's finding: `cosmx`'s text channel is **richer** than `deep_starmap`'s in two
+independent ways (709 vs 546 median chars; **0 % vs 83 %** orthologue summaries), so a REFUTATION
+there is the stronger negative and a SUPPORT must be written as **"replicated on a dataset whose
+text channel is richer"**. In the spec before any fit, so it cannot read as a post-hoc discount.

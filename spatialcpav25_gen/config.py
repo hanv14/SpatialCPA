@@ -838,6 +838,33 @@ class Config:
     ``mu`` against a variance of counts would be below it for a healthy model, because
     ``Var[x] = Var[mu] + E[NB noise]``."""
 
+    sefl_spatial_collapse_warn_fraction: float = 0.05
+    """The generated field's median Moran's I, as a fraction of the real cells' on the same
+    positions, below which the **spatial** collapse alarm fires.
+
+    A second alarm, because the first one cannot see this failure.
+    ``sefl_collapse_warn_fraction`` watches the per-gene **variance** of drawn counts across
+    cells; a field uniform in *position* while retaining per-cell variance leaves that untouched.
+    A7 measured exactly that: three SEFL-on fits whose ``i_gen`` was **1.35-2.38 %** of its
+    target and whose every gene module had a generated Moran's I under 0.006, with the variance
+    alarm silent.
+
+    ⚠️ **0.05 catches total collapse and nothing subtler, deliberately.** The anchors available
+    are A7's, and they come from the *calibration's* construction (median Moran's I of a
+    generated section against flanking real sections): **0.016** collapsed, **~0.95** healthy.
+    This field is read in a **different** construction — generated against real counts on the
+    *same batch cells* — where no healthy value has been measured, and R12 is the warning
+    against assuming they agree: a healthy `deep_starmap` model carried only **15 %** of real
+    tissue's counts-level Moran's I, so a threshold set at the calibration's healthy value would
+    cry wolf on a working model.
+
+    So this is set an order of magnitude below the calibration's healthy figure and 3x above its
+    collapsed one — it would have caught A7 and cannot fire on anything that still has structure.
+    **Tighten it only once the ratio has been logged on healthy runs in this construction**;
+    ``TrainHistory.spatial_ratio`` records it from every logged step for exactly that purpose.
+    Setting it from the two numbers available today would be the threshold-without-a-measurement
+    that this project has already got wrong twice."""
+
     sefl_consistency_ratio_warn: float = 0.5
     """Warn when ``sum(weighted consistency terms) / sum(weighted reconstruction terms)``
     exceeds this. ``specs/07`` §5: "Reconstruction terms must dominate throughout"."""
@@ -1923,6 +1950,7 @@ class Config:
             "sefl_thick_grid": self.sefl_thick_grid,
             "sefl_morans_k": self.sefl_morans_k,
             "sefl_consistency_ratio_warn": self.sefl_consistency_ratio_warn,
+            "sefl_spatial_collapse_warn_fraction": self.sefl_spatial_collapse_warn_fraction,
             "thickness_ratio": self.thickness_ratio,
             "cfm_sigma_min": self.cfm_sigma_min,
             "ode_steps": self.ode_steps,
