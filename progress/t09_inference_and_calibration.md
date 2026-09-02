@@ -4704,3 +4704,87 @@ the replication measures. **The sequencing that dominates both single choices: r
 now, then run the replication.** If the budget genuinely admits only one *large* spend, that spend
 is the replication — and A7 should still be run, because at 6.2 core-hours it is not the thing
 competing with it.
+
+---
+
+## A7 — the `L_thick` binding check built, and two versions of it were wrong (2026-09-01)
+
+`scripts/t10_a7_thick_binding.py`. It runs before A7's six fits and answers one question: **on
+this dataset, how large a student–teacher disagreement must exist before `L_thick` charges
+anything at all?** It fits nothing and takes no training step.
+
+**Two versions failed on the synthetic fixture before either reached tier-1**, and both failures
+are the same shape — an instrument reporting "no signal" for a reason that has nothing to do with
+the thing being measured.
+
+1. **"An untrained model answers it: a term that is structurally zero is zero at initialisation
+   too."** False in the direction that matters. `L_thick` compares the **student** on a `3h` slab
+   against the **teacher** on three `h` slabs over common random numbers whose estimator error
+   cancels exactly; at initialisation the EMA teacher is a deep copy, so both branches integrate
+   the same field over the same points and the term is **exactly zero by construction**. Measured
+   on the fixture: `count` 0.0, `count_by_type` 0.0, `state` −1.1e-13, on a geometry where the
+   thick slab occupies 18 % of the z-extent and nothing grazes. An untrained model returns zero
+   *whether or not the term binds*.
+2. **Perturbing the student's parameters by 5 % of each tensor's sd.** The teacher then genuinely
+   differed (max parameter delta 0.0129, teacher object distinct), and `count` was **still exactly
+   zero**. The cause is `_poisson_consistency` = `relu(z² − 1)/expected`: a disagreement inside one
+   Poisson standard deviation costs **exactly zero**, which is what `specs/07` asks for and what
+   `test_thick_counts_add` checks. A 5 % move on 26 182 intensity-head weights changed the
+   *integrated count* by far less than `1/sqrt(N)`.
+
+**What the instrument measures now.** The student branch's **output** is scaled by a known factor
+— `_intensity_at` patched for the duration of a sweep, restored in a `finally`, the same discipline
+`t09_retention_mechanism` applies to `_flow_counts` — so the sweep reads in units of **relative
+count error**. It reports, per error size, the fraction of draws charging above `ZERO`, the median
+and max charge, and the grazing fraction; the headline is **the smallest relative error the term
+notices**.
+
+On the fixture that is **3 %**, with 1 % and below at exact zero — consistent with a hinge at
+`1/sqrt(N)` and a thick slab of roughly 1 100 cells.
+
+**This is the number that decides A7's dataset**, and it is a data property, not a modelling one:
+a volume whose slabs hold few cells needs a large disagreement before `L_thick` has any gradient;
+a denser one registers a much smaller one. Tier-1 has ~4.1 k cells/section against `deep_starmap`'s
+18–39 k, so the hinge should bite at a **larger** relative error on tier-1 — which is a reason the
+cheaper dataset might be the wrong one, and it is measured rather than argued.
+
+⚠️ **A third defect, found and fixed in the same pass**: `fraction_grazed` counts draws where every
+part is exactly 0.0 — `_zero_terms`' signature — but below the hinge `_poisson_consistency` returns
+exact zeros too, so the two causes are indistinguishable there. On the fixture it reads **0.375 at
+a 1 % error and 0.000 at 3 %**, and the 3 % figure is the true one. The verdict now reads grazing
+off the **largest** factor in the sweep, and `draw_terms`' docstring says why.
+
+⚠️ **A non-zero charge is necessary, not sufficient.** It says the geometry admits the term. It
+does not say `L_thick` helps, which is what A7's six fits measure and what nothing short of them
+can say.
+
+`tests/test_sefl.py::test_thick_binding_instrument_reads_the_poisson_hinge` pins both failure
+modes so a third version cannot regress into either: zero at agreement, zero at 0.1 %, charging at
+30 %, monotone between, and grazing read only where the hinge is escaped.
+
+### The three verdicts, and what each means for A7
+
+* **BINDS** — the geometry admits the term. A7 runs on tier-1 at ~6.2 core-hours.
+* **DOES NOT BIND** — a 30 % student-side error charges nothing. A7 on tier-1 would test
+  **`L_prog` alone**, which is a different experiment. **Stop and report; the user chooses it
+  rather than having it happen.**
+* **ILL-POSED** — sections thicker than the spacing between them, so the coarse-graining identity
+  is false and the same tissue is observed twice (`OverlappingSlabsWarning`). Not a matter of
+  degree; A7 does not run on that dataset at all.
+
+Reported beside the verdict: `thickness_is_assumed`. If tier-1's thickness was defaulted from
+median spacing rather than measured, `L_thick` still binds but **every A7 number rests on that
+assumption** and the result must say so.
+
+### A7's arm switches, added to the tier-1 driver
+
+`scripts/t09_ship_starmap.py` gains `--w-thick` and `--w-prog`. `specs/10` §9's CLI table already
+lists them as A7's switches; the script did not have them. Each overrides exactly one `Config`
+field **after** the selected config is loaded, so the arm differs from the shipped fit in the
+weight and nothing else, and the override lands in the config hash the report prints. The banner
+now names all three SEFL weights and marks the arm `<- A7 arm (SEFL ON)` or `(shipped: SEFL off)`,
+because two runs whose only difference is a weight are exactly the pair a log has to distinguish.
+
+`--w-cross` is deliberately **not** added. `w_cross` stays at 0 in both arms — redundant by
+construction in v25 and harmful when trained (R6) — so A7 tests **two** losses, not three, and the
+write-up has to say so. A switch that made it settable would invite an arm nobody pre-registered.

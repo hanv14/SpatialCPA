@@ -730,6 +730,51 @@ def test_cross_loss_decreases(trained_cross: Built):
 # --------------------------------------------------------------------------------------
 
 
+def test_thick_binding_instrument_reads_the_poisson_hinge(built: Built):
+    """A7's dataset check measures the hinge, and two earlier versions of it did not.
+
+    `scripts/t10_a7_thick_binding.py` decides whether A7 can run on tier-1 by asking how wrong
+    the student has to be before `L_thick` charges anything. Its first two versions both
+    reported "does not bind" on a geometry where it plainly does, and this test pins the
+    reasons so a third version cannot regress into either:
+
+    * **student == teacher gives exactly zero, whatever the geometry.** At initialisation the
+      EMA teacher is a deep copy, both branches integrate the same field over the same points,
+      and the term is zero by construction. An untrained model alone can never answer the
+      question.
+    * **`_poisson_consistency` hinges at one Poisson standard deviation**, so a relative count
+      error below ~`1/sqrt(N)` costs *exactly* zero however wrong the student is. Perturbing
+      26 182 intensity-head *parameters* by 5 % moved the integrated count far less than that
+      and read as "no gradient". Scaling the branch's **output** by a known factor is what makes
+      the sweep readable, in units of relative count error.
+
+    The assertion is the shape of the answer, not its value: zero at agreement, zero at a small
+    error, non-zero at a large one, and monotone between. The fixture's own hinge lands at 3 %,
+    which is recorded in the script and is a property of the fixture's slab counts.
+    """
+    import sys
+    from pathlib import Path as _Path
+
+    sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "scripts"))
+    from t10_a7_thick_binding import binding_sweep
+
+    model, cfg = built.model, built.cfg.replace(w_thick=0.2)
+    teacher = EMATeacher(model, cfg)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        sweep = binding_sweep(model, teacher, cfg, 6, SEED, (1.0, 1.001, 1.3))
+    rows = sweep["by_relative_error"]
+
+    assert rows["0"]["fraction_nonzero"] == 0.0, "identical branches must charge nothing"
+    assert rows["0.001"]["fraction_nonzero"] == 0.0, "0.1% is inside the Poisson hinge"
+    assert rows["0.3"]["fraction_nonzero"] == 1.0, "30% must escape the hinge on this fixture"
+    assert rows["0.3"]["median_total"] > rows["0.001"]["median_total"]
+    assert sweep["smallest_error_noticed"] == pytest.approx(0.3)
+    # And the grazing count is only meaningful where the hinge is escaped: at 0.3 the fixture's
+    # thick slab fits on every draw, which the small-error rows cannot show.
+    assert rows["0.3"]["fraction_grazed"] == 0.0
+
+
 def test_thick_counts_add(built: Built):
     """``N`` at ``3h`` is within Poisson tolerance of ``3 x N`` at ``h`` — and the loss says so.
 

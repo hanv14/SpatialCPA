@@ -1277,6 +1277,24 @@ run:**
 | **kept** (the model was fitted on them) | `lookup` — a free per-gene table | **−0.1330** (A1−A3) | 0.0230 | 5.8x, 6/6 |
 | **held out** (never in a batch) | `medcpt` — text alone | **+0.2999** (A2−A4) | 0.0532 | 5.6x, 6/6 |
 
+> ⚠️ **CORRECTION 2026-09-01 — the two rows above are two different contrasts, and the table as
+> first written invited reading them as one finding across two pools. They are not.** The kept row
+> is **A1 − A3** (both arms with the distillation head); the held-out row is **A2 − A4** (both
+> without it, and A4 is `norm(0)` for a gene it has no row for, so that comparison is against a
+> void). A sign reversal *between two different contrasts* is not a sign reversal within a
+> comparison, and nothing above establishes one.
+>
+> **The reversal is real, and it is stated on `A2 − A3` on both pools** — the one contrast where
+> neither arm is degenerate on either pool, whose held-out half is the replication's own primary
+> (+0.2514), and whose lookup side is the **shipped** configuration rather than an arm built to
+> fail. Its kept half is **−0.1322**, derived exactly from the recorded A1 − A3 = −0.1330 and
+> A1 − A2 = −0.0008; the two directly measured neighbours bracket it inside 0.002. The point
+> estimate is safe; **the envelope for that contrast is not derivable and must be read from a run.**
+> The `cosmx_nsclc_3d` replication reports both halves directly and its criteria are pre-registered
+> in `progress/t09_inference_and_calibration.md`.
+>
+> The paragraph below stands as the *claim*; what changed is which numbers support it.
+
 A free lookup table wins where it has a row and loses where it does not. That is the
 open-vocabulary claim stated as a measurement rather than as a motivation, and it is the first
 within-run evidence for it in this project: one set of weights, one scoring pass, the sign of the

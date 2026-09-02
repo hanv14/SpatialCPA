@@ -393,6 +393,25 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--no-modules", action="store_true", help="skip the per-module Moran's I diagnostic (A2)"
     )
+    ap.add_argument(
+        "--w-thick",
+        type=float,
+        default=None,
+        help="override Config.w_thick. With --w-prog this is ablation A7 (specs/10 section 6): "
+        "SEFL ships with all three weights at 0, so A7 is an ADDITION experiment and the "
+        "spec's value is 0.2. The override lands in the config hash the report prints. Run "
+        "scripts/t10_a7_thick_binding.py on this dataset first: L_thick's Poisson hinge makes "
+        "it charge exactly zero below a relative count error of ~1/sqrt(N), and on a volume "
+        "with small slabs that can be most of training",
+    )
+    ap.add_argument(
+        "--w-prog",
+        type=float,
+        default=None,
+        help="override Config.w_prog; the other half of A7. w_cross stays at 0 in both arms — "
+        "it is redundant by construction in v25 and harmful when trained (open risk R6), so "
+        "A7 tests TWO losses, not three, and the write-up has to say so",
+    )
     ap.add_argument("--text-cache", default=None)
     ap.add_argument("--gene-meta", default=None)
     ap.add_argument(
@@ -428,6 +447,12 @@ def main(argv: list[str] | None = None) -> int:
         overrides["train_steps"] = int(args.train_steps)
     if args.expr_pca_dim is not None:
         overrides["expr_pca_dim"] = int(args.expr_pca_dim)
+    # A7. Each overrides exactly one Config field after the selected config is loaded, so the
+    # arm differs from the shipped fit in the weight and nothing else (specs/10 section 6).
+    if args.w_thick is not None:
+        overrides["w_thick"] = float(args.w_thick)
+    if args.w_prog is not None:
+        overrides["w_prog"] = float(args.w_prog)
     cfg, provenance = load_selected(
         Path(args.selected) if args.selected else None, args.seed, overrides
     )
@@ -437,6 +462,11 @@ def main(argv: list[str] | None = None) -> int:
         f"layout_mode={cfg.layout_mode} prior_mode={cfg.prior_mode} expr_mode={cfg.expr_mode} "
         f"text_emb_mode={cfg.text_emb_mode} train_steps={cfg.train_steps} "
         f"weights={cfg.w_autocorr:g}/{cfg.w_profile:g}/{cfg.w_distribution:g}"
+    )
+    sefl_on = cfg.w_thick > 0.0 or cfg.w_prog > 0.0 or cfg.w_cross > 0.0
+    print(
+        f"  SEFL: w_cross={cfg.w_cross:g} w_thick={cfg.w_thick:g} w_prog={cfg.w_prog:g}"
+        + ("   <- A7 arm (SEFL ON)" if sefl_on else "   (shipped: SEFL off)")
     )
 
     volume = load_training_volume(cfg, paths.input, flattened=args.flattened)
