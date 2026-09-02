@@ -4788,3 +4788,105 @@ because two runs whose only difference is a weight are exactly the pair a log ha
 `--w-cross` is deliberately **not** added. `w_cross` stays at 0 in both arms — redundant by
 construction in v25 and harmful when trained (R6) — so A7 tests **two** losses, not three, and the
 write-up has to say so. A switch that made it settable would invite an arm nobody pre-registered.
+
+---
+
+## A7 — STOPPED at the binding check. Both candidate datasets fail, for different reasons (2026-09-01)
+
+`reports/t10_a7_thick_binding_tier1.json`, `..._deep.json`, seed 2, 32 draws each. The
+pre-registered stop has fired on **both**, so no A7 fit runs and the choice returns to the user,
+as committed: *"stop and let the user choose it rather than have it happen."*
+
+| | tier-1 `starmap_visual_cortex` | `deep_starmap` |
+|---|---|---|
+| sections | 4 | 4 |
+| thickness (µm) | 22, **assumed** | 42, **assumed** |
+| spacing median / min (µm) | 22 / 22 | 42 / **40.6** |
+| slabs overlap | no (exactly tangent) | **YES** |
+| `3h` slab (µm) | 66 | 126 |
+| z-extent (µm) | **88** | **167.3** |
+| `3h` / z-extent | **0.75** | **0.75** |
+| grazed draws at a 30 % error | **0.969** | 0.938 |
+| smallest error noticed | **never, up to 30 %** | never, up to 30 % |
+| verdict | **MARGINAL** | **ILL-POSED** |
+
+### 1. `deep_starmap` is ILL-POSED, and the cause is a defaulting rule, not the tissue
+
+`spacing_min` is **40.6 µm** against an assumed thickness of **42 µm**, so one section pair
+overlaps by 1.4 µm and the coarse-graining identity `L_thick` rests on is false — the same tissue
+observed twice.
+
+**The 42 µm is not measured.** `loaders` defaults `Section.thickness` to `vol.median_spacing` and
+sets `thickness_is_assumed`. **That rule guarantees `OverlappingSlabsWarning` on any stack whose
+spacing is not uniform**, because half the gaps are below the median by construction. It is not a
+fact about the sections; it is a default choosing a value that breaks a downstream loss.
+
+⚠️ **`min_spacing` would be the safe rule and I am not proposing the change.** `Section.thickness`
+is load-bearing for T05's intensity integral — cells per unit *volume* — so altering it moves every
+layout number in this project, including R11's shipped `layout_mode` decision. That is a
+project-wide invalidation to unblock one ablation, and the trade is not worth it without a separate
+decision. **Recorded as a defect in the default; the fix is not costed here.**
+
+(The 1.4 µm is the same 1.4 µm as R14's donor rule. One irregular gap in this stack shows up in
+two unrelated places.)
+
+### 2. Tier-1 is MARGINAL, and the cause is undetermined between two possibilities
+
+**97 % of random planes are refused.** The one draw in 32 that is not charges strongly — total
+1.70 at a 30 % error, 0.102 at 10 %, 6.3e-4 at 3 % — so `L_thick` is not structurally vacuous here.
+It is *starved of usable planes*.
+
+A draw is refused when `_slab_sample` gathers fewer than `Config.layout_n_mc` = 4096 in-box points
+within `Config.sefl_rejection_max_rounds` = 16. **Two very different causes produce that and the
+sweep cannot distinguish them:**
+
+* **The sampler is under-budgeted.** The loop proposes `4 x (n - found)` per round and accepts a
+  fraction `a`, so `remaining` shrinks by `(1 - 4a)` and the rounds needed grow as
+  `log(n) / -log(1 - 4a)`. Worked out at the shipped budget:
+
+  | acceptance `a` | rounds needed | 16 enough? |
+  |---|---|---|
+  | 0.02 | 96 | no |
+  | 0.05 | 37 | no |
+  | 0.10 | 17 | **no — by one round** |
+  | **0.11** | 16 | **yes, the threshold** |
+  | 0.20 | 6 | yes |
+
+  **A slab that fits perfectly well is refused whenever acceptance sits below about a tenth.**
+* **The geometry is genuinely starved.** An oblique `3h` slab through a volume only `4h` deep
+  intersects little of it, and no round budget recovers that.
+
+`3h / z-extent = 0.75` on **both** datasets is consistent with either. The fixture, where
+everything works, has 9 sections and a 425 µm extent — `3h` is **0.18** of it — which is why
+`thickness_ratio = 3` and a 16-round budget were never stressed. **Another
+`progress/fixture_limitations.md` entry: the fixture's stack is 4.8x deeper in units of its own
+slab than the real data's, and both SEFL constants were set against it.**
+
+### 3. The instrument that would settle it, and what each answer rules out
+
+`scripts/t10_a7_thick_binding.py` now also reports `_slab_sample`'s **acceptance rate** directly —
+patched for the probe, restored in a `finally`. On the synthetic fixture as a control: acceptance
+**0.187–0.458, median 0.237**, 3 rounds needed, **100 %** of draws reach `n`. That is what a
+healthy geometry looks like.
+
+**If acceptance on tier-1 is >= ~0.05**: the geometry is fine and the 16-round budget is the
+binding constraint. Raising `sefl_rejection_max_rounds` is a **sampler-budget** change — it alters
+how a fixed integral is estimated, not what `L_thick` compares — the same class of fix as R11's
+grid-multinomial sampler replacing the biased rejection one. A7 then runs on tier-1 at ~6.2
+core-hours. ⚠️ It also means **every SEFL measurement in T07 was taken on a sampler that silently
+refused most planes**, which is a finding in its own right.
+
+**If acceptance is << 0.01**: no budget recovers it. `L_thick`'s random-plane construction is
+**inoperative on 4-section stacks**, which is the shape of every volume this project has. That is
+not a failure to run the experiment — **it is a partial answer to the question A7 was going to
+ask**, obtained for zero core-hours: the thickness half of SEFL cannot contribute on this data, and
+the paper says so. A7 would then be `L_prog` alone, which is the different experiment the
+pre-registration said the user chooses rather than has happen.
+
+**Between 0.01 and 0.05**: raising the budget helps some planes and not most. Report and decide;
+do not tune the ratio to make an experiment runnable.
+
+⚠️ **What I will not do**: lower `Config.thickness_ratio` from 3 to 2 to make the slab fit. It
+would raise the acceptance rate and it would also change what `L_thick` asserts, and changing a
+loss's definition to make its ablation runnable is the tuning-to-enable failure this project has
+recorded five times in other forms.

@@ -201,6 +201,98 @@ def _scaled_intensity(model, factor: float):
     return patched()
 
 
+def acceptance_rates(model, cfg, n_draws: int, seed: int) -> dict:
+    """Why `_slab_sample` refuses: measure its acceptance fraction and the rounds it consumes.
+
+    A grazed draw is `_slab_sample` raising because fewer than `Config.layout_n_mc` of its
+    proposals fell inside the bounding box within `Config.sefl_rejection_max_rounds`. Two very
+    different causes produce that, and the sweep cannot tell them apart:
+
+    * **Under-budgeted sampler.** The loop proposes `4 x (n - found)` per round and accepts a
+      fraction `a`, so `remaining` shrinks by `(1 - 4a)` and the rounds needed grow as
+      `log(n) / -log(1 - 4a)`. At the shipped budget of 16 rounds that needs **a >= 0.11**;
+      at a = 0.10 it needs 17 rounds and fails, at a = 0.05 it needs 37. A slab that fits
+      perfectly well is refused whenever acceptance sits below about a tenth.
+    * **Starved geometry.** An oblique slab of thickness `3h` through a volume only a few `h`
+      deep genuinely intersects little of it, and no round budget recovers that.
+
+    This measures `a` directly, so the two are distinguishable. `_slab_sample` is patched for
+    the duration and restored in a `finally`.
+    """
+    import contextlib
+
+    from spatialcpav25_gen.infer.planes import random_plane_pair
+
+    from spatialcpav25_gen.losses import sefl as sefl_mod  # isort: skip
+
+    box = np.asarray(model.data.vol.bbox, dtype=np.float64)
+    thin_h = float(np.median([float(sec.thickness) for sec in model.data.vol.sections]))
+    thick_h = thin_h * int(cfg.thickness_ratio)
+    gen = np.random.default_rng(seed)
+    original = sefl_mod._slab_sample
+    records: list[dict] = []
+
+    @contextlib.contextmanager
+    def spying():
+        def spy(plane, n, bbox, cfg_, gen_):
+            b = np.asarray(bbox, dtype=np.float64)
+            found = proposed = rounds = 0
+            for _ in range(int(cfg_.sefl_rejection_max_rounds)):
+                if found >= n:
+                    break
+                draw = sefl_mod._uniform_slab(plane, max(4 * (n - found), 16), gen_)
+                proposed += int(draw.shape[0])
+                inside = np.all((draw >= b[0][None, :]) & (draw <= b[1][None, :]), axis=1)
+                found += int(inside.sum())
+                rounds += 1
+            records.append(
+                {
+                    "n": int(n),
+                    "found": int(found),
+                    "proposed": int(proposed),
+                    "rounds": int(rounds),
+                    "acceptance": float(found) / float(max(proposed, 1)),
+                    "reached_n": bool(found >= n),
+                }
+            )
+            raise ValueError("acceptance probe: not a real sample")
+
+        sefl_mod._slab_sample = spy
+        try:
+            yield
+        finally:
+            sefl_mod._slab_sample = original
+
+    with spying():
+        for _ in range(int(n_draws)):
+            plane, _ = random_plane_pair(
+                box,
+                float(cfg.sefl_min_angle_deg),
+                float(cfg.sefl_max_angle_deg),
+                int(gen.integers(0, 2**31 - 1)),
+                thickness=thick_h,
+            )
+            with contextlib.suppress(ValueError):
+                sefl_mod._slab_sample(plane, int(cfg.layout_n_mc), box, cfg, gen)
+
+    rates = np.asarray([r["acceptance"] for r in records], dtype=np.float64)
+    reached = np.asarray([r["reached_n"] for r in records], dtype=bool)
+    needed = np.where(rates > 0, np.log(int(cfg.layout_n_mc)) / -np.log1p(-4.0 * rates), np.inf)
+    return {
+        "n_probes": int(rates.size),
+        "budget_rounds": int(cfg.sefl_rejection_max_rounds),
+        "acceptance_needed_for_budget": 0.11,
+        "acceptance_median": float(np.median(rates)),
+        "acceptance_min": float(rates.min()) if rates.size else float("nan"),
+        "acceptance_max": float(rates.max()) if rates.size else float("nan"),
+        "fraction_reaching_n": float(reached.mean()) if reached.size else float("nan"),
+        "rounds_needed_median": float(np.median(needed[np.isfinite(needed)]))
+        if np.isfinite(needed).any()
+        else float("inf"),
+        "fraction_acceptance_above_0.05": float(np.mean(rates >= 0.05)),
+    }
+
+
 def binding_sweep(model, teacher, cfg, n_draws: int, seed: int, factors) -> dict:
     """Charge `L_thick` at a range of student-side relative errors. The binding check.
 
@@ -267,6 +359,12 @@ def main(argv: list[str] | None = None) -> int:
     teacher = EMATeacher(model, cfg)
 
     print(f"\n    {'mean_density (cells/um^3)':<28}{data.stats.mean_density:.6g}")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        accept = acceptance_rates(model, cfg, args.draws, args.seed)
+    print("\n  _slab_sample acceptance — why a draw is refused:")
+    for key, value in accept.items():
+        print(f"    {key:<32}{value}")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         sweep = binding_sweep(model, teacher, cfg, args.draws, args.seed, FACTORS)
@@ -345,6 +443,7 @@ def main(argv: list[str] | None = None) -> int:
         "load_warnings": names,
         "mean_density": float(data.stats.mean_density),
         "sweep": sweep,
+        "acceptance": accept,
         "verdict": verdict,
     }
     if args.out:
