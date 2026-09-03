@@ -5954,3 +5954,80 @@ Recorded beside E1's finding: `cosmx`'s text channel is **richer** than `deep_st
 independent ways (709 vs 546 median chars; **0 % vs 83 %** orthologue summaries), so a REFUTATION
 there is the stronger negative and a SUPPORT must be written as **"replicated on a dataset whose
 text channel is richer"**. In the spec before any fit, so it cannot read as a post-hoc discount.
+
+---
+
+## Replication — the repair worked; every gate now clears (2026-09-01)
+
+`resources/gene_meta.cosmx_human.parquet` rebuilt with the dot-to-hyphen retry: **960/960 full
+names**, all 11 HLA symbols resolved through the repair, and the warning names the substitution
+with provenance.
+
+### The held-out side is now clean by every measure
+
+| criterion | threshold | before repair | after repair |
+|---|---|---|---|
+| held-out summary rate | >= 0.80 | 0.9843 | **1.0000** (191/191) |
+| held-out bare-symbol fraction | <= 0.10 | 0.0157 | **0.0000** |
+| held-out median descriptor | >= 200 chars | 709 | **720** |
+| held-out **minimum** descriptor | — | 9 | **176** |
+| orthologue summaries | — | 0 | **0 — all native** |
+| summary-rate gap (held-out − kept) | metadata-blind | −0.0014 | **+0.004** |
+
+**The minimum matters as much as the median here.** At 176 characters the *shortest* held-out
+descriptor is still a real description, so there is no tail of effectively-bare genes hiding under
+a healthy median — the failure mode the whole coverage check exists to catch.
+
+### ⚠️ A third asymmetry, and it cuts the same way as the other two
+
+The gap now runs **+0.4 points in the held-out side's favour**: the arm under test is, if anything,
+slightly *advantaged* rather than handicapped. With the descriptors already longer (720 vs 546) and
+native rather than orthologue prose (0 % vs 83 %), **all three differences push in the same
+direction**, and `specs/10` now records the set: a REFUTATION on `cosmx` is the stronger negative,
+and a SUPPORT must read **"replicated on a dataset whose text channel is richer"**.
+
+None of the three is a defect. Together they mean the replication is a *more favourable* test than
+the original, which is exactly why its failure would say more than its success.
+
+## ⚠️ The `check_collapse` question is resolvable after all — correcting the conclusion
+
+The user reported that `grep`ping for "collapse" across `runs/a7_on_s*/` returns nothing, the
+console was not kept, and proposed recording the "never fired" half as **unresolvable**. **It is
+not unresolvable, and the grep is weak evidence rather than none: warnings go to stderr, which was
+never in that directory in the first place.**
+
+`TrainHistory.collapse_alarms` — the list of steps at which the alarm fired — **is persisted**.
+`write_checkpoint` stores `history=dataclasses.asdict(history)` and `save_checkpoint` writes the
+whole payload with `torch.save`, so it is inside the resumable fit checkpoint, in a binary a text
+`grep` cannot read:
+
+    python - <<'PY'
+    import torch
+    for seed in (1, 2, 3):
+        h = torch.load(f"runs/a7_on_s{seed}/fit_seed{seed}.pt", weights_only=False)["history"]
+        print(seed, "collapse_alarms:", h["collapse_alarms"],
+              " variance_ratio last:", h["variance_ratio"][-3:])
+    PY
+
+An **empty** `collapse_alarms` on a fit whose SEFL block was live past
+`sefl_collapse_min_steps` is the positive result: the alarm was *checked* and did not fire. That is
+the half the code-level proof cannot supply, and it is one command away as long as those
+checkpoints still exist.
+
+### And the artifact gap that caused the confusion is now closed
+
+`model.pt` carries weights and config, never the history, so once a fit checkpoint is cleaned up
+the alarm record is gone. **An alarm nobody can show fired later is half an alarm.**
+`t09_ship_starmap.py` now writes an `alarms` block into every run's JSON:
+
+```json
+{"collapse_alarms": [], "spatial_collapse_alarms": [250, 300],
+ "variance_ratio": {"min": 0.85, "median": 0.88, "last": 0.88, "n": 3},
+ "spatial_ratio":  {"min": 0.004, "median": 0.02, "last": 0.004, "n": 3}}
+```
+
+Both alarm lists **and the trajectories they read**, so a later reader can tell *"did not fire"*
+from *"was never checked"* — the distinction A7's artifacts could not make. A reused fit records
+`null`, which says "not measured on this run" and is not the same as "did not fire". Exactly this
+record on an A7 ON fit would have shown `collapse_alarms: []` beside `spatial_ratio.min ≈ 0.004`:
+the variance alarm silent, the field dead, in one artifact.

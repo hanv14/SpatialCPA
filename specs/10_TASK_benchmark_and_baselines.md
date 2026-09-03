@@ -1356,16 +1356,24 @@ Measured on the split before any fit (`reports/t09_text_coverage_cosmx_human.jso
 
 | | `deep_starmap`, where the effect was found | `cosmx_nsclc_3d`, the replication |
 |---|---|---|
-| held-out summary rate | 0.941 | **0.984** |
-| held-out bare symbols | 0 | 3 (all HLA, repaired since) |
-| median held-out descriptor | 546 chars | **709 chars** |
+| held-out summary rate | 0.941 | **1.000** |
+| held-out bare symbols | 0 | **0** (11 HLA symbols repaired, `.` -> `-`) |
+| median held-out descriptor | 546 chars | **720 chars** |
+| **minimum** held-out descriptor | — | **176 chars** — every held-out gene carries a real description |
 | summaries that are an **orthologue's** | **83 %** | **0 % — all native human** |
+| summary-rate gap, held-out − kept | −1.1 points | **+0.4 points** |
 
 `deep_starmap`'s A2 demonstrates *"MedCPT places a **mouse** gene from mostly **human orthologue**
 prose"*. `cosmx`'s would demonstrate *"MedCPT places a **human** gene from **native human**
 prose"*, from descriptors 30 % longer. **The text channel is richer on the replication dataset in
 two independent ways, and nothing in the design separates a richer channel from a transferring
 mechanism.**
+
+**Three things cut the same way**, and none of them is a defect: the descriptors are longer, they
+are native rather than orthologue prose, and the split's summary-rate gap now runs **+0.4 points in
+the held-out side's favour** — so the arm under test is, if anything, slightly advantaged rather
+than handicapped. The minimum held-out descriptor is 176 characters, so there is no tail of
+effectively-bare genes either.
 
 So the two outcomes carry different weight, and this is recorded **before the fits** so it cannot
 later read as a convenient discount:

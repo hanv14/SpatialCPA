@@ -58,10 +58,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import statistics
 import sys
 import time
 import warnings
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import scipy.sparse as sp
@@ -344,6 +347,32 @@ def generate_targets(model, volume, cfg, seed, window, detection, anchor, truth,
     return out_raw, out_matched
 
 
+def _alarm_record(history: Any) -> dict[str, Any]:
+    """Summarise a fit's alarm history for the run's JSON. Plain types only.
+
+    Both collapse alarms plus the trajectories they read, so a later reader can tell "did not
+    fire" from "was never checked" — the distinction A7 could not make from its artifacts.
+    """
+
+    def tail(values: list[float]) -> dict[str, float] | None:
+        finite = [v for v in values if math.isfinite(v)]
+        if not finite:
+            return None
+        return {
+            "min": float(min(finite)),
+            "median": float(statistics.median(finite)),
+            "last": float(finite[-1]),
+            "n": float(len(finite)),
+        }
+
+    return {
+        "collapse_alarms": [int(v) for v in history.collapse_alarms],
+        "spatial_collapse_alarms": [int(v) for v in history.spatial_collapse_alarms],
+        "variance_ratio": tail(list(history.variance_ratio)),
+        "spatial_ratio": tail(list(history.spatial_ratio)),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -513,6 +542,9 @@ def main(argv: list[str] | None = None) -> int:
         model.load_state_dict(checkpoint["state_dict"])
         model.eval()
         fit_seconds = None
+        # `model.pt` carries weights and config, never the TrainHistory, so a reused fit has no
+        # alarm record. `null` says "not measured on this run", which is not "did not fire".
+        alarms = None
         print(f"  reused the fit at {model_path}")
     else:
         fit_ckpt = workdir / f"fit_seed{args.seed}.pt"
@@ -523,11 +555,13 @@ def main(argv: list[str] | None = None) -> int:
         t0 = time.time()
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", BBoxClampWarning)
-            train_ctfflow(
+            history = train_ctfflow(
                 model, cfg, steps=int(cfg.train_steps), seed=args.seed, checkpoint=str(fit_ckpt)
             )
         fit_seconds = time.time() - t0
         print(f"  fit: {cfg.train_steps} steps in {fit_seconds:.0f}s ({fit_seconds / 3600:.2f} h)")
+        alarms = _alarm_record(history)
+        print(f"  alarms: {json.dumps(alarms)}")
         torch.save({"config": cfg.to_dict(), "state_dict": model.state_dict()}, model_path)
         print(f"  saved {model_path}")
 
@@ -646,6 +680,12 @@ def main(argv: list[str] | None = None) -> int:
                 # timing gate ("one fit before the other five") checkable from the artifact
                 # rather than from a scrollback. `null` means the fit was reused, not free.
                 "fit_seconds": fit_seconds,
+                # Persisted because its absence cost an answer: A7's collapse question could
+                # not be settled from the run artifacts, only from the resumable fit
+                # checkpoint, and a `grep` over the run directory found nothing because the
+                # alarm history was inside a `.pt`. An alarm nobody can show fired later is
+                # half an alarm.
+                "alarms": alarms,
                 "provenance": provenance,
                 "config": gen_cfg.to_dict(),
             },
