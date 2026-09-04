@@ -6031,3 +6031,76 @@ from *"was never checked"* — the distinction A7's artifacts could not make. A 
 `null`, which says "not measured on this run" and is not the same as "did not fire". Exactly this
 record on an A7 ON fit would have shown `collapse_alarms: []` beside `spatial_ratio.min ≈ 0.004`:
 the variance alarm silent, the field dead, in one artifact.
+
+---
+
+## Replication — fit 1 timed at 3.50 h, and a hole the gate did not cover (2026-09-01)
+
+`runs/fit_timing.json`: **12 602.8 s = 3.50 h**, seed 2, arm `medcpt`. The timing gate worked —
+fit 1 ran, wrote the record, and the other five are unblocked by it.
+
+### 1. ⚠️ The estimate was 2.2x too HIGH, and the cost model behind it was wrong
+
+| | projected | measured |
+|---|---|---|
+| per fit | ~8 h | **3.50 h** |
+| six fits | **~47 core-hours** | **21.0 core-hours** |
+
+**The first over-estimate in this project, after five consecutive under-estimates.** That is not
+an improvement in my estimating — it is the same error in the other direction, and the reason is
+worth having:
+
+I wrote *"cell count has driven the scaling on both measured points more than gene count. At ~2x
+`deep_starmap`'s cells and 0.94x its genes, six fits project to ~47 core-hours."* **That premise is
+structurally wrong at a fixed step budget.** `sample_batch` draws `Config.batch_cells` cells per
+step regardless of how many the volume holds, so training cost is
+`train_steps x batch_cells x genes_per_step` — **fixed** — plus a setup term that does scale with
+the volume (load, retrieval index, PCA). At the same 2400 steps:
+
+| dataset | cells | genes | measured |
+|---|---|---|---|
+| `deep_starmap` | 113 k | 1017 | 3.74 h |
+| `cosmx_nsclc_3d` | **226 k** | 960 | **3.50 h** |
+
+**Twice the cells, slightly less time.** The cost model should be **steps-driven, not
+cell-driven**, and the tier-1 comparison that seemed to support the old model (16.5 k cells,
+62 min) confounded cell count with a step budget half the size.
+
+**Remaining five: 17.5 core-hours**, ~3.5 h wall five-up.
+
+### 2. ⚠️ But the gate had a hole, and fit 1 may have fallen through it
+
+`t09_zeroshot_run.py` had **no `--gene-meta` flag**. `base_config` sets only `BENCH3_KEYS`, so the
+fit read `Config.gene_meta_path` — **`resources/gene_meta.parquet`, the mouse table** — under
+`Config.mygene_species = "mouse"`, for a **human** panel.
+
+**Nothing upstream would have raised.** `load_gene_meta` checks the table's rows against the
+requested species and both say mouse, so the pairing is internally consistent and silent. The
+human symbols then resolve **121 of 960** by case-insensitive accident (`A2M` matching mouse
+`A2m`), leaving 839 bare.
+
+**And the coverage gate cannot catch it, by construction**: `t09_zeroshot_text_coverage.py` reads
+the table `--gene-meta` points *it* at, while the fit reads `Config.gene_meta_path`. **The gate can
+pass on one table while the experiment runs on another** — which is precisely what it is for, and
+precisely what it could not see.
+
+⚠️ **This is unresolved for fit 1 and it decides whether that 3.50 h is a measurement or a void
+run.** The run printed `text channel: {...}` with `gene_meta_path`, `n_with_meta` and `n_bare` in
+it. **`n_with_meta` near 960 means the fit is sound; near 121 means it must be discarded and
+re-run, along with the timing.** The remaining five must not start until that line is read.
+
+### 3. The fix, so it cannot recur
+
+* **`--gene-meta` and `--species` added** to `t09_zeroshot_run.py`, required together — the path
+  and the organism are one statement, and inferring the second from the first is the fallback
+  Convention 6 forbids.
+* **`check_text_channel` refuses the fit** when under `MIN_PANEL_WITH_META = 0.5` of the panel
+  carries metadata, on **either** arm — `lookup` is built from the same descriptors and applies
+  its gate inside the embedding, so a `lookup` arm against the wrong table is wrong the same way,
+  and A4's `norm(0)` void only means what it should if the text channel is what we think.
+  The message names the likely cause and says explicitly that the coverage check cannot catch it.
+* Verified: 960/960 allowed, 1017/1017 allowed, **121/960 refused**.
+
+The constant is a **structural-mismatch detector, not a quality bar** — the same shape as
+`MIN_RESOLVED_FRACTION` in the build script, and set the same way: half separates 12.6 % from
+100 % with room on both sides and cannot fire on a real pairing.

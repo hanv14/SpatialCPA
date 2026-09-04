@@ -106,6 +106,48 @@ def write_timing(root: Path, seconds: float, seed: int, arm: str) -> None:
     print(f"  wrote the timing record: {root / TIMED_FIT_RECORD}")
 
 
+MIN_PANEL_WITH_META = 0.5
+"""Fraction of the panel that must carry metadata before a fit is allowed to start.
+
+**A structural-mismatch detector, not a quality bar.** A panel paired with its own table
+resolves near-completely (`deep_starmap` 1017/1017; the `cosmx` human table 960/960). The
+failure it exists to catch is a panel paired with **another organism's** table, which is silent:
+`load_gene_meta` checks the table's rows against the requested species and both agree, so a
+human panel read against the mouse table raises nothing and resolves **121 of 960** by
+case-insensitive accident, leaving the rest bare.
+
+The coverage gate cannot catch it either — `t09_zeroshot_text_coverage.py` is pointed at a table
+by `--gene-meta` while the fit reads `Config.gene_meta_path`, so the gate can pass on one table
+while the experiment runs on another. Half separates 12.6 % from 100 % with room on both sides
+and cannot fire on a real pairing."""
+
+
+def check_text_channel(described: dict, cfg, *, arm: str) -> None:
+    """Refuse to fit when the panel and the metadata table are not the same organism's.
+
+    ``described`` is :func:`describe_text_channel`'s record. The check runs on **both** arms:
+    ``lookup`` applies its gate inside the embedding and is built from the same descriptors, so
+    a ``lookup`` arm fitted against the wrong table is wrong in the same way — and A4's
+    ``norm(0)`` void condition only means what it should if the text channel is what we think.
+    """
+    n_genes = int(described.get("n_genes", 0))
+    n_meta = int(described.get("n_with_meta", 0))
+    if n_genes <= 0:
+        return
+    fraction = n_meta / n_genes
+    if fraction >= MIN_PANEL_WITH_META:
+        return
+    raise SystemExit(
+        f"TEXT CHANNEL: only {n_meta}/{n_genes} ({fraction:.1%}) of the panel carries metadata "
+        f"from {cfg.gene_meta_path} at species {cfg.mygene_species!r}, on arm {arm!r}. A panel "
+        "paired with its own table resolves near-completely; this is what a panel read against "
+        "ANOTHER ORGANISM's table looks like, and nothing upstream raises because that table is "
+        "internally consistent. Pass --gene-meta and --species for this panel's organism. "
+        "(The coverage check cannot catch this: it reads the table you point IT at, and the fit "
+        "reads Config.gene_meta_path.)"
+    )
+
+
 def load_split(path: str | Path) -> tuple[np.ndarray, np.ndarray, dict]:
     """Read the recorded gene split. ``(kept, held_out, record)``, both int64 panel indices."""
     record = json.loads(Path(path).read_text())
@@ -168,6 +210,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--train-steps", type=int, default=2400)
     ap.add_argument("--expr-mode", default="zinb-flow")
     ap.add_argument("--expr-pca-dim", type=int, default=None)
+    ap.add_argument(
+        "--gene-meta",
+        default=None,
+        help="the panel's gene-metadata table (default: Config.gene_meta_path, which is the "
+        "MOUSE table). A human panel fitted against it resolves a handful of symbols by "
+        "case-insensitive accident and leaves the rest bare — silently, because the table is "
+        "internally consistent. Required with --species",
+    )
+    ap.add_argument(
+        "--species",
+        default=None,
+        help="the table's organism (default: Config.mygene_species = 'mouse'). Required "
+        "whenever --gene-meta is given: the path and the species are one statement",
+    )
     ap.add_argument("--fit-only", action="store_true")
     ap.add_argument(
         "--timing-root",
@@ -214,6 +270,13 @@ def main(argv: list[str] | None = None) -> int:
     else:
         timing_gate(timing_root, int(args.seed), args.arm, first=(int(first_seed), first_arm))
 
+    if (args.gene_meta is None) != (args.species is None):
+        raise SystemExit(
+            "--gene-meta and --species are one statement: pass both or neither. A table is "
+            "keyed by symbol and describes exactly one organism, and inferring the second from "
+            "the first is the silent fallback Convention 6 forbids."
+        )
+
     kept, held, split = load_split(args.split)
     cfg = arm_config(
         args.arm,
@@ -222,6 +285,8 @@ def main(argv: list[str] | None = None) -> int:
         train_steps=args.train_steps,
         expr_pca_dim=args.expr_pca_dim,
     )
+    if args.gene_meta is not None:
+        cfg = cfg.replace(gene_meta_path=args.gene_meta, mygene_species=args.species)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -244,7 +309,9 @@ def main(argv: list[str] | None = None) -> int:
         f"{len(kept)} kept / {len(held)} held out (seed {split['seed']}, "
         f"{split['n_bins']}x{split['n_bins']} strata on {split['reference_section']})"
     )
-    print("  text channel: " + json.dumps(describe_text_channel(cfg, volume), default=str))
+    described = describe_text_channel(cfg, volume)
+    print("  text channel: " + json.dumps(described, default=str))
+    check_text_channel(described, cfg, arm=args.arm)
     print(
         "  held out of: training batches (gene_pool), the retrieval PCA and its size factor "
         "(TrainingData.build gene_pool); cross-mix refused"
