@@ -964,7 +964,11 @@ class TrainHistory:
     ``Config.sefl_spatial_collapse_warn_fraction`` is deliberately set to catch only total
     collapse and **cannot be tightened until this has been measured on healthy runs**."""
     spatial_collapse_alarms: list[int] = dataclass_field(default_factory=list)
-    """Steps at which the **spatial** collapse alarm fired."""
+    """Steps at which the **spatial** collapse alarm fired — the field lost its spatial signal."""
+    spatial_inversion_alarms: list[int] = dataclass_field(default_factory=list)
+    """Steps at which the spatial ratio went **negative** — signal of the wrong sign, not absent
+    signal. Kept apart from the collapse list because they are different faults with different
+    remedies, and a run that mixed them could not be read."""
     metric_ratio: list[float] = dataclass_field(default_factory=list)
     """``sum(weighted metric-aware) / sum(weighted reconstruction)`` at each step the
     metric-aware block ran (``specs/08``'s "do not weight these losses above reconstruction").
@@ -1361,11 +1365,16 @@ def _log_sefl(
         cfg,
     ):
         history.collapse_alarms.append(int(step))
-    # Both alarms run, and both are needed: A7 produced three fits the variance alarm passed
-    # and this one would have caught. They watch orthogonal statistics.
+    # Both alarms run, and both are needed - they watch orthogonal statistics, not because the
+    # variance alarm missed A7 (it fired there, 72-74 times per seed). Three outcomes: the field
+    # kept its structure, lost it, or has it inverted. The third is filed separately.
     spatial = terms.get(f"{DIAG_PREFIX}spatial_ratio")
-    if alarm and spatial is not None and check_spatial_collapse(float(spatial.detach()), step, cfg):
-        history.spatial_collapse_alarms.append(int(step))
+    if alarm and spatial is not None:
+        fired = check_spatial_collapse(float(spatial.detach()), step, cfg)
+        if fired == "collapse":
+            history.spatial_collapse_alarms.append(int(step))
+        elif fired == "inversion":
+            history.spatial_inversion_alarms.append(int(step))
 
 
 def flanking_sections(vol: Volume, plane: Plane, *, k: int = 2) -> list[Section]:

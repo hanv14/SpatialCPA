@@ -78,6 +78,7 @@ from spatialcpav25_gen.model.field import BBoxClampWarning, RotationContext
 from spatialcpav25_gen.model.spatialcpav25_gen import (
     LOSS_TERMS,
     CTFFlow,
+    TrainHistory,
     TrainingData,
     loss_weights,
     train_ctfflow,
@@ -765,18 +766,86 @@ def test_spatial_collapse_alarm_catches_what_the_variance_alarm_cannot():
             float(scrambled.var(dim=0).mean()), float(real.var(dim=0).mean()), 500, cfg
         )
 
-    # 2. The spatial ratio collapses, and the alarm fires.
+    # 2. The spatial ratio collapses, and the alarm fires — as a COLLAPSE, not an inversion.
+    #    The scrambled ratio is a hair below zero (-0.0133 at this seed) because Moran's I under
+    #    a permutation null is -1/(n-1). That is the reason the inversion boundary is minus the
+    #    threshold rather than zero: at zero, this fixture — the canonical collapse — would be
+    #    reported as anti-correlated structure.
     ratio = spatial_structure_ratio(scrambled, real, coords, cfg)
-    assert abs(ratio) < float(cfg.sefl_spatial_collapse_warn_fraction), ratio
+    threshold = float(cfg.sefl_spatial_collapse_warn_fraction)
+    assert -threshold < ratio < threshold, ratio
+    assert ratio < 0.0, "the permutation null is negative; the boundary must survive that"
     with pytest.warns(CollapseWarning, match="SPATIAL COLLAPSE"):
-        assert check_spatial_collapse(ratio, 500, cfg)
+        assert check_spatial_collapse(ratio, 500, cfg) == "collapse"
 
     # 3. And it does not fire on the structured field itself, whose ratio is 1 by construction.
     intact = spatial_structure_ratio(real, real, coords, cfg)
     assert intact == pytest.approx(1.0)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        assert not check_spatial_collapse(intact, 500, cfg)
+        assert check_spatial_collapse(intact, 500, cfg) is None
+
+
+def test_spatial_inversion_is_reported_as_its_own_fault():
+    """A field anti-correlated in space is not a flat field, and must not be reported as one.
+
+    The distinction is not cosmetic. "Flat in SPACE" tells a reader the model produced no
+    spatial signal; a negative ratio says it produced signal of the **opposite sign** —
+    neighbouring generated cells less alike than random ones, where the tissue's are more alike.
+    Those have different causes and different fixes, and a single message covering both would
+    also rank -0.25 as a *worse* collapse than +0.01, which is backwards.
+
+    The boundary is minus the collapse threshold, not zero, and
+    `test_spatial_collapse_alarm_catches_what_the_variance_alarm_cannot` is why: a spatially
+    scrambled field lands at -0.0133, on the negative side of zero and squarely a collapse.
+    Real anti-correlation is much further out — the one healthy real-data fit measured reached
+    -0.2451 during warm-up, five times outside the threshold.
+    """
+    cfg = Config()
+    threshold = float(cfg.sefl_spatial_collapse_warn_fraction)
+
+    with pytest.warns(CollapseWarning, match="SPATIAL INVERSION"):
+        assert check_spatial_collapse(-0.2451, 500, cfg) == "inversion"
+
+    # The permutation null sits inside the threshold and stays a collapse.
+    with pytest.warns(CollapseWarning, match="SPATIAL COLLAPSE"):
+        assert check_spatial_collapse(-0.0133, 500, cfg) == "collapse"
+
+    # The boundary itself is an inversion; a hair inside it is a collapse.
+    with pytest.warns(CollapseWarning, match="SPATIAL INVERSION"):
+        assert check_spatial_collapse(-threshold, 500, cfg) == "inversion"
+    with pytest.warns(CollapseWarning, match="SPATIAL COLLAPSE"):
+        assert check_spatial_collapse(-threshold + 1e-6, 500, cfg) == "collapse"
+
+    # NaN is neither. `spatial_structure_ratio` returns it when the real field has no structure
+    # to divide by, and an alarm that fires on an undefined ratio is an alarm nobody reads.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert check_spatial_collapse(float("nan"), 500, cfg) is None
+
+
+def test_the_two_spatial_faults_are_filed_in_separate_histories():
+    """`TrainHistory` keeps inversions apart from collapses, so a run can be read afterwards.
+
+    The alarm returns a string precisely so the trainer can route it. A run that mixed the two
+    lists would report "N spatial collapse alarms" over a trajectory that never collapsed.
+    """
+    history = TrainHistory()
+    assert history.spatial_collapse_alarms == []
+    assert history.spatial_inversion_alarms == []
+
+    cfg = Config()
+    for step, ratio in ((10, -0.30), (20, 0.01), (30, 1.20), (40, -0.90)):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", CollapseWarning)
+            fired = check_spatial_collapse(ratio, step, cfg)
+        if fired == "collapse":
+            history.spatial_collapse_alarms.append(step)
+        elif fired == "inversion":
+            history.spatial_inversion_alarms.append(step)
+
+    assert history.spatial_collapse_alarms == [20]
+    assert history.spatial_inversion_alarms == [10, 40]
 
 
 def test_thick_binding_instrument_reads_the_poisson_hinge(built: Built):

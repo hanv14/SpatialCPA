@@ -869,7 +869,29 @@ class Config:
     **Tighten it only once the ratio has been logged on healthy runs in this construction**;
     ``TrainHistory.spatial_ratio`` records it from every logged step for exactly that purpose.
     Setting it from the two numbers available today would be the threshold-without-a-measurement
-    that this project has already got wrong twice."""
+    that this project has already got wrong twice.
+
+    **First measurement in this construction (2026-09-04), and read the population before you
+    read the number.** A real-data ``deep_starmap`` fit logged ``spatial_ratio`` at 241 steps:
+    median **1.299**, and after step 100 (the warm-up the alarm itself skips, see
+    ``sefl_collapse_min_steps``) a floor of **0.5467** over 231 steps, none below 0.05. That is a
+    **10.9x** margin on the floor and 26x on the median, which is why 0.05 stays where it is.
+
+    But that anchor comes from a fit with **SEFL off**, and this alarm only arms when SEFL is
+    **on**. The population it will actually be applied to - SEFL-on, running, not collapsed - has
+    never been observed on real data at all: every SEFL-on real-data fit measured to date is A7,
+    and A7 collapsed. So 0.547 is the right construction and the wrong population. It bounds
+    what a healthy *decoder* does on real tissue; it does not tell you what the consistency
+    losses do to that ratio while they are training. Treat the 10.9x as a margin against a
+    proxy, not against the thing being watched, and do not tighten the threshold toward it until
+    a healthy SEFL-on real-data fit has been logged.
+
+    The same run put four samples **below zero** (minimum -0.2451), all inside the warm-up. This
+    field is read **symmetrically**: ``|ratio|`` under it is a collapse whichever side of zero
+    the noise fell on, and ``ratio <= -0.05`` is an *inversion* - anti-correlated structure,
+    which is a different fault and gets its own message in ``check_spatial_collapse``. Zero is
+    not the boundary between them, because Moran's I under a permutation null is ``-1/(n-1)`` and
+    a genuinely collapsed field therefore lands slightly negative on its own."""
 
     sefl_consistency_ratio_warn: float = 0.5
     """Warn when ``sum(weighted consistency terms) / sum(weighted reconstruction terms)``

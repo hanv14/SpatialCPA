@@ -1370,12 +1370,32 @@ def spatial_structure_ratio(
     return i_gen / i_real if abs(i_real) > 1e-12 else float("nan")
 
 
-def check_spatial_collapse(ratio: float, step: int, cfg: Config) -> bool:
-    """Fire when the generated field has lost its **spatial** structure. Returns whether it did.
+def check_spatial_collapse(ratio: float, step: int, cfg: Config) -> str | None:
+    """Classify a spatial-structure ratio. Returns ``"collapse"``, ``"inversion"`` or ``None``.
 
     The second collapse alarm, added at T10 after A7 produced three fits whose anatomical field
     was flat — `i_gen` at 1.35-2.38 % of its target, every gene module's generated Moran's I
     under 0.006.
+
+    **Two conditions, because they are two faults.** A ratio near zero means the field has lost
+    its spatial signal; a ratio **below minus the threshold** means it has signal of the
+    *opposite sign* — neighbouring generated cells less alike than random ones, where the
+    tissue's are more alike. Folding the second into the first would rank ``-0.25`` as a worse
+    collapse than ``0.01`` and print "flat in SPACE" about a field that is not flat at all.
+
+    ⚠️ **The inversion boundary is minus the collapse threshold, not zero.** Zero is the
+    tempting boundary and it is wrong: Moran's I under a permutation null is ``-1/(n-1)``, so a
+    field scrambled in space — the textbook *collapse*, and the shape three A7 fits took — lands
+    a hair **below** zero, at ``-0.0133`` on this module's own fixture. A zero boundary would
+    file that as an inversion. Reusing ``sefl_spatial_collapse_warn_fraction`` symmetrically says
+    what is meant: ``|ratio|`` inside the threshold is absent structure whichever side of zero
+    the noise fell on, and only structure that is anti-correlated *by more than the alarm's own
+    resolution* is an inversion. The healthy real-data run's four negative excursions reached
+    ``-0.2451``, five times outside it, so the distinction is not academic.
+
+    Reusing the existing field also costs nothing at rest: every new ``Config`` field changes
+    ``content_hash`` and strands every existing checkpoint's resume (the standing hazard in
+    ``progress/``), and this alarm earns its second condition without paying that.
 
     ⚠️ **It was added on a claim that turned out to be false about that run.** I wrote that
     :func:`check_collapse` "did not fire and could not". It **did** fire — 72-74 times per seed
@@ -1391,9 +1411,25 @@ def check_spatial_collapse(ratio: float, step: int, cfg: Config) -> bool:
     the first one on that run.
     """
     if not math.isfinite(ratio):
-        return False
-    if ratio >= float(cfg.sefl_spatial_collapse_warn_fraction):
-        return False
+        return None
+    threshold = float(cfg.sefl_spatial_collapse_warn_fraction)
+    if ratio <= -threshold:
+        warnings.warn(
+            f"SPATIAL INVERSION WARNING at step {step}: the generated field's median Moran's I "
+            f"is {ratio:.4f} of the real cells' on the same positions (inversion below "
+            f"{-threshold:.4f}) - a negative ratio well outside the permutation null, so the "
+            "generated field is ANTI-correlated in space where the tissue is correlated. That "
+            "is structure of the WRONG SIGN, not absent structure, and it is a different fault "
+            "from a collapse: neighbouring generated cells are more unlike each other than "
+            "random ones. Expected transiently at initialisation and not after; on the one "
+            "healthy real-data fit measured, all four negative excursions were inside "
+            "Config.sefl_collapse_min_steps and the floor afterwards was +0.547.",
+            CollapseWarning,
+            stacklevel=2,
+        )
+        return "inversion"
+    if ratio >= threshold:
+        return None
     warnings.warn(
         f"SPATIAL COLLAPSE WARNING at step {step}: the generated field's median Moran's I is "
         f"{ratio:.4f} of the real cells' on the same positions (alarm at "
@@ -1405,7 +1441,7 @@ def check_spatial_collapse(ratio: float, step: int, cfg: Config) -> bool:
         CollapseWarning,
         stacklevel=2,
     )
-    return True
+    return "collapse"
 
 
 def sefl_terms(

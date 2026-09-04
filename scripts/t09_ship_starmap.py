@@ -369,22 +369,27 @@ def _alarm_chunks(alarms: dict[str, Any] | None) -> list[str]:
             "fire*; nothing here can distinguish the two. Re-fit to get an alarm record.",
         ]
     variance, spatial = alarms["collapse_alarms"], alarms["spatial_collapse_alarms"]
+    inverted = alarms.get("spatial_inversion_alarms", [])
     lines = ["", "## Collapse alarms", ""]
-    if not variance and not spatial:
+    if not variance and not spatial and not inverted:
         lines += [
             "Neither alarm fired. Both were **checked** — the record below is the trajectory "
             "each of them read, so this is a measured silence rather than an absent measurement.",
         ]
     else:
         lines += [
-            f"🚨 **{len(variance) + len(spatial)} ALARM(S) FIRED. Every metric in this report "
+            f"🚨 **{len(variance) + len(spatial) + len(inverted)} ALARM(S) FIRED. Every metric "
+            "in this report "
             "comes from a model that reported itself broken while training, and no number here "
             "should be read as a property of the method until that is explained.**",
             "",
             f"* per-gene **variance** collapse: **{len(variance)}** firing(s)"
             + (f", first at step {variance[0]}" if variance else ""),
-            f"* **spatial** collapse: **{len(spatial)}** firing(s)"
+            f"* **spatial** collapse (signal lost): **{len(spatial)}** firing(s)"
             + (f", first at step {spatial[0]}" if spatial else ""),
+            f"* **spatial** inversion (signal of the WRONG SIGN, a different fault): "
+            f"**{len(inverted)}** firing(s)"
+            + (f", first at step {inverted[0]}" if inverted else ""),
         ]
     for name, key in (("variance ratio", "variance_ratio"), ("spatial ratio", "spatial_ratio")):
         row = alarms.get(key)
@@ -419,6 +424,7 @@ def _alarm_record(history: Any) -> dict[str, Any]:
     return {
         "collapse_alarms": [int(v) for v in history.collapse_alarms],
         "spatial_collapse_alarms": [int(v) for v in history.spatial_collapse_alarms],
+        "spatial_inversion_alarms": [int(v) for v in history.spatial_inversion_alarms],
         "variance_ratio": tail(list(history.variance_ratio)),
         "spatial_ratio": tail(list(history.spatial_ratio)),
     }

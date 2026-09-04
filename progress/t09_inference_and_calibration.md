@@ -6186,3 +6186,56 @@ failure `check_text_channel` now refuses. The 3.50 h and its timing record are d
 **The measurement that survives is the cost model**, because it is a property of the code path
 rather than of the metadata: at a fixed step budget the fit is steps-driven, not cell-driven. The
 re-run will confirm it, and 21.0 core-hours remains the projection to beat.
+
+## The healthy `spatial_ratio` trajectory — first measurement in the alarm's own construction (2026-09-04)
+
+The re-run's log gives what `Config.sefl_spatial_collapse_warn_fraction`'s docstring had been
+asking for since T10: the spatial ratio on a **real-data** fit that did not collapse. Until now the
+only anchors were A7's, and they came from the *calibration's* construction (generated section vs
+flanking real sections), which R12 says need not agree with this one.
+
+**n = 241 logged steps.** Median **1.299**. First two samples 0.0168 and **-0.2010**. Last two
+1.451 / 1.384. Restricted to after step 100 — the warm-up `Config.sefl_collapse_min_steps` already
+skips — **n = 231, minimum 0.5467, zero samples below 0.05**. Four samples anywhere in the run were
+negative, minimum **-0.2451**, all of them before step ~100.
+
+So the threshold has a **10.9x margin on the measured floor** and 26x on the median. That is the
+first evidence that 0.05 is not merely a guess bounded below by A7's 0.016, and it is why 0.05
+**stays where it is**: moving a threshold on a single observation is the mistake this project has
+recorded twice already, and a 10.9x margin is a real safety factor, not a reason to spend one.
+
+⚠️ **It is the right construction and the wrong population, and the docstring now says so.** The
+fit that produced these numbers had **SEFL off**. This alarm only arms when SEFL is **on**. The
+population it will actually be applied to — SEFL-on, running, not collapsed — has **never been
+observed on real data**: every SEFL-on real-data fit to date is A7, and A7 collapsed. 0.547
+therefore bounds what a healthy *decoder* does on real tissue; it says nothing about what the
+consistency losses do to the ratio while they train. Anyone reading 0.547 as headroom for the
+armed alarm is reading a proxy.
+
+### The sign handling was wrong, and the fix is not the obvious one
+
+Four negative samples exposed a defect: `check_spatial_collapse` treated every ratio below 0.05 as
+a collapse and printed **"The field is flat in SPACE"**. A negative ratio is not a flat field. It
+is signal of the **opposite sign** — neighbouring generated cells *less* alike than random ones,
+where the tissue's are more alike. Anti-correlated structure is not absent structure, and the
+single message also ranked `-0.25` as a *worse* collapse than `+0.01`, which is backwards.
+
+It is latent, not harmless: on this run every negative excursion fell inside
+`sefl_collapse_min_steps`, so nothing fired. A longer warm-up, or a mid-training dip past step 100,
+and the first message anyone reads is a wrong diagnosis of a real fault.
+
+`check_spatial_collapse` now returns `"collapse" | "inversion" | None` and the trainer files them in
+separate `TrainHistory` lists; `t09_ship_starmap.py` prints them as separate lines.
+
+**The boundary is minus the threshold, not zero** — and the module's own fixture is why. A field
+scrambled in space, the textbook collapse and the shape three A7 fits took, scores **-0.0133**: not
+by accident, because Moran's I under a permutation null is `-1/(n-1)`. A boundary at zero would
+have filed the canonical collapse as an inversion. Reading
+`sefl_spatial_collapse_warn_fraction` **symmetrically** says what is meant — `|ratio|` inside it is
+absent structure whichever side of zero the noise landed, and only anti-correlation beyond the
+alarm's own resolution is an inversion. The healthy run's -0.2451 is five times outside it, so the
+two classes are well separated in the data we have.
+
+Reusing the existing field also avoids the standing `content_hash` hazard: `Config().content_hash()`
+is **unchanged at `445414903717491c`**, so the re-run's checkpoint still resumes. Every change in
+this entry is a docstring, a return type, a history list and a report line.
