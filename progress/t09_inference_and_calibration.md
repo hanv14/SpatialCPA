@@ -6104,3 +6104,85 @@ re-run, along with the timing.** The remaining five must not start until that li
 The constant is a **structural-mismatch detector, not a quality bar** — the same shape as
 `MIN_RESOLVED_FRACTION` in the build script, and set the same way: half separates 12.6 % from
 100 % with room on both sides and cannot fire on a real pairing.
+
+---
+
+## 🚨 CORRECTION — `check_collapse` fired on A7. 218 times. Nothing surfaced it (2026-09-01)
+
+Read out of the fit checkpoints:
+
+| seed | alarms | first | `variance_ratio` (last three logged) |
+|---|---|---|---|
+| 1 | **72** | step 250 | 0.153 / 0.193 / 0.188 |
+| 2 | **74** | step 250 | 0.141 / 0.131 / 0.129 |
+| 3 | **72** | step 250 | 0.113 / 0.105 / 0.107 |
+
+Against a `sefl_collapse_warn_fraction` of **0.25**. The alarm fired from step **250 of 1200** on
+every seed and kept firing.
+
+### What I got wrong, in both halves
+
+I wrote that `check_collapse` **"did not fire and could not"**. Both halves are false.
+
+* **"Did not fire"** — it fired 218 times. My evidence was a `grep` for "collapse" over the run
+  directories, which was never going to find anything: warnings go to stderr and the alarm history
+  goes into a binary `.pt`. I treated the absence of a signal from an instrument I had not checked
+  as the absence of the signal.
+* **"Could not"** — the *general* argument was sound and is still why the spatial alarm exists: the
+  two statistics are orthogonal, and
+  `test_spatial_collapse_alarm_catches_what_the_variance_alarm_cannot` constructs the field that
+  proves it (a real gradient scrambled in space, per-gene variance preserved **exactly**, Moran's I
+  to zero). But **it does not describe A7**. There the field lost per-cell variance *as well as*
+  spatial structure — ratio 0.105-0.193 — so the existing alarm caught it. I applied a valid
+  general claim to a specific run without checking whether the run matched it.
+
+**The spatial alarm is still worth having**, and its justification is now stated correctly in both
+`Config.sefl_spatial_collapse_warn_fraction` and `check_spatial_collapse`: nothing guarantees the
+two collapse together, and in A7 they happened to. **Justified by the orthogonality, not by a miss.**
+
+### The real defect, and it is worse than the one I diagnosed
+
+`history.collapse_alarms` was **populated**, **persisted**, and **read by no report**. Three fits
+were reviewed here in detail across three rounds, and the model's own alarm — screaming from step
+250 — never entered the review, because the artifacts I was reading do not carry it.
+
+**An alarm that fires where nobody looks is worse than an alarm that cannot fire.** A blind spot is
+at least honest about being one; this created the impression of a watched run. The whole "the
+six-metric table is a trap" analysis was reconstructed from `i_gen` and the module tables, and the
+model had been saying so directly for 950 steps.
+
+⚠️ **It also means A7's ON arm was diagnosable at step 250 of 1200.** Nothing about A7's verdict
+changes — SEFL is still harmful on three seeds — but "the run told us and the report did not print
+it" is the finding, and it belongs beside the result rather than in a footnote.
+
+### The fix
+
+`t09_ship_starmap.py` now:
+
+* prints the count to the console at fit time, with `⚠️ N COLLAPSE ALARM(S) FIRED ... Every number
+  below is from a model that reported itself broken while training`;
+* carries a **`## Collapse alarms`** section in the **markdown report**, not only the JSON. A count
+  buried in JSON is barely better than one buried in a `.pt`. When it fired the section leads with
+  🚨 and the sentence that no number in the report should be read as a property of the method until
+  it is explained; when it did not, it says **"a measured silence rather than an absent
+  measurement"** and prints the trajectories both alarms read;
+* renders **"not measured on this run"** for a reused fit — because `model.pt` carries weights and
+  config but never the history, and that is **not** the same as "did not fire".
+
+Rendered against A7 seed 1's real history, the section it would have produced reads:
+
+    🚨 **72 ALARM(S) FIRED. Every metric in this report comes from a model that reported itself
+    broken while training, and no number here should be read as a property of the method until
+    that is explained.**
+
+    * per-gene **variance** collapse: **72** firing(s), first at step 250
+
+## Replication — fit 1 is void, as predicted (2026-09-01)
+
+`n_with_meta` **121 of 960**, 839 bare, example descriptor `"AATK."`, `gene_meta_path
+resources/gene_meta.parquet`. The fit read the **mouse** table for a human panel, exactly the
+failure `check_text_channel` now refuses. The 3.50 h and its timing record are discarded.
+
+**The measurement that survives is the cost model**, because it is a property of the code path
+rather than of the metadata: at a fixed step budget the fit is steps-driven, not cell-driven. The
+re-run will confirm it, and 21.0 core-hours remains the projection to beat.

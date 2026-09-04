@@ -347,6 +347,57 @@ def generate_targets(model, volume, cfg, seed, window, detection, anchor, truth,
     return out_raw, out_matched
 
 
+def _alarm_chunks(alarms: dict[str, Any] | None) -> list[str]:
+    """The collapse-alarm section of the report. Prominent when it fired, honest when unknown.
+
+    **This section exists because an alarm fired 218 times and nobody saw it.** A7's SEFL arm
+    tripped `check_collapse` on all three seeds — 72-74 times each, from step 250, variance ratio
+    0.105-0.193 against a 0.25 threshold — and the run's report said nothing, because
+    `TrainHistory.collapse_alarms` was written into the resumable `.pt` and read by no report.
+    Three fits were reviewed in detail and the model's own alarm never entered the review.
+
+    An alarm that fires where nobody looks is worse than one that cannot fire: it creates the
+    impression of a watched run.
+    """
+    if alarms is None:
+        return [
+            "",
+            "## Collapse alarms",
+            "",
+            "⚠️ **Not measured on this run** — the fit was reused from `model.pt`, which carries "
+            "weights and config but never the `TrainHistory`. That is not the same as *did not "
+            "fire*; nothing here can distinguish the two. Re-fit to get an alarm record.",
+        ]
+    variance, spatial = alarms["collapse_alarms"], alarms["spatial_collapse_alarms"]
+    lines = ["", "## Collapse alarms", ""]
+    if not variance and not spatial:
+        lines += [
+            "Neither alarm fired. Both were **checked** — the record below is the trajectory "
+            "each of them read, so this is a measured silence rather than an absent measurement.",
+        ]
+    else:
+        lines += [
+            f"🚨 **{len(variance) + len(spatial)} ALARM(S) FIRED. Every metric in this report "
+            "comes from a model that reported itself broken while training, and no number here "
+            "should be read as a property of the method until that is explained.**",
+            "",
+            f"* per-gene **variance** collapse: **{len(variance)}** firing(s)"
+            + (f", first at step {variance[0]}" if variance else ""),
+            f"* **spatial** collapse: **{len(spatial)}** firing(s)"
+            + (f", first at step {spatial[0]}" if spatial else ""),
+        ]
+    for name, key in (("variance ratio", "variance_ratio"), ("spatial ratio", "spatial_ratio")):
+        row = alarms.get(key)
+        if row:
+            lines.append(
+                f"* {name}: min {row['min']:.4f}, median {row['median']:.4f}, "
+                f"last {row['last']:.4f} over {int(row['n'])} logged steps"
+            )
+        else:
+            lines.append(f"* {name}: not recorded (the block was never live on this run)")
+    return lines
+
+
 def _alarm_record(history: Any) -> dict[str, Any]:
     """Summarise a fit's alarm history for the run's JSON. Plain types only.
 
@@ -562,6 +613,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  fit: {cfg.train_steps} steps in {fit_seconds:.0f}s ({fit_seconds / 3600:.2f} h)")
         alarms = _alarm_record(history)
         print(f"  alarms: {json.dumps(alarms)}")
+        n_fired = len(alarms["collapse_alarms"]) + len(alarms["spatial_collapse_alarms"])
+        if n_fired:
+            print(
+                f"  ⚠️ {n_fired} COLLAPSE ALARM(S) FIRED during this fit. Every number below "
+                "is from a model that reported itself broken while training."
+            )
         torch.save({"config": cfg.to_dict(), "state_dict": model.state_dict()}, model_path)
         print(f"  saved {model_path}")
 
@@ -663,6 +720,7 @@ def main(argv: list[str] | None = None) -> int:
         modules,
         volume,
         args,
+        alarms,
     )
     text = "\n".join(lines)
     print()
@@ -709,6 +767,7 @@ def _report(
     modules,
     volume,
     args,
+    alarms,
 ) -> list[str]:
     arm_names = [r["arm"] for r in rows]
     header = "| metric | " + " | ".join(f"`{a}`" for a in arm_names)
@@ -803,6 +862,7 @@ def _report(
     lines += calibration_chunks(lengthscale, window, modules)
     lines += [
         "",
+        *_alarm_chunks(alarms),
         "## Provenance",
         "",
         "```",

@@ -842,12 +842,18 @@ class Config:
     """The generated field's median Moran's I, as a fraction of the real cells' on the same
     positions, below which the **spatial** collapse alarm fires.
 
-    A second alarm, because the first one cannot see this failure.
-    ``sefl_collapse_warn_fraction`` watches the per-gene **variance** of drawn counts across
-    cells; a field uniform in *position* while retaining per-cell variance leaves that untouched.
-    A7 measured exactly that: three SEFL-on fits whose ``i_gen`` was **1.35-2.38 %** of its
-    target and whose every gene module had a generated Moran's I under 0.006, with the variance
-    alarm silent.
+    A second alarm, because the first one watches an **orthogonal** statistic.
+    ``sefl_collapse_warn_fraction`` reads the per-gene **variance** of drawn counts across cells;
+    a field uniform in *position* while retaining per-cell variance leaves that untouched, which
+    ``test_spatial_collapse_alarm_catches_what_the_variance_alarm_cannot`` demonstrates by
+    scrambling a real gradient in space while preserving its variance exactly.
+
+    ⚠️ **Not because the variance alarm failed on A7 — it did not.** This field was added on
+    the claim that A7's collapse was invisible to it, and that claim was **wrong**: the alarm
+    fired **72-74 times per seed from step 250**, ratio **0.105-0.193** against its 0.25
+    threshold. In A7 the field lost per-cell variance *and* spatial structure together. Nothing
+    guarantees that pairing, which is why both alarms are worth having; but the justification is
+    the orthogonality, not a miss.
 
     ⚠️ **0.05 catches total collapse and nothing subtler, deliberately.** The anchors available
     are A7's, and they come from the *calibration's* construction (median Moran's I of a

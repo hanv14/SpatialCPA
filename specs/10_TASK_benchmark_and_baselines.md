@@ -485,6 +485,27 @@ largest difference exactly 0**. The original 0.0120 was that defect, not run-to-
 the envelope it helped justify was inflated by a bug. The sentences above are kept because the
 *rule* they motivate survives; the number does not.
 
+### 4.2f ⚠️ An alarm that fires where nobody looks
+
+State this beside §4.2e, because it is the same run and the same lesson from the other side.
+
+A7's SEFL arm tripped `check_collapse` on **all three seeds — 72, 74 and 72 times, from step 250
+of 1200** — with the variance ratio settling at **0.105–0.193** against its 0.25 threshold. The
+model reported itself broken for 950 consecutive steps.
+
+**No report printed it.** `TrainHistory.collapse_alarms` was populated and persisted into the
+resumable checkpoint, and nothing read it back. Six fits were reviewed in detail and the alarm
+never entered the review; the collapse was reconstructed instead from the calibration's `i_gen`
+and the per-module Moran's table, both of which say the same thing less directly.
+
+**The rule:** a diagnostic that is computed, recorded, and never surfaced is worse than one that
+was never built. A missing alarm is honestly missing. A silent one creates the impression of a
+watched run — and it is the impression, not the absence, that stops anyone from looking.
+
+Every alarm this project defines must appear in the artifact a human reads, with its trajectory
+beside it, and must distinguish **"did not fire"** from **"was never checked"**. `t09_ship_starmap`
+now carries a `## Collapse alarms` section that does all three.
+
 ### 4.2e ⚠️ WORKED EXAMPLE — why `claim_min_seeds` = 3, in one metric's three numbers
 
 State this in the methods, with the numbers. It is the clearest demonstration this project has

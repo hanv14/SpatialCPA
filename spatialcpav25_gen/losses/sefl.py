@@ -1375,8 +1375,20 @@ def check_spatial_collapse(ratio: float, step: int, cfg: Config) -> bool:
 
     The second collapse alarm, added at T10 after A7 produced three fits whose anatomical field
     was flat — `i_gen` at 1.35-2.38 % of its target, every gene module's generated Moran's I
-    under 0.006 — and :func:`check_collapse` did not fire and **could not**, because it watches
-    per-cell variance rather than spatial organisation.
+    under 0.006.
+
+    ⚠️ **It was added on a claim that turned out to be false about that run.** I wrote that
+    :func:`check_collapse` "did not fire and could not". It **did** fire — 72-74 times per seed
+    from step 250, with the variance ratio settling at **0.105-0.193** against its 0.25
+    threshold — because in A7 the field lost its per-cell variance *as well as* its spatial
+    structure, and the variance alarm caught the first.
+
+    **The general claim stands and is why this exists**: the two statistics are orthogonal, and
+    ``test_spatial_collapse_alarm_catches_what_the_variance_alarm_cannot`` builds the field that
+    proves it — a real spatial gradient, spatially scrambled, so per-gene variance is preserved
+    *exactly* while Moran's I goes to zero. Nothing guarantees the two collapse together; in A7
+    they happened to. So this alarm is justified by the orthogonality, **not** by a failure of
+    the first one on that run.
     """
     if not math.isfinite(ratio):
         return False
