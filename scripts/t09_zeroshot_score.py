@@ -32,6 +32,25 @@ The layout must be **identical across the four arms** or the comparison is not a
 channel at all. Under ``layout_mode=resample`` it is, by construction, and this script asserts
 it rather than assuming it.
 
+**This script reads the gene-metadata table, and it must be the same one the fits used.**
+"It only scores existing checkpoints" is the reasoning that would let the flags be skipped, and
+it is wrong: ``build_and_fit`` calls ``embeddings_factory(volume)(cfg)``, which is
+:func:`~spatialcpav25_gen.model.embeddings.build_entity_embeddings` reading
+``cfg.gene_meta_path`` and ``cfg.mygene_species`` and encoding this panel's descriptors through
+MedCPT — *before* the checkpoint is loaded over the top. And the held-out genes' text is what
+the whole experiment measures: ``ZeroShotView`` embeds an unseen gene as
+``forward_zero_shot(base.text_vecs[g])``, so ``text_vecs`` **is** the zero-shot input, not an
+incidental buffer.
+
+Two guards, and they catch different things. ``gene_meta_path`` and ``mygene_species`` are both
+in ``Config.content_hash``, so a scorer pointed at the wrong table fails the checkpoint's
+``require_compatible`` — but it fails *after* encoding a panel of wrong descriptors, with a
+message that names a hash and no field. ``check_text_channel`` runs first and names the table,
+the species and the resolved fraction, which is the message a reader can act on. The run script
+had this same hole and it cost a fit (``progress/t09_inference_and_calibration.md``,
+2026-09-01); there the failure was silent, here it is merely unreadable, and neither is
+acceptable when one flag fixes both.
+
 Usage::
 
     python scripts/t09_zeroshot_score.py --dataset deep_starmap --holdout paper_2_4_6 \\
@@ -62,8 +81,8 @@ from spatialcpav25_gen.train.select import METRIC_NAMES, section_scores, selecti
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _bench3_paths import add_path_args, resolve, set_torch_threads
-from _starmap_run import embeddings_factory, load_training_volume
-from t09_zeroshot_run import arm_config, build_and_fit, load_split
+from _starmap_run import describe_text_channel, embeddings_factory, load_training_volume
+from t09_zeroshot_run import arm_config, build_and_fit, check_text_channel, load_split
 
 ARMS: dict[str, tuple[str, bool]] = {
     "A1": ("medcpt", True),
@@ -147,10 +166,30 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", required=True, help="destination .json")
     ap.add_argument("--train-steps", type=int, default=2400)
     ap.add_argument("--expr-pca-dim", type=int, default=None)
+    ap.add_argument(
+        "--gene-meta",
+        default=None,
+        help="the panel's gene-metadata table, and it MUST be the one the fits were run "
+        "under: this script rebuilds the embeddings from it before loading the checkpoint. "
+        "Default Config.gene_meta_path, which is the MOUSE table. Required with --species",
+    )
+    ap.add_argument(
+        "--species",
+        default=None,
+        help="the table's organism (default: Config.mygene_species = 'mouse'). Required "
+        "whenever --gene-meta is given: the path and the species are one statement",
+    )
     ap.add_argument("--flattened", dest="flattened", action="store_true", default=None)
     ap.add_argument("--no-flattened", dest="flattened", action="store_false")
     add_path_args(ap)
     args = ap.parse_args(argv)
+
+    if (args.gene_meta is None) != (args.species is None):
+        raise SystemExit(
+            "--gene-meta and --species are one statement and must be given together. The "
+            "path alone leaves Config.mygene_species at 'mouse', which makes load_gene_meta's "
+            "organism check agree with itself while the panel is another organism's."
+        )
 
     paths = resolve(args)
     print(paths.describe())
@@ -167,6 +206,8 @@ def main(argv: list[str] | None = None) -> int:
             train_steps=args.train_steps,
             expr_pca_dim=args.expr_pca_dim,
         )
+        if args.gene_meta is not None:
+            cfg = cfg.replace(gene_meta_path=args.gene_meta, mygene_species=args.species)
         checkpoint = Path(args.workdir) / f"fit_zeroshot_{mode}_seed{args.seed}.pt"
         if not checkpoint.is_file():
             raise SystemExit(
@@ -186,6 +227,10 @@ def main(argv: list[str] | None = None) -> int:
             f"{args.split} splits {len(kept) + len(held)} genes but the volume has "
             f"{volume.n_genes}. The split was written for a different panel."
         )
+    described = describe_text_channel(shared, volume)
+    print("  text channel: " + json.dumps(described, default=str))
+    check_text_channel(described, shared, arm="score")
+
     embeddings = embeddings_factory(volume)
     folds = selection_folds(volume, shared)
     axis = profile_axis(volume, shared)

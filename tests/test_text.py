@@ -1294,3 +1294,71 @@ def test_zero_shot_view_refuses_an_index_off_the_table(cfg):
     emb = _embedding(cfg, n=8)
     with pytest.raises(ValueError, match="outside the 8-entity table"):
         ZeroShotView(emb, torch.tensor([8], dtype=torch.int64))
+
+
+def test_the_zero_shot_scorer_reads_the_gene_table_and_refuses_the_wrong_one():
+    """`t09_zeroshot_score.py` is not a pure consumer of checkpoints, and its flags say so.
+
+    The tempting reading is that scoring cannot touch gene text: the four arms differ only in
+    `use_distill` and in which fit they load, and the embeddings are in the checkpoint. It is
+    wrong twice over, and the second way is the one that matters:
+
+    * `build_and_fit` calls `build_entity_embeddings(cfg, ...)`, which reads
+      `cfg.gene_meta_path` / `cfg.mygene_species` and encodes the panel's descriptors, **before**
+      `load_state_dict` puts the fitted buffers over the top;
+    * `ZeroShotView` embeds an unseen gene as `forward_zero_shot(base.text_vecs[g])`, so
+      `text_vecs` is the zero-shot *input*. Text is what this experiment measures.
+
+    `t09_zeroshot_run.py` had the same hole and it cost a fit: a human panel read against the
+    mouse table resolved 121 of 960 symbols by case-insensitive accident, silently. This test
+    pins the three properties that close it here.
+    """
+    import sys
+    from pathlib import Path as _Path
+
+    sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "scripts"))
+    import t09_zeroshot_score
+    from t09_zeroshot_run import MIN_PANEL_WITH_META, check_text_channel
+
+    # 1. The flags exist and are one statement: neither half is usable alone.
+    for argv in (
+        [
+            "--split",
+            "s.json",
+            "--seed",
+            "1",
+            "--workdir",
+            "w",
+            "--out",
+            "o.json",
+            "--gene-meta",
+            "resources/gene_meta.cosmx_human.parquet",
+        ],
+        [
+            "--split",
+            "s.json",
+            "--seed",
+            "1",
+            "--workdir",
+            "w",
+            "--out",
+            "o.json",
+            "--species",
+            "human",
+        ],
+    ):
+        with pytest.raises(SystemExit, match="one statement"):
+            t09_zeroshot_score.main(argv)
+
+    # 2. The scorer applies the same guard as the fitter, on the same constant. 121/960 is the
+    #    real measurement from the void fit, and it must be refused by a message that names the
+    #    table rather than by a downstream config_hash mismatch that names no field.
+    cfg = Config().replace(gene_meta_path="resources/gene_meta.parquet", mygene_species="mouse")
+    with pytest.raises(SystemExit, match="ANOTHER ORGANISM"):
+        check_text_channel({"n_genes": 960, "n_with_meta": 121}, cfg, arm="score")
+    check_text_channel({"n_genes": 960, "n_with_meta": 960}, cfg, arm="score")
+
+    # 3. And the guard is reached from the scorer's own module, not merely importable.
+    source = _Path(t09_zeroshot_score.__file__).read_text()
+    assert "check_text_channel(described, shared, arm=" in source
+    assert MIN_PANEL_WITH_META == 0.5

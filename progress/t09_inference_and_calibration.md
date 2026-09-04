@@ -6239,3 +6239,54 @@ two classes are well separated in the data we have.
 Reusing the existing field also avoids the standing `content_hash` hazard: `Config().content_hash()`
 is **unchanged at `445414903717491c`**, so the re-run's checkpoint still resumes. Every change in
 this entry is a docstring, a return type, a history list and a report line.
+
+## `t09_zeroshot_score.py` had the same gene-metadata hole (2026-09-04)
+
+Asked directly: does the scorer read gene text, and from where? **It does**, and the reasoning
+that says it cannot is the reasoning that would have shipped six wrong scorings.
+
+The tempting argument is that scoring only consumes checkpoints — the four arms differ in
+`use_distill` and in which of two fits they load, and the embeddings are in the `.pt`. Both
+halves of that are false where it counts:
+
+* `build_and_fit` — shared with the fitter, by design — calls `embeddings_factory(volume)(cfg)`,
+  which is `build_entity_embeddings(cfg, ...)`. That reads `cfg.gene_meta_path` and
+  `cfg.mygene_species`, loads the table, and encodes the panel's descriptors through MedCPT
+  **before** `load_state_dict` puts the fitted buffers over the top.
+* `ZeroShotView` embeds an unseen gene as `forward_zero_shot(base.text_vecs[g])`. `text_vecs` is
+  not an incidental buffer; on the held-out side it **is** the zero-shot input, and it is the
+  quantity the whole experiment is about.
+
+`arm_config` takes no metadata arguments, so the scorer built every config at
+`gene_meta_path="resources/gene_meta.parquet"`, species `mouse` — the same default that voided
+replication fit 1.
+
+### It is not the identical failure, and the difference is worth stating
+
+`gene_meta_path` and `mygene_species` are **both in `content_hash`** (verified: changing either
+moves it off `445414903717491c`). So a scorer pointed at the mouse table would have failed the
+checkpoint's `require_compatible` rather than producing a quiet wrong number. The run script's
+hole was **silent**; this one was **loud but unreadable** — the failure arrives after a full
+MedCPT encode of the wrong descriptors, and the message names a hash and no field. A reader
+would have to diff two configs to learn that the gene table was the problem. It also means the
+six scoring commands could not have run at all without the flags.
+
+### The fix
+
+Same shape as the fitter's, deliberately:
+
+* `--gene-meta` / `--species`, **required together**, refused before any path resolution — the
+  path alone leaves `mygene_species` at `mouse`, which makes `load_gene_meta`'s organism check
+  agree with itself while the panel is another organism's.
+* `check_text_channel` on the shared config, at the same `MIN_PANEL_WITH_META = 0.5`, run
+  **before** `build_and_fit`, so the wrong table is named by a message about the table.
+* The module docstring states why the scorer touches text at all, so the "it only scores"
+  argument does not get re-derived by the next reader.
+* `tests/test_text.py::test_the_zero_shot_scorer_reads_the_gene_table_and_refuses_the_wrong_one`
+  pins all three: the flags reject either half alone, 121/960 is refused with the
+  ANOTHER-ORGANISM message, and the guard is actually wired into the scorer rather than merely
+  importable from it.
+
+**The general lesson, since this is the second instance:** a script that shares a builder with
+the fitter inherits every config field that builder reads. "It only scores" describes the
+intent, not the code path.
