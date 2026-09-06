@@ -1469,3 +1469,60 @@ def test_fold_scores_passes_physical_coordinates(split):
         per_fold = fold_scores(model, training, cfg, seed=SEED)
     assert len(per_fold) == len(selection_folds(training, cfg))
     assert set(per_fold[0]) == set(METRIC_NAMES)
+
+
+def test_the_two_envelope_constructions_are_both_computed_and_disagreement_blocks_a_verdict():
+    """`specs/10` §4.2d, as an instrument: (b) >= (a) always, and a disagreement is fatal.
+
+    The rule is not "prefer the stricter one". It is that a result clearing the fold-mean
+    envelope and not the per-fold one has a verdict which is a property of the aggregation
+    choice, and is therefore **not established**. That only works if both are computed on every
+    check, which is what `scripts/t09_zeroshot_envelopes.py` does and what this pins.
+
+    Two fixtures, because the arithmetic identity and the refusal are different claims:
+
+    * folds that move **together** across seeds — (b) equals (a), nothing is hidden by averaging;
+    * folds that move in **opposite** directions — averaging cancels them, so (a) collapses while
+      (b) sees the full swing. That is the case the rule exists for, and the effect placed
+      between the two envelopes must come back flagged.
+    """
+    import sys
+    from pathlib import Path as _Path
+
+    sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "scripts"))
+    from t09_zeroshot_envelopes import ENVELOPE_MEMBERS, envelopes
+
+    seeds, folds = (1, 2, 3), ("f0", "f1")
+
+    def build(per_arm: dict[str, dict[tuple[int, str], float]]):
+        cells = {}
+        for arm in ENVELOPE_MEMBERS:
+            for s in seeds:
+                for f in folds:
+                    cells[("held_out", arm, s, f)] = {
+                        "morans_pearson": per_arm.get(arm, {}).get((s, f), 0.0)
+                    }
+        return cells
+
+    # 1. Folds moving together: averaging removes nothing, so the constructions agree.
+    together = {"A1": {(s, f): 0.1 * s for s in seeds for f in folds}}
+    a, b, _, _ = envelopes(build(together), "held_out", "morans_pearson", seeds, folds)
+    assert a == pytest.approx(0.2), a
+    assert b == pytest.approx(0.2), b
+
+    # 2. Folds moving oppositely: the fold mean is constant, so (a) is zero while (b) is the
+    #    full within-fold swing. (b) >= (a) is an identity, not an empirical finding.
+    opposed = {
+        "A1": {(s, "f0"): 0.1 * s for s in seeds} | {(s, "f1"): -0.1 * s for s in seeds},
+    }
+    a, b, _, who_b = envelopes(build(opposed), "held_out", "morans_pearson", seeds, folds)
+    assert a == pytest.approx(0.0), a
+    assert b == pytest.approx(0.2), b
+    assert b >= a
+    assert who_b == "A1"
+
+    # 3. An effect between the two envelopes clears (a) and not (b) — the disagreement the rule
+    #    refuses to resolve. A script that reported only (a) would call this established.
+    effect = 0.1
+    assert effect > a, "the fixture must clear the fold-mean envelope"
+    assert effect < b, "and sit inside the per-fold one"
