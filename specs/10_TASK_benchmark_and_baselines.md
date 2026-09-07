@@ -507,15 +507,35 @@ same fact said twice. The consequence: an effect present on **12 of 12** seed x 
 consistent sign and fold balances never below 0.39, could not clear a threshold **6–18x** larger
 than any informative arm's variance.
 
+**And the degenerate member's spread is not even a stable estimate of its own noise.** Under the
+null a Pearson correlation over `n` genes has `sd ≈ 1/sqrt(n-1)`, and the **range of three draws**
+has expectation `1.693 sd` with its own `sd = 0.888 sd` — a coefficient of variation above 50 %.
+Measured:
+
+| envelope | n genes | sd(r) | E[range of 3] | observed | z |
+|---|---|---|---|---|---|
+| `cosmx` held-out, set by A4 | 191 | 0.0725 | 0.1228 | **0.2015** | +1.22 |
+| `deep_starmap` held-out | 204 | 0.0702 | 0.1188 | **0.0930** | −0.41 |
+| `cosmx` kept, set by `shuffled` | 769 | 0.0361 | 0.0611 | **0.0646** | +0.11 |
+
+All three are ordinary draws from the same null, so the 2.2x difference between the two datasets'
+envelopes — which reads like a fact about the datasets — is **noise in the noise estimate**. Three
+seeds cannot pin a threshold like this, and every criterion in the experiment is read against it.
+
 **The rule this adds.** An envelope is a *measurement* of run-to-run variation, so it may only be
 taken over quantities that are measurements. An arm that is degenerate **by construction** —
 present to certify a void, or to be a floor — contributes its level to the comparison and must not
 contribute its spread. State which members set the envelope, in advance and in the report; a
-threshold whose owner is never named is one nobody checks.
+threshold whose owner is never named is one nobody checks. Where a null's sampling distribution is
+known, quote it beside the measured spread: it costs nothing and it is the only way to see that a
+three-seed envelope is an estimate rather than a number.
 
-⚠️ **It did not change the verdict it was found in, and that is the point.** The `cosmx` criteria
-named the envelope construction before any fit, so the replication is read under them: Part 1
-PARTIAL, Part 2 DOES NOT REPLICATE. Applying a rule discovered *by* a run *to* that run is the
+⚠️ **It did not change the verdict it was found in, and that can be shown rather than asserted.**
+The decisive contrast fails under every plausible envelope: held-out A2 − A3 = 0.0450 sits at
+**0.22x** the measured envelope, **0.48x** `deep_starmap`'s, and **0.37x** the theoretical
+E[range]; kept A2 − A3 = 0.0327 at 0.51x and 0.54x. Inside, every time. The `cosmx` criteria named
+the envelope construction before any fit, so the replication is read under them: Part 1 PARTIAL,
+Part 2 DOES NOT REPLICATE. Applying a rule discovered *by* a run *to* that run is the
 fifth-instance failure §4.2's meta-finding already describes, arriving from the other direction —
 a threshold moved after seeing where the data fell, in the direction that helps. The fix belongs
 in the next pre-registration, not in this one's reading.

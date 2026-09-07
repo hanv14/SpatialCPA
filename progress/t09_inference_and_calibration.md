@@ -6611,3 +6611,89 @@ or its objective that closes R4, followed by a re-run of the six-metric comparis
 short of that produces another number in the negative column. The zero-shot claim is now as strong
 as three seeds on two datasets can make it, and the mechanism question underneath it needs a
 design change rather than more seeds.
+
+## The zero-total guess — **RULED OUT**, and it points the other way (2026-09-07)
+
+Measured on both datasets with `scripts/t09_zeroshot_pool_sparsity.py`, against thresholds fixed
+before the instrument was written.
+
+| | `cosmx_nsclc_3d` | `deep_starmap` |
+|---|---|---|
+| held-out zero-total cells | **329 / 225 981 = 0.00146** | **417 / 115 830 = 0.00360** |
+| kept zero-total cells | **0** | **0** |
+| per-gene detection rate (median) | **0.0933** | **0.0164** |
+| median pool total, held out | 37–56 counts | 12–23 counts |
+
+**RULES IT OUT fires on the first clause: 0.00146 < 0.05.** Not marginally — the fraction is
+**34x below** the threshold, and the pool-restricted normalisation drops **0.15 %** of cells on
+`cosmx`'s held-out side and **none at all** on either kept pool. `n_eff` is `n_cells` to three
+decimal places everywhere. The mechanism I proposed does not exist at a scale that could affect
+anything.
+
+**And the direction is backwards, which is worth more than the threshold.** `cosmx` is **2.5x
+LESS** sparse than `deep_starmap` by zero-total fraction and **5.7x DENSER** per gene by detection
+rate — 9.3 % of cells detect the median gene against 1.6 %. The dataset where the held-out effect
+was **5.6x smaller** is the one with substantially **more** data per cell. If field sparsity
+mattered at all it predicts the opposite of what was observed, so this is not a weakened
+explanation, it is an eliminated one — and the second candidate mechanism, per-gene sparsity, is
+eliminated the same way and harder: `deep_starmap`'s least-detected held-out gene appears in
+**0.04 %** of cells, and that is the dataset with the *larger* effect.
+
+⚠️ **A hole in my own threshold set, recorded because it nearly mattered.** The RULES OUT clause
+"within 1.5x of `deep_starmap`'s" is a **two-sided band**, `[0.67, 1.50]`. The measured ratio is
+**0.404** — outside it, on the low side — so that clause returned *false* on a result that refutes
+the guess more strongly than a ratio of 1.0 would. Had the fraction landed above 0.05 (say `cosmx`
+0.30 against `deep` 0.90), **no branch would have fired**: not SUPPORTS (ratio 0.33 < 3), not RULES
+OUT, and the run would have been called INCONCLUSIVE when it should have been ruled out. Clause 1
+saved it here. The defect is that I wrote a symmetric band for an asymmetric hypothesis: the guess
+predicts `cosmx` **sparser**, so the refuting region is everything below, not a neighbourhood of
+parity. Next pre-registration of this shape states the one-sided form.
+
+### Two things this bought that the guess did not
+
+**1. A4's swing is not anomalous — it is exactly the sampling distribution of a null correlation,
+and that makes §4.2g worse.** Under the null, a Pearson correlation over `n` genes has
+`sd ≈ 1/sqrt(n-1)`, and the **range of three draws** has expectation `1.693 sd` and its own
+`sd = 0.888 sd`:
+
+| quantity | n | sd(r) | E[range of 3] | observed | z |
+|---|---|---|---|---|---|
+| `cosmx` held-out **A4** | 191 | 0.0725 | 0.1228 | **0.2015** | +1.22 |
+| `deep_starmap` held-out shared envelope | 204 | 0.0702 | 0.1188 | **0.0930** | −0.41 |
+| `cosmx` kept **`shuffled`** | 769 | 0.0361 | 0.0611 | **0.0646** | +0.11 |
+
+All three are unremarkable draws from the same null. So the two datasets' envelopes — 0.2015 and
+0.0930, a 2.2x difference that reads like a fact about the datasets — are **noise in the noise
+estimate**, and the kept-pool envelope lands within 6 % of its theoretical expectation.
+
+**§4.2g is therefore stronger than recorded.** It is not only that a degenerate member sets the
+envelope; it is that a degenerate member's spread is a draw from a wide distribution that **three
+seeds cannot estimate**. The threshold every criterion is read against is itself a random variable
+with a coefficient of variation over 50 %. That belongs in the spec beside the rule.
+
+**2. The verdicts are robust to it, and that can now be shown rather than hoped.** The decisive
+criterion fails under every plausible envelope, not just the one measured:
+
+| | vs measured | vs the other dataset's | vs the theoretical E[range] |
+|---|---|---|---|
+| held-out A2 − A3 = 0.0450 | 0.22x (0.2015) | 0.48x (0.0930) | 0.37x (0.1228) |
+| kept A2 − A3 = 0.0327 | 0.51x (0.0646) | — | 0.54x (0.0611) |
+
+Inside, every time. **Part 1 stays PARTIAL and Part 2 stays DOES NOT REPLICATE** whichever
+envelope is used, so §4.2g's defect did not decide either verdict — it only made the margin look
+larger than it is. That is the good case: a rule found to be wrong which turns out not to have
+changed the answer it produced.
+
+### What is left unexplained, stated plainly
+
+**Nothing in this measurement accounts for the 5.6x shrinkage, and two candidates are dead.** What
+remains is what the instrument cannot see: tissue organisation (mouse cortex is laminar, NSCLC
+tumour is not), panel composition, and the text channel's content.
+
+⚠️ **A nuance about my corrected reading, and I want it stated carefully rather than used.** The
+pre-registered reading of DOES NOT REPLICATE was *"a property of `deep_starmap` — mouse cortex,
+laminar"*. I corrected it because the **signs** replicated on 12 of 12 cells, and that correction
+stands. But the laminar hypothesis was about *magnitude*, and on magnitude it is still live and now
+has less competition. The honest statement is: **the direction is not a `deep_starmap` property;
+the effect size may well be.** That is a different sentence from the one I withdrew, it is not
+evidence for anything yet, and it does not touch either verdict.
