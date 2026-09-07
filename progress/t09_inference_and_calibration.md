@@ -7174,3 +7174,125 @@ and toward the expression path — R12's territory, not R11's.
 It does not change a verdict, and `marker_field_r` is exactly as weak as it was: **0.247 below its
 copy floor at 7.4x the envelope**, v25's worst metric, on two clean appearances. Three sections,
 one seed, one dataset. It eliminates one candidate from a short list, for free.
+
+---
+
+# A9 — THE METRIC-AWARE WEIGHTS: PRE-REGISTRATION (2026-09-07, before any fit)
+
+Written before `scripts/t09_ship_starmap.py` gains its switches and before a single fit runs. This
+is the last spend that resolves anything.
+
+## Why this and not something else
+
+`w_autocorr = w_profile = w_distribution = **0.5**` **ship ON**, and nothing establishes them. At
+1200 steps they lose (rank 3.5 against 3.0, a cost on every metric); at **2400** — the budget T09
+selected — they win the selection on aggregate rank, 1.0 against 2.0, on four of six metrics. The
+per-metric margins there are **0.0052 / 0.0101 / 0.0018** against R10's **0.0335** envelope: inside
+it by factors of 3 to 19, on **one seed**.
+
+That makes this the only component in the project that **ships on** while established by nothing,
+and it sits **inside the baseline every other number was measured against**. It is not a claim the
+paper makes; it is a claim the paper's setup makes silently.
+
+## The design
+
+**Arms.** `(2400, on)` = the shipped `0.5 / 0.5 / 0.5`, against `(2400, off)` = `0 / 0 / 0`. One
+gate, two levels, nothing else moved. **Three seeds**, two fits each: **six fits.**
+
+**Dataset and instrument.** Tier-1 STARmap, holdout `paper_2_4_6`, the pinned
+`bench3.evaluate_paper`, ground-truth-matched density, `layout_mode=resample` (shipped).
+
+**Envelope.** The shared envelope of `specs/10` §4.2b, computed **on this run** — the largest
+across-seed spread among the arms on that metric — never R10's inherited 0.0335. §4.2i applies: the
+null's sampling distribution is not analytically available for these metrics, so the envelope is
+reported as the estimate it is, with the measured spread of **both** arms shown beside it.
+
+**Both §4.2d constructions.** Fold-mean and per-fold, on every metric. If they disagree on any
+metric, that metric is **not established** and is reported as such.
+
+## The claim under test
+
+> The metric-aware losses improve the metrics they are made of.
+
+Three of the six metrics are the ones the losses are *built from* — `morans_pearson`,
+`gearys_pearson` (autocorrelation), `marker_depth_r` (profile). Those are the **primary** three.
+`umap_mixing` and `marker_field_r` are secondary: the distribution term is not built from them
+directly. `celltype_localization` is **inert** under `resample` and is excluded, not scored as a
+tie.
+
+## POSITIVE — the losses do what they are named for. All of:
+
+1. `(on) − (off) > 0` on **at least two of the three primary metrics**, with signs agreeing at
+   **every seed and every fold**;
+2. each of those margins **exceeds the shared envelope** under **both** §4.2d constructions;
+3. no primary metric shows a **negative** margin that clears the envelope — an improvement on two
+   bought by a real regression on the third is not "improves the metrics they are made of".
+
+**Reading.** The weights ship at 0.5 on evidence, the selection is retrospectively justified, and
+the shipped baseline is no longer carrying an unestablished component.
+
+## NULL — and this is stated as explicitly as the positive, because it is the likelier outcome
+
+**NULL fires when every primary margin sits inside the shared envelope under either construction**,
+whatever the signs.
+
+**The reading is not "the losses are harmless".** It is:
+
+* **The selection that put them at 0.5 was a coin-flip on a rank**, made on margins the design
+  cannot resolve, and the paper must say the shipped configuration includes three terms whose
+  contribution is **zero to within measurement**.
+* **Every absolute number in this project was produced with three inert terms active.** That
+  changes no *contrast* — R11, A7 and the zero-shot arms all carry the same weights on both sides —
+  but it means "the best configuration found" is a statement about a rank, not about the model.
+* **The right disposition is to say so, not to turn them off.** Turning them off after the fact
+  would re-open every fitted number in the project for a change that is by hypothesis within noise,
+  and would be a threshold moved after seeing where the data fell. They ship as they are, with the
+  null attached.
+* **It is publishable.** "A three-term auxiliary objective, selected by aggregate rank, contributes
+  nothing measurable at three seeds" is a real result about metric-aware training, and it is the
+  same shape as A7's — a mechanism that was supposed to help and does not.
+
+## NEGATIVE — the losses cost
+
+At least one primary metric shows `(on) − (off) < 0` clearing the shared envelope under both
+constructions, with signs agreeing at every seed and fold, and **no** primary metric clears it
+positive. **Reading:** the same shape as A7 and a stronger version of it — the weights should be
+set to 0, and every number in the project was measured on a configuration that was actively worse
+than an available alternative. This outcome **would** require re-opening the absolute numbers, and
+that cost is named here so it cannot be a surprise.
+
+## MIXED — one primary clears positive and another clears negative
+
+Reported as-is, with both, and the claim is **refuted as stated**: "improves the metrics they are
+made of" is a claim about the set, and a set that moves in both directions does not satisfy it.
+
+## UNINFORMATIVE — decided by these conditions and no others
+
+* **(a)** the shared envelope on any primary metric **exceeds 0.0335**, R10's recorded figure by a
+  factor of two or more. The design would then be noisier than the instrument that produced the
+  number being tested, and neither outcome could be read. *Checkable only after the fits.*
+* **(b)** the two §4.2d constructions disagree on **all three** primary metrics — a verdict that is
+  entirely a property of the aggregation choice.
+* **(c)** the `(2400, off)` arm's scores differ from the recorded `(2x, weights off)` row
+  (`morans_pearson` **0.9316**, `gearys_pearson` **0.9022**, `umap_mixing` **0.9145**) by more than
+  one envelope at seed 1. The fits would then not be reproducing the selection they are testing.
+* **(d)** any fit fires `check_collapse` or `check_spatial_collapse`. A7's lesson: an alarm that
+  fires and is not read invalidates every metric in the report, and the run report now prints it.
+
+## What no outcome licenses
+
+**None of the four changes any verdict in the close-out.** R11, A7 and the zero-shot results are
+within-configuration contrasts with the same weights on both sides; their *differences* are
+untouched whatever this returns. The exposure is to the **absolute** numbers and to the sentence
+"the shipped model is the best configuration found" — nothing else.
+
+**Three seeds is the minimum, not a comfortable margin.** `claim_min_seeds = 3`, and §4.2i's warning
+stands: a three-seed envelope is an estimate. Two seeds agreeing would not have been reportable;
+three is the floor at which it becomes so.
+
+## Order of operations
+
+1. **One fit, timed** — seed 1, `(2400, off)` — before the other five. It writes the timing record
+   and prints the six-fit projection; every later fit **refuses to start** without it.
+2. Report the projection and **stop**, for the same reason the last two campaigns did.
+3. Five more fits, then score, aggregate under both constructions, and read the verdict.

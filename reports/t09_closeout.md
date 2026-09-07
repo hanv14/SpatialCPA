@@ -265,8 +265,16 @@ negative column and were measured at the selected budget. Writing the caveat bro
    head**, not at `align.py`. That is a specific place to look, which is what distinguishes an open
    item from a complaint.
 
-   ✅ **The boundary stratification is DONE (2026-09-07), and it eliminates a candidate.** It cost
-   zero fits and zero generation — both sides were already on disk. On `resample-grid`, the
+   ✅ **DONE 2026-09-07 — and the redirect is the useful half.** The boundary candidate is
+   eliminated, but what the elimination *points at* is worth more than the elimination:
+   **`resample` does not use the intensity head to place cells at all, and still carries a 0.19
+   deficit.** The weakness survives removing the layout head from the picture entirely, so it is
+   not T05's — it is in the **expression path**, R12's territory. §8.6 predicted the intensity head
+   via the boundary regime; that route is closed and the prediction is **weakened, not confirmed**.
+   The remaining search is arrangement in the emission, at every depth.
+
+   **The measurement.** Zero fits and zero generation — both sides were already on disk. On
+   `resample-grid`, the
    **shipped** layout mode and the only arm whose sections are density-comparable (spread
    **1.04x**), the deficit below each section's own copy floor is **0.1729 / 0.1877 / 0.2043** and
    the boundary-vs-interior gap is **0.69x** the envelope: **BOUNDARY ELIMINATED**. The weakness is
@@ -278,11 +286,8 @@ negative column and were measured at the selected budget. Writing the caveat bro
    `section_6`, so the boundary section is scored on a 64x-thinned, better-conditioned draw. The
    "inversion" is the count error read through the metric.
 
-   ⚠️ **The pointer at T05's intensity head is weakened, not confirmed** — that argument ran through
-   the boundary regime, and that route is now closed. `resample` does not use the intensity head to
-   place cells at all, and its deficit is still **0.19**: the weakness survives removing the layout
-   head from the picture entirely. That points **away** from T05 and toward the expression path,
-   R12's territory. `reports/t10_marker_field_boundary.md`.
+   `reports/t10_marker_field_boundary.md`. **Closed as far as free measurement goes**: nothing else
+   about this metric can be settled without a spend.
 
 7. **R14's donor rule.** Costs 0.116 of `marker_depth_r`, deliberately unfixed because fixing it
    makes the negatives **stronger**.

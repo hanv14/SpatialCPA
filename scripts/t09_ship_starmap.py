@@ -97,6 +97,7 @@ from _starmap_run import (
     load_training_volume,
     preflight_text_encoder,
 )
+from t09_zeroshot_run import timing_gate, write_timing
 
 TARGETS = (("section_2", 30.0), ("section_4", 52.0), ("section_6", 74.0))
 
@@ -491,12 +492,43 @@ def main(argv: list[str] | None = None) -> int:
         "with small slabs that can be most of training",
     )
     ap.add_argument(
+        "--w-metric-aware",
+        type=float,
+        default=None,
+        help="override w_autocorr, w_profile and w_distribution together — ablation A9. Unlike "
+        "A7 this is a REMOVAL experiment: the three ship at 0.5, so the arms are "
+        "--w-metric-aware 0.5 (shipped) and 0. They are the only component in the project that "
+        "ships ON while established by nothing: they LOSE at 1200 steps and win the 2400 "
+        "selection on aggregate rank alone, with per-metric margins of 0.0052/0.0101/0.0018 "
+        "inside R10's 0.0335 envelope, on one seed. Pre-registration and the four outcomes are "
+        "in progress/t09_inference_and_calibration.md (2026-09-07); a NULL is as reportable as "
+        "a positive and is the likelier result",
+    )
+    ap.add_argument(
         "--w-prog",
         type=float,
         default=None,
         help="override Config.w_prog; the other half of A7. w_cross stays at 0 in both arms — "
         "it is redundant by construction in v25 and harmful when trained (open risk R6), so "
         "A7 tests TWO losses, not three, and the write-up has to say so",
+    )
+    ap.add_argument(
+        "--timing-root",
+        default=None,
+        help="directory holding the campaign's timing record (default: --workdir's parent). "
+        "The first fit writes it; every later fit refuses to start without it",
+    )
+    ap.add_argument(
+        "--first-fit",
+        default="1:0",
+        help="the 'seed:w_metric_aware' designated as fit 1 — the one fit the timing gate lets "
+        "run unconditionally, and the one that records the duration the other five are gated on",
+    )
+    ap.add_argument(
+        "--no-timing-gate",
+        action="store_true",
+        help="skip the gate. Deliberate only: it prints a refusal to the log naming what was "
+        "never measured, so a skipped gate is visible in the artifact rather than silent",
     )
     ap.add_argument("--text-cache", default=None)
     ap.add_argument("--gene-meta", default=None)
@@ -539,6 +571,14 @@ def main(argv: list[str] | None = None) -> int:
         overrides["w_thick"] = float(args.w_thick)
     if args.w_prog is not None:
         overrides["w_prog"] = float(args.w_prog)
+    if args.w_metric_aware is not None:
+        weight = float(args.w_metric_aware)
+        # All three together: `specs/09` §3 makes them ONE gate, because a coordinate-descent
+        # selector that moves them separately cannot reach the cell that wins (T08's interaction).
+        # Splitting them here would test a configuration the selection never considered.
+        overrides["w_autocorr"] = weight
+        overrides["w_profile"] = weight
+        overrides["w_distribution"] = weight
     cfg, provenance = load_selected(
         Path(args.selected) if args.selected else None, args.seed, overrides
     )
@@ -549,6 +589,22 @@ def main(argv: list[str] | None = None) -> int:
         f"text_emb_mode={cfg.text_emb_mode} train_steps={cfg.train_steps} "
         f"weights={cfg.w_autocorr:g}/{cfg.w_profile:g}/{cfg.w_distribution:g}"
     )
+    if not args.no_timing_gate and args.model is None and not args.reuse_model:
+        timing_root = Path(args.timing_root) if args.timing_root else Path(args.workdir).parent
+        first_seed, _, first_weight = str(args.first_fit).partition(":")
+        timing_gate(
+            timing_root,
+            int(args.seed),
+            f"{cfg.w_autocorr:g}",
+            first=(int(first_seed), first_weight),
+        )
+    elif args.no_timing_gate:
+        print(
+            "  ⚠️ TIMING GATE SKIPPED (--no-timing-gate). No fit on this campaign has reported a "
+            "duration, so its cost is unmeasured and the projection nobody has seen cannot be "
+            "checked against it."
+        )
+
     sefl_on = cfg.w_thick > 0.0 or cfg.w_prog > 0.0 or cfg.w_cross > 0.0
     print(
         f"  SEFL: w_cross={cfg.w_cross:g} w_thick={cfg.w_thick:g} w_prog={cfg.w_prog:g}"
@@ -617,6 +673,16 @@ def main(argv: list[str] | None = None) -> int:
             )
         fit_seconds = time.time() - t0
         print(f"  fit: {cfg.train_steps} steps in {fit_seconds:.0f}s ({fit_seconds / 3600:.2f} h)")
+        if not args.no_timing_gate:
+            timing_root = Path(args.timing_root) if args.timing_root else Path(args.workdir).parent
+            first_seed, _, first_weight = str(args.first_fit).partition(":")
+            if (int(args.seed), f"{cfg.w_autocorr:g}") == (int(first_seed), first_weight):
+                write_timing(timing_root, fit_seconds, int(args.seed), f"{cfg.w_autocorr:g}")
+                print(
+                    f"  This was fit 1. Six fits project to {6 * fit_seconds / 3600.0:.1f} "
+                    "core-hours; the other five are now unblocked. Report this number before "
+                    "starting them."
+                )
         alarms = _alarm_record(history)
         print(f"  alarms: {json.dumps(alarms)}")
         n_fired = len(alarms["collapse_alarms"]) + len(alarms["spatial_collapse_alarms"])
