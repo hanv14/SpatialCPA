@@ -485,6 +485,44 @@ largest difference exactly 0**. The original 0.0120 was that defect, not run-to-
 the envelope it helped justify was inflated by a bug. The sentences above are kept because the
 *rule* they motivate survives; the number does not.
 
+### 4.2g Not every arm's spread is an envelope — the mirror of §4.2b, found by a replication
+
+§4.2b's rule is that a clearance takes **the largest across-seed envelope among everything the
+comparison contains**, so that no arm's verdict can be bought by varying less than the others. It
+was written against one failure mode — the *steady* arm being credited with a capability — and
+the `cosmx` replication found the other one.
+
+On that run the shared envelope was set, on **both** gene pools, by a quantity that carries no
+information:
+
+| pool | shared envelope | set by | the four arms' own spreads |
+|---|---|---|---|
+| held-out | **0.2015** | **A4**, the void arm | A1 0.0318, A2 0.0111, A3 0.0234 |
+| kept | **0.0646** | **`shuffled`**, the floor | 0.0108 – 0.0134 |
+
+A4 gives every held-out gene the *same* embedding, so its `morans_pearson` is a correlation across
+genes whose generated fields are draws from one distribution — noise about zero. Its **level** is
+what certifies the void condition; its **spread** is not a noise scale for anything. Both are the
+same fact said twice. The consequence: an effect present on **12 of 12** seed x fold cells, with
+consistent sign and fold balances never below 0.39, could not clear a threshold **6–18x** larger
+than any informative arm's variance.
+
+**The rule this adds.** An envelope is a *measurement* of run-to-run variation, so it may only be
+taken over quantities that are measurements. An arm that is degenerate **by construction** —
+present to certify a void, or to be a floor — contributes its level to the comparison and must not
+contribute its spread. State which members set the envelope, in advance and in the report; a
+threshold whose owner is never named is one nobody checks.
+
+⚠️ **It did not change the verdict it was found in, and that is the point.** The `cosmx` criteria
+named the envelope construction before any fit, so the replication is read under them: Part 1
+PARTIAL, Part 2 DOES NOT REPLICATE. Applying a rule discovered *by* a run *to* that run is the
+fifth-instance failure §4.2's meta-finding already describes, arriving from the other direction —
+a threshold moved after seeing where the data fell, in the direction that helps. The fix belongs
+in the next pre-registration, not in this one's reading.
+
+This is §4.2c one level up: *not every referent is a floor* becomes *not every arm's spread is an
+envelope*.
+
 ### 4.2f ⚠️ An alarm that fires where nobody looks
 
 State this beside §4.2e, because it is the same run and the same lesson from the other side.
@@ -543,8 +581,9 @@ Three consequences the methods should state:
 
 ### 4.2* ⚠️ THE FINDING: four verdicts turned on conventions nobody had written down
 
-**State this in the paper's methods, as one finding.** §4.2a–d below are not four housekeeping
-rules; they are four instances of one thing, and the pattern is more transferable than any of them.
+**State this in the paper's methods, as one finding.** §4.2a–d and §4.2g below are not five
+housekeeping rules; they are five instances of one thing, and the pattern is more transferable
+than any of them.
 
 Every claim-bearing comparison in this literature is of the form *"the margin exceeds the noise"*.
 That sentence hides four independent choices, and **in this project each one silently decided a
@@ -556,6 +595,7 @@ verdict before anyone noticed it was a choice**:
 | **which comparison's** envelope a clearance takes | 4.2b | two arms 0.004 apart landed on opposite sides of the line, because one varied less; the steadier arm was being credited with a capability |
 | **which referent** is a floor at all | 4.2c | the pre-registered "constant-field band" had bitwise-identical input — no variation for any metric to find — and three instruments were needed to establish it, two of them thresholds that failed |
 | **how the spread is aggregated** | 4.2d | an arm effect read 1.12x under fold-averaged noise and 0.75x under per-fold noise; it was reported as standing and is withdrawn |
+| **which arms may contribute a spread at all** | 4.2g | on the `cosmx` replication the envelope was set, on both gene pools, by a **degenerate** member — the void arm and the floor — at 6-18x every informative arm's variance, so an effect consistent on 12 of 12 cells could not clear it |
 
 **A fifth, and it is a different failure.** The four above are all *thresholds placed too close to
 the data* — the cut decided the verdict because nobody had checked where the data would fall. The
@@ -1424,11 +1464,30 @@ works. On the kept genes the same contrast is −0.0008 (0.1x, signs disagree) �
 there either. Against the measured floor this is decisive rather than cosmetic: **A2 clears at
 2.52x and A1 at 0.87x**, so the head takes the arm from clearing to not clearing.
 
-The reading, now that the ceiling is in: **the pure-text path `W t` is the contribution and the
-machinery around it is not.** That is a smaller claim than the architecture was designed to make
-and a better-supported one, and it points at a specific change — either drop the residual path for
-unseen entities or gate it on something that knows when it is unreliable, rather than adding it
-unconditionally.
+🚨 **WITHDRAWN 2026-09-07 — the replication does not carry it.** The sentence this paragraph
+stated was: *"the pure-text path `W t` is the contribution and the machinery around it is not."*
+It is a claim about **A2 against A3**, and A2 against A3 was pre-registered as the replication's
+primary contrast and came back **undetectable** on `cosmx_nsclc_3d`: +0.0450 against a shared
+envelope of 0.2015, **0.22x**, where `deep_starmap` had +0.2514 at 2.7x. The direction is the
+same on every seed and every fold; the magnitude is **5.6x smaller** and inside the noise. One
+dataset cannot carry a mechanism claim the second cannot detect, so the sentence comes out of the
+paper rather than being qualified in place.
+
+**What survives, and it is not nothing.** A2 − A4 replicated: **+0.3949 at 1.96x** the shared
+envelope, 3/3 seeds and 6/6 folds, and A2 cleared the `shuffled` floor at **2.08x** against
+`deep_starmap`'s 2.52x. So *text reaches a gene the model never saw* has two independent positives
+on two datasets. What has one is *which path in the text channel does it*. The specific change the
+withdrawn sentence pointed at — drop or gate the residual path for unseen entities — is
+correspondingly **not** supported: it rested on A1 − A2 and A2 − A3, and on `cosmx` A1 − A2 is
+−0.0052 at 0.2x with signs disagreeing. The architecture question is open, not answered in the
+negative.
+
+⚠️ **And the asymmetry cuts the right way here.** `cosmx`'s text channel is *richer* than
+`deep_starmap`'s — 709 vs 546 median descriptor characters, **0 % vs 83 %** orthologue summaries —
+so a failure to detect the mechanism there is the **stronger** negative, not a weaker one. This is
+the outcome the pre-registration named as more informative, and it arrived.
+
+`progress/t09_inference_and_calibration.md`, "REPLICATION — THE VERDICTS".
 
 **The split is not the explanation.** Descriptor coverage on the two sides is the same: 192/204
 held-out genes carry a summary (94.1%) against 774/813 kept (95.2%), a gap of −1.1 points, with

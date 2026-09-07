@@ -6290,3 +6290,324 @@ Same shape as the fitter's, deliberately:
 **The general lesson, since this is the second instance:** a script that shares a builder with
 the fitter inherits every config field that builder reads. "It only scores" describes the
 intent, not the code path.
+
+## The zero-total guess — PRE-REGISTERED, before the instrument is written (2026-09-07)
+
+**Status: a guess.** It is written here before `scripts/t09_zeroshot_pool_sparsity.py` exists, and
+before any number, because a candidate explanation proposed after seeing its own measurement is
+not a candidate explanation.
+
+### What it claims
+
+`select._normalised` library-size normalises **within the scored gene pool**: the size factor is
+the sum over the pool's columns, not the panel's. A cell whose counts across the 191 held-out
+genes sum to zero therefore gets an all-zero normalised row — `eps`-guarded, so no error, just a
+row carrying nothing. Every held-out-gene metric is then computed over fewer *effective* cells
+than the fold contains, and neither the metric nor the seed files say so.
+
+If that fraction is large on `cosmx` and small on `deep_starmap`, it is a candidate for **both**
+open oddities in the replication at once:
+
+* the held-out A2−A3 effect shrinking **5.6×** (+0.2514 → +0.0450) — a sparser field gives noisier
+  per-gene Moran's I, which attenuates any correlation across genes;
+* **A4's 0.2015 across-seed swing**, six to eighteen times every informative arm's, which is the
+  spread that set the shared envelope and decided both verdicts. A4's held-out genes all share one
+  embedding, so its `morans_pearson` is already a correlation over near-identical fields; on a
+  sparse pool it is that correlation computed on a handful of cells.
+
+### The thresholds, fixed now
+
+The quantity to explain is a **difference between two datasets**, so the decisive comparison is
+`cosmx` held-out against `deep_starmap` held-out. The kept pool is the within-dataset control.
+
+**SUPPORTS the guess** — `cosmx`'s held-out zero-total fraction is **≥ 0.20** *and* at least **3×**
+`deep_starmap`'s held-out fraction.
+
+**RULES IT OUT** — `cosmx`'s held-out fraction is **< 0.05**, *or* within **1.5×** of
+`deep_starmap`'s. Either way the pool sparsity is not what differs between the two runs, and this
+explanation is dead rather than weakened.
+
+**INCONCLUSIVE** — anything between. A real difference that is too small to carry a 5.6× effect
+shrinkage on its own, and it would then be reported as one contributing factor among unknown
+others rather than as the cause.
+
+### Reported beside it, as corroboration only and with no threshold
+
+* the **per-gene detection rate** on each pool (fraction of cells where the gene is non-zero,
+  median across the pool). A pool of near-undetected genes produces the same attenuation through a
+  different door, and the two are worth telling apart.
+* the **effective cell count** `n_eff` = cells with a non-zero pool total. If the guess is right,
+  A4's across-seed swing should scale roughly as `1/sqrt(n_eff)` between the two datasets — but
+  that is one comparison on two points and cannot test anything. It is written down so it is not
+  later presented as a prediction that was confirmed.
+
+⚠️ **Whatever this returns, no verdict moves.** Part 1 is PARTIAL and Part 2 DOES NOT REPLICATE
+under criteria fixed before the fits, and an explanation for *why* an effect was undetectable is
+not a licence to re-read it as detected. If the guess is supported, what it buys is a stated
+reason to expect the replication to have been underpowered on this dataset — which belongs in the
+paper's limitations, not in its results.
+
+---
+
+# REPLICATION — THE VERDICTS (2026-09-07)
+
+Three seeds (2, 3, 4) x two fits x four arms x two folds x two gene pools on `cosmx_nsclc_3d`,
+holdout `paper_2_4`, folds `section_3` / `section_5`, 191 held out of 960. Every gate the
+pre-registration names is measured. Both verdicts are read against criteria fixed before any fit.
+
+## Every gate, closed
+
+| gate | threshold | measured | |
+|---|---|---|---|
+| **(a)** ceiling − floor | >= 0.50 | room **0.9563** | pass (staged gate) |
+| **(b)** held-out / kept ceiling | >= 0.80 | **~1.00** | pass (staged gate) |
+| **(c)** held-out shared envelope | <= 0.2514 | **0.2015** (a) / **0.2327** (b) | does not fire — **by 7.4 % under (b)** |
+| **(d)** `self` = 1.0 | exact | 1.0, four rows | pass |
+| **(d)** layouts identical across arms | exact | scorer's own assert | pass |
+| **(d)** retrieval PCA zero on held-out | exact | `build_and_fit`'s assert | pass |
+| **(d)** constant field bitwise row-identical | required | **true**, deviation exactly **0.0**, all four (fold, pool) cells | pass |
+| **(e)** kept shared envelope | <= 0.1322 | **0.0646** (a) / **0.1103** (b) | does not fire |
+| **§4.2d** | both constructions agree | every check, both pools | nothing withheld |
+
+Envelope (a) is the fold-mean construction, (b) per-fold. (b) is 1.15x (a) on the held-out pool
+and 1.71x on the kept one, and **no check changes side between them**, so neither verdict is a
+property of the aggregation choice. That is the first time this project has been able to say so:
+nothing computed (b) until `scripts/t09_zeroshot_envelopes.py` existed.
+
+⚠️ **(c) is the thin one.** Under the fold-mean construction the design cleared its own
+cannot-detect-it condition by 20 %; under the per-fold construction by **7.4 %**. The replication
+is inside its stated power by a margin I would not defend as comfortable, and the write-up says so
+rather than reporting "(c) did not fire" as though it were clear.
+
+## Part 1 — **PARTIAL**
+
+`morans_pearson`, held-out genes, primary contrast **A2 − A3**, against the shared envelope
+**0.2015**.
+
+| criterion | measured | |
+|---|---|---|
+| 1. A2 − A3 > 0, signs at every seed **and** fold, balance >= 0.25 | +0.0573 / +0.0546 / +0.0231; **3/3 seeds, 6/6 folds**; balances 0.61 / 0.81 / 0.39 | ✓ |
+| 2. \|A2 − A3\| exceeds the envelope | 0.0450 = **0.22x** (a), 0.19x (b) | ✗ |
+| 3. A2 clears the `shuffled` floor by more than the envelope | +0.4189 over −0.0071 = **2.08x** (a), 1.80x (b) | ✓ |
+| 4. void condition: A4 within one envelope of the floor | +0.0240 = **0.12x** | ✓ |
+
+A2 − A4 meets 1–4 with A4 in A3's place: **+0.3949 = 1.96x** (a), 1.70x (b), 3/3 seeds, 6/6 folds,
+balances 0.76 / 0.84 / 0.65. That is the pre-registered **PARTIAL** branch exactly:
+
+> *text works, the route does not replicate. Something in the text channel reaches an unseen gene,
+> but `W t` is not distinguishable from `gamma psi(t)` as the thing that does it.*
+
+**`specs/10` §7's mechanism sentence is withdrawn** — "the pure-text path is the contribution and
+the machinery around it is not" is a statement about A2 against A3, and A2 against A3 is
+undetectable here. **The A2 − A4 claim is kept**: text does reach a gene the model never saw.
+
+**The headline transfers; the mechanism does not.** `deep_starmap`'s A2 cleared its floor at
+**2.52x**; here at **2.08x**. That is the 2.52x observation replicating on a second dataset, and
+it is the one thing in the zero-shot experiment that now has two independent positives. Against
+it, A2 − A3 went **+0.2514 → +0.0450, 5.6x smaller**, and the kept half **−0.1322 → −0.0327,
+4.0x smaller**.
+
+## Part 2 — **DOES NOT REPLICATE**, and the verdict's stated reading is wrong
+
+| pool | A2 − A3 | signs | balances | vs its own envelope |
+|---|---|---|---|---|
+| held-out | **+0.0450** | 3/3 seeds, 6/6 folds | 0.61 / 0.81 / 0.39 | 0.22x (a), 0.19x (b) |
+| kept | **−0.0327** | 3/3 seeds, 6/6 folds | 0.77 / 0.56 / 0.54 | 0.51x (a), 0.30x (b) |
+
+Criterion 3 — *both magnitudes exceed the shared envelope computed on their own gene pool* —
+fails on **both** halves, so it is not ONE-SIDED either. **DOES NOT REPLICATE**, as written.
+
+⚠️ **The reading I attached to that verdict does not describe this data, and I am correcting it
+rather than the verdict.** I pre-registered DOES NOT REPLICATE to mean *"the reversal was a
+property of `deep_starmap` — mouse cortex, laminar — and the open-vocabulary claim has no
+within-run evidence."*
+
+**The reversal happened.** Sign-negative on kept and sign-positive on held-out, on **every seed
+and every fold on both pools**, 12 of 12 cells, with fold balances never below 0.39. What failed
+is **detectability**: neither magnitude clears an envelope set by a degenerate quantity. I wrote
+the reading assuming a magnitude failure would arrive with a sign failure, and it did not. The
+correct reading of this outcome is: **the direction replicated and the effect size did not, so
+the flip is not established as a measurement even though nothing about it pointed the wrong way.**
+
+That is a weaker claim than SUPPORT and a *different* claim from "it was a `deep_starmap`
+artifact". The verdict stands; the sentence under it is replaced by this one.
+
+## §4.2g — not every arm's spread is an envelope
+
+**On both pools the threshold was set by a quantity that carries no information**, and on neither
+did any informative arm's variance enter it:
+
+| pool | shared envelope | set by | the four arms' own spreads |
+|---|---|---|---|
+| held-out | **0.2015** | **A4** (−0.0820 / +0.1195 / +0.0133) | A1 0.0318, A2 0.0111, A3 0.0234 |
+| kept | **0.0646** | **`shuffled`** (+0.0528 / −0.0118 / +0.0337) | 0.0108 – 0.0134 |
+
+A4 gives every held-out gene the **same** embedding, so its `morans_pearson` is a correlation
+across genes whose generated fields are draws from one distribution — noise about zero. Its
+*level* is exactly what certifies the void condition (0.12x from the floor, criterion 4's pass);
+its *spread* is not a measurement scale for anything. Both facts are the same fact, stated twice:
+A4 is noise centred near the floor.
+
+§4.2b's rule — *"the largest across-seed envelope among everything the comparison contains ... so
+none can be bought with a low variance"* — was written against an arm buying a verdict by being
+**steady**. This is the mirror failure it did not anticipate: a **degenerate** arm inflating the
+threshold **6–18x** above every real arm's, so that an effect present on 12 of 12 cells cannot
+clear it. It is §4.2c's lesson one level up — *not every referent is a floor* becomes *not every
+arm's spread is an envelope*.
+
+⚠️ **This is an open methods question, and it is NOT grounds to re-read either verdict.** The
+criteria were fixed before the fits and the envelope construction was named in them. Recording a
+defect in a rule I wrote is not a licence to apply a different rule to the run that exposed it —
+that is the fifth-instance failure §4.2 already describes, arriving from the other direction. It
+belongs in the paper's methods as the next instance of the series and in the next
+pre-registration as a construction to settle in advance.
+
+## Cross-metric — an observation, and only that
+
+**Not pre-registered.** The criteria are on `morans_pearson`; these five columns were computed
+from the same seed files afterwards and no threshold applies to them.
+
+| metric | held-out A2 − A3 | kept A2 − A3 | sign reverses |
+|---|---|---|---|
+| `morans_pearson` | +0.0450 | −0.0327 | **yes** |
+| `gearys_pearson` | +0.0451 | −0.0396 | **yes** |
+| `marker_field_r` | +0.0473 | −0.0092 | **yes** |
+| `marker_depth_r` | +0.0855 | +0.0104 | no — positive on both, 8x smaller on kept |
+| `umap_mixing` | −0.0052 | −0.0076 | no — negative on both; **no usable floor** (`_mixing` reads no coordinates) |
+
+**Three of five reverse**, and the two that do not fail differently: `marker_depth_r` keeps its
+sign while collapsing 8x, and `umap_mixing` is the metric §4.2c already excludes from referent
+analysis entirely. The direction of Part 2's finding is therefore broader than the one metric it
+was stated on — which makes the magnitude failure more interesting, not less, since a coincidence
+would have to be a coincidence across four metrics at once.
+
+It changes no verdict and cannot: a metric that was not named in advance cannot rescue one that
+was. It is recorded because a reader will ask whether the reversal was a single-metric fluke, and
+the answer is on this page rather than in a re-analysis someone else has to run.
+
+## What the degeneracy check actually contributed — narrower than I implied
+
+I asked for uninformative (d)'s constant-field clause as though it were open. **The staged gate
+had already measured it on `cosmx`** on 2026-09-01 — `input_rows_identical: true`,
+`input_std_max: 0.0`, all four rows — and the ceiling instrument's `input_information` calls
+**the same `train.select._normalised`** on the same pools. I did not recall that when I raised it.
+
+What `scripts/t09_zeroshot_degeneracy.py` adds is genuinely narrow, and it is worth having:
+
+* **The ceiling path was established; the scorer's was not.** They are separately constructed —
+  the ceiling broadcasts the *target section's* own mean over that section's cells, the scorer
+  broadcasts the *whole training volume's* mean over the *generated* section's. The referent the
+  arms were actually scored against had not been checked, and it is now: bitwise row-identical,
+  deviation exactly **0.0**, on 55–58 k cells, all four (fold, pool) cells.
+* **The CV comparison against real counts is new on this dataset**: constant field **8.8e-08 to
+  1.03e-07** against real counts **5.42 to 6.07** — a **5.3e7x** separation, against
+  `deep_starmap`'s 6.2e7x. Same order, so §4.2c's instrument gave the same answer on a second
+  dataset by measurement rather than by inheritance.
+
+⚠️ **And my own route to the conclusion was invalid regardless.** In the first review I wrote that
+the constant field's across-seed spread of exactly 0.0000 showed bitwise-identical input. It shows
+nothing of the kind: the constant field is a deterministic function of the training volume, so its
+score is identical across seeds whatever its rows contain. A reproducible referent and a
+degenerate one are indistinguishable in that statistic. The conclusion happened to be right and
+the reasoning could not have established it.
+
+Two readings from the same numbers, neither a finding: `cosmx`'s real-counts CV (5.4–6.1) sits
+about **3x below** `deep_starmap`'s 16.1, which is what a denser 960-plex panel should look like;
+and real counts hit a maximum row deviation of exactly **1.0** on both held-out folds, meaning
+some cell puts all of its held-out mass on one gene while another puts none there — which is what
+a 191-gene subset of a 960-plex panel should look like, and confirms the size factor is
+pool-restricted as `_normalised` intends.
+
+---
+
+# T09 CLOSE-OUT, with the replication resolved (2026-09-07)
+
+Supersedes the 2026-09-01 close-out. That one had five open items and named the replication as
+"the only live decision left". It has been run, and item 4 (A7) has been run too. This states what
+is left and where the project stands.
+
+## What changed since 2026-09-01
+
+| item | then | now |
+|---|---|---|
+| the `morans_pearson` replication | "the only live decision left" | **run and read** — Part 1 **PARTIAL**, Part 2 **DOES NOT REPLICATE** |
+| A7 — SEFL's net contribution | "a hole in the method's own identity" | **answered, negatively**: SEFL is *harmful* on real tissue, 3 seeds, and ships at zero because it should |
+| §7's mechanism sentence | the paper's one positive mechanism claim | **withdrawn** — it is A2 vs A3, and A2 vs A3 is undetectable on a second dataset |
+| "text reaches an unseen gene" | one dataset, one metric, unreplicated | **two datasets**: A2 clears the floor at 2.52x and 2.08x; A2 − A4 at 1.96x |
+| the evaluation methodology | four rules (§4.2a–d) | **five** — §4.2g, found by the replication, plus §4.2e/f from A7 |
+
+## The honest headline, updated
+
+> A continuous-field formulation reconstructs oblique planes at **95 %** of axis-aligned quality.
+> On real tissue every generative component built on it — the intensity-field layout, the
+> flow-matching expression head, the text-grounded gene embedding — **loses to copying a real
+> section**, and the sectioning-equivariant losses the method is named for make it **worse** when
+> switched on. One capability claim survives replication on a second dataset: **text places genes
+> the model never saw**, at 2.52x and 2.08x over a measured floor. Which *path* in the text channel
+> does it is **not** established — the pre-registered contrast between the pure-text projection and
+> the distillation head reproduced in direction on 12 of 12 cells and at a fifth of the effect
+> size, inside the noise. The expression failure is localised to the count draw and within it to
+> the decoder's dispersion: `theta` carries 57–63 % of the conditional variance and is
+> uncorrelated with the data's own (Spearman 0.068 over 1017 genes), so it absorbs unpredicted mean
+> variation rather than estimating noise — a property of the ZINB objective, not a tuning error.
+> The evaluation methodology developed to establish all of this — per-arm envelopes, referent- and
+> arm-validity tests, aggregation-level rules, a five-channel leak taxonomy, and pre-registration
+> with named uninformative conditions — is the transferable contribution.
+
+## Where the project stands
+
+**Unchanged in kind, stronger in evidence: a negative-results paper with a methods contribution,
+and the methods contribution is the stronger half.** What the replication changed is the *shape*
+of the positive column, and it is worth being precise because it is easy to report either too
+well or too badly.
+
+**The positive got narrower and much harder to dismiss.** Before, the paper had one unreplicated
+positive on a post-hoc metric — worth approximately nothing to a referee, correctly. Now it has a
+pre-registered replication on a second dataset in which the claim *text reaches an unseen gene*
+cleared its floor twice, and the *mechanism* claim did not. That is a smaller claim than the
+architecture was designed to make and it is the first thing in this project that has survived
+being tested twice under criteria written in advance.
+
+**The negative got a second confirmed instance.** A7 answered the identity hole: the three SEFL
+losses do not merely fail to help, they collapse the anatomical field. The method is named for a
+mechanism that is measurably harmful on real tissue, and the paper says so with three seeds.
+
+**The methods contribution grew by the two ways this campaign failed itself**, and both are more
+transferable than the results they were found in: §4.2f (an alarm that fires 218 times and reaches
+no report is worse than one that was never built) and §4.2g (an envelope taken over a degenerate
+arm sets a bar no real effect can clear). Neither is in this literature.
+
+⚠️ **The one thing I would not oversell.** The replication cleared uninformative condition (c) by
+**7.4 %** under the per-fold envelope construction. It is inside its stated power, and barely. A
+referee entitled to ask "was this design able to detect the effect you were replicating?" gets the
+answer "yes, by a margin of 7 %", and the paper should print that rather than "condition (c) did
+not fire".
+
+## What remains open
+
+1. **R4 / the ZINB trade.** Unchanged and still the largest: a measured instance, a named term
+   (`theta` absorbing mean variation), and a design change — objective or emission model — as the
+   only route. A follow-up paper, not a follow-up measurement.
+2. **R12's two questions.** The 46–119x per-gene spread in `s`, and why `theta` is uncorrelated
+   with the data's dispersion. Both owed to T06.
+3. **§4.2g's construction question.** How an envelope should be taken when some members of a
+   comparison are degenerate by design. Recorded, deliberately *not* applied to the run that
+   exposed it, and it must be settled **before** the next pre-registration rather than after the
+   next verdict.
+4. **The zero-total guess.** Pre-registered above with its thresholds fixed; the instrument exists
+   and has not been run. Model-free, one minute per dataset, and it is the only live candidate for
+   why the held-out effect shrank 5.6x and why A4 swung 0.2015. **It cannot move a verdict** — if
+   supported it is a limitation, not a re-reading.
+5. **R14's donor rule.** Unchanged: costs 0.116 of `marker_depth_r`, deliberately not fixed
+   because fixing it makes the negatives stronger.
+
+**Removed from the list:** the replication (run), A7 (run), the `decoder_mu_link` refit (not owed),
+and the moment-matched `theta` (stopped after one fit — no data-derived value exists to match to).
+
+## What would change this assessment
+
+Only one thing, and it is not a measurement this project can run: a change to the emission model
+or its objective that closes R4, followed by a re-run of the six-metric comparison. Everything
+short of that produces another number in the negative column. The zero-shot claim is now as strong
+as three seeds on two datasets can make it, and the mechanism question underneath it needs a
+design change rather than more seeds.

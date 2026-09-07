@@ -115,10 +115,14 @@ FLOOR_NOTE = {
 PRIMARY_METRIC = "marker_depth_r"
 PRIMARY_SIDE = "held_out"
 SECONDARY_METRIC = "morans_pearson"
-"""The metric the four-arm run's only positive landed on. Reported *after* the primary and
-labelled secondary, because it was not the pre-registered one — a metric promoted to primary
-because it produced a result is not a test. Its floor is `shuffled`; its constant field is
-degenerate (see VALID_FLOOR)."""
+"""Which metric and side the two clearance tables and the ``--ceiling`` flags address.
+
+⚠️ **These names are a reporting convenience, not a claim.** They were `deep_starmap`'s
+pre-registered primary and the metric its only positive landed on, and while this script also
+printed a verdict under those names it was asserting one experiment's criteria over any seed
+files it was handed — including the `cosmx` replication, whose primary is ``morans_pearson`` on
+the **A2-A3** contrast against a shared §4.2b envelope. The verdict block is gone (2026-09-07);
+what survives is arithmetic, and no metric here is "the primary" of anything."""
 FOLD_BALANCE_MIN = 0.25
 """``min|diff| / max|diff|`` across folds. Below this the gap is carried by one fold."""
 
@@ -217,11 +221,13 @@ def main(argv: list[str] | None = None) -> int:
     metrics = [m for m in METRIC_NAMES if VALID_FLOOR[m] or m != "celltype_localization"]
 
     lines: list[str] = [
-        "# The four-arm zero-shot comparison on `deep_starmap`",
+        "# The four-arm zero-shot comparison",
         "",
         f"Seeds {seeds}, folds {folds}, arms {list(ARMS)}. "
-        f"{len(rows)} scored cells. The pre-registration is in "
-        "`progress/t09_inference_and_calibration.md`; this file applies it and nothing else.",
+        f"{len(rows)} scored cells. **Arithmetic only — this file states no verdict.** Each "
+        "experiment's pre-registration and its reading live in "
+        "`progress/t09_inference_and_calibration.md`, and "
+        "`scripts/t09_zeroshot_envelopes.py` applies the replication's.",
         "",
         "| arm | `text_emb_mode` | `use_distill` | unseen gene's embedding |",
         "|---|---|---|---|",
@@ -352,169 +358,32 @@ def main(argv: list[str] | None = None) -> int:
                 )
         lines.append("")
 
-    # ---------------------------------------------------------------- the verdict
-    lines += ["## The pre-registered verdict", ""]
-    primary = report["contrasts"]["A1-A3"][PRIMARY_SIDE][PRIMARY_METRIC]
-    band_name = VALID_FLOOR[PRIMARY_METRIC][0]
-    band = report["referents"][PRIMARY_SIDE][PRIMARY_METRIC][band_name]
-    degenerate_band = report["referents"][PRIMARY_SIDE][PRIMARY_METRIC]["constant_field"]
-    clearances = {}
-    # specs/10 §4.2b: a clearance against a referent is read against the LARGEST across-seed
-    # envelope in the comparison — every arm plus the referents — and not against the arm's own.
-    # One threshold per metric per experiment, so the arm that clears is the one that scored
-    # highest rather than the one that happened to vary least.
-    shared = max(
-        [report["scores"][PRIMARY_SIDE][PRIMARY_METRIC][a]["spread"] for a in ARMS]
-        + [
-            spread([fold_mean(cells, PRIMARY_SIDE, r, s, folds, PRIMARY_METRIC) for s in seeds])
-            for r in REFERENTS
-        ]
-    )
-    for arm in ("A1", "A3", "A4"):
-        per_seed = report["scores"][PRIMARY_SIDE][PRIMARY_METRIC][arm]
-        mean = float(np.mean(per_seed["per_seed"]))
-        clearances[arm] = {
-            "mean": mean,
-            "over_band": mean - band,
-            "own_spread": per_seed["spread"],
-            "envelope": shared,
-            "ratio": abs(mean - band) / max(shared, 1e-12),
-        }
-    report["verdict"] = {
-        "primary": primary,
-        "band": band,
-        "shared_envelope": shared,
-        "clearances": clearances,
-    }
-
+    # ------------------------------------------------ where the verdicts live, and why not here
     lines += [
-        f"**Primary**: `{PRIMARY_METRIC}` on the `{PRIMARY_SIDE}` genes, A1 - A3 = "
-        f"**{primary['mean']:+.4f}**, envelope {primary['envelope']:.4f} "
-        f"({primary['ratio']:.1f}x), signs "
-        + ("agree" if primary["signs_agree"] else "**disagree**")
-        + f", fold balance {primary['fold_balance']:.2f} -> **{primary['verdict']}**.",
+        "## Where the verdict lives — deliberately not in this script",
         "",
-        f"**Against the `{band_name}` floor** ({band:+.4f}) — the pre-registration named the "
-        f"constant field, which measures {degenerate_band:+.4f} here and is **precision-"
-        "unstable on every metric**, so the justified referent is used instead and the "
-        "pre-registered one is shown beside it. The verdict is reported under both. Read "
-        "against the shared envelope "
-        f"**{shared:.4f}** — the largest across-seed spread in the comparison, arms and "
-        "referents together (`specs/10` §4.2b). Each arm's own spread is shown, and does not "
-        "set its threshold:",
+        "This script computes **arithmetic**: per-arm scores, per-arm across-seed spreads, every "
+        "pairwise contrast, and the referents, on both gene pools. It states no verdict, and it "
+        "used to.",
         "",
-        "| arm | mean | over band | own spread | shared envelope | over band / envelope |",
-        "|---|---|---|---|---|---|",
-    ]
-    for arm, c in clearances.items():
-        lines.append(
-            f"| {arm} ({ARM_LABEL[arm]}) | {c['mean']:+.4f} | {c['over_band']:+.4f} | "
-            f"{c['own_spread']:.4f} | {c['envelope']:.4f} | **{c['ratio']:.2f}x** |"
-        )
-    supported = primary["verdict"] == "STANDS" and primary["mean"] > 0
-    # "Clears the band" = above it by more than the SHARED envelope (§4.2b). The two
-    # refutation branches are not complements: the architecture branch needs *both* arms clear
-    # (text works, W.t is redundant), the idea branch needs *neither* (no route works). One arm
-    # clear and the other not satisfies neither, and the pre-registration did not name that
-    # case, so it is reported as unresolved rather than rounded into whichever branch is nearer.
-    clear = {
-        a: clearances[a]["over_band"] > 0 and clearances[a]["ratio"] > 1.0 for a in ("A1", "A3")
-    }
-    architecture_refuted = not supported and all(clear.values())
-    idea_refuted = not any(clear.values())
-    report["verdict"]["clears_band"] = clear
-    report["verdict"]["outcome"] = (
-        "SUPPORT"
-        if supported
-        else "REFUTATION_ARCHITECTURE"
-        if architecture_refuted
-        else "REFUTATION_IDEA"
-        if idea_refuted
-        else "UNRESOLVED"
-    )
-    a4 = clearances["A4"]
-    lines += [
+        "⚠️ **It carried `deep_starmap`'s pre-registration hardcoded** — primary "
+        "`marker_depth_r`, contrast A1-A3, clearances read against §4.2a per-contrast envelopes "
+        "— and printed a SUPPORT / REFUTATION / void reading under it. Run on the `cosmx` "
+        "replication, whose pre-registration names a **different** primary (`morans_pearson`, "
+        "contrast **A2-A3**, held-out) against a single **shared** §4.2b envelope, it produced a "
+        "confident verdict for the wrong experiment, under a title naming the wrong dataset. "
+        "**Two pre-registrations in one script is how a reader applies the wrong one**, which is "
+        "the same argument that kept the envelope computation in its own instrument. Removed "
+        "2026-09-07.",
         "",
-        "**SUPPORT** requires A1 > A3 with signs agreeing, the margin over the envelope and over "
-        "the fold spread, and A1 clearing the band by more than the envelope: "
-        + ("**met**" if supported else "**not met**")
-        + ".",
-        "",
-        "**REFUTATION of the architecture** (text works, `W.t` is redundant) would be A1 - A3 "
-        "inside its envelope while *both* clear the band: "
-        + ("**this is the case**" if architecture_refuted else "**not the case**")
-        + ".",
-        "",
-        "**REFUTATION of the idea** (no route from text to an unseen gene) is neither arm "
-        "clearing the band by more than the envelope: "
-        + ("**this is the case**" if idea_refuted else "**not the case**")
-        + ".",
-        "",
-        f"**Void condition** — A4 must sit inside the band. A4 is {a4['over_band']:+.4f} from it "
-        f"against the shared {a4['envelope']:.4f} envelope ({a4['ratio']:.2f}x): "
-        + (
-            # A ratio against a vanishing envelope is arithmetic, not evidence: three seeds that
-            # agree to the fourth decimal make any offset look infinitely significant. Said
-            # rather than divided through.
-            "**cannot be read** — the shared across-seed envelope is ~0, so the ratio is a "
-            "division by noise. Report the offset itself and get more seeds"
-            if shared < 1e-6
-            else "**holds**, no leak detected"
-            if a4["ratio"] <= 1.0
-            else "**FAILS — the run means nothing**"
-        )
-        + ".",
-        "",
-    ]
-    # The pre-registration named the constant field. It is degenerate, so the verdict above uses
-    # the justified floor — and is then re-derived under the pre-registered one, because a
-    # verdict that depends on which referent was chosen is a verdict about the referent.
-    alt = {
-        a: (
-            clearances[a]["mean"] - degenerate_band > 0
-            and abs(clearances[a]["mean"] - degenerate_band) / max(shared, 1e-12) > 1.0
-        )
-        for a in ("A1", "A3")
-    }
-    alt_outcome = (
-        "REFUTATION_IDEA"
-        if not any(alt.values())
-        else "REFUTATION_ARCHITECTURE"
-        if all(alt.values())
-        else "UNRESOLVED"
-    )
-    report["verdict"]["outcome_under_preregistered_band"] = alt_outcome
-    lines += [
-        f"**Under the pre-registered constant-field band** ({degenerate_band:+.4f}) the outcome "
-        f"is **{alt_outcome.replace('_', ' ').lower()}** — "
-        + (
-            "the same, so the verdict does not depend on the referent that turned out to be "
-            "degenerate."
-            if alt_outcome == report["verdict"]["outcome"]
-            else "**different**, so the verdict does depend on a degenerate referent and cannot "
-            "be reported without saying which floor produced it."
-        ),
+        "Each experiment's criteria and verdict are stated in "
+        "`progress/t09_inference_and_calibration.md`, beside the pre-registration they belong "
+        "to. For the replication, `scripts/t09_zeroshot_envelopes.py` applies them — including "
+        "§4.2d's two envelope constructions, which this script never computed.",
         "",
     ]
 
-    if report["verdict"]["outcome"] == "UNRESOLVED":
-        yes = [a for a in ("A1", "A3") if clear[a]]
-        no = [a for a in ("A1", "A3") if not clear[a]]
-        lines += [
-            "**UNRESOLVED — none of the three pre-registered outcomes applies.** "
-            f"{', '.join(yes)} clears the band and {', '.join(no)} does not, so the architecture "
-            "branch (which needs *both* clear) and the idea branch (which needs *neither*) are "
-            "both false, and support was not met. The pre-registration did not name this case "
-            "and it is recorded as unresolved rather than rounded into the nearer branch. What "
-            "it says substantively: a route from text to an unseen gene may survive through the "
-            f"arm that clears ({', '.join(yes)}), but not through the full architecture.",
-            "",
-        ]
-
-    if args.ceiling:
-        lines += _room(args.ceiling, PRIMARY_METRIC, clearances, band)
-
-    # ---------------------------------------------------------------- the secondary metric
+    # ------------------------------------------------- clearances against the usable floor
     floor_name = VALID_FLOOR[SECONDARY_METRIC][0]
     floor = report["referents"][PRIMARY_SIDE][SECONDARY_METRIC][floor_name]
     shared2 = max(
@@ -541,11 +410,13 @@ def main(argv: list[str] | None = None) -> int:
         "arms": secondary,
     }
     lines += [
-        f"## Secondary — `{SECONDARY_METRIC}` on the `{PRIMARY_SIDE}` genes",
+        f"## Clearances against the usable floor — `{SECONDARY_METRIC}`, `{PRIMARY_SIDE}` genes",
         "",
-        "⚠️ **Not the pre-registered primary.** It is reported because the four-arm run's only "
-        "positive landed here, and a metric promoted to primary *because* it produced a result "
-        "is not a test. Read it as an observation with its own arithmetic shown.",
+        "Arithmetic, not a verdict: each arm's distance above the floor, in units of the shared "
+        "envelope. Whether a clearance means anything depends on which pre-registration is being "
+        "read and whether that metric was named in it in advance — a metric promoted to primary "
+        "*because* it produced a result is not a test, and this table cannot tell you which case "
+        "you are in. See the section above.",
         "",
         f"Floor is `{floor_name}` ({floor:+.4f}) — the constant field is degenerate on this "
         f"metric. Shared envelope **{shared2:.4f}** (`specs/10` §4.2b).",
