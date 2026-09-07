@@ -7034,3 +7034,143 @@ confounding it and a deficit at ~0 degrees points at **T05's intensity head**. *
 costs zero fits**: the alignment diagnostics are already reported beside it, and stratifying the
 existing tier-1 scores by distance to the volume boundary (R3's regime, where the intensity integral
 is least stable) is a scoring pass on fits that already exist.
+
+## `marker_field_r` boundary stratification — PRE-REGISTERED, before the instrument (2026-09-07)
+
+**Status: a localisation test, not a hypothesis test.** It cannot make `marker_field_r` better or
+worse; it can only say **where** the deficit lives. Written before
+`scripts/t10_rescore_saved.py` is touched.
+
+### The correction this rests on, first
+
+The advisor framing — *"its fourth appearance as this project's standing weakness (v20 and v21's
+pooled loss vs SpatialZ, …)"* — is **wrong and is withdrawn** in `progress/numbers.md`,
+`scripts/t10_rescore_saved.py`'s docstring, and the close-out. The v20/v21 figure is a
+**cross-dataset pool, which `specs/10` §4.2a forbids by name**: per dataset the comparison is
+**9-9**, on tier-1 v20 (**0.8804**) and v21 (**0.8881**) both **beat** SpatialZ (**0.8522**), and
+in the wide regime v20 wins **7 of 7**. Only the pooled average favours SpatialZ. The honest count
+is **two clean v25 appearances** — the single loss at T09 and 0.1611 in the smoke run — **plus a
+pooled comparison our own methodology rejects.** A real pattern in v25, not a three-generation one.
+
+### What is measured
+
+Tier-1's three held-out sections split into **one boundary section and two interior**:
+`section_2` sits next to `section_1`, the stack's first, so its flanking evidence is **one-sided**
+— R3's regime. `section_4` and `section_6` are interior.
+
+The quantity is **not** v25's raw per-section score. `reports/pilot.md` §3 already established that
+the **model-free copy floor is itself worst at `section_2`** on 6 of 6 metrics
+(`marker_field_r`: **0.8470** there against 0.8857 / 0.8873), so a raw v25 deficit at `section_2`
+would be partly a property of the protocol rather than of the model. The quantity is v25's
+**deficit below its own per-section `flanking_copy` floor**:
+
+    deficit(s) = flanking_copy_marker_field_r(s) − v25_marker_field_r(s)
+
+pooled median deficit **0.247** (0.8857 − 0.6384), **7.4x** R10's 0.0335 envelope.
+
+### The three outcomes, fixed now
+
+**LOCALISED TO THE BOUNDARY** — `deficit(section_2)` exceeds the mean of
+`deficit(section_4)`, `deficit(section_6)` by **more than one envelope (0.0335)**. Reading: the
+weakness concentrates where the intensity integral is least stable and the evidence is one-sided.
+That is a **pointer at T05's intensity head**, and it makes the boundary-clamp geometry (C33's
+`z ± thickness/2` fix and R3) the first place to look. It does **not** prove causation from one
+seed and three sections.
+
+**BOUNDARY ELIMINATED** — the three deficits agree **within one envelope**. Reading: the weakness
+is uniform across the stack, so R3's boundary regime is **not** where it lives, and the intensity
+head's boundary behaviour is **removed as a candidate**. That is the more useful outcome for
+narrowing, and it points the remaining search at the interior mechanism — arrangement at every
+depth, not at the edges.
+
+**INVERTED** — `deficit(section_2)` is **lower** than the interior mean by more than an envelope.
+Reading: reported as-is and not explained. It would mean the model does relatively *better* where
+evidence is one-sided, which no candidate on the table predicts, and it would be a finding about
+the metric rather than the model.
+
+### Conditions that make it uninformative, named in advance
+
+* **(a)** any section's `flanking_copy` or v25 score is missing or NaN — three points is already
+  the minimum and two cannot support the comparison.
+* **(b)** the re-scored pooled median `marker_field_r` differs from the recorded **0.6384** by more
+  than one envelope. The saved weights, the generation seed and the evaluator would then not be the
+  ones that produced the recorded number, and the stratification would describe a different run.
+* **(c)** ground-truth-matched density is not achieved per section — the raw layout over-produces,
+  and a denser point set inflates every graph-based metric, so an unmatched comparison across
+  sections is confounded by exactly the quantity R11 found spanning 500x between these sections.
+
+### What no outcome licenses
+
+**None of the three changes any verdict in the close-out**, and none makes `marker_field_r` a
+positive. `n = 3` sections, **one seed**, one dataset: this is a pointer for the next person, and
+`claim_min_seeds = 3` applies to seeds, which this has one of. It is worth running because it is
+**free** — a re-score of saved weights, no fit — and because "eliminated" is as useful as
+"localised" when the candidate list is this short.
+
+## `marker_field_r` boundary stratification — RESULT: the boundary is eliminated, on the only readable arm (2026-09-07)
+
+Run with **zero fits and zero generation**: both sides were already on disk — `arms[*]`'s
+`matched_per_section` and `referents.flanking_copy` in `reports/r11_starmap_layout_modes.json`.
+`scripts/t10_marker_field_boundary.py` reads them and applies the pre-registered criteria.
+The pre-registration named no arm, so **all five** are reported rather than one chosen.
+
+| arm | deficit `section_2` | interior mean | gap vs 0.0335 | verdict | readable? |
+|---|---|---|---|---|---|
+| `resample-grid` | 0.1729 | 0.1960 | −0.0231, **0.69x** | **BOUNDARY ELIMINATED** | ✅ density spread **1.04x** |
+| `hybrid-grid` | 0.1678 | 0.2265 | −0.0587, 1.75x | INVERTED | ❌ spread **71x** |
+| `field-grid` | 0.2431 | 0.3612 | −0.1182, 3.53x | INVERTED | ❌ spread **71x** |
+| `hybrid-rejection` | 0.1957 | 0.2929 | −0.0972, 2.90x | INVERTED | ❌ spread **1079x** |
+| `field-rejection` | 0.2213 | 0.3064 | −0.0851, 2.54x | INVERTED | ❌ spread **1079x** |
+
+### The four INVERTED verdicts are a density artifact, and condition (c) caught it
+
+Pre-registered condition **(c)** — *"ground-truth-matched density is not achieved per section"* —
+**fires on all five arms**, because every one emits fewer cells than the truth in at least one
+section and subsampling cannot add. But the *magnitude* differs by three orders of magnitude, and
+that is what decides readability. The field-based modes emit **63.9x** the truth at `section_2` and
+**0.90x** at `section_6`: the boundary section is scored on a 64x-thinned draw — many candidates,
+well-conditioned — and the interior on the raw emission. A better-conditioned point set scores
+better, so `section_2` looks better, and the "inversion" is the sampler's count error read through
+the metric. `hybrid` shares `field`'s count draw bit-for-bit (R11), so it inherits the same artifact
+despite passing (b).
+
+**`resample-grid` is the only arm where the sections are comparable** — ratios 0.97 / 1.02 / 0.99, a
+spread of **1.04x** — and it is also the **shipped** `layout_mode`. It returns **BOUNDARY
+ELIMINATED**: the deficits are 0.1729 / 0.1877 / 0.2043, and the boundary-vs-interior gap is
+**0.69x** the envelope, comfortably inside it.
+
+### The reading
+
+**The boundary is not where `marker_field_r`'s weakness lives.** On the shipped configuration the
+deficit below the copy floor is **uniform along the stack** — if anything marginally *smaller* at
+the boundary — so R3's one-sided-evidence regime and the boundary-clamp geometry are **removed as
+candidates**. That was the pre-registered "boundary eliminated" branch, and it is the more useful
+of the three for narrowing: the remaining search is an **interior** mechanism, arrangement at every
+depth, not an edge effect.
+
+⚠️ **The pointer at T05's intensity head is weakened, not confirmed.** The close-out's §8.6 argued
+that a deficit at ~0 degrees rotation points at the intensity head *via the boundary regime*. That
+route is now closed. The intensity head is not exonerated — `resample` does not use it for
+placement at all, and the deficit is still 0.19 there, which says the weakness survives **removing
+the layout head from the picture entirely**. That is itself informative and points away from T05
+and toward the expression path — R12's territory, not R11's.
+
+### Two defects in my own instrument, both found by running it
+
+1. **Condition (b) was written for one arm and applied to five.** `RECORDED_POOLED` was `hybrid`'s
+   0.6384, compared against `field` and `resample` too, and duly "fired" on both — a category
+   error, not evidence. It is now a `(mode, sampler)` map, and a **grid** arm has no prior value on
+   its own sampler at all, so (b) is reported **NOT EVALUABLE** there, which is not the same as
+   passing.
+2. **Condition (c) was binary where it needed a magnitude.** As written it fires on all five and
+   would have thrown the readable arm away with the unreadable ones. The 2.0x spread cut that
+   separates them is **post-hoc** and is labelled as such everywhere it appears — the report prints
+   the pre-registered binary result first and the magnitude judgement beside it, never instead of
+   it. This is `specs/10` §4.2h's failure in a new place: a condition written without asking how the
+   data would fall.
+
+### What this does not do
+
+It does not change a verdict, and `marker_field_r` is exactly as weak as it was: **0.247 below its
+copy floor at 7.4x the envelope**, v25's worst metric, on two clean appearances. Three sections,
+one seed, one dataset. It eliminates one candidate from a short list, for free.

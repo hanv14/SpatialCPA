@@ -5,8 +5,11 @@ Two questions, one pass over an already-fitted model:
 * **T10 item 2** — the ``exp``-link arm's full six target metrics, at ground-truth-matched cell
   density, so ``reports/pilot.md``'s smoke table (softplus, 1200 steps, uncalibrated) can be
   replaced by a current one. ``paper_marker_field_r`` in particular: it was 0.1611 against a
-  0.8857 copy floor in the smoke run, it was v25's single loss at T09, and it is the pooled loss
-  for v20 and v21 against SpatialZ.
+  0.8857 copy floor in the smoke run and v25's single loss at T09 - **two** clean appearances.
+  ⚠️ A third was claimed and is **withdrawn**: "the pooled loss for v20 and v21 against
+  SpatialZ" is a **cross-dataset average, which** ``specs/10`` **§4.2a forbids**. Per dataset
+  the comparison is 9-9, on tier-1 v20 (0.8804) and v21 (0.8881) both *beat* SpatialZ (0.8522),
+  and v20 wins 7 of 7 in the wide regime. Only the pooled figure favours SpatialZ.
 * **R11 / item 1** — ``layout_mode`` field vs hybrid vs resample on real STARmap. ``layout_mode``
   is a **generation-time** gate (``CTFFlow.check_generation_cfg`` lets it differ from the model's),
   so all three come from the same saved weights and none needs a fit.

@@ -246,7 +246,7 @@ negative column and were measured at the selected budget. Writing the caveat bro
 
    | # | where | what |
    |---|---|---|
-   | 1–2 | v20 and v21 against SpatialZ | the **pooled** loss across datasets |
+   | 1–2 | v20 and v21 against SpatialZ | the **pooled** loss across datasets — **withdrawn as evidence**, see below |
    | 3 | v25 at T09, on the fixture | its **single** losing metric |
    | 4 | v25 at T10, tier-1 STARmap | **0.6384 against a `flanking_copy` floor of 0.8857 — 0.247 below it, 7.4x the envelope**, the worst of the six |
 
@@ -265,10 +265,24 @@ negative column and were measured at the selected budget. Writing the caveat bro
    head**, not at `align.py`. That is a specific place to look, which is what distinguishes an open
    item from a complaint.
 
-   **Cost of the first step: zero fits.** `align_rotation_deg` / `align_score` / `align_runner_up`
-   are already reported beside it, and stratifying the existing tier-1 scores by distance to the
-   volume boundary (R3's regime, where the intensity integral is least stable) is a scoring pass on
-   fits that exist.
+   ✅ **The boundary stratification is DONE (2026-09-07), and it eliminates a candidate.** It cost
+   zero fits and zero generation — both sides were already on disk. On `resample-grid`, the
+   **shipped** layout mode and the only arm whose sections are density-comparable (spread
+   **1.04x**), the deficit below each section's own copy floor is **0.1729 / 0.1877 / 0.2043** and
+   the boundary-vs-interior gap is **0.69x** the envelope: **BOUNDARY ELIMINATED**. The weakness is
+   **uniform along the stack**, so R3's one-sided-evidence regime and the boundary-clamp geometry
+   are **out**.
+
+   The other four arms return INVERTED and **must not be read**: pre-registered condition (c) fires
+   on all five, but the field-based modes emit **63.9x** the truth at `section_2` and **0.90x** at
+   `section_6`, so the boundary section is scored on a 64x-thinned, better-conditioned draw. The
+   "inversion" is the count error read through the metric.
+
+   ⚠️ **The pointer at T05's intensity head is weakened, not confirmed** — that argument ran through
+   the boundary regime, and that route is now closed. `resample` does not use the intensity head to
+   place cells at all, and its deficit is still **0.19**: the weakness survives removing the layout
+   head from the picture entirely. That points **away** from T05 and toward the expression path,
+   R12's territory. `reports/t10_marker_field_boundary.md`.
 
 7. **R14's donor rule.** Costs 0.116 of `marker_depth_r`, deliberately unfixed because fixing it
    makes the negatives **stronger**.
