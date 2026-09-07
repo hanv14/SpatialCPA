@@ -3027,7 +3027,7 @@ That is a publishable paper. It is not the paper the design documents describe.
 | Text-grounded embeddings help genes the model was fitted on | **REFUTED, two three-seed negatives** | `lookup` beats `medcpt` on Moran's and Geary's at 4.9x / 2.3x their own envelopes; reproduced a third time on the zero-shot run's kept genes at 5.8x |
 | Text-grounded embeddings place genes the model never saw | ⚠️ **PARTIAL, replicated on two datasets** | Pre-registered primary `marker_depth_r` refuted (neither A1 nor A3 clears, 0.42x/0.45x). The `morans_pearson` observation was replicated on `cosmx` under criteria fixed in advance: **A2 clears the `shuffled` floor at 2.08x** against `deep_starmap`'s 2.52x and A2−A4 at 1.96x, so *text reaches an unseen gene* has two independent positives; **A2−A3 = +0.0450, 0.22x the envelope**, so *which path in the text channel does it* has none. `specs/10` §7's mechanism sentence withdrawn |
 | SEFL improves anything | 🚨 **REFUTED — it makes things WORSE, 3 seeds x 2 arms** | A7 (2026-09-01): the SEFL arm collapses the anatomical field, `i_gen` at **1.6-2.4 %** of target against the off arm's 95.6-97.5 %; five of seven metrics cost, signs agreeing 3/3 at 1.31x-4.68x. `check_collapse` fired **218 times** across the three ON fits from step 250. The method is named for a mechanism that is measurably harmful on real tissue |
-| Metric-aware losses improve the metrics they are made of | **NEGATIVE at the shipped budget** | cost on every metric at 1200 steps; ordering reverses on 4 of 6 at 2400 — slower, not better |
+| Metric-aware losses improve the metrics they are made of | ⚠️ **NEGATIVE at 1200; UNRESOLVED at the shipped 2400** — row corrected 2026-09-07 | At 1200 the weights lose (rank 3.5 vs 3.0) and cost on every metric. At **2400 they win the selection** (rank 1.0 vs 2.0, four of six metrics) and **ship at 0.5** — so "negative at the shipped budget" was written when the shipped budget was 1200 and did not survive T09 selecting 2400. But the per-metric margins at 2400 are **0.0052 / 0.0101 / 0.0018** on the autocorrelation metrics, all far inside R10's 0.0335 envelope, on **one seed**: won on aggregate rank, not established on any metric. Neither a negative nor a positive |
 | The model reproduces gene–gene covariance | **DOWNGRADED to a mechanism claim** | criterion unsatisfiable as stated; 9.316 against an independent-donor 7.783 |
 
 Two things read as positives and should not be oversold. **GATE 2 is a reconstruction result on
@@ -6846,3 +6846,98 @@ in the negative column.
 two datasets can make it, and §4.2i is the reason to say so plainly: the envelopes those seeds
 produce are estimates with a coefficient of variation above 50 %, so a fourth and fifth seed buy
 precision in the noise estimate, not evidence about the method.
+
+---
+
+# CLOSE-OUT AMENDMENTS (2026-09-07)
+
+Two corrections to the close-out above, at the user's direction. The second one did not survive
+checking in the form it was raised, and the corrected version is stronger.
+
+## Amendment 1 — intersection consistency is the SECOND validated claim, not residue
+
+The close-out listed exactly one thing that works — the representation — and put mutual
+consistency between crossing sections nowhere. That is a misplacement, and the property is the
+cleanest positive in the project.
+
+**Two crossing sections emit bitwise identical expression along their intersection**, on an
+**untrained** model, with no consistency loss applied
+(`tests/test_sefl.py::test_generation_is_intersection_consistent_by_construction`). Not
+approximately, not as a consequence of optimisation, and not at a particular checkpoint: the 3D
+noise field is continuous (T03) so both branches draw the identical realisation along the
+intersection, and every conditioning pathway — retrieval, the GRF, the Fourier encoding — is
+queried at **physical** points while `CTFFlow.generate` conditions with the identity pose whatever
+plane it is handed. The property therefore holds for **every model of this architecture, at every
+checkpoint, exactly**.
+
+**Three things make this a result rather than an implementation note.**
+
+1. **It is a stronger claim than the loss written to earn it.** `L_cross` exists in `specs/07` to
+   *train* approximate agreement between crossing planes. The architecture already has exact
+   agreement, so the loss is **vacuous in v25** — and worse than vacuous: the only plane-dependent
+   channel left for it to act on is the augmentation **pose**, which T04 made pose-dependent on
+   purpose, so minimising it destroys the anatomical field. At `specs/07`'s `w_cross = 0.3` the
+   generated section's per-gene variance falls to **0.065** of the real one's, against **0.711**
+   with SEFL off (R6). `w_cross` ships at **0**.
+2. **So it survived the strongest possible test of a claimed property**: the mechanism written to
+   enforce it was shown to be both unnecessary *and* harmful, and the property was unaffected —
+   because it never depended on that mechanism.
+3. **No competing method has it.** A method that generates sections independently per plane has no
+   reason for two crossing sections to agree anywhere, and none of the baselines in `reference/`
+   makes the guarantee. It is a property of committing to a **continuous 3D field** as the
+   representation, which is exactly the thesis the generative half failed to support.
+
+**Where it belongs.** Beside GATE 1's correlated prior and GATE 2's oblique reconstruction, as the
+third statement about the **representation** — and the second that is exact rather than measured.
+The headline should read: the continuous field is a good representation, and here is what
+"good" means concretely — off-axis reconstruction at 95.5 %, controllable per-gene spatial
+autocorrelation, and mutual consistency that is exact by construction rather than trained for.
+
+## Amendment 2 — the budget question, and the premise it was raised on does not hold
+
+Raised as: *every negative was measured at `train_steps` 1200 or on a defaults-provenance config,
+while T09's gate selected 2400 and T08 showed the metric-aware terms reverse sign between those
+budgets.* **The concern is real and the scope is much narrower than that.** Checked against the
+record, one negative of the four was measured at 1200:
+
+| negative | budget it was measured at |
+|---|---|
+| **Layout (R11)** | **2400** for the headline `layout_mode` swap; the count error confirmed at **both** (4332/1372/3866 at 1200, 11168/146/3788 at 2400, against ~4160) |
+| **SEFL (A7)** | 🚨 **1200 only** — `Config.train_steps`'s default, not the selected 2400 |
+| **Metric-aware (T08/T09)** | **both**, and it is the one case where the budget flips the sign |
+| **Zero-shot (E1 + replication)** | **2400** — `t09_zeroshot_run.py --train-steps` defaults to 2400, and all six fits of both campaigns ran there |
+
+**What this licenses, precisely.**
+
+* **A7's verdict carries the budget caveat and always did** — the record already states it as
+  *"SEFL adds nothing at the default budget of 1200 steps", not "SEFL adds nothing to the shipped
+  model"*, and the close-out should repeat it rather than leave it in a prior entry. It is the one
+  headline negative whose budget does not match the shipped configuration, and the metric-aware
+  result is the proof that the objection is not hypothetical: **the same three-weight comparison
+  reverses between 1200 and 2400.** A reviewer asking "would SEFL have helped at 2400?" has a
+  measured precedent for the question and the honest answer is that nobody knows.
+* **The claims table was stale and is corrected.** "Metric-aware losses: NEGATIVE at the shipped
+  budget" was written when the shipped budget was 1200. At 2400 the weights **win** the selection
+  (rank 1.0 against 2.0, four of six metrics) and **ship at 0.5** — but the per-metric margins are
+  **0.0052 / 0.0101 / 0.0018**, all far inside R10's 0.0335 envelope, on one seed. The claim is now
+  **UNRESOLVED at the shipped budget**: won on aggregate rank, established on nothing.
+
+**What it does NOT license, and this is the part to state plainly.**
+
+* **It does not rescue the layout or the zero-shot negatives**, which were measured at the selected
+  budget. Those two are the bulk of the negative column and the budget objection does not touch
+  them.
+* **It does not rescue A7 either — it only widens A7's stated scope.** A7's SEFL arm did not merely
+  underperform; it **collapsed**, with `i_gen` at 1.6–2.4 % of target and `check_collapse` firing
+  218 times from step 250 of 1200. A budget that ends *after* the collapse has already run for 950
+  steps is not obviously a budget that would have escaped it, and the burden is on the claim that
+  more steps recover a dead field, not on the claim that they do not.
+* **It does not make the negatives provisional.** "Measured at a budget the project itself did not
+  select" is a scope statement on one result, not a general discount. Writing it as a general
+  discount would be the reverse of the §4.2 failures: instead of a threshold moved to help, a
+  caveat applied broadly to soften an answer that was measured correctly.
+
+**The cost of closing it**, stated because a reviewer will ask and because it bears on what is left
+to spend: A7 at 2400 is six fits at roughly double the per-fit cost of the 1200-step arms. That is
+the largest single item on any remaining list, and it buys a scope extension on a result that is
+already negative on three seeds — not a new result.
