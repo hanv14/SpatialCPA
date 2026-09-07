@@ -6941,3 +6941,55 @@ record, one negative of the four was measured at 1200:
 to spend: A7 at 2400 is six fits at roughly double the per-fit cost of the 1200-step arms. That is
 the largest single item on any remaining list, and it buys a scope extension on a result that is
 already negative on three seeds — not a new result.
+
+## Amendment 3 — a component that ships ON on no evidence (2026-09-07)
+
+The corrected metric-aware row is not a bookkeeping fix and should not sit in the claims table
+where a reader scans past it. **`w_autocorr = w_profile = w_distribution = 0.5` ship ON, and
+nothing establishes them.**
+
+* At **1200** steps they lose — rank 3.5 against 3.0, a cost on every metric.
+* At **2400**, the budget T09 selected, they win the selection on aggregate rank, 1.0 against 2.0,
+  taking four of six metrics. That is why they ship at 0.5.
+* The per-metric margins at 2400 are **0.0052 / 0.0101 / 0.0018** on the autocorrelation metrics,
+  against R10's **0.0335** envelope. Every one is inside it, by factors of 3 to 19. On **one seed**.
+
+So the selection is sound as a *selection* — an aggregate rank over six metrics is a legitimate way
+to pick a cell when the individual margins are small — and it is **not evidence that the losses do
+what they are named for**. "Metric-aware losses improve the metrics they are made of" is
+**UNRESOLVED**, and `claim_min_seeds = 3` says one seed cannot resolve it in either direction.
+
+**Why this is a different kind of problem from the rest of the negative column, and belongs in the
+paper as such.** Every other component here is in one of two defensible states:
+
+| state | components | what the paper can say |
+|---|---|---|
+| **ships OFF, with evidence against** | SEFL's three weights (A7: harmful, 3 seeds), `w_cross` (vacuous *and* destructive, R6), the intensity-field layout (R11: below the copy floor by 3.2-3.5x the envelope) | "we tried it, it does not work, here is the measurement, it is disabled" |
+| **ships ON, with evidence for** | `prior_mode="correlated"` (GATE 1), `layout_mode="resample"` (beats both field modes), `decoder_mu_link="exp"` (structured share 15.1 % -> 61.4 %) | "we tried it, it works, here is the measurement" |
+| 🚨 **ships ON, established by nothing** | the three **metric-aware** weights at 0.5 | — |
+
+A component that ships **off** with evidence against it is an honest negative result: the reader
+learns something and the shipped model does not depend on it. A component that ships **on** while
+established by nothing is a different failure — **every number this project reports on the shipped
+configuration was produced with those three losses active**, so an unestablished component is
+inside the baseline that all of the negatives are measured against. It is not a claim the paper
+makes; it is a claim the paper's *setup* makes silently.
+
+**What honesty requires here**, and it is cheap: say it. The paper should state that the
+metric-aware weights ship at 0.5 because they won a one-seed aggregate-rank selection at 2400
+steps, that the per-metric margins were inside the reproducibility envelope, and that their
+contribution is therefore unresolved rather than demonstrated. A reader can then discount the
+shipped configuration accordingly, which is the point.
+
+**What would resolve it**, so the option is costed rather than gestured at: the same
+`(2400, on)` vs `(2400, off)` comparison at **three seeds** — two fits per seed, six fits, the same
+order as A7. It is the cheapest unresolved item on the list and the only one that touches the
+configuration every other number was measured on. I am **not** recommending it over the R4 work;
+I am recording that it is the one place where a small spend would convert a silent assumption into
+a stated result.
+
+⚠️ **And it does not weaken the negatives.** If the metric-aware losses turn out to do nothing,
+every negative was measured on a model carrying three inert terms, which changes no comparison —
+each of R11, A7 and the zero-shot arms is a *within-configuration* contrast with the same weights
+on both sides. The exposure is to the **absolute** numbers and to the claim that the shipped model
+is the best configuration found, not to any of the differences.
