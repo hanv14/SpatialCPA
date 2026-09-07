@@ -72,7 +72,7 @@ Three things the spec asks for in prose and that are now mechanisms:
 |---|---|---|---|
 | `test_generate_shapes_and_dtypes` | valid AnnData, integer X, no NaN, `uns` carries plane/seed/config hash | passes; `uns` also carries the boundary flag and the derived window | pass |
 | `test_generate_deterministic` | same seed → identical output | bitwise on counts **and** positions; a different seed differs | pass |
-| `test_stack_coherence` | correlation decays with `|dz|`, no spike at a training section's depth | decay confirmed; on-section coherence within **`COPY_SPIKE_MAX` = 0.10** of its neighbours' median | pass |
+| `test_stack_coherence` | correlation decays with `|dz|`, no spike at a training section's depth | decay confirmed; on-section coherence no more than **`COPY_SPIKE_MAX` = 0.10** ABOVE its neighbours' median (one-sided, as the code asserts; "within" was wrong here — §4.2h) | pass |
 | `test_oblique_intersection_agreement` (E5) | concordance > 0.8, expression r > 0.85 | concordance **0.814** (ceiling 0.781); expression r **0.724** against a measured ceiling of **0.726** — 99.7 % of achievable | pass (ceiling-relative), literal criterion a **strict xfail** |
 | `test_calibration_no_leakage` | held-out cannot be passed; result independent of the parent | `TypeError` at all five calibrator doors, for `HeldOutSections` *and* for a plain `Volume`; identical result from a standalone training volume | pass |
 | `test_calibration_converges` | \|I_gen − I_flank\| < 0.02 within 8 iterations | see §4 | pass |
@@ -3025,8 +3025,8 @@ That is a publishable paper. It is not the paper the design documents describe.
 | The learned intensity field places cells better than copying | **REFUTED on real data** | R11: `field` 0.6607 / `hybrid` 0.6692 against `resample` 0.7546 and a 0.7765 copy floor; `resample` ships |
 | Generated expression beats copying a real section | **REFUTED, both datasets** | tier-1 `cross-mix` beats `zinb-flow` by 4.6–5.3x the envelope on three metrics; on `deep_starmap` copying wins all five live metrics |
 | Text-grounded embeddings help genes the model was fitted on | **REFUTED, two three-seed negatives** | `lookup` beats `medcpt` on Moran's and Geary's at 4.9x / 2.3x their own envelopes; reproduced a third time on the zero-shot run's kept genes at 5.8x |
-| Text-grounded embeddings place genes the model never saw | **PRIMARY REFUTED; one unreplicated positive** | `marker_depth_r`: neither A1 nor A3 clears the floor (0.42x, 0.45x). `morans_pearson`: A2 at 2.52x, 25% of the measured room — not pre-registered, replication pre-registered above |
-| SEFL improves anything | **UNVERIFIED, ships at zero** | `L_cross` is vacuous by construction in v25 and flattens the field when trained (R6); A7 never run |
+| Text-grounded embeddings place genes the model never saw | ⚠️ **PARTIAL, replicated on two datasets** | Pre-registered primary `marker_depth_r` refuted (neither A1 nor A3 clears, 0.42x/0.45x). The `morans_pearson` observation was replicated on `cosmx` under criteria fixed in advance: **A2 clears the `shuffled` floor at 2.08x** against `deep_starmap`'s 2.52x and A2−A4 at 1.96x, so *text reaches an unseen gene* has two independent positives; **A2−A3 = +0.0450, 0.22x the envelope**, so *which path in the text channel does it* has none. `specs/10` §7's mechanism sentence withdrawn |
+| SEFL improves anything | 🚨 **REFUTED — it makes things WORSE, 3 seeds x 2 arms** | A7 (2026-09-01): the SEFL arm collapses the anatomical field, `i_gen` at **1.6-2.4 %** of target against the off arm's 95.6-97.5 %; five of seven metrics cost, signs agreeing 3/3 at 1.31x-4.68x. `check_collapse` fired **218 times** across the three ON fits from step 250. The method is named for a mechanism that is measurably harmful on real tissue |
 | Metric-aware losses improve the metrics they are made of | **NEGATIVE at the shipped budget** | cost on every metric at 1200 steps; ordering reverses on 4 of 6 at 2400 — slower, not better |
 | The model reproduces gene–gene covariance | **DOWNGRADED to a mechanism claim** | criterion unsatisfiable as stated; 9.316 against an independent-donor 7.783 |
 
@@ -6697,3 +6697,152 @@ stands. But the laminar hypothesis was about *magnitude*, and on magnitude it is
 has less competition. The honest statement is: **the direction is not a `deep_starmap` property;
 the effect size may well be.** That is a different sentence from the one I withdrew, it is not
 evidence for anything yet, and it does not touch either verdict.
+
+## The density difference — an open candidate, and deliberately NOT pursued (2026-09-07)
+
+The sparsity measurement ruled out its own hypothesis and produced a different one on the way out:
+`cosmx` detects the median gene in **9.3 %** of cells against `deep_starmap`'s **1.6 %** — **5.7x
+denser** — and its held-out A2 − A3 effect is **5.6x smaller**. Two numbers, opposite directions,
+one dataset pair.
+
+**It is a live candidate and it is being left alone.** This would be the fourth mechanism hunt of
+this campaign (the length-scale calibration, the step budget, `decoder_mu_link`, the pool
+sparsity), and each has cost more than it returned — three of the four ended in "not this either",
+and the one that found something, `decoder_mu_link`, arrived after the fits it would have changed.
+The base rate is what governs here, not how interesting the number looks.
+
+**What would test it, so the next person does not have to re-derive it.** The mechanism would be
+that a *denser* field makes per-gene Moran's I easier to estimate for **every** arm, compressing
+the spread between arms — an attenuation of contrasts rather than of any one score. Two
+predictions follow, and both are checkable without new fits:
+
+1. **On the same dataset, split the held-out pool by detection rate** and score the arms
+   separately on the sparse and dense halves. If density compresses contrasts, A2 − A3 is larger
+   on the **sparse** half of `cosmx`'s pool than on the dense half. One scoring pass, no fitting.
+2. **The arm scores themselves should not move much** — an attenuated *contrast* with unchanged
+   *levels* is the signature; if the levels move together with the contrast, it is a difference in
+   difficulty rather than in resolution.
+
+**And a third dataset would settle it properly**, which is why this is a candidate and not a
+finding: two points cannot separate "density" from every other way `cosmx` and `deep_starmap`
+differ — tissue organisation, panel composition, tumour versus cortex.
+
+⚠️ **Two datasets, one comparison, and no test.** Nothing above is evidence. It is written down so
+that it is a recorded open question rather than an observation someone rediscovers and treats as
+new.
+
+---
+
+# T09 CLOSE-OUT — the campaign is finished (2026-09-07, supersedes the entry above)
+
+Written after the replication, A7, and the sparsity test. Nothing is pending measurement; the open
+items below are design questions, not experiments this project can run.
+
+## What I actually think the paper says
+
+The 2026-09-01 close-out said "a negative-results paper with a methods contribution, and the
+methods contribution is the stronger half". I think that is true and too vague to be useful, and
+that the results now support a sharper claim which is also a more uncomfortable one.
+
+**The generative hypothesis failed at every level that was tested, and it failed to the same
+trivial baseline each time.** Not "some components underperformed" — *copying*:
+
+* the learned intensity-field layout loses to **copying the coordinates** (R11: `field` 0.6607,
+  `hybrid` 0.6692 against `resample` 0.7546), so `resample` ships;
+* the flow-matching expression head loses to **copying the counts** — on `deep_starmap`
+  `cross-mix` wins **every live metric**, and the one metric where generation had won was an
+  artifact of the frame defect and reversed when it was fixed;
+* the sectioning-equivariant losses the method is **named for** make it worse on three seeds, and
+  ship at zero weight;
+* the metric-aware losses cost on every metric they are built from.
+
+**So the shipped configuration is beaten by the previous version on real data.** v25 ships
+`resample` + `zinb-flow`: real positions with generated expression. v20's fallback is `resample` +
+`cross-mix`: the same real positions with the donor's counts copied. The difference between them
+is exactly the contribution v25 makes to that pairing, and it is **negative on every live metric**.
+That sentence has not been written down before and it should be in the paper, because a reader who
+works it out for themselves will trust nothing else in it.
+
+**Against that, one thing works and it is not the generator — it is the representation.** GATE 2
+is a real, clean, unqualified pass: oblique planes reconstruct at **95.5 %** of axis-aligned
+quality (edge-excluded 97.9 %) against a pre-registered 90 %. And the text channel places genes the
+model never saw above a measured floor, on **two datasets** at **2.52x** and **2.08x**, under
+criteria written before the second run. Both of those are statements about **encoding** — that the
+continuous field represents the volume off-axis, and that MedCPT text carries enough to position an
+unseen gene. Neither is a statement about generation.
+
+**My honest headline, then, is not "the method fails".** It is:
+
+> A continuous 3D field is a good **representation** of a tissue volume and a bad **generator**
+> from it. Reconstruction off-axis reaches 95 % of on-axis quality, and text embeddings place genes
+> the model never saw above a measured floor on two datasets — but every generative component built
+> on that representation loses to copying a real section, including the sectioning-equivariant
+> losses the method is named for. The failure is localised and mechanical rather than diffuse: the
+> decoder reproduces the *pattern* of between-cell variation almost perfectly (`mu`'s Moran's I
+> 0.861, above the tissue's own latent at 0.745) at a fraction of its *amplitude*, and the ZINB
+> objective closes the gap with dispersion instead — `theta` carries 57–63 % of the conditional
+> variance while correlating with the data's own dispersion at Spearman **0.068** over 1017 genes.
+> That is a property of the emission model's objective, not a tuning error, and no data-derived
+> value of `theta` can substitute for changing it.
+
+The part I would defend hardest is the last sentence, because it is the difference between "our
+expression head underperformed" and a finding. A likelihood that can be reduced by moving
+explanatory power out of the structured mean and into the noise term will be, and this project
+measured it happening four separate ways (R4 i–iv).
+
+## The methods half — and why I think it is the stronger contribution
+
+Nine rules now (§4.2a–i), and the reason they are worth a paper is not that they are individually
+clever. It is the pattern: **every claim in this literature has the form "the margin exceeds the
+noise", and that sentence hides six independent choices — in this project each one silently decided
+a verdict before anyone noticed it was a choice.** Which arm's variance is the noise (§4.2a). Which
+envelope a clearance takes (§4.2b). Which referent is a floor at all (§4.2c). How the spread is
+aggregated (§4.2d). Which arms may contribute a spread (§4.2g). Which side of the threshold refutes
+(§4.2h). Plus two failures of a different kind — a metric that is a correlation on a dead field
+(§4.2e) and an alarm that fired 218 times where no report read it (§4.2f) — and one standing
+reporting requirement that falls out of all of them (§4.2i: a three-seed envelope is an estimate
+with a CV above 50 %, and none of ours was ever reported as one).
+
+I think this is the stronger half because it is the part that transfers. The negative result is
+about one method on two datasets; the methodology is about how anyone reads a repeated-seed
+benchmark, and none of it is reported in this literature.
+
+⚠️ **The honest discount on that claim.** Every one of these was found *because a criterion in this
+project nearly returned the wrong answer*, and in four cases it had already returned one that was
+published internally and later withdrawn. That is the right provenance for a methods paper and it
+should be stated as such rather than presented as foresight. The paper should say: we found these
+by getting them wrong first.
+
+## What remains open
+
+1. **R4 / the ZINB trade.** Unchanged and still the largest. A measured mechanism, a named term,
+   and a design change — objective or emission model — as the only route. A follow-up paper.
+2. **R12's two questions.** The 46–119x per-gene spread in `s`, and why `theta` is uncorrelated
+   with the data's dispersion. Both owed to T06.
+3. **§4.2g's construction question.** How to take an envelope when some members are degenerate by
+   design, and how to report one that three seeds cannot pin (§4.2i). Must be settled **before**
+   the next pre-registration, not after the next verdict.
+4. **The `cosmx` effect-size shrinkage.** The direction replicated on 12 of 12 cells and the
+   magnitude fell 5.6x, and nothing explains it. Two candidates eliminated (pool sparsity, per-gene
+   sparsity); the density difference is recorded above as a candidate with a stated test and is
+   **deliberately not being chased**. The magnitude half of the withdrawn "property of
+   `deep_starmap`" reading is also still live and also unused.
+5. **R14's donor rule.** Costs 0.116 of `marker_depth_r`, deliberately unfixed because fixing it
+   makes the negatives stronger.
+
+**Closed since 2026-09-01:** the replication (run — PARTIAL / DOES NOT REPLICATE), A7 (run — SEFL
+harmful), the `decoder_mu_link` refit (not owed), the moment-matched `theta` (no data-derived value
+exists to match to), and the pool-sparsity guess (refuted, direction backwards).
+
+## What would change this assessment
+
+One thing, and this project cannot run it: a change to the emission model or its objective that
+closes R4, followed by a re-run of the six-metric comparison against copying. If generated
+expression beat `cross-mix` on real tissue after that change, the headline inverts from "a good
+representation and a bad generator" to a method paper. Everything short of it produces another row
+in the negative column.
+
+**And one thing that would not.** More seeds. The zero-shot claim is as strong as three seeds on
+two datasets can make it, and §4.2i is the reason to say so plainly: the envelopes those seeds
+produce are estimates with a coefficient of variation above 50 %, so a fourth and fifth seed buy
+precision in the noise estimate, not evidence about the method.

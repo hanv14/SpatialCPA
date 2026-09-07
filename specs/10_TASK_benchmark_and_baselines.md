@@ -485,6 +485,77 @@ largest difference exactly 0**. The original 0.0120 was that defect, not run-to-
 the envelope it helped justify was inflated by a bug. The sentences above are kept because the
 *rule* they motivate survives; the number does not.
 
+### 4.2h A two-sided band on a one-sided hypothesis cannot return the right answer
+
+A criterion of the form *"X is within `k`x of Y"* is a **two-sided** band. It is the correct shape
+only when a deviation in **either** direction refutes the claim. When the hypothesis predicts a
+direction — X **larger** than Y, X **above** the floor — the band's far side is a region where the
+hypothesis is refuted *more strongly*, and a two-sided test scores it as a failure to decide.
+
+**The instance that found it.** The pool-sparsity guess (2026-09-07) predicted `cosmx`'s held-out
+zero-total fraction would be **higher** than `deep_starmap`'s. Its RULES OUT branch read *"< 0.05
+**or** within 1.5x of the reference"* — and `[0.67, 1.50]` is a neighbourhood of parity. The
+measured ratio was **0.404**: `cosmx` 2.5x *less* sparse, refuting the guess harder than parity
+would, and the clause returned **false**. The other clause fired and the verdict was right. Had the
+fraction landed above 0.05 — say 0.30 against a reference 0.90 — **no branch would have fired at
+all**: not SUPPORTS (ratio 0.33 < 3), not RULES OUT, and a clean refutation would have been
+reported as INCONCLUSIVE.
+
+**The rule.** State the hypothesis's direction first, then give every threshold on it the matching
+sidedness. A one-sided hypothesis takes a one-sided criterion in each branch; write the refuting
+region as *everything past the cut*, not as a neighbourhood. Where a band is genuinely two-sided
+— a calibration error, a coverage differential, a mean-variance slope — say which two failures it
+covers, so the choice is visible as a choice.
+
+**The audit this triggered, over every threshold in this spec and the T09 pre-registrations.** One
+further instance, and it is in a *pre-registered criterion*:
+
+* 🚨 **The zero-shot void condition** — *"A4 sits **within one shared envelope** of the `shuffled`
+  floor"* — is two-sided on a one-sided question. The condition exists to detect a **leak**, and a
+  leak can only push A4 **above** the floor; an A4 far below it is a broken arm, not a leak, and
+  would be reported as one. Correct form: `A4 − floor < envelope`, signed. **It did not bite** —
+  `cosmx` measured +0.0240, 0.12x, above the floor and inside the band, so the one-sided form is
+  satisfied a fortiori and no verdict moves. Fixed for future use, not applied retroactively.
+* `test_stack_coherence`'s copy-spike is **documented** in `progress/` as "within
+  `COPY_SPIKE_MAX` = 0.10" and **implemented** correctly one-sided (`spike = mine − median(others)`,
+  asserted `< 0.10`). A prose defect, not a criterion defect; the log wording is corrected.
+
+Audited and **correctly one-sided**: uninformative (b)'s `0.80x` ceiling ratio (an *easier* draw
+raises arm and floor together, so it is not the same threat), A7's `I(mu) < 0.90x`, GATE 2's
+`0.90x`, `sefl_consistency_ratio_warn`, and fold balance (a min/max ratio, one-sided by
+construction). Audited and **correctly two-sided**: the mean-variance slope's relative error, the
+descriptor-coverage differential, `test_calibration_converges`, and the spatial
+collapse/inversion pair — each covers two genuinely distinct failures, now named.
+
+### 4.2i STANDING REQUIREMENT — quote the null's sampling distribution beside every measured spread
+
+Not a note on one result. **Every envelope in this project is an estimate from three seeds, and
+until 2026-09-07 none was ever reported as one.**
+
+Where a statistic's null distribution is known, it is free to state and it changes how the number
+reads. For a Pearson correlation over `n` genes the null has `sd ≈ 1/sqrt(n-1)`; the **range of
+three draws** — which is what a three-seed envelope *is* — has expectation `1.693 sd` and its own
+`sd = 0.888 sd`, a coefficient of variation above **50 %**:
+
+| envelope | n | sd(r) | E[range of 3] | observed | z |
+|---|---|---|---|---|---|
+| `cosmx` held-out, set by the void arm | 191 | 0.0725 | 0.1228 | 0.2015 | +1.22 |
+| `deep_starmap` held-out | 204 | 0.0702 | 0.1188 | 0.0930 | −0.41 |
+| `cosmx` kept, set by `shuffled` | 769 | 0.0361 | 0.0611 | 0.0646 | +0.11 |
+
+**The consequence is general, not local.** The 2.2x gap between the two datasets' envelopes reads
+like a fact about the datasets and is **noise in the noise estimate** — all three rows are ordinary
+draws from the same null. Any criterion of the form *"the margin exceeds the envelope"* is
+therefore being read against a random variable, and three seeds cannot pin it. That is true of
+**every claim in this project**, not only the ones where it was checked.
+
+**The requirement.** Report a measured spread with its null expectation and that expectation's own
+spread whenever the null is known, and say which member of the comparison set the envelope. Where
+the null is not analytically available, say so — an envelope presented as a number, with no
+statement of how well three seeds estimate it, overstates its own precision. This does not license
+replacing a measured envelope with a theoretical one: the measurement is what the criterion is
+read against, and the theory is what tells a reader how much to trust it.
+
 ### 4.2g Not every arm's spread is an envelope — the mirror of §4.2b, found by a replication
 
 §4.2b's rule is that a clearance takes **the largest across-seed envelope among everything the
@@ -601,9 +672,9 @@ Three consequences the methods should state:
 
 ### 4.2* ⚠️ THE FINDING: four verdicts turned on conventions nobody had written down
 
-**State this in the paper's methods, as one finding.** §4.2a–d and §4.2g below are not five
-housekeeping rules; they are five instances of one thing, and the pattern is more transferable
-than any of them.
+**State this in the paper's methods, as one finding.** §4.2a–d, §4.2g and §4.2h below are not six
+housekeeping rules; they are six instances of one thing, and the pattern is more transferable
+than any of them. §4.2i is the reporting requirement they imply.
 
 Every claim-bearing comparison in this literature is of the form *"the margin exceeds the noise"*.
 That sentence hides four independent choices, and **in this project each one silently decided a
@@ -616,6 +687,7 @@ verdict before anyone noticed it was a choice**:
 | **which referent** is a floor at all | 4.2c | the pre-registered "constant-field band" had bitwise-identical input — no variation for any metric to find — and three instruments were needed to establish it, two of them thresholds that failed |
 | **how the spread is aggregated** | 4.2d | an arm effect read 1.12x under fold-averaged noise and 0.75x under per-fold noise; it was reported as standing and is withdrawn |
 | **which arms may contribute a spread at all** | 4.2g | on the `cosmx` replication the envelope was set, on both gene pools, by a **degenerate** member — the void arm and the floor — at 6-18x every informative arm's variance, so an effect consistent on 12 of 12 cells could not clear it |
+| **which side of the threshold refutes** | 4.2h | a "within 1.5x" band on a one-sided hypothesis returned *false* on the result that refuted it most strongly; a nearby case would have read INCONCLUSIVE on a clean refutation, and the same shape sits in the zero-shot void condition |
 
 **A fifth, and it is a different failure.** The four above are all *thresholds placed too close to
 the data* — the cut decided the verdict because nobody had checked where the data would fall. The
