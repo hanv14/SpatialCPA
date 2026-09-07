@@ -6993,3 +6993,44 @@ every negative was measured on a model carrying three inert terms, which changes
 each of R11, A7 and the zero-shot arms is a *within-configuration* contrast with the same weights
 on both sides. The exposure is to the **absolute** numbers and to the claim that the shipped model
 is the best configuration found, not to any of the differences.
+
+## Close-out amendments 4–6 (2026-09-07)
+
+**4. §2.4's header now carries its own qualification.** It read "Text places genes the model never
+saw — replicated" while §3 records the same experiment as PARTIAL and DOES NOT REPLICATE. A header
+that will be quoted alone must not need the body to be honest. It now reads **"Text beats a
+gene-blind arm on unseen genes — replicated. *Which* text path does it — not."** What replicated is
+A2 over the `shuffled` floor (2.52x, 2.08x) and A2 − A4 (1.96x); what did not is A2 − A3, the
+contrast that says *how*.
+
+**5. §9 was self-contradicting on its face and the two statements are now separated.** "More seeds
+would not change the assessment" and "six fits at three seeds is the only small spend that touches
+something real" are about different objects:
+
+* *More seeds on a comparison already run* buys precision in the **noise estimate**, which §4.2i
+  shows is a CV-above-50 % quantity. It cannot change a verdict on the zero-shot claim.
+* *Three seeds on the metric-aware comparison* is not a rerun at higher precision — the existing
+  evidence there is **one** seed, so three is the **first** measurement `claim_min_seeds` accepts.
+
+Different objects, opposite conclusions, and the section now says so rather than leaving a reader to
+reconcile them.
+
+**6. `marker_field_r` is promoted to an open item (§8.6).** It had no entry anywhere in the
+close-out and it has appeared four times: the pooled v20/v21 loss against SpatialZ, v25's single
+losing metric on the fixture at T09, the smoke run's 0.1611, and tier-1's **0.6384 against a
+`flanking_copy` floor of 0.8857 — 0.247 below it, 7.4x the envelope**, the worst of the six.
+
+⚠️ **Stated at its real strength, which is lower than the count implies.** Appearances 1–2 are a
+**cross-dataset pool**, which `specs/10` §4.2a forbids: per dataset the comparison is **9–9**, on
+tier-1 v20 (0.8804) and v21 (0.8881) both beat SpatialZ (0.8522), and in the wide regime v20 wins
+**7 of 7**. Only the pooled figure favours SpatialZ. The honest count is **two clean v25 appearances
+plus a pooled comparison this project's own methodology rejects** — still a pattern across three
+generations, and not the four-for-four it reads as.
+
+**Why it is an open item and not a complaint**: the deficit is **arrangement, not magnitude**
+(`gene_mean_spearman` is 0.0033 off its copy floor, inside the envelope), and it is one of only two
+**pose-dependent** metrics with tier-1 rotations of 0.0–1.5 degrees — so alignment is measurably not
+confounding it and a deficit at ~0 degrees points at **T05's intensity head**. **The first step
+costs zero fits**: the alignment diagnostics are already reported beside it, and stratifying the
+existing tier-1 scores by distance to the volume boundary (R3's regime, where the intensity integral
+is least stable) is a scoring pass on fits that already exist.

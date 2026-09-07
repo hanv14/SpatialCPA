@@ -61,11 +61,18 @@ Three things make it a result rather than an implementation note:
   reason to agree anywhere. It is a property of committing to a continuous 3D field — the thesis
   the generative half failed to support.
 
-**2.4 Text places genes the model never saw — replicated.** Pre-registered on a second dataset and
-run under criteria fixed before the fits. A2 (`medcpt`, pure text) clears the `shuffled` floor at
-**2.52x** on `deep_starmap` and **2.08x** on `cosmx`; A2 − A4 (text against a gene-blind arm) is
-**+0.3949, 1.96x** the shared envelope, signs agreeing on 3/3 seeds and 6/6 folds; the void
-condition holds at 0.12x. **Two independent positives on two datasets.**
+**2.4 Text beats a gene-blind arm on unseen genes — replicated. *Which* text path does it — not.**
+The qualification belongs in the header because this line will be quoted alone, and §3 records the
+other half of the same experiment as PARTIAL and DOES NOT REPLICATE.
+
+What replicated, under criteria fixed before the fits, on a second dataset: A2 (`medcpt`, pure
+text) clears the `shuffled` floor at **2.52x** on `deep_starmap` and **2.08x** on `cosmx`, and
+A2 − A4 — text against an arm that sees no gene identity at all — is **+0.3949, 1.96x** the shared
+envelope with signs agreeing on 3/3 seeds and 6/6 folds. The void condition holds at 0.12x. **Two
+independent positives on two datasets.**
+
+What did **not**: A2 − A3, the pure-text projection against the distillation head, which is the
+contrast that would say *how* the text channel reaches an unseen gene. See §3.
 
 ---
 
@@ -233,7 +240,37 @@ negative column and were measured at the selected budget. Writing the caveat bro
    way). The **density difference** (`cosmx` 5.7x denser per gene) is recorded as a candidate with a
    stated test and is **deliberately not being chased**: fourth mechanism hunt of the campaign, and
    the base rate governs.
-6. **R14's donor rule.** Costs 0.116 of `marker_depth_r`, deliberately unfixed because fixing it
+6. **`marker_field_r` — a weakness that has survived three method generations.** It has no row
+   anywhere above and it has appeared **four times**, which makes it an open item rather than a
+   table entry:
+
+   | # | where | what |
+   |---|---|---|
+   | 1–2 | v20 and v21 against SpatialZ | the **pooled** loss across datasets |
+   | 3 | v25 at T09, on the fixture | its **single** losing metric |
+   | 4 | v25 at T10, tier-1 STARmap | **0.6384 against a `flanking_copy` floor of 0.8857 — 0.247 below it, 7.4x the envelope**, the worst of the six |
+
+   ⚠️ **State appearances 1–2 at their real strength, which is lower than it sounds.** That loss is
+   a **cross-dataset pool**, and §4.2a forbids exactly that: read per dataset it is **9–9**, on
+   tier-1 v20 (0.8804) and v21 (0.8881) both **beat** SpatialZ (0.8522), and in the wide regime v20
+   wins **7 of 7**. Only the pooled figure favours SpatialZ. So the honest count is **two clean
+   appearances in v25 plus a pooled comparison our own methodology rejects** — which is still a
+   pattern, and still the metric where this line has been weakest for three generations.
+
+   **What makes it worth opening rather than noting.** The tier-1 deficit is not expression
+   magnitude: `gene_mean_spearman` sits **0.0033** off its copy floor, inside the envelope, so
+   per-gene magnitude is solved and the residual is **spatial arrangement**. And it is one of only
+   two **pose-dependent** metrics, with tier-1 rotations of 0.0–1.5 degrees — so alignment is
+   measurably **not** confounding it, and a v25 deficit at ~0 degrees points at **T05's intensity
+   head**, not at `align.py`. That is a specific place to look, which is what distinguishes an open
+   item from a complaint.
+
+   **Cost of the first step: zero fits.** `align_rotation_deg` / `align_score` / `align_runner_up`
+   are already reported beside it, and stratifying the existing tier-1 scores by distance to the
+   volume boundary (R3's regime, where the intensity integral is least stable) is a scoring pass on
+   fits that exist.
+
+7. **R14's donor rule.** Costs 0.116 of `marker_depth_r`, deliberately unfixed because fixing it
    makes the negatives **stronger**.
 
 **Closed since 2026-09-01:** the replication (PARTIAL / DOES NOT REPLICATE), A7 (SEFL harmful), the
@@ -249,11 +286,24 @@ the six-metric comparison against copying. If generated expression beat `cross-m
 after that change, the headline inverts from "a good representation and a bad generator" to a
 method paper. This project cannot run it.
 
-**Would not: more seeds.** §4.2i is the reason. The envelopes three seeds produce are estimates with
-a CV above 50 %, so a fourth and fifth seed buy precision in the noise estimate, not evidence about
-the method. The zero-shot claim is as strong as three seeds on two datasets can make it.
+**Would not: more seeds on the results already measured.** §4.2i is the reason. The envelopes three
+seeds produce are estimates with a CV above 50 %, so a fourth and fifth seed on an existing
+comparison buy precision in the **noise estimate**, not evidence about the method. The zero-shot
+claim in particular is as strong as three seeds on two datasets can make it, and adding seeds there
+would sharpen an envelope rather than change a verdict.
+
+**The two statements below are about different objects and are not in tension.** The paragraph
+above is about **precision on comparisons already run**. The one below is about **resolving a
+component that has never been measured at three seeds at all** — an unrun comparison, not a rerun
+one. More seeds do not help the first; three seeds are the minimum that can settle the second.
 
 **The cheapest thing that would change something real** is §4's six fits: `(2400, on)` against
-`(2400, off)` at three seeds. It converts a silent assumption inside the shipped baseline into a
-stated result. I am **not** recommending it over the R4 work — I am recording that it is the only
-small spend on the list that touches the configuration every other number was measured on.
+`(2400, off)` at **three** seeds, where the existing evidence is **one**. That is not extra
+precision on a measured result; it is the first measurement that `claim_min_seeds` would accept, on
+a component that ships **on** and sits inside the baseline every other number was produced against.
+It converts a silent assumption into a stated result — in either direction, since a null there is
+as publishable as a positive.
+
+I am **not** recommending it over the R4 work, which is the larger question and which this project
+cannot run anyway. I am recording that it is the only small spend on the list that touches the
+configuration every other number was measured on.
