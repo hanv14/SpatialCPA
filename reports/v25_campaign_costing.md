@@ -509,8 +509,9 @@ campaign that is worth running, which is smaller in both directions.
    bench3. A dataset that is registered in `DATASET_SPECS` but not built cannot be screened, and
    building it needs its raw source present. Separately, `survey_datasets` screens **v1's
    processed tree**, not bench3's built datasets — different trees, different prerequisites.
-   `scripts/campaign_screen.sh` step 0 now reports all of it before anything runs; the build cost
-   itself is still unpriced and belongs in the next revision of §4.
+   The build cost itself is unpriced and belongs in the next revision of §4; until then, check
+   what exists under `$BENCH_V3_DATA` and `$BENCH_V3_RESULTS/_inputs` before assuming a dataset
+   can be screened at all.
 3. **`deep_starmap` was charged 88 core-h of selection it does not owe under `specs/10` §12**
    (*"experiment homes … inherit the shipped config rather than re-running selection"*). §4c's
    256 core-h should have read ~168 for the same four datasets. **This is not resolved by removing
