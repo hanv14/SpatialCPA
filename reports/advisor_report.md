@@ -378,20 +378,27 @@ operation.** Real tissue retains **62.2 %** across the same latent→counts step
 
 **Why.** The decoder reproduces the *pattern* of between-cell variation almost perfectly and a
 fraction of its *amplitude*, and the ZINB objective closes the gap with **dispersion** rather than
-by sharpening the mean. **The three supporting figures landed on 2026-09-08 and were checked against the
-artifact one by one. They do not all survive:**
+by sharpening the mean. **The three supporting figures were checked against artifacts on 2026-09-08, one by one:**
 
-| figure as stated | in the artifact | status |
+| figure | artifact | status |
 |---|---|---|
-| Spearman **0.068** between `theta` and the data's own dispersion, over **1017 genes** | `log_ratio_spearman = 0.06801`, `n_genes = 1017` (`reports/t09_theta_learned_s2.json`) | ✅ **sourced exactly** |
-| `theta` carrying **57–63 %** of conditional variance | `f_overdispersion` = 0.6110, 0.6304 — the file has two folds and both are 61–63 % | ⚠️ **upper bound sourced, lower bound is not.** The honest range from this artifact is **61–63 %**; where 57 % came from is not in the file |
-| `mu`'s Moran's I **0.861** against the tissue's own latent **0.745** | ❌ **neither number appears.** A scan of all thirteen recovered files finds no value within 0.004 of either. The nearest is `cond_mean_morans_top` = 0.8240 / 0.8153 | 🚨 **unsourced — stays in §8b** |
+| Spearman **0.068** between `theta` and the data's own dispersion, over **1017 genes** | `log_ratio_spearman = 0.06801`, `n_genes = 1017` — `reports/t09_theta_learned_s2.json` | ✅ **sourced exactly** |
+| `theta` carrying **61–63 %** of conditional variance | `f_overdispersion` = 0.6110 and 0.6304, the two folds in that file | ✅ **sourced.** ⚠️ Stated as **57–63 %** until 2026-09-08; the landed artifact covers **two folds of one arm at one seed**, and the 57 % lower bound is in none of it. The record calls the quantity arm- and split-independent, so 57 % plausibly comes from an arm whose file did not land — but an unlanded arm is not a source, so the range is narrowed to what the artifact carries |
+| `mu`'s Moran's I **0.8607** against the tissue's own latent **0.7449** | `reports/chain_2400.md`, rows 3 and REF — the **chain** artifact, sourced all along | ✅ **sourced.** ⚠️ Quoted as 0.861 / 0.745; the artifact's values are 0.8607 and 0.7449 with IQRs 0.8508–0.8722 and 0.6752–0.7912 |
 
-**So the attribution to `theta` is now two-thirds sourced, not sourced.** The chain figures in the
-paragraph above **are** sourced, so the *localisation* to the count draw survives regardless. ⚠️
-**Until the 0.861 / 0.745 pair is either found or re-measured, this paragraph should quote 61–63 %
-and the Spearman, and drop the Moran's comparison** — it is the one number here with no file behind
-it.
+🚨 **A correction to this report's own §8b, and to the instruction that followed from it.** An
+earlier revision reported this last pair as appearing **nowhere**, on a numeric scan of the thirteen
+files recovered from the reflog. The scan was correct and its **scope was wrong**: the pair was
+never in those files because it belongs to the chain measurement, whose artifacts this report has
+cited as sourced throughout. A withdrawal of the figure was authorised on the strength of that
+finding and is **not being carried out**, because its premise does not hold.
+
+⚠️ **A separate, live objection to the same comparison, which is about meaning and not provenance.**
+`progress/t09_inference_and_calibration.md` records that this 0.8607 was measured on **the encoder's
+latent for a real section**, never on the flow's latent at generated positions, and that the
+comparison is **between two latents**. That is a real limit on what the pair licenses, it is
+independent of whether a file exists, and it is the ground on which the figure might still be
+dropped. Recorded, not acted on.
 
 That is a property of the **objective**, not a tuning error: a likelihood that can be reduced by
 moving explanatory power out of the structured component into the unstructured one will be, and
@@ -554,18 +561,19 @@ them and neither can we.
 
 | result | what is missing | consequence |
 |---|---|---|
-| **§7's Moran's comparison** — `mu`'s Moran's I **0.861** against the tissue's own latent **0.745** | no file. The thirteen recovered artifacts were scanned numerically and **no value falls within 0.004 of either number**; the nearest is `cond_mean_morans_top` = 0.8240 / 0.8153. | ⚠️ **This row is what is left of a bigger one.** Its two companions — the Spearman and the conditional-variance share — landed and check out (§7), so the attribution to `theta` is now mostly sourced. This pair is not, and §7 should drop it until it is found or re-measured. ✅ **Regenerable**: `scripts/t09_theta_mode.py` and `t09_structured_share.py` are in the repo, and the latter states it measures on an existing fit with no refit — so this costs a scoring pass **if that fit is still held**. A regeneration is a new measurement and must be labelled so. |
 | **The T09 selection table** that put the metric-aware weights at 0.5 — the four `(budget x weights)` cells, ranks 3.0 / 3.5 / 2.0 / 1.0 | the `scripts/t09_report.py` run's output. `reports/config_selection_synthetic.md` covers the synthetic selection but not this table. | §6's recommendation rests on *how* the weights were chosen. The claim "selected on the fixture by an aggregate rank, one seed, margins inside the envelope" is currently attested by `progress/` only. It is **cheap to regenerate** — the fixture run is ~8 minutes a fit — but a regeneration is a new measurement, not the one that made the decision, and should be labelled as such. |
 
-✅ **This table did shrink on 2026-09-08 — on the third attempt, and only the third one counted.**
-The `theta` row was moved out on a report that its files existed, moved back when four searches
-found nothing, and finally reduced to a fragment when the files were recovered from the reflog and
-**checked figure by figure against their contents**. Only the last of those three was evidence.
+✅ **This table is one row, and it took four passes to get there.** The `theta` row was moved out on
+a report that its files existed; moved back when four searches found nothing; reduced to a fragment
+when the files were recovered from the reflog and checked figure by figure; and removed entirely
+when that fragment turned out to be sourced in `reports/chain_2400.md` — an artifact this report had
+been citing as sourced on the very same page.
 
-**What each round cost and bought.** The first cost a wrong edit. The second cost a search and
-bought the correct classification at the time. The third cost a reflog recovery and bought the thing
-neither of the others could: the knowledge that two of §7's three figures are sourced and one is
-not — which no amount of confirming that *a file exists* would ever have revealed.
+**Only the last pass was right, and the error in the third was mine.** A numeric scan of the
+thirteen recovered files came back empty and I reported the figure as unsourced. The scan was
+correct; the **scope** was wrong, because the figure was never going to be in those files. **A
+negative result is only as broad as what it searched**, and a search of the wrong corpus reads
+exactly like an absence.
 
 ### 8c. Why this section exists at all
 
@@ -605,8 +613,23 @@ and both were describing a state that had ceased to exist. Only the **reflog** s
 3. **When a search comes back empty and someone is confident, check `git reflog` before concluding
    the file was never written.** That step was missing here and it cost a round trip.
 4. **A landed file is not a sourced figure.** Verify the cited number against the artifact's
-   contents — §7 had three figures, one file, and only two of the figures survived contact with it.
-5. ⚠️ **Pushes from the campaign machine return 403, so everything travels by patch.** Until that is
+   contents — §7 had three figures, one file, and checking them against it moved every one of them.
+5. 🚨 **A regeneration substituted for an original passes every check except a field-by-field
+   comparison.** The A9 and A7 reports committed on 2026-09-08 were **re-scores**, not the fitting
+   runs' output. Their metric values were **identical** to the originals — that is why nothing
+   caught it: no table, no verdict, no aggregate would have differed by a digit. Only
+   `fit_seconds` and `alarms` differed, and those are exactly the fields a re-score cannot carry.
+   **So a provenance check that compares numbers will always pass here**; the check has to be on
+   the file. This is the sixth failure mode and the most invisible of them: §8a states the rule
+   ("a copy of the file that produced the number, not a regeneration"), and §8a is where it was
+   broken.
+6. 🚨 **A negative result is only as broad as the corpus it searched.** §7's Moran's pair was
+   reported as appearing *nowhere*, on a scan of the thirteen files just recovered. The scan was
+   correct and the corpus was the wrong one: the pair lives in `reports/chain_2400.md`, cited as
+   sourced elsewhere on the same page. A withdrawal was authorised on that finding and had to be
+   stopped. **State what a search covered whenever reporting that something is absent** — "not in
+   these thirteen files" and "unsourced" are different claims, and only the first was measured.
+7. ⚠️ **Pushes from the campaign machine return 403, so everything travels by patch.** Until that is
    fixed, *"committed on the campaign machine"* and *"in the branch of record"* are different states
    and this section must keep treating them as different. Every landing recorded above went through
    a patch for that reason.
