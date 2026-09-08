@@ -25,3 +25,6 @@ runs/
 # Campaign-machine run logs (`logs/fit_*.log`, `logs/arm_*.log`). The console record of one
 # machine's scheduling; every number in them that matters is committed under `reports/`.
 logs/
+
+# Pre-campaign screen outputs (scripts/campaign_screen.sh) — patched between machines.
+reports/screen/
