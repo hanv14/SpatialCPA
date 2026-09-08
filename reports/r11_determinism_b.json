@@ -1,0 +1,128 @@
+[
+  {
+    "arm": "resample-grid",
+    "mode": "resample",
+    "layout_sampler": "grid",
+    "model": "runs/pilot/model_exp_2400.pt",
+    "decoder_mu_link": "exp",
+    "train_steps": 2400,
+    "seed": 1,
+    "n_pred": {
+      "section_2": 4073.0,
+      "section_4": 4169.0,
+      "section_6": 4110.0
+    },
+    "n_gt": {
+      "section_2": 4187,
+      "section_4": 4102,
+      "section_6": 4162
+    },
+    "cell_count_ratio_raw": 0.9875060067275349,
+    "cell_count_ratio_per_section": {
+      "section_2": 0.9727728684021972,
+      "section_4": 1.0163334958556802,
+      "section_6": 0.9875060067275349
+    },
+    "raw": {
+      "paper_morans_pearson": 0.6541247918418932,
+      "paper_gearys_pearson": 0.6534758976781627,
+      "paper_umap_mixing": 0.92623420625,
+      "paper_marker_field_r": 0.6824328010827682,
+      "paper_marker_depth_r": 0.8330618359123428,
+      "paper_celltype_localization": 0.7750828804692658,
+      "paper_gene_mean_spearman": 0.9901477832512315
+    },
+    "matched": {
+      "paper_morans_pearson": 0.6541247918418932,
+      "paper_gearys_pearson": 0.6534758976781627,
+      "paper_umap_mixing": 0.92623420625,
+      "paper_marker_field_r": 0.6824328010827682,
+      "paper_marker_depth_r": 0.8330618359123428,
+      "paper_celltype_localization": 0.7546030028470386,
+      "paper_gene_mean_spearman": 0.9901477832512315
+    },
+    "matched_per_section": {
+      "paper_morans_pearson": {
+        "section_2": 0.6541247918418932,
+        "section_4": 0.6666653938113664,
+        "section_6": 0.6472052756742561
+      },
+      "paper_gearys_pearson": {
+        "section_2": 0.6534758976781627,
+        "section_4": 0.6687616003435307,
+        "section_6": 0.6480771993756205
+      },
+      "paper_umap_mixing": {
+        "section_2": 0.92623420625,
+        "section_4": 0.9366828999999999,
+        "section_6": 0.9207848875
+      },
+      "paper_marker_field_r": {
+        "section_2": 0.6824328010827682,
+        "section_4": 0.7022405498491683,
+        "section_6": 0.6809217269450568
+      },
+      "paper_marker_depth_r": {
+        "section_2": 0.7994034720811022,
+        "section_4": 0.8598682179005014,
+        "section_6": 0.8330618359123428
+      },
+      "paper_celltype_localization": {
+        "section_2": 0.7008237900099381,
+        "section_4": 0.7546030028470386,
+        "section_6": 0.7867703289628786
+      },
+      "paper_gene_mean_spearman": {
+        "section_2": 0.9655172413793103,
+        "section_4": 0.9939792008757526,
+        "section_6": 0.9901477832512315
+      }
+    },
+    "raw_per_section": {
+      "paper_morans_pearson": {
+        "section_2": 0.6541247918418932,
+        "section_4": 0.6658317355811972,
+        "section_6": 0.6472052756742561
+      },
+      "paper_gearys_pearson": {
+        "section_2": 0.6534758976781627,
+        "section_4": 0.6675934878432641,
+        "section_6": 0.6480771993756205
+      },
+      "paper_umap_mixing": {
+        "section_2": 0.92623420625,
+        "section_4": 0.9340498958333333,
+        "section_6": 0.9207848875
+      },
+      "paper_marker_field_r": {
+        "section_2": 0.6824328010827682,
+        "section_4": 0.7055033067652214,
+        "section_6": 0.6809217269450568
+      },
+      "paper_marker_depth_r": {
+        "section_2": 0.7994034720811022,
+        "section_4": 0.8641115646451901,
+        "section_6": 0.8330618359123428
+      },
+      "paper_celltype_localization": {
+        "section_2": 0.7008237900099381,
+        "section_4": 0.7750828804692658,
+        "section_6": 0.7867703289628786
+      },
+      "paper_gene_mean_spearman": {
+        "section_2": 0.9655172413793103,
+        "section_4": 0.9939792008757526,
+        "section_6": 0.9901477832512315
+      }
+    },
+    "pooled_weighted_mean_matched": {
+      "paper_morans_pearson": 0.6559433223204952,
+      "paper_gearys_pearson": 0.6567071698649878,
+      "paper_umap_mixing": 0.9278549979233595,
+      "paper_marker_field_r": 0.6884533853634378,
+      "paper_marker_depth_r": 0.8305746629586863,
+      "paper_celltype_localization": 0.7472708084164857,
+      "paper_gene_mean_spearman": 0.9831273347955294
+    }
+  }
+]
