@@ -1713,3 +1713,55 @@ def test_gate_reports_unchanged(volume: Volume):
     assert cfg.rotation_aug is True
     assert (cfg.prior_mode, cfg.expr_mode, cfg.decoder) == ("correlated", "zinb-flow", "zinb")
     assert to_xyz(volume.sections[0]).shape[1] == 3
+
+
+def test_a_checkpoint_written_before_gene_theta_existed_still_loads():
+    """🚨 Adding a buffer broke every checkpoint written before it.
+
+    `gene_theta` arrived with `Config.decoder_theta_mode` (2026-09-01). A strict
+    `load_state_dict` then rejects any earlier fit with *"Missing key(s) in state_dict:
+    decoder.gene_theta"* — which is exactly what `runs/pilot/model_exp_2400.pt` did when the
+    `umap_mixing` re-score tried to reuse it, months of compute later. The `Config.content_hash`
+    stranding hazard already in the record is the mild form; a **state_dict** key is the hard one,
+    because no flag works around it.
+
+    The resolution follows from what the buffer *is* in each mode, and this pins both halves:
+
+    * under `learned` it is `zeros(0)` and nothing reads it, so a checkpoint missing it — or
+      carrying a full `(G,)` table from a moment-matched fit — must load anyway;
+    * under `moment_matched` it **is** the emitted dispersion, so a checkpoint without it must
+      **fail loudly** rather than silently emit a zero-width table. Convention 6: the fallback
+      that would hide this is the one not taken.
+    """
+    cfg = Config()
+    assert cfg.decoder_theta_mode == "learned"
+    decoder = ZINBDecoder(cfg, cfg.gene_emb_dim, init_mean_expression=1.0)
+
+    # A checkpoint from before the buffer existed: every key except `gene_theta`.
+    legacy = {k: v for k, v in decoder.state_dict().items() if k != "gene_theta"}
+    assert "gene_theta" not in legacy
+
+    # 1. It loads, strictly, with nothing reported missing.
+    result = decoder.load_state_dict(legacy, strict=True)
+    assert result.missing_keys == [], result.missing_keys
+    assert result.unexpected_keys == [], result.unexpected_keys
+
+    # 2. A moment-matched checkpoint's full table also loads into a `learned` decoder — it is
+    #    unused there, so its width must not raise a size mismatch.
+    from_matched = dict(legacy)
+    from_matched["gene_theta"] = torch.arange(7, dtype=torch.float32)
+    assert decoder.load_state_dict(from_matched, strict=True).missing_keys == []
+
+    # 3. But under `moment_matched` the value is load-bearing, and its absence is an error that
+    #    names the reason rather than a silent zero-width table.
+    matched_cfg = cfg.replace(decoder_theta_mode="moment_matched")
+    matched = ZINBDecoder(
+        matched_cfg,
+        matched_cfg.gene_emb_dim,
+        init_mean_expression=1.0,
+        gene_theta=np.full(7, 2.0),
+    )
+    with pytest.raises(RuntimeError, match="predates the buffer"):
+        matched.load_state_dict(
+            {k: v for k, v in matched.state_dict().items() if k != "gene_theta"}, strict=True
+        )

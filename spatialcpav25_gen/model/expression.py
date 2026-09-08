@@ -595,8 +595,9 @@ class ZINBDecoder(nn.Module):
             )
             self.head_theta.bias.fill_(_softplus_inverse(1.0))
             self.head_pi.bias.zero_()
-        # Registered unconditionally so a checkpoint from either mode loads into either
-        # decoder; empty under "learned", where nothing reads it.
+        # Registered in both modes, but that alone does NOT make checkpoints interchangeable --
+        # see `_load_from_state_dict`, which is what actually does. Empty under "learned", where
+        # nothing reads it.
         if cfg.decoder_theta_mode == "moment_matched":
             if gene_theta is None:
                 raise ExpressionError(
@@ -616,6 +617,52 @@ class ZINBDecoder(nn.Module):
                     f"{cfg.decoder_theta_mode!r}, which would ignore it."
                 )
             self.register_buffer("gene_theta", torch.zeros(0))
+
+    def _load_from_state_dict(
+        self,
+        state_dict: dict[str, Any],
+        prefix: str,
+        local_metadata: dict[str, Any],
+        strict: bool,
+        missing_keys: list[str],
+        unexpected_keys: list[str],
+        error_msgs: list[str],
+    ) -> None:
+        """Load a checkpoint whose ``gene_theta`` is absent, or present at the wrong width.
+
+        🚨 **Adding a buffer broke every checkpoint written before it existed.** `gene_theta`
+        arrived with ``Config.decoder_theta_mode`` (2026-09-01); a strict ``load_state_dict``
+        then rejects any earlier fit with *"Missing key(s) in state_dict: decoder.gene_theta"*,
+        which is what `runs/pilot/model_exp_2400.pt` did when the `umap_mixing` re-score tried to
+        reuse it. The `Config.content_hash` stranding hazard already recorded in ``progress/`` is
+        the mild version of this; a **state_dict** key is the hard one, because no flag works
+        around it.
+
+        The resolution follows from what the buffer *is* in each mode:
+
+        * under ``"learned"`` it is ``zeros(0)`` and **nothing reads it** (`_fixed_theta` is only
+          reached from the moment-matched branch), so its presence, absence or width in a
+          checkpoint is immaterial. A missing key is filled in; a full ``(G,)`` table from a
+          moment-matched fit is dropped rather than allowed to raise a size mismatch.
+        * under ``"moment_matched"`` it is **load-bearing** -- it *is* the dispersion the decoder
+          emits -- so a checkpoint without it cannot be loaded, and the error says why rather
+          than letting a silently-zero table through. That is Convention 6: the fallback that
+          would hide this is exactly the one not taken.
+        """
+        key = prefix + "gene_theta"
+        if self.cfg.decoder_theta_mode != "moment_matched":
+            state_dict[key] = torch.zeros(0)
+        elif key not in state_dict:
+            error_msgs.append(
+                f"{key} is absent from the checkpoint but "
+                "Config.decoder_theta_mode='moment_matched' reads it as the emitted dispersion. "
+                "The fit predates the buffer; re-fit under this mode, or score it under "
+                "decoder_theta_mode='learned', which does not read it."
+            )
+            return
+        super()._load_from_state_dict(  # type: ignore[no-untyped-call]
+            state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+        )
 
     @property
     def gene_emb_dim(self) -> int:

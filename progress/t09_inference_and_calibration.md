@@ -7510,3 +7510,51 @@ Arm `off` averages **57 min**, arm `on` **93 min** — **1.63x**. Whatever else 
 they cost 63 % more compute per fit. That is not a criterion and changes no verdict; it belongs
 beside the disposition, because "ships on, established by nothing" now reads "ships on, established
 by nothing, and 1.63x the compute".
+
+## 🚨 Adding a buffer stranded every earlier checkpoint (2026-09-08)
+
+The `umap_mixing` re-score failed on `runs/pilot/model_exp_2400.pt`:
+
+    RuntimeError: Error(s) in loading state_dict for CTFFlow:
+            Missing key(s) in state_dict: "decoder.gene_theta".
+
+**A defect I introduced.** `gene_theta` arrived with `Config.decoder_theta_mode` (2026-09-01),
+registered **unconditionally** on `ZINBDecoder` with a comment claiming it was done that way "so a
+checkpoint from either mode loads into either decoder". That comment was wrong in **both**
+directions: an *earlier* checkpoint has no such key and strict loading rejects it, and a
+moment-matched checkpoint loaded into a `learned` decoder would hit a size mismatch instead.
+
+⚠️ **This is the `content_hash` stranding hazard's hard form, and I recorded the mild one twice
+without noticing the severe one.** A `content_hash` change refuses a *resume* and is worked around
+by re-fitting or by not resuming. A **state_dict** key cannot be worked around at all: the weights
+exist, they are correct, and no flag loads them. `runs/pilot/model_exp_2400.pt` is the fit behind
+`reports/pilot.md` §13 and `reports/r11_starmap_layout_modes.json` — months of compute — and it was
+unloadable for a week without anyone noticing, because nothing tried to reuse it until this
+re-score.
+
+### The fix, and why it is not `strict=False`
+
+`ZINBDecoder._load_from_state_dict` now resolves it from what the buffer **is** in each mode:
+
+* under **`learned`** it is `zeros(0)` and **nothing reads it** — `_fixed_theta` is reachable only
+  from the moment-matched branch — so its presence, absence or width in a checkpoint is
+  immaterial. A missing key is filled in; a full `(G,)` table from a moment-matched fit is
+  dropped rather than allowed to raise.
+* under **`moment_matched`** it **is** the emitted dispersion, so a checkpoint without it is
+  refused with a message naming the reason and the two ways out. Convention 6: `strict=False`
+  would have "fixed" the error by loading a zero-width dispersion table into a decoder that reads
+  it — the silent fallback, which is the failure this project has paid for repeatedly.
+
+`test_a_checkpoint_written_before_gene_theta_existed_still_loads` pins all three: the legacy load
+reports no missing keys, a moment-matched table loads into a `learned` decoder without a size
+error, and the moment-matched-without-the-buffer case **raises**.
+
+### The rule this earns
+
+**A new buffer or parameter is a breaking change to every existing checkpoint, and the breakage is
+silent until something tries to load one.** `Config` fields at least announce themselves through
+`content_hash`; `state_dict` keys announce nothing. Any future buffer needs a
+`_load_from_state_dict` path decided at the same time it is added, stating what an older checkpoint
+should do — and the decision has to distinguish a buffer that is **read** from one that is merely
+**present**. Belongs beside the `content_hash` hazard in the standing-risks list, as the more
+serious half.
