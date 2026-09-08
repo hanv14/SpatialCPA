@@ -82,8 +82,8 @@ contrast that would say *how* the text channel reaches an unseen gene. See §3.
 
 | component | result | measurement |
 |---|---|---|
-| intensity-field layout | **REFUTED** | `field` 0.6607, `hybrid` 0.6692 against `resample` **0.7546**; the model-free copy floor is 0.7765 and the oracle ceiling 0.9808. Both field modes score **below the floor** on the metric the layout head exists to win, by 3.5x and 3.2x the envelope. `resample` ships. |
-| flow-matching expression head | **REFUTED, both datasets** | on `deep_starmap` `cross-mix` (copying) wins **every live metric**; on tier-1 by 4.6–5.3x the envelope on three. The one metric where generation had won was an artifact of the frame defect and reversed when it was fixed. |
+| intensity-field layout | **REFUTED** | `field` 0.6607, `hybrid` 0.6692 against `resample` **0.7546**; the model-free copy floor is 0.7765 and the oracle ceiling 0.9808. Both field modes score **below the floor** on the metric the layout head exists to win, by **0.1158 and 0.1073 raw**. 🚩 **The "3.5x and 3.2x the envelope" this row carried is withdrawn and not replaced**: it divided by the pooled synthetic-fixture 0.0335, and no envelope exists for `paper_celltype_localization` on the `field`/`hybrid` arms — all five r11 arms are **one seed** (`reports/envelope_correction.md` §3). The raw deficits are what the verdict rests on and they are large; the multiple is not available. `resample` ships. |
+| flow-matching expression head | **REFUTED, both datasets** | on `deep_starmap` `cross-mix` (copying) wins **every live metric**; on tier-1 by **2.2x, 2.3x and 7.4x** their own per-metric per-arm envelopes on three (`gearys`, `morans`, `umap_mixing`; margins +0.1303 / +0.1313 / +0.1415 against 0.0595 / 0.0574 / 0.0190, three seeds). ⚠️ **Corrected 2026-09-08** from "4.6–5.3x the envelope", which was one seed on the pre-frame-fix code state, divided by the pooled fixture 0.0335 — the two autocorrelation metrics carry less than half the weight quoted and `umap_mixing` carries more (`reports/envelope_correction.md` §2.1). The one metric where generation had won was an artifact of the frame defect and reversed when it was fixed. |
 | SEFL — the mechanism the method is named for | **REFUTED, 3 seeds** | the SEFL arm **collapses** the anatomical field: `i_gen` at **1.6–2.4 %** of target against the off arm's 95.6–97.5 %; five of seven metrics cost with signs agreeing 3/3 at 1.31x–4.68x. `check_collapse` fired **218 times** across the three ON fits, from step 250 of 1200. All three weights ship at **0**. |
 | the mechanism half of the zero-shot claim | **PARTIAL** | A2 − A3 — the pure-text projection against the distillation head — is **+0.0450, 0.22x** the shared envelope, where `deep_starmap` had +0.2514 at 2.7x. `specs/10` §7's mechanism sentence is **withdrawn**. |
 | the seen/unseen sign flip | **DOES NOT REPLICATE** | signs reversed on **12 of 12** seed x fold cells across both gene pools, and **both** magnitudes sit inside their pool's envelope (0.22x, 0.51x). The direction replicated; the effect size did not. |
@@ -104,16 +104,29 @@ in §3.
 `w_autocorr = w_profile = w_distribution = **0.5**` ship **on**. At 1200 steps they lose (rank 3.5
 against 3.0, a cost on every metric); at **2400** — the budget T09 selected — they win the
 selection on aggregate rank, 1.0 against 2.0, taking four of six metrics. That is why they ship.
-The per-metric margins at 2400 are **0.0052 / 0.0101 / 0.0018** against R10's **0.0335** envelope:
-every one inside it, by factors of 3 to 19, on **one seed**.
+The per-metric margins at 2400 are **0.0052 / 0.0101 / 0.0018**, and against the fixture's **own
+per-metric** envelopes — `morans_pearson` 0.0160, `gearys_pearson` 0.0335 — every one is still
+inside, **by factors of 1.6 to 19**, on **one seed**. ⚠️ **Corrected 2026-09-08** from "against
+R10's 0.0335 envelope … by factors of 3 to 19": R10's pooled figure is `gearys_pearson`'s envelope
+worn by all six metrics and is up to 5x too strict on the others. The verdict is unchanged — the
+weights are still established by nothing — but the safety factor is half what was stated. ⚠️ The
+record says these three margins sit *"on the autocorrelation metrics"* and there are only two of
+those, so **the third metric is unidentified**, and the table that produced them is §8b
+(unrecoverable) so the assignment cannot be checked. Had one of the three been
+`celltype_localization` (fixture envelope 0.0068) the 0.0101 margin would **clear** at 1.49x.
+`reports/envelope_correction.md` §2.3.
 
 🚨 **And the selection ran on the SYNTHETIC FIXTURE** — 19 fits at ~8 minutes each, against the 56
 minutes a real tier-1 fit takes. So the accurate statement is stronger than "one seed with small
 margins": these weights ship on **an aggregate rank over the fixture, and have never been measured
-on real data at all.** That is the pattern R11 already burned, where a fixture tie-break inside the
-envelope put `hybrid` ahead and real data reversed it — the fixture was *"underpowered, not
-wrong"*, its flanking baseline sitting at 58 % of its ceiling against real tissue's 79 %, so it
-over-rewards a generative addition at any number of seeds.
+on real data at all.** That is the pattern R11 already burned, where a fixture tie-break put
+`hybrid` ahead and real data reversed it — its flanking baseline sitting at 58 % of its ceiling
+against real tissue's 79 %, so it over-rewards a generative addition at any number of seeds.
+⚠️ **The parenthetical "inside the envelope" is withdrawn from that sentence.** Re-read per metric,
+the fixture `layout_mode` gate was **not** decided inside the noise: `umap_mixing` separates at
+**3.49x** its own envelope toward `resample` and `celltype_localization` at **2.84x** toward
+`hybrid`, both 3/3 on sign. The fixture was not underpowered on this gate — it gave two answers that
+disagreed, and the pooled reading hid that (`reports/envelope_correction.md` §2.4).
 
 The selection is sound as a selection. It is **not evidence that the losses do what they are named
 for**, and `claim_min_seeds = 3` says one seed cannot resolve it either way.
@@ -154,10 +167,15 @@ rather than inheriting a coin-flip rank, so the recommendation is stated and the
 listed:
 
 1. **They were selected on the synthetic fixture**, by an aggregate rank over six metrics, with
-   per-metric margins of 0.0052 / 0.0101 / 0.0018 inside a 0.0335 envelope, on **one seed** — and
-   the fixture is documented to over-reward exactly this kind of addition (R11: its flanking
-   baseline sits at 58 % of its ceiling against real tissue's 79 %; the fixture was *"underpowered,
-   not wrong"* and real data reversed its verdict).
+   per-metric margins of 0.0052 / 0.0101 / 0.0018 inside their **own** fixture envelopes (0.0160
+   and 0.0335 on the autocorrelation metrics, so inside by 1.6x to 19x — ⚠️ corrected 2026-09-08
+   from "inside a 0.0335 envelope", §4), on **one seed** — and the fixture is documented to
+   over-reward exactly this kind of addition (R11: its flanking baseline sits at 58 % of its
+   ceiling against real tissue's 79 %, and real data reversed its verdict). ⚠️ The gloss that the
+   fixture was *"underpowered, not wrong"* is withdrawn: read per metric it separated the
+   `layout_mode` gate on two metrics that **disagreed** with each other
+   (`reports/envelope_correction.md` §2.4). Over-rewarding a generative addition is the surviving
+   objection; being too blunt to see a difference is not.
 2. **The one real-data test could not resolve them.** A9, three seeds, six fits: UNINFORMATIVE,
    with the worst primary envelope **6.5x** the condition's bound and both autocorrelation
    primaries' signs disagreeing across seeds. "More seeds" is not a cheap path — this design was
@@ -232,7 +250,14 @@ Nine rules (`specs/10` §4.2a–i). They are worth a paper not individually but 
 > noticed it was a choice.
 
 * **§4.2a** which arm's variance is the noise — a pooled envelope was too lenient on three metrics
-  and too strict on two, and the worse arm alternates by metric.
+  and too strict on two, and the worse arm alternates by metric. 🚨 **And this project went on
+  dividing by the pooled figure for three weeks after writing the rule** — the per-metric table
+  existed in `envelope_synthetic.md` from the day it was measured, with a line in that report saying
+  it was the right thing to quote. The correction (`reports/envelope_correction.md`, 2026-09-08)
+  moved two verdicts and found a **third** axis the rule does not name: an envelope is per
+  **instrument** too, and every real-data clearance in this project was read against a figure from
+  the wrong one. **This is the strongest instance in the set, because the rule was already written
+  and it still did not bite.**
 * **§4.2b** which envelope a clearance takes — two arms 0.004 apart landed on opposite sides
   because one varied less.
 * **§4.2c** which referent is a floor at all — the pre-registered constant-field band had
@@ -326,6 +351,15 @@ negative column and were measured at the selected budget. Writing the caveat bro
 3. **§4.2g / §4.2i's construction question.** How to take an envelope when some members are
    degenerate by design, and how to report one three seeds cannot pin. **Must be settled before the
    next pre-registration, not after the next verdict.**
+3b. 🚩 **The envelope correction's residue** (`reports/envelope_correction.md` §3). Six clearance
+   figures have **no admissible envelope** and are now flagged rather than numbered: R11's two
+   layout deficits, `marker_field_r`'s tier-1 deficit, the boundary gap, `gene_mean_spearman`'s
+   position against its floor, and §13.2's prior-campaign localization lead. The blocker is not
+   compute for five of the six: **`runs/pilot/model_exp_2400.pt`'s configuration is not recorded in
+   any artifact that cites it** — no `config_hash`, no `text_emb_mode`, no metric-aware weights — so
+   A9's three-seed `bench3` envelopes cannot be matched to the arm behind the six-metric table.
+   Recovering that one config block closes most of the list from files already committed; if the
+   arm turns out to differ, it is a three-seed measurement and should be costed as one.
 4. **The metric-aware weights** (§4). Unresolved, shipping on, inside the baseline everything else
    was measured against.
 5. **The `cosmx` effect-size shrinkage.** Direction replicated 12/12, magnitude fell 5.6x, nothing
@@ -341,7 +375,7 @@ negative column and were measured at the selected budget. Writing the caveat bro
    |---|---|---|
    | 1–2 | v20 and v21 against SpatialZ | the **pooled** loss across datasets — **withdrawn as evidence**, see below |
    | 3 | v25 at T09, on the fixture | its **single** losing metric |
-   | 4 | v25 at T10, tier-1 STARmap | **0.6384 against a `flanking_copy` floor of 0.8857 — 0.247 below it, 7.4x the envelope**, the worst of the six |
+   | 4 | v25 at T10, tier-1 STARmap | **0.6384 against a `flanking_copy` floor of 0.8857 — 0.247 below it**, the worst of the six. 🚩 **"7.4x the envelope" is withdrawn and not replaced** (§envelope-correction §3): it divided by the pooled fixture 0.0335, the arm is the **superseded `hybrid` pilot row** (the shipped `resample` deficit is 0.203), and the only real-data envelope on this instrument — A9's `paper_marker_field_r`, 0.0596 — is on an arm whose configuration r11's artifacts do not record |
 
    ⚠️ **State appearances 1–2 at their real strength, which is lower than it sounds.** That loss is
    a **cross-dataset pool**, and §4.2a forbids exactly that: read per dataset it is **9–9**, on
@@ -351,8 +385,13 @@ negative column and were measured at the selected budget. Writing the caveat bro
    pattern, and still the metric where this line has been weakest for three generations.
 
    **What makes it worth opening rather than noting.** The tier-1 deficit is not expression
-   magnitude: `gene_mean_spearman` sits **0.0033** off its copy floor, inside the envelope, so
-   per-gene magnitude is solved and the residual is **spatial arrangement**. And it is one of only
+   magnitude: `gene_mean_spearman` sits **0.0033** off its copy floor. 🚩 **"inside the envelope"
+   is withdrawn** — this metric is not in `METRIC_NAMES` and appears in **no** fixture or
+   internal-LOSO envelope at all (the two-`SIX` defect), and the only spreads that exist for it are
+   A7's and A9's on `bench3.evaluate_paper`, at **0.0033 to 0.1193** — a range that brackets the
+   deficit, so "inside" is not established either way. What survives without an envelope is the
+   comparison of magnitudes: 0.0033 against `marker_field_r`'s 0.203, i.e. the residual is
+   **spatial arrangement** and not per-gene magnitude, by a factor of 60. And it is one of only
    two **pose-dependent** metrics, with tier-1 rotations of 0.0–1.5 degrees — so alignment is
    measurably **not** confounding it, and a v25 deficit at ~0 degrees points at **T05's intensity
    head**, not at `align.py`. That is a specific place to look, which is what distinguishes an open
@@ -369,10 +408,21 @@ negative column and were measured at the selected budget. Writing the caveat bro
    **The measurement.** Zero fits and zero generation — both sides were already on disk. On
    `resample-grid`, the
    **shipped** layout mode and the only arm whose sections are density-comparable (spread
-   **1.04x**), the deficit below each section's own copy floor is **0.1729 / 0.1877 / 0.2043** and
-   the boundary-vs-interior gap is **0.69x** the envelope: **BOUNDARY ELIMINATED**. The weakness is
-   **uniform along the stack**, so R3's one-sided-evidence regime and the boundary-clamp geometry
-   are **out**.
+   **1.04x**), the deficit below each section's own copy floor is **0.1729 / 0.1877 / 0.2043** —
+   a boundary-vs-interior gap of **−0.0231**.
+
+   🚩 **BOUNDARY ELIMINATED is downgraded to NOT READABLE, 2026-09-08.** The verdict rested on that
+   gap being **0.69x the envelope**, and `t10_marker_field_boundary.json` hard-codes
+   `"envelope": 0.0335` — the pooled synthetic-fixture figure, on a `bench3.evaluate_paper` number.
+   Against the only real-data envelope on that instrument (A9's `paper_marker_field_r`, 0.0596) the
+   same gap is **1.56x**, i.e. the other side of the line. That does **not** establish a boundary
+   effect either: A9's envelope is fold-aggregated where this effect is **per section** (§4.2d says
+   the per-section construction is always the larger), and it is on an arm r11's artifacts do not
+   identify. So the honest state is that the test cannot be read at all until an envelope exists for
+   this metric, on this arm, at this aggregation level. The **raw** finding stands and is what the
+   redirect below rests on: the three deficits are 0.1729 / 0.1877 / 0.2043, and the boundary
+   section carries the **smallest** of the three, so nothing in the data points at a boundary
+   mechanism. `reports/envelope_correction.md` §3.
 
    The other four arms return INVERTED and **must not be read**: pre-registered condition (c) fires
    on all five, but the field-based modes emit **63.9x** the truth at `section_2` and **0.90x** at

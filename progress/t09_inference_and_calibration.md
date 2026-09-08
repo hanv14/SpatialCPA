@@ -7558,3 +7558,93 @@ silent until something tries to load one.** `Config` fields at least announce th
 should do — and the decision has to distinguish a buffer that is **read** from one that is merely
 **present**. Belongs beside the `content_hash` hazard in the standing-risks list, as the more
 serious half.
+
+---
+
+## The 0.0335 correction — every clearance figure re-read against its own envelope (2026-09-08)
+
+Full derivation: **[reports/envelope_correction.md](../reports/envelope_correction.md)**. Zero fits,
+zero generation; every number from artifacts already in the branch.
+
+**What was wrong.** `specs/10` §4.2a says an envelope is per-metric, per-arm, per-dataset and
+per-gate. The practice was to divide every margin by **0.0335**, which is none of those: it is the
+**maximum over six metrics** of a spread measured on the **synthetic fixture** by
+`train/select.py::section_scores`. Defect (1), pooling, was avoidable from day one —
+`reports/envelope_synthetic.md` carries the per-metric table and says in its own text that it *"is
+the right thing for T10 to quote per claim"*. It was pooled anyway, for three weeks, across three
+documents. Defect (2) is applying a fixture figure to real data.
+
+**Verified against the record before trusting the method.** Recomputing §4.2a's tier-1 table from
+`t09_envelope_starmap_seed{2,3,4}.json` reproduces every cell (0.0054/0.0574, 0.0027/0.0595,
+0.0068/0.0190, 0.0049/0.0148, 0.0084/0.0472); the `deep_starmap` "worse arm alternates by metric"
+row reproduces on all five metrics; A7's six ratios reproduce **exactly** (4.68x / 3.76x / 2.75x /
+1.55x / 1.31x, and 0.78x/0.83x on the two unreadable ones); A9's envelope (a) of 0.1225 reproduces
+to four decimals.
+
+**Recomputed, verdicts unchanged, numbers moved:**
+
+| figure | was | is |
+|---|---|---|
+| `expr_mode` tier-1, three metrics | 4.6–5.3x | **2.2x / 2.3x / 7.4x** (per-metric per-arm, 3 seeds) |
+| tier-1 reconstruction headroom | 4.6x | **3.3x** |
+| `deep_starmap` headroom over the best copy | 0.5x | **0.37x** |
+| `deep_starmap` headroom over the operational copy (R14) | 2.6x | **2.0x** |
+| R14's donor-rule cost | 3.5x | **2.7x** |
+| metric-aware selection margins | inside by 3–19x | inside by **1.6–19x** |
+
+Note the `expr_mode` row: the error runs in **opposite directions** on different metrics — the two
+autocorrelation metrics were overstated by more than 2x and `umap_mixing` was understated. That is
+§4.2a's own claim arriving in this project's own headline numbers.
+
+**Two verdicts changed.**
+
+1. 🚨 **The fixture `layout_mode` gate was NOT "decided inside the noise".** *"0.0344 against a
+   0.0335 envelope, 1.03x the noise floor"* compared a max-over-metrics margin to a
+   max-over-metrics envelope. Per metric, from the same nine fits: `umap_mixing` +0.0401 against
+   0.0115 = **3.49x toward `resample`**, `celltype_localization` −0.0193 against 0.0068 = **2.84x
+   toward `hybrid`**, both 3/3 on sign, the other four inside. The fixture was not too blunt to see
+   a difference — it saw **two, and they disagreed**. The recorded gloss *"underpowered, not wrong"*
+   is withdrawn wherever it appears; *over-rewards a generative addition* survives as the objection.
+2. 🚩 **BOUNDARY ELIMINATED → NOT READABLE.** `t10_marker_field_boundary.json` hard-codes
+   `"envelope": 0.0335` on a `bench3.evaluate_paper` number. Against A9's `paper_marker_field_r`
+   (0.0596) the same −0.0231 gap is **1.56x** — the other side of the line — and that envelope is
+   itself inadmissible (fold-aggregated where the effect is per section; wrong arm). The **raw**
+   finding is untouched and still carries the redirect: the boundary section has the **smallest** of
+   the three deficits (0.1729 vs 0.1877, 0.2043).
+
+**And the finding that was not anticipated: the corpus contains two instruments, and every envelope
+is on the wrong one.** `train/select.py::section_scores` (internal LOSO, folds `section_3/5`) versus
+`bench3.evaluate_paper` (`paper_2_4_6`). `specs/10` §5 forbids mixing them by name. **Every
+three-seed envelope ever quoted is the first; the headline table, R11, the marker deficits and the
+boundary work are all the second.** On tier-1 their per-metric envelopes differ by **2.6x–6.7x**.
+
+✅ **The missing envelope existed inside A9.** `t10_a9_{0,05}_s{1,2,3}` are three seeds, two arms,
+2400 steps, `paper_2_4_6`, pinned evaluator — per-metric spreads from **0.0009 to 0.2894**, and they
+carry `paper_gene_mean_spearman`, which no instrument-A envelope has. A9 was filed UNINFORMATIVE
+about the question it was built for and nobody looked at what else it had measured.
+
+🚩 **Six figures could not be recomputed and are flagged, not substituted** (correction §3): R11's
+two layout deficits, `marker_field_r`'s tier-1 deficit, the boundary gap, `gene_mean_spearman`'s
+position against its floor, and §13.2's prior-campaign localization lead. **Five share one blocker
+and it is not compute**: `runs/pilot/model_exp_2400.pt`'s configuration is recorded in none of the
+artifacts that cite it — `r11_starmap_layout_modes.json` and `r11_{resample_grid,determinism}*.json`
+carry `model`, `decoder_mu_link`, `train_steps` and `seed`, and no `config_hash`, no
+`text_emb_mode`, no metric-aware weights. So A9's envelope cannot be matched to that arm, and §4.2a
+forbids assuming: on the `deep_starmap` `text_emb_mode` gate the arms' envelopes differ by up to
+2.6x and the worse arm alternates by metric.
+
+**Two rules earned**, added to `specs/10` as **§4.2a-i** (an envelope is per *instrument*; where no
+matching one exists, report the raw margin and say the multiple is unavailable — the nearest
+available figure is not a fallback) and **§4.2a-ii** (an artifact records the arm it describes, or
+its envelope can never be matched later). Both are in the §4.2* meta table, which now names nine
+choices rather than seven.
+
+⚠️ **Two things this correction did not touch and should not be read as having fixed.**
+`scripts/t10_marker_field_boundary.py` still hard-codes 0.0335, and the per-seed audit reports
+(`t09_envelope_starmap_seed*.md`, `t09_audit_*.md`) still carry a `vs 0.0335` column. They are
+measurement artifacts and were left as written; anyone re-running or re-reading them gets the old
+divisor back.
+
+⚠️ **Estimator.** Margins are the **median** across seeds (§4.6). The record's own R10 recomputation
+used the **mean**; the two differ by at most 0.3x here (`marker_depth_r` 1.21x vs 1.51x) and no
+verdict turns on it. Stated so the choice is visible.

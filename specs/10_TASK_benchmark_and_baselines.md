@@ -42,16 +42,30 @@ is (R13: it *is* that copy, to −0.0009 / +0.0099 on `deep_starmap`).
 **Consequences, and they are binding on this task:**
 
 1. **`deep_starmap` cannot carry a reconstruction claim against an optimal copier.** Its entire
-   headroom is **half the reproducibility envelope**. Its large `expr_mode` margins (0.6614 and
+   headroom is **0.37x its own `marker_depth_r` envelope** (+0.0160 against 0.0427, measured on the
+   same instrument — ⚠️ corrected 2026-09-08 from "half the reproducibility envelope", which divided
+   by the pooled synthetic-fixture 0.0335; `reports/envelope_correction.md` §2.2). Its large
+   `expr_mode` margins (0.6614 and
    0.5948 on the two arrangement metrics, both 6.0x+ the within-arm fold spread) are real, and
    they separate the arms on a task where copying already reaches **98 %** of what is achievable.
    Any such number must be reported **with the ceiling beside it**, never alone.
-2. **Tier-1 is the informative reconstruction benchmark** — 4.6x the envelope of genuine room —
+2. **Tier-1 is the informative reconstruction benchmark** — **3.3x** its own `marker_depth_r`
+   envelope of genuine room (+0.1551 against 0.0472; ⚠️ corrected 2026-09-08 from 4.6x) —
    **despite being the smaller and sparser dataset.** This is the reverse of the campaign's
-   working assumption that tier 2 is the more demanding test.
+   working assumption that tier 2 is the more demanding test. The conclusion is unchanged and the
+   multiple is smaller; the two datasets' intervals remain disjoint at P = 0.000, which is what the
+   consequence actually rests on.
 3. **The "saturated" verdict is against an *oracle* copier.** Against the copy the shipped
-   configuration actually performs, `deep_starmap` has **2.6x** the envelope of headroom — see
-   **R14**, which is a defect in that copier, not a property of the tissue.
+   configuration actually performs, `deep_starmap` has **2.0x** its own envelope of headroom
+   (+0.0855 against 0.0427; ⚠️ corrected 2026-09-08 from 2.6x) — see **R14**, which is a defect in
+   that copier, not a property of the tissue. R14's own "0.116, 3.5x the envelope" becomes
+   **2.7x** on the same correction.
+
+   ⚠️ **All three multiples in this section divide a model-free headroom by a *fit* envelope.**
+   That is a scale comparison — *is the room larger than the noise a fitted method would carry?* —
+   and not a clearance between two arms. The referent's own envelope is zero (§4.2b, fixed layout),
+   so the fitted arm's is the right one, but no margin is being tested and none of these numbers is
+   a claim.
 4. **Report every reconstruction number as a fraction of the measured headroom**, not only as a
    raw value or an envelope multiple. §2's ceiling protocol was written for the synthetic fixture
    because it was "the only dataset with a known generative law"; `scripts/t09_depth_ceiling.py`
@@ -718,8 +732,10 @@ level down — not a criterion that decided a verdict, but an **instrument** rep
 could not have performed.
 
 Every claim-bearing comparison in this literature is of the form *"the margin exceeds the noise"*.
-That sentence hides four independent choices, and **in this project each one silently decided a
-verdict before anyone noticed it was a choice**:
+That sentence hides **nine** independent choices, and **in this project each one silently decided a
+verdict before anyone noticed it was a choice** — including two (§4.2a-i, §4.2a-ii) found only when
+every figure in the corpus was re-derived, three weeks after the rule that should have caught them
+was written:
 
 | choice | §  | the verdict it decided |
 |---|---|---|
@@ -730,6 +746,8 @@ verdict before anyone noticed it was a choice**:
 | **which arms may contribute a spread at all** | 4.2g | on the `cosmx` replication the envelope was set, on both gene pools, by a **degenerate** member — the void arm and the floor — at 6-18x every informative arm's variance, so an effect consistent on 12 of 12 cells could not clear it |
 | **which side of the threshold refutes** | 4.2h | a "within 1.5x" band on a one-sided hypothesis returned *false* on the result that refuted it most strongly; a nearby case would have read INCONCLUSIVE on a clean refutation, and the same shape sits in the zero-shot void condition |
 | **whether the check ran at all** | 4.2j | both collapse alarms were armed only while SEFL was on, so on the **shipped** configuration neither ever ran — and two reports, one of them written to enforce §4.2f, described that as a check that had been performed |
+| **which instrument the envelope came from** | 4.2a-i | two scorers over the same six metric names, and **every three-seed envelope ever quoted came from the one the headline numbers were not scored on** — a 2.6x–6.7x difference on tier-1, forbidden in prose by §5 while every "Nx the envelope" in the project performed it |
+| **whether the artifact says which arm it is** | 4.2a-ii | the committed, bitwise-reproducible files behind the six-metric table record no `config_hash`, no `text_emb_mode` and no metric-aware weights, so a correctly measured envelope cannot be matched to them — six clearance figures are flagged rather than numbered for this reason alone |
 
 **A fifth, and it is a different failure.** The four above are all *thresholds placed too close to
 the data* — the cut decided the verdict because nobody had checked where the data would fall. The
@@ -813,6 +831,57 @@ separately**. That is the methods claim.
 reusing a figure measured in one setting because it is the only one available is exactly the
 error this section exists to retire. Each claim-bearing comparison pays for its own envelope, and
 `scripts/t09_seed_claim.py` computes it from the runs.
+
+### 4.2a-i 🚨 An envelope is per **instrument** too — and this project mixed two of them everywhere
+
+**Found 2026-09-08, re-deriving every clearance figure in the corpus** (`reports/envelope_correction.md`).
+§4.2a names metric, arm, dataset and gate. It does not name the **scorer**, and that omission is the
+one that reached every published number.
+
+This repository contains two scorers over the same six metric names:
+
+| | instrument A | instrument B |
+|---|---|---|
+| scorer | `train/select.py::section_scores` (T08 kernels) | `bench3.evaluate_paper`, SHA-pinned |
+| design | internal LOSO, **interior training** sections (`section_3`, `section_5`) | **`paper_2_4_6`** held-out (`section_2/4/6`) |
+| names | `morans_pearson`, … | `paper_morans_pearson`, … |
+| produced by | `t09_envelope.py`, `t09_audit_starmap.py`, `t09_depth_ceiling.py` | `t09_ship_starmap.py`, `t10_layout_modes_table.py`, `t10_rescore_saved.py` |
+
+§5 below already forbids mixing them: *"Numbers … scored on internal LOSO with T08 kernels are a
+different quantity and must not be placed beside these."* **Every three-seed envelope this project
+ever quoted is instrument A's, and the headline table, R11, the marker deficits and the boundary
+work are all instrument B.** Measured on tier-1, the per-metric envelopes differ by **2.6x to 6.7x**
+between them (`morans` 0.0574 → 0.2894, `gearys` 0.0595 → 0.2861, `umap_mixing` 0.0190 → 0.1281,
+`marker_field_r` 0.0148 → 0.0596, `marker_depth_r` 0.0472 → 0.1225; the arms differ too, which is
+precisely why neither set may stand in for the other).
+
+✅ **Instrument B's envelope does exist, inside A9.** `reports/t10_a9_{0,05}_s{1,2,3}.json` are three
+seeds, two arms, 2400 steps, `paper_2_4_6`, pinned evaluator — the real-data envelope this spec has
+been asking for. Its per-metric spreads run **0.0009 to 0.2894**, against a pooled fixture figure of
+0.0335. It also carries `paper_gene_mean_spearman`, which is in no instrument-A envelope at all.
+
+**The rule.** An envelope is quoted with its scorer named, and a margin is divided only by an
+envelope measured on the same scorer, the same design, the same dataset, the same gate and the same
+arms. Where no such envelope exists, **report the raw margin and say the multiple is unavailable** —
+the nearest available figure is not a fallback, it is the error this whole section exists to retire.
+
+### 4.2a-ii 🚨 An artifact must record the arm it describes, or its envelope can never be matched
+
+The corollary, and the thing that blocked five of the six figures the correction could not redo.
+
+`reports/r11_starmap_layout_modes.json`, `r11_resample_grid{,_umap}.json` and
+`r11_determinism_{a,b}.json` are the files behind the six-metric table. They are committed,
+verified, and reproduce bitwise. They record `model` (a path), `decoder_mu_link`, `train_steps` and
+`seed`. They record **no `config_hash`, no `text_emb_mode` and no metric-aware weights.**
+
+So A9's correctly measured envelope cannot be matched to them, and §4.2a forbids assuming it can:
+on the `deep_starmap` `text_emb_mode` gate the two arms' envelopes differ by up to 2.6x and **the
+worse arm alternates by metric**, so `medcpt` and `lookup` are not interchangeable envelope donors.
+
+**The rule.** Every results artifact records the resolved `Config.content_hash()` and every gate
+value that could move its envelope — §10.1's `method_params` requirement, applied to *analysis*
+outputs and not only to bench3 predictions. A number whose arm cannot be identified cannot be given
+a noise scale later, which makes it unreadable as a claim however carefully it was measured.
 
 ### 4.2b A clearance against a *referent* takes the worst envelope in the comparison, not the arm's own
 
@@ -1030,9 +1099,19 @@ median over the three held-out sections — are:
 
 | arm | median | vs the 0.7765 copy floor |
 |---|---|---|
-| `resample` (shipped) | **0.7546** | −0.0219, *inside* R10's 0.0335 envelope |
-| `hybrid` | **0.6692** | −0.1073, **3.2x** the envelope |
-| `field` | **0.6607** | −0.1158, **3.5x** the envelope |
+| `resample` (shipped) | **0.7546** | **−0.0219** |
+| `hybrid` | **0.6692** | **−0.1073** |
+| `field` | **0.6607** | **−0.1158** |
+
+🚩 **The envelope multiples this table carried — "inside R10's 0.0335", 3.2x and 3.5x — are
+withdrawn and not replaced (2026-09-08).** They divided a `bench3.evaluate_paper` number by the
+pooled **synthetic-fixture** figure, which is wrong on three axes at once (metric, dataset,
+instrument — §4.2a and §4.2a-i). No admissible replacement exists: **all five arms in
+`r11_starmap_layout_modes.json` are `seed: 1`**, so `field` and `hybrid` have no across-seed spread
+at all, and the one real-data envelope on this instrument (A9's `paper_celltype_localization`,
+0.0009–0.0061) is measured on `resample` only and on an arm whose configuration r11's artifacts do
+not record. **The raw deficits are what the verdict rests on**, and the count evidence below is what
+actually decided it. `reports/envelope_correction.md` §3.
 
 and the deciding measurement is the **count**, not localization: `field`/`hybrid` emitted 267 567,
 21 993 and 3 727 cells against ground truths of 4 187, 4 102 and 4 162, and the same configuration
@@ -1053,18 +1132,42 @@ everything else fixed and swapping only `layout_mode`:
 
 `cell_count_ratio` moves 0.8283 → 0.9875 in the same swap. **The learned continuous layout scores
 0.4252 where copying a neighbouring slice scores 0.7765** — it is below the floor on the metric it
-exists to win, by 0.35, which is ~29x the 0.0120 across-seed envelope.
+exists to win, **by 0.35**. 🚩 **"~29x the 0.0120 across-seed envelope" is withdrawn**: 0.0120 is
+retired (§4.2 — it was the `hash()` seeding defect, not run-to-run variation), and this row is
+superseded by the grid-sampler re-measurement above it in any case.
 
 **Signal 2 — the synthetic fixture (T09's merged 18-cell gate).** The rank winner was
 **`resample`** (median rank 3.0); `hybrid` followed at 4.2; **`field`'s best cell ranked 7.0 and it
 won nothing.** `hybrid` ships only because it *won a tie-break* — `resample` reuses real positions
-and is the v20 fallback, so shipping it switches the learned layout off. And the margin, 0.0344
-against a 0.0335 envelope, was **decided inside the noise** (R10).
+and is the v20 fallback, so shipping it switches the learned layout off.
+
+🚨 **"The margin, 0.0344 against a 0.0335 envelope, was decided inside the noise" is corrected,
+2026-09-08, and the verdict changes.** Both sides of that comparison were pooled: a
+maximum-over-metrics margin against a maximum-over-metrics envelope. Recomputed per metric from the
+same nine fits (`reports/envelope_synthetic.csv`, margin = `resample` − `hybrid`, median over three
+seeds, against each metric's own fixture envelope):
+
+| metric | median margin | fixture envelope | vs own envelope | favours |
+|---|---|---|---|---|
+| **`umap_mixing`** | **+0.0401** | 0.0115 | **3.49x** | `resample` |
+| **`celltype_localization`** | **−0.0193** | 0.0068 | **2.84x** | `hybrid` |
+| `morans_pearson` | +0.0062 | 0.0160 | 0.39x | — |
+| `marker_field_r` | +0.0046 | 0.0162 | 0.28x | — |
+| `marker_depth_r` | +0.0051 | 0.0299 | 0.17x | — |
+| `gearys_pearson` | +0.0030 | 0.0335 | 0.09x | — |
+
+**The fixture gate was not decided inside the noise. Two metrics clear their own envelopes with 3/3
+sign agreement and they point in opposite directions**, and the pooled reading collapsed that
+disagreement into a single number sitting 1.03x from a bar up to 5x too strict. ⚠️ These nine fits
+predate the grid sampler, so both arms are on the biased rejection sampler — as was the 0.0344
+figure, so the correction is like-for-like. `reports/envelope_correction.md` §2.4.
 
 **Why the pair matters.** On the fixture the preference against `field` was real but undecidable —
-inside the reproducibility envelope, which is why `hybrid` shipped at all. On real data the same
-preference is **far outside** it. The fixture result was not wrong; it was underpowered, and the
-real-data measurement resolves it in the same direction.
+⚠️ **not because the fixture was too blunt to see a difference, which is what "underpowered" was
+taken to mean, but because it saw two and they disagreed.** On real data the same
+preference is **far outside** any plausible envelope. The fixture result was not wrong; it was
+**split**, and the real-data measurement resolves it in the same direction as the metric that
+favoured `resample`.
 
 **Consequences for T10.**
 
@@ -2320,10 +2423,15 @@ what makes it a good criterion to aim a mechanism at.
   before any localization number is published**: if they emit no types, they are absent from the
   comparison rather than losing it, and the tier-1 `localization` group is a five-method race whose
   ranks change accordingly.
-* **The margin is inside twice the reproducibility envelope.** T09 measured refit-at-same-seed drift
-  up to **0.0120**. The **+0.015** gap to v21 is barely above it, which is why C1 is stated at
-  **3 seeds with the spread reported** and never as a single-run comparison — and why a v25 result
-  that merely ties v21 here says nothing at all.
+* **The margin is small relative to any noise scale this project can quote, and 🚩 no admissible
+  one exists.** The **+0.015** gap to v21 was read against a refit-at-same-seed drift of **0.0120**,
+  which is **retired** (§4.2 — that figure was the `hash()` seeding defect, not run-to-run
+  variation), and §13.1 establishes that the two sides of this comparison were scored by
+  **different `evaluate_paper` revisions** anyway, so the margin and any envelope for it are
+  cross-instrument twice over. The gap is reported raw. This is why C1 is stated at **3 seeds with
+  the spread reported** and never as a single-run comparison — and why a v25 result that merely
+  ties v21 here says nothing at all. For scale, and **not as a threshold**: A9's three-seed
+  `paper_celltype_localization` spread on the shipped arm is 0.0061, on the pinned instrument.
 
 ### 13.3 C2 — the wide regime is unestablished in *both* directions
 

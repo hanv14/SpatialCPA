@@ -99,8 +99,8 @@ in the text channel does it is **not** established — see §6.
 
 | component | verdict | measurement | source |
 |---|---|---|---|
-| intensity-field layout | **REFUTED** | `field` **0.6607**, `hybrid` **0.6692** against `resample` **0.7546**, a copy floor of **0.7765** and an oracle ceiling of **0.9808** — both field modes score *below the floor* on the metric the layout head exists to win. `resample` ships. | `reports/r11_starmap_layout_modes.json` |
-| flow-matching expression head | **REFUTED, both datasets** | on `deep_starmap` copying wins **every live metric**; on tier-1 by 4.6–5.3x the envelope on three | `reports/t09_audit_deep_expr_mode.json`, `reports/t09_audit_expr_mode.json` |
+| intensity-field layout | **REFUTED** | `field` **0.6607**, `hybrid` **0.6692** against `resample` **0.7546**, a copy floor of **0.7765** and an oracle ceiling of **0.9808** — both field modes score *below the floor* on the metric the layout head exists to win, by **0.1158 and 0.1073 raw**. 🚩 No envelope multiple is quotable: all five r11 arms are **one seed**, so `field` and `hybrid` have no across-seed spread at all (`reports/envelope_correction.md` §3). `resample` ships. | `reports/r11_starmap_layout_modes.json` |
+| flow-matching expression head | **REFUTED, both datasets** | on `deep_starmap` copying wins **every live metric**; on tier-1 by **2.2x, 2.3x and 7.4x** their own per-metric per-arm envelopes on three (⚠️ corrected 2026-09-08 from "4.6–5.3x", which was one seed, pre-frame-fix, ÷ the pooled fixture 0.0335) | `reports/t09_envelope_starmap_seed{2,3,4}.json`; `reports/envelope_correction.md` §2.1 |
 | SEFL — the mechanism the method is named for | **REFUTED, 3 seeds** | the SEFL arm **collapses** the anatomical field: `i_gen` at **1.6–2.4 %** of target against 95.6–97.5 % off; `check_collapse` fired **218 times**. All three weights ship at 0. | ⚠️ **held locally, not committed** (§8a) |
 | the *mechanism* half of the zero-shot claim | **PARTIAL** | A2 − A3 = **+0.0450**, **0.22x** the shared envelope, where `deep_starmap` had +0.2514 at 2.7x. `specs/10` §7's mechanism sentence is **withdrawn**. | ⚠️ held locally, not committed (§8a) |
 | the seen/unseen sign flip | **DOES NOT REPLICATE** | signs reversed on **12 of 12** seed x fold cells; **both** magnitudes inside their pool's envelope (0.22x, 0.51x). Direction replicated, effect size did not. | ⚠️ held locally, not committed (§8a) |
@@ -125,13 +125,15 @@ not that any one is clever:
 
 | § | the choice | the verdict it decided |
 |---|---|---|
-| 4.2a | **which arm's** variance is the noise | a pooled envelope was too lenient on three metrics and too strict on two; the worse arm alternates by metric, so it cannot be reasoned about in advance |
+| 4.2a | **which arm's** variance is the noise | a pooled envelope was too lenient on three metrics and too strict on two; the worse arm alternates by metric, so it cannot be reasoned about in advance. 🚨 **The strongest instance in this table, because the rule was written and still did not bite**: the per-metric envelope existed from the day R10 measured it, in a report that said so, and this project divided by the pooled scalar for three weeks afterwards across all three documents |
 | 4.2b | **which comparison's** envelope a clearance takes | two arms 0.004 apart landed on opposite sides of the line, because one varied less — the steadier arm was being credited with a capability |
 | 4.2c | **which referent** is a floor at all | the pre-registered "constant-field band" had bitwise-identical input; three instruments were needed to establish it, two of them thresholds that failed |
 | 4.2d | **how the spread** is aggregated | an effect read 1.12x under fold-averaged noise and 0.75x under per-fold; reported as standing, withdrawn |
 | 4.2g | **which arms may contribute** a spread | on the replication the envelope was set on *both* gene pools by a **degenerate** member, 6–18x every real arm's variance, so an effect consistent on 12 of 12 cells could not clear it |
 | 4.2h | **which side** of the threshold refutes | a two-sided "within 1.5x" band on a one-sided hypothesis returned *false* on the result that refuted it most strongly |
 | 4.2j | **whether the check ran at all** | both collapse alarms were armed only while SEFL was on, so on the **shipped** configuration neither ever ran — and two reports described that as a check performed (§4a) |
+| **4.2a-i** | 🚨 **which instrument the envelope was measured on** | the corpus holds two scorers over the same six metric names, and **every three-seed envelope ever quoted came from the one the headline numbers were not scored on**. On tier-1 their per-metric envelopes differ by 2.6x–6.7x. `specs/10` §5 forbade the mixture in prose while every "Nx the envelope" in the project performed it (`reports/envelope_correction.md`, 2026-09-08) |
+| **4.2a-ii** | 🚨 **whether the artifact records the arm it describes** | the committed, verified, bitwise-reproducible files behind the six-metric table carry no `config_hash`, no `text_emb_mode` and no metric-aware weights, so a correctly measured envelope **cannot be matched to them**. Six clearance figures are flagged rather than numbered for this reason alone |
 
 Plus two of a different kind, and one standing requirement:
 
@@ -302,8 +304,12 @@ change cannot move them. **It is now a measurement, and the inference it replace
 
   ⚠️ **Not yet fixed, and the fix is not free.** Adding `umap_mixing` to the layout-mode table means
   re-scoring both probes and every layout arm with UMAP on. It changes no verdict I can foresee —
-  `resample` beat the field modes by 0.09 on localization, far outside any envelope — but "changes
-  no verdict I can foresee" is exactly the phrase this campaign has now been wrong about twice.
+  `resample` beat the field modes by 0.09 on localization, ⚠️ which the earlier draft called "far
+  outside any envelope" and which is **not a statement this project can currently make**: no
+  across-seed envelope exists for `paper_celltype_localization` on the `field`/`hybrid` arms
+  (one seed each). The comparison to A9's `resample`-arm figure of 0.0061 is suggestive and is not
+  admissible — different arm (`reports/envelope_correction.md` §3). "Changes no verdict I can
+  foresee" is exactly the phrase this campaign has now been wrong about twice.
 
   **Scope of the damage, stated honestly.** Within-campaign comparisons are unaffected: r11's
   layout-mode ranking (`field` / `hybrid` / `resample`) was measured in one code state, so the
@@ -341,10 +347,15 @@ Stated as a recommendation rather than a note, so whoever runs next decides with
 front of them instead of inheriting a coin-flip rank. Four reasons:
 
 1. **They were selected on the synthetic fixture** — an aggregate rank over six metrics, per-metric
-   margins of 0.0052 / 0.0101 / 0.0018 inside a 0.0335 envelope, **one seed** — on a fixture
+   margins of 0.0052 / 0.0101 / 0.0018 inside their **own** fixture envelopes (0.0160 and 0.0335 on
+   the autocorrelation metrics, so inside by **1.6x to 19x**; ⚠️ corrected 2026-09-08 from "inside a
+   0.0335 envelope … 3 to 19", `reports/envelope_correction.md` §2.3), **one seed** — on a fixture
    documented to over-reward exactly this kind of addition (R11: its flanking baseline sits at 58 %
-   of its ceiling against real tissue's 79 %; it was *"underpowered, not wrong"*, and real data
-   reversed its verdict).
+   of its ceiling against real tissue's 79 %, and real data reversed its verdict). ⚠️ The
+   *"underpowered, not wrong"* gloss is withdrawn: read per metric the fixture `layout_mode` gate
+   separated on **two** metrics that pointed **opposite ways** (`umap_mixing` 3.49x to `resample`,
+   `celltype_localization` 2.84x to `hybrid`). Over-rewarding a generative addition survives as the
+   objection; bluntness does not.
 2. **The one real-data test could not resolve them** (above).
 3. **They cost 1.63x the compute** — 93 minutes a fit against 57 (`reports/t10_a9.md`).
 4. **On the diagnostic the shipped model did not watch, they sit in the collapse regime** — median
@@ -454,11 +465,23 @@ SpatialZ (0.8522); in the wide regime v20 wins **7 of 7**. Only the pooled figur
 **The honest count is two clean v25 appearances plus a comparison this project's own methodology
 rejects** — a real pattern in v25, not the three-generation weakness it was written as.
 
-**Where it lives.** A boundary stratification (zero fits — both sides were on disk) returned
-**BOUNDARY ELIMINATED** on the shipped arm: deficits **0.1729 / 0.1877 / 0.2043** across the three
-held-out sections, boundary-vs-interior gap **0.69x** the envelope
-(`reports/t10_marker_field_boundary.json`). The weakness is **uniform along the stack**, so R3's
-one-sided-evidence regime is out.
+**Where it lives.** A boundary stratification (zero fits — both sides were on disk) measured
+deficits of **0.1729 / 0.1877 / 0.2043** across the three held-out sections on the shipped arm, a
+boundary-vs-interior gap of **−0.0231** (`reports/t10_marker_field_boundary.json`).
+
+🚩 **The BOUNDARY ELIMINATED verdict is downgraded to NOT READABLE, 2026-09-08.** It rested on that
+gap being *"0.69x the envelope"*, and the instrument hard-codes `"envelope": 0.0335` — the pooled
+**synthetic-fixture** figure, applied to a `bench3.evaluate_paper` number. Against the only
+real-data envelope on that instrument (A9's `paper_marker_field_r`, **0.0596**) the same gap is
+**1.56x** — the other side of the line — and that envelope is itself inadmissible here, being
+fold-aggregated where the effect is per section and measured on an arm r11's artifacts do not
+identify. `reports/envelope_correction.md` §3.
+
+**What survives without an envelope, and it is what the redirect rests on**: the boundary section
+carries the **smallest** of the three deficits (0.1729 against 0.1877 and 0.2043), so nothing in
+the data points toward a boundary mechanism even before a threshold is applied. R3's
+one-sided-evidence regime stays out on that reading; the *quantitative* claim that the three agree
+within one envelope is not currently supportable.
 
 **And the redirect is worth more than the elimination**: `resample` does not use the intensity head
 to place cells **at all**, and still carries a 0.19 deficit. The weakness survives removing the
@@ -560,15 +583,48 @@ across-seed spread from the three committed seed files reproduces its every cell
 | `marker_field_r` | 0.0049 | 0.0148 | 0.0148 | 0.44x |
 | `marker_depth_r` | 0.0084 | 0.0472 | 0.0472 | 1.41x |
 
-⚠️ **And that exposes something about the 0.0335 every ratio in this report is divided by.** It is
-**sourced** — `reports/envelope_synthetic.md`, R10, nine fits at three seeds — but it is a
-**pooled figure measured on the synthetic fixture**, while the real-data per-metric envelopes
-above span **0.0148 to 0.0595**, a 4.0x range straddling it. §4.2a states the rule that a pooled
-envelope errs in both directions; the practice throughout this project, this report included, has
-been to divide by the pooled fixture number anyway. **Every "Nx the envelope" here should be read
-as "N times a synthetic pooled figure", not as a real-data noise scale.** The material to redo them
-per-metric is now committed; doing so is a scoring-free re-derivation and is the cheapest
-outstanding correction in this document.
+⚠️ **And that exposes something about the 0.0335.** It is **sourced** — `reports/envelope_synthetic.md`,
+R10, nine fits at three seeds — but it is a **pooled figure measured on the synthetic fixture**,
+while the real-data per-metric envelopes above span **0.0148 to 0.0595**, a 4.0x range straddling
+it. §4.2a states the rule that a pooled envelope errs in both directions; the practice throughout
+this project, this report included, was to divide by the pooled fixture number anyway.
+
+✅ **DONE 2026-09-08 — `reports/envelope_correction.md`.** Every clearance figure in this report,
+the close-out and `specs/10` was re-read against its own metric's envelope on the dataset and
+instrument it was measured on. Zero fits. Four things came out of it, and only the first was
+expected:
+
+1. **Nothing in the negative column moved.** Every negative is a within-configuration contrast, so
+   the divisor changes the scale and not the sign. The multiples moved a lot: `expr_mode` on tier-1
+   goes 4.6–5.3x → **2.2x / 2.3x / 7.4x**, with the error running in **opposite directions** on
+   different metrics, which is §4.2a's own point arriving in this report's own numbers.
+2. 🚨 **A third axis the rule does not name: an envelope is per *instrument*.** The corpus holds two
+   scorers over the same six metric names — `train/select.py::section_scores` on internal LOSO, and
+   `bench3.evaluate_paper` on `paper_2_4_6` — and **every three-seed envelope ever quoted is on the
+   first while every headline number is on the second.** `specs/10` §5 forbids mixing them by name.
+   On tier-1 their per-metric envelopes differ by 2.6x–6.7x.
+3. ✅ **The missing envelope existed inside A9.** `t10_a9_{0,05}_s{1,2,3}` are three seeds of the
+   shipped-shape configuration on the pinned instrument at `paper_2_4_6` — the real-data envelope
+   this project has been saying it lacks. Its per-metric spreads run **0.0009 to 0.2894**, against
+   a pooled fixture figure of 0.0335.
+4. 🚩 **Six figures could not be recomputed and are now flagged rather than numbered**, because the
+   only admissible envelope would have to come from an arm this project can no longer identify —
+   see the correction's §3 and the new failure mode below.
+
+⚠️ **And a correction to this paragraph's own earlier wording**, which said *"the 0.0335 every ratio
+in this report is divided by"*. That was an overstatement: the zero-shot ratios — most of §2 and §6
+— divide by their own measured envelopes, as do A7's and A9's. The defect is real, and it is
+narrower than this report claimed.
+
+🚨 **A seventh failure mode, and it is new: a landed artifact that does not record its own
+configuration.** `r11_starmap_layout_modes.json`, `r11_resample_grid{,_umap}.json` and
+`r11_determinism_{a,b}.json` — the files behind §5's six-metric table, all committed, all verified,
+all reproducible bitwise — carry `model`, `decoder_mu_link`, `train_steps` and `seed`, and carry
+**no `config_hash`, no `text_emb_mode` and no metric-aware weights**. So A9's envelopes cannot be
+matched to that arm, and §4.2a forbids assuming they can: on the `deep_starmap` `text_emb_mode`
+gate the two arms' envelopes differ by up to 2.6x and the worse arm alternates by metric. §8's
+tiers assume the problem is a **missing** file. This is a present, verified file that is missing its
+own identity — and it is the single blocker on five of the six flagged rows.
 
 **Still not committed**: the 21 `logs_*.txt` console logs from the same listing.
 
