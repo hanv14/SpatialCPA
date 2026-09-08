@@ -495,14 +495,23 @@ Only then fix the dataset list and commit the ~256 core-h.
 **Agreed 2026-09-08.** §4's bill costed the campaign `specs/10` describes. This section costs the
 campaign that is worth running, which is smaller in both directions.
 
-### 7a. Two corrections to §2–§4, both material
+### 7a. Three corrections to §2–§4, all material
 
 1. **Step 4 is a fit, and it is a short one.** The §6 summary that went out said *"none is a fit"*
    while item 4 was one. It is also cheaper than §6 priced it: peak RSS is reached during load,
    `cKDTree` construction and the first steps, so `--train-steps 100 --fit-only` measures it in
    **~10 minutes** rather than the ~4 hours a full 2400-step fit takes. `scripts/campaign_screen.sh`
    prints the exact invocation.
-2. **`deep_starmap` was charged 88 core-h of selection it does not owe under `specs/10` §12**
+2. **The screen has an uncosted prerequisite, and §1c only half-flagged it.** `t09_depth_ceiling.py`
+   resolves three things per dataset (`scripts/_bench3_paths.py::resolve`): the **built**
+   `$BENCH_V3_DATA/<ds>/data.h5ad`, the **leakage-guarded** input
+   `$BENCH_V3_RESULTS/_inputs/<ds>/<holdout>/train_registered.h5ad`, and v2's `_v2_io.py` beside
+   bench3. A dataset that is registered in `DATASET_SPECS` but not built cannot be screened, and
+   building it needs its raw source present. Separately, `survey_datasets` screens **v1's
+   processed tree**, not bench3's built datasets — different trees, different prerequisites.
+   `scripts/campaign_screen.sh` step 0 now reports all of it before anything runs; the build cost
+   itself is still unpriced and belongs in the next revision of §4.
+3. **`deep_starmap` was charged 88 core-h of selection it does not owe under `specs/10` §12**
    (*"experiment homes … inherit the shipped config rather than re-running selection"*). §4c's
    256 core-h should have read ~168 for the same four datasets. **This is not resolved by removing
    the line — see §7d.**
