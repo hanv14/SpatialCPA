@@ -7607,7 +7607,9 @@ autocorrelation metrics were overstated by more than 2x and `umap_mixing` was un
    is withdrawn wherever it appears; *over-rewards a generative addition* survives as the objection.
 2. 🚩 **BOUNDARY ELIMINATED → NOT READABLE.** `t10_marker_field_boundary.json` hard-codes
    `"envelope": 0.0335` on a `bench3.evaluate_paper` number. Against A9's `paper_marker_field_r`
-   (0.0596) the same −0.0231 gap is **1.56x** — the other side of the line — and that envelope is
+   (0.0596) the same −0.0231 gap is **0.39x** (⚠️ **corrected** — an earlier revision put 1.56x
+   here, which is the ratio against *instrument A's* 0.0148, not A9's), while against instrument A
+   it is **1.56x**: the two candidate divisors give **opposite** answers. Neither envelope is
    itself inadmissible (fold-aggregated where the effect is per section; wrong arm). The **raw**
    finding is untouched and still carries the redirect: the boundary section has the **smallest** of
    the three deficits (0.1729 vs 0.1877, 0.2043).
@@ -7648,3 +7650,78 @@ divisor back.
 ⚠️ **Estimator.** Margins are the **median** across seeds (§4.6). The record's own R10 recomputation
 used the **mean**; the two differ by at most 0.3x here (`marker_depth_r` 1.21x vs 1.51x) and no
 verdict turns on it. Stated so the choice is visible.
+
+### Follow-ups to the correction (2026-09-08, same day)
+
+**1. The r11 config was never lost — and that is the sharper version of §4.2a-ii.** The first
+revision of the correction implied the arm behind the six-metric table could no longer be
+identified. Wrong: `scripts/t10_rescore_saved.py` writes and reads the model file as
+`{"config": <every Config field>, "state_dict": ...}` and its own `--preflight` branch already
+prints five gates from it. The whole `Config` has been in `runs/pilot/model_exp_2400.pt` throughout.
+**The defect is that the reporting scripts never copied the block into their output** — ordinary,
+cheap to fix, and easier to miss precisely because nothing is absent.
+
+New: **`scripts/t09_recover_checkpoint_config.py`**. Reads both payload shapes — a saved fit
+(`{"config", "state_dict"}`, every gate a direct read) and a resumable `FitCheckpoint`
+(`config_hash` only, so the gates are *inferred* from evidence and labelled as inference:
+`history.terms` omits `autocorr`/`profile`/`distribution` **iff** all three metric-aware weights are
+zero, since `train_ctfflow` builds no `LOSOScheduler` at zero weight and `metric_aware_terms` is
+never called; `teacher is None` **iff** every SEFL weight is zero). `--patch` writes a
+`recovered_config` block into named artifacts. The command:
+
+```
+python scripts/t09_recover_checkpoint_config.py runs/pilot/model_exp_2400.pt \
+    --patch reports/r11_starmap_layout_modes.json \
+    --patch reports/r11_resample_grid.json --patch reports/r11_resample_grid_umap.json \
+    --patch reports/r11_determinism_a.json --patch reports/r11_determinism_b.json
+```
+
+⚠️ **Not run here — this container has no `torch` and no `numpy`.** What *was* verified: the
+payload logic against both shapes and both error paths (`--self-check`, passes), and the patcher
+against a copy of `r11_determinism_a.json` — idempotent, refuses overwrite without `--force`, every
+original field byte-equal afterwards.
+
+**2. Both hard-coded divisors are closed.** A correction that only rewrites prose leaves the defect
+in the code that produced it.
+
+* `scripts/t10_marker_field_boundary.py` hard-coded `ENVELOPE = 0.0335`, and **every branch** of its
+  pre-registered criterion compared against it. `--envelope` is now required with no default; a
+  numeric value also requires `--envelope-source` (§4.2g); `--envelope unavailable` returns a new
+  **NOT READABLE** outcome rather than falling through to `boundary_eliminated`, because a criterion
+  that cannot fail must not be scored as passed (§4.2j). Uninformative (b) gained the same
+  three-way distinction. `reports/t10_marker_field_boundary.{md,json}` regenerated under it:
+  **every measured field byte-identical** to the superseded pair — `deficits`, `gap`,
+  `floor_per_section`, `arm_per_section`, `density_*`, `pooled_median`, both uninformative
+  conditions — with only `envelope` (0.0335 → `null`) and `outcome` moving. The `.md` carries a
+  header saying so, because a regeneration that replaces a verdict must not read as a
+  re-measurement. ⚠️ Produced with a two-function `numpy` stub (`mean` over two floats, `isfinite`
+  on a float — the script's only `numpy` uses); the deficits reproduce the committed ones exactly,
+  which is checkable from the file.
+* `scripts/t09_audit_starmap.py` printed a `vs 0.0335` column on every gate audit it ever wrote.
+  Now `vs own envelope`, populated only from `--envelopes` (per metric, with a required `source`
+  naming dataset, holdout, instrument, arms and seeds) and `—` otherwise. `vs fold spread` —
+  always the honest column at n = 2 — is unchanged.
+
+The eleven `.md` artifacts carrying the old column are **annotated, not regenerated** (regenerating
+needs fits). Two different notes, because they are two different situations: the seven post-fix seed
+reports get the per-metric per-arm replacement, derivable from those same files; the four
+`t09_audit_*.md` are marked **superseded outright**, since they are one seed *and* pre-frame-fix —
+visible in their own tables as a negative `marker_field_r` — so their margins are as retired as
+their divisor.
+
+**3. The two-scorer finding is out of the correction report and into the documents.** It was the
+most consequential thing in it and it was sitting in one file. Now `reports/advisor_report.md`
+**§4b** (a peer of §4a's collapse-alarm finding) and `reports/t09_closeout.md` §6 as **§4.2a-i**,
+both stating it plainly: every envelope in this project was measured by a different scorer, on a
+different design, from the numbers it was used to judge; tier-1's per-metric envelopes differ
+**2.6x–6.7x** between the two, and on the autocorrelation metrics the real instrument-B envelope is
+**~9x** the pooled figure that was used — in the direction that flatters every clearance. A third
+axis of error on top of pooled-across-metrics and pooled-across-arms.
+
+**4. The A9 retrieval failure is recorded as its own finding** — advisor **§4c**, close-out §6,
+`specs/10` **§4.2a-iii**. A9's instrument-B envelope existed for a month and nobody looked, because
+the run was **filed by its verdict rather than by what it measured**. "The project has no real-data
+envelope on the pinned instrument" and "A9 measured one" were both true, and only the first was
+written down. **Retrieval, not measurement**, and the kind that recurs: a null result's measurements
+stay valid long after its verdict stops being interesting, and indexing a run by the question it was
+designed to answer makes them unfindable to anyone asking a different one. §4.2f one level up.

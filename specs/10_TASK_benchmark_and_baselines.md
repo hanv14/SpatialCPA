@@ -878,10 +878,37 @@ So A9's correctly measured envelope cannot be matched to them, and §4.2a forbid
 on the `deep_starmap` `text_emb_mode` gate the two arms' envelopes differ by up to 2.6x and **the
 worse arm alternates by metric**, so `medcpt` and `lookup` are not interchangeable envelope donors.
 
+✅ **And the config was never lost, which makes the defect narrower and easier to miss.**
+`scripts/t10_rescore_saved.py` writes and reads the model file as
+``{"config": <every Config field>, "state_dict": ...}`` and its own ``--preflight`` branch already
+prints five of the gates. The whole `Config` has been in `runs/pilot/model_exp_2400.pt` throughout;
+the reporting scripts simply never copied it into their output. Recovery is one file read —
+``scripts/t09_recover_checkpoint_config.py <checkpoint> [--patch <results>.json ...]`` — which
+prints every envelope-deciding gate and writes a `recovered_config` block into the named artifacts
+without touching a measured value.
+
 **The rule.** Every results artifact records the resolved `Config.content_hash()` and every gate
 value that could move its envelope — §10.1's `method_params` requirement, applied to *analysis*
-outputs and not only to bench3 predictions. A number whose arm cannot be identified cannot be given
-a noise scale later, which makes it unreadable as a claim however carefully it was measured.
+outputs and not only to bench3 predictions. A number whose arm cannot be identified **from the
+artifact** cannot be given a noise scale by whoever reads it next, however carefully it was
+measured and however recoverable the config turns out to be from somewhere else.
+
+### 4.2a-iii ⚠️ An experiment's record states what it *measured*, not only what it *concluded*
+
+Not an envelope rule, and it is why §4.2a-i went a month without being noticed.
+
+A9 (§6's metric-aware experiment) returned **UNINFORMATIVE** and was filed under that verdict
+everywhere. The same six fits are also **three seeds of two arms of the shipped-shape configuration,
+at 2400 steps, on `paper_2_4_6`, scored by the pinned evaluator** — the instrument-B envelope §4.2a-i
+says the project lacked, including `paper_gene_mean_spearman`, which no other envelope in the
+project carries. Both "we have no such envelope" and "A9 measured one" were true, and only the first
+was written down.
+
+**The rule.** A run's record names its arms, seeds, dataset, holdout, instrument and **every metric
+it emitted**, beside its verdict — because a null result's measurements stay valid after its verdict
+stops being interesting, and a run indexed only by the question it was built to answer is
+unfindable to anyone asking a different one. This is §4.2f one level up: not a diagnostic that fires
+where nobody looks, but a **measurement filed where nobody will think to look.**
 
 ### 4.2b A clearance against a *referent* takes the worst envelope in the comparison, not the arm's own
 

@@ -1,7 +1,8 @@
 {
   "arm": "resample-grid",
   "metric": "paper_marker_field_r",
-  "envelope": 0.0335,
+  "envelope": null,
+  "envelope_source": "none measured for this metric, arm and instrument",
   "floor_per_section": {
     "section_2": 0.847032204478424,
     "section_4": 0.8856547222842449,
@@ -20,7 +21,7 @@
   "boundary_deficit": 0.17286198329350777,
   "interior_mean_deficit": 0.1959838561891296,
   "gap": -0.023121872895621842,
-  "outcome": "boundary_eliminated",
+  "outcome": "not_readable",
   "pooled_median": 0.6829807783571701,
   "recorded_pooled": null,
   "density_ratios": {

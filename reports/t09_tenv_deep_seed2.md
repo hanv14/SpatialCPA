@@ -1,5 +1,22 @@
 # T09 audit — `text_emb_mode` measured where it is live, per fold
 
+> 🚩 **The `vs 0.0335` column in the table below is WITHDRAWN (2026-09-08).** 0.0335 is R10's
+> **maximum over six metrics** of a spread measured on the **synthetic fixture**, not on
+> `deep_starmap` and not on this gate. This file is one of the three seeds that measure the right
+> envelope for it:
+>
+> | metric | `lookup` | `medcpt` | shared (§4.2b) |
+> |---|---|---|---|
+> | `morans_pearson` | 0.0073 | **0.0246** | 0.0246 |
+> | `gearys_pearson` | **0.0501** | 0.0398 | 0.0501 |
+> | `umap_mixing` | **0.0201** | 0.0067 | 0.0201 |
+> | `marker_field_r` | **0.0197** | 0.0152 | 0.0197 |
+> | `marker_depth_r` | **0.0427** | 0.0182 | 0.0427 |
+>
+> Note that **the worse arm alternates by metric** — `medcpt` on `morans_pearson`, `lookup` on the
+> other four — which is `specs/10` §4.2a's own finding, measured here. Derivation in `reports/envelope_correction.md`.
+
+
 Dataset **`deep_starmap`**, holdout **`paper_2_4_6`** — 115830 training cells x 1017 genes over 4 sections. Config from Config defaults, measured under **`expr_mode=zinb-flow`**, 2400 steps, seed 2.
 
 The selection could not make this measurement: it scored this gate under `expr_mode=cross-mix`, where `_expression` returns from `_cross_mix` before the prior, the flow, the decoder and the gene embeddings are reached — so both options emitted bitwise-identical counts and the gate reported a separation of exactly **0.0000**. That is an absence of measurement, not a tie.

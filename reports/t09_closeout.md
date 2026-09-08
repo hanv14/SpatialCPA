@@ -243,7 +243,8 @@ objective opposing it.
 
 ## 6. The methods contribution, and why I think it is the stronger half
 
-Nine rules (`specs/10` §4.2a–i). They are worth a paper not individually but as a pattern:
+Eleven rules (`specs/10` §4.2a–j, plus §4.2a-i and §4.2a-ii from the 2026-09-08 envelope
+correction). They are worth a paper not individually but as a pattern:
 
 > Every claim in this literature has the form **"the margin exceeds the noise"**, and that sentence
 > hides six independent choices. In this project each one silently decided a verdict before anyone
@@ -253,11 +254,37 @@ Nine rules (`specs/10` §4.2a–i). They are worth a paper not individually but 
   and too strict on two, and the worse arm alternates by metric. 🚨 **And this project went on
   dividing by the pooled figure for three weeks after writing the rule** — the per-metric table
   existed in `envelope_synthetic.md` from the day it was measured, with a line in that report saying
-  it was the right thing to quote. The correction (`reports/envelope_correction.md`, 2026-09-08)
-  moved two verdicts and found a **third** axis the rule does not name: an envelope is per
-  **instrument** too, and every real-data clearance in this project was read against a figure from
-  the wrong one. **This is the strongest instance in the set, because the rule was already written
-  and it still did not bite.**
+  it was the right thing to quote. **This is the strongest instance in the set, because the rule was
+  already written and it still did not bite** (`reports/envelope_correction.md`, 2026-09-08).
+* 🚨 **§4.2a-i** which **instrument** the envelope came from — **the largest of the set by blast
+  radius, and stated here rather than as a footnote to §4.2a because it is a different error.**
+  This repository holds two scorers over the same six metric names: `train/select.py::section_scores`
+  on internal LOSO over the *interior training* sections, and `bench3.evaluate_paper` on
+  `paper_2_4_6`. **Every three-seed envelope this project ever quoted is the first. Every headline
+  number — the six-metric table, R11, A7, A9, the marker deficits, the boundary work — is the
+  second.** On tier-1 their per-metric envelopes differ by **2.6x to 6.7x**, and on the two
+  autocorrelation metrics the real instrument-B envelope is **~9x** the pooled fixture figure that
+  was used, in the direction that flatters every clearance. `specs/10` §5 forbade the mixture in
+  prose — *"a different quantity … must not be placed beside these"* — while every division in the
+  project performed it. It changes no verdict in §3 (each is a within-configuration contrast, so a
+  wrong divisor rescales without changing a sign) and it means **no "Nx the envelope" on a `paper_*`
+  number was ever a statement about that number's noise.**
+* 🚨 **§4.2a-ii** whether the artifact records the arm it describes — the committed, verified,
+  bitwise-reproducible files behind the six-metric table carry no `config_hash`, no `text_emb_mode`
+  and no metric-aware weights, so a correctly measured envelope could not be matched to them. ⚠️
+  **The information was never lost, and that is the sharper version of the finding**: the model file
+  those artifacts were scored from carries the whole `Config`, and `t10_rescore_saved.py` already
+  reads and prints it. The reporting scripts simply never copied the block into their own output.
+  A recovery costs one file read (`scripts/t09_recover_checkpoint_config.py`).
+* ⚠️ **A retrieval failure, not a measurement one, and the kind that recurs.** A9's envelope existed
+  for a month and nobody looked, because the run was **filed by its verdict rather than by what it
+  measured** — UNINFORMATIVE about the metric-aware weights, and simultaneously three seeds of two
+  arms of the shipped-shape configuration on the pinned instrument, which is precisely the envelope
+  §4.2a-i says the project lacked. "We have no real-data envelope on that instrument" and "A9
+  measured one" were both true, and only the first was written down. **The rule: an experiment's
+  record states what it measured, not only what it concluded** — a null result's measurements stay
+  valid after its verdict stops being interesting. §4.2f's shape one level up: not a diagnostic
+  firing where nobody looks, but a measurement filed where nobody will think to look.
 * **§4.2b** which envelope a clearance takes — two arms 0.004 apart landed on opposite sides
   because one varied less.
 * **§4.2c** which referent is a floor at all — the pre-registered constant-field band had
@@ -415,7 +442,11 @@ negative column and were measured at the selected budget. Writing the caveat bro
    gap being **0.69x the envelope**, and `t10_marker_field_boundary.json` hard-codes
    `"envelope": 0.0335` — the pooled synthetic-fixture figure, on a `bench3.evaluate_paper` number.
    Against the only real-data envelope on that instrument (A9's `paper_marker_field_r`, 0.0596) the
-   same gap is **1.56x**, i.e. the other side of the line. That does **not** establish a boundary
+   same gap is **0.39x** — still inside — while against instrument A's `marker_field_r` envelope
+   (0.0148) it is **1.56x**, outside. ⚠️ **Corrected: an earlier revision of this note attributed
+   the 1.56x to A9's envelope; it belongs to instrument A's.** The two candidate divisors give
+   **opposite answers**, which is why the verdict is unreadable rather than overturned. That does
+   **not** establish a boundary
    effect either: A9's envelope is fold-aggregated where this effect is **per section** (§4.2d says
    the per-section construction is always the larger), and it is on an arm r11's artifacts do not
    identify. So the honest state is that the test cannot be read at all until an envelope exists for

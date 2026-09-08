@@ -1,5 +1,25 @@
 # T09 audit — `expr_mode` measured where it is live, per fold
 
+> 🚩 **The `vs 0.0335` column in the table below is WITHDRAWN (2026-09-08).** 0.0335 is R10's
+> **maximum over six metrics** of a spread measured on the **synthetic fixture** — pooled across
+> metrics and measured on a different volume. This file is one of the three seeds that measure the
+> **right** envelope for this exact gate, dataset, instrument and arm pair, so the replacement is
+> derivable from these files alone:
+>
+> | metric | `cross-mix` | `zinb-flow` | shared (§4.2b) |
+> |---|---|---|---|
+> | `morans_pearson` | 0.0054 | **0.0574** | 0.0574 |
+> | `gearys_pearson` | 0.0027 | **0.0595** | 0.0595 |
+> | `umap_mixing` | 0.0068 | **0.0190** | 0.0190 |
+> | `marker_field_r` | 0.0049 | **0.0148** | 0.0148 |
+> | `marker_depth_r` | 0.0084 | **0.0472** | 0.0472 |
+> | `celltype_localization` | 0.0000 | 0.0000 | inert under `resample` |
+>
+> Three-seed margins against those: `morans` **2.29x**, `gearys` **2.19x**, `umap_mixing`
+> **7.45x**, `marker_field_r` **1.35x**, `marker_depth_r` **1.21x** (medians; §4.6). Derivation in
+> `reports/envelope_correction.md` §2.1. `vs fold spread` was always the honest column at n = 2.
+
+
 Dataset **`starmap_visual_cortex`**, holdout **`paper_2_4_6`** — 16527 training cells x 28 genes over 4 sections. Config from Config defaults, measured under **`prior_mode=correlated`**, 2400 steps, seed 2.
 
 The selection could not make this measurement: it scored this gate under `expr_mode=cross-mix`, where `_expression` returns from `_cross_mix` before the prior, the flow, the decoder and the gene embeddings are reached — so both options emitted bitwise-identical counts and the gate reported a separation of exactly **0.0000**. That is an absence of measurement, not a tie.

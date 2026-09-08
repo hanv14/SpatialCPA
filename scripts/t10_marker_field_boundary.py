@@ -1,7 +1,7 @@
 """Does `marker_field_r`'s deficit concentrate at the volume boundary, or is it uniform?
 
 `marker_field_r` is v25's weakest metric against its copy floor — **0.247 below it on tier-1,
-7.4x R10's 0.0335 envelope** — and it has been weak twice before in v25 (its single loss at T09,
+7.4x R10's 0.0335 envelope** — 🚩 that multiple is **withdrawn**, see `--envelope` — and it has been weak twice before in v25 (its single loss at T09,
 0.1611 in the smoke run). This localises that deficit along the stack, or eliminates the boundary
 as its home. Criteria are pre-registered in `progress/t09_inference_and_calibration.md`
 (2026-09-07) and restated in :data:`OUTCOMES`; nothing here was written after seeing a number.
@@ -54,9 +54,31 @@ BOUNDARY = "section_2"
 """The stack's first held-out section: `section_1` is the volume's end, so `section_2`'s flanking
 evidence is one-sided. R3's regime, and the only boundary section among tier-1's three."""
 INTERIOR = ("section_4", "section_6")
-ENVELOPE = 0.0335
-"""R10's across-seed reproducibility envelope on this instrument. One seed here, so it is the only
-scale available; §4.2i's warning applies — it is an estimate, not a constant."""
+NO_ENVELOPE = "unavailable"
+"""``--envelope`` may be set to this, and then the script reports the **raw gap** and refuses to
+return a verdict. `specs/10` §4.2a-i: where no envelope has been measured on the same metric, arm,
+dataset, gate and **instrument**, the nearest available figure is not a fallback."""
+
+ENVELOPE_REQUIRED = """\
+--envelope is required and has no default.
+
+This script used to hard-code 0.0335 — R10's **pooled** envelope, measured over six metrics on the
+**synthetic fixture** by `train/select.py::section_scores`. Every number it reads is
+`bench3.evaluate_paper` on `paper_2_4_6`, so that figure was wrong on three axes at once (metric,
+dataset, instrument: `specs/10` §4.2a and §4.2a-i), and the BOUNDARY ELIMINATED verdict it produced
+rested on it. `reports/envelope_correction.md` §3.
+
+Pass one of:
+
+  --envelope <value> --envelope-source '<what measured it>'
+      an across-seed spread for paper_marker_field_r, measured on the SAME arm, dataset, holdout
+      and instrument as --scores, at the same aggregation level as the effect (§4.2d: this effect
+      is per section, so a fold-aggregated envelope is a lower bound and must be labelled one).
+
+  --envelope unavailable
+      no such envelope has been measured. The report gives the raw gap and returns NOT READABLE,
+      which is the honest state and is what the correction left this measurement in.
+"""
 RECORDED_POOLED = {
     ("field", "rejection"): 0.5763,
     ("hybrid", "rejection"): 0.6384,
@@ -99,6 +121,13 @@ OUTCOMES = {
         "better where evidence is one-sided, and it would be a finding about the metric rather "
         "than the model."
     ),
+    "not_readable": (
+        "NO VERDICT. Every branch of the pre-registered criterion compares the gap against an "
+        "envelope, and none has been measured for this metric on this arm, dataset and "
+        "instrument - so the criterion cannot fail and must not be scored as passed "
+        "(`specs/10` §4.2j). The raw deficits are reported and are what any reading must rest "
+        "on. See `reports/envelope_correction.md` §3."
+    ),
 }
 
 
@@ -114,13 +143,21 @@ def deficits(arm: dict[str, Any], floor: dict[str, float]) -> dict[str, float]:
     return {s: float(floor[s]) - float(per_section[s]) for s in (BOUNDARY, *INTERIOR)}
 
 
-def classify(d: dict[str, float]) -> tuple[str, float, float]:
-    """``(outcome, boundary deficit, interior mean)`` under the pre-registered criteria."""
+def classify(d: dict[str, float], envelope: float | None) -> tuple[str, float, float]:
+    """``(outcome, boundary deficit, interior mean)`` under the pre-registered criteria.
+
+    ``envelope`` of ``None`` means none has been measured for this metric on this arm and
+    instrument, and every branch of the pre-registered criterion is a comparison against it — so
+    the outcome is ``not_readable`` rather than a verdict. Returning ``boundary_eliminated`` in
+    that case would be `specs/10` §4.2j's failure: a criterion that cannot fail, scored as passed.
+    """
     interior = float(np.mean([d[s] for s in INTERIOR]))
     gap = d[BOUNDARY] - interior
-    if gap > ENVELOPE:
+    if envelope is None:
+        return "not_readable", d[BOUNDARY], interior
+    if gap > envelope:
         return "localised_to_boundary", d[BOUNDARY], interior
-    if gap < -ENVELOPE:
+    if gap < -envelope:
         return "inverted", d[BOUNDARY], interior
     return "boundary_eliminated", d[BOUNDARY], interior
 
@@ -132,7 +169,35 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--scores", required=True, help="a t10_rescore_saved.py .json")
     ap.add_argument("--arm", default="hybrid-grid", help="which arm to stratify")
     ap.add_argument("--out", default=None, help="destination .md (a .json is written beside it)")
+    ap.add_argument(
+        "--envelope",
+        required=True,
+        help=f"a measured across-seed spread for {METRIC} on this arm, or {NO_ENVELOPE!r}",
+    )
+    ap.add_argument(
+        "--envelope-source",
+        default=None,
+        help="what measured it: dataset, holdout, instrument, arm, seeds, aggregation level",
+    )
     args = ap.parse_args(argv)
+
+    if args.envelope == NO_ENVELOPE:
+        envelope: float | None = None
+        envelope_source = "none measured for this metric, arm and instrument"
+    else:
+        try:
+            envelope = float(args.envelope)
+        except ValueError:
+            raise SystemExit(ENVELOPE_REQUIRED) from None
+        if envelope <= 0:
+            raise SystemExit(f"--envelope must be positive, got {envelope}")
+        if not args.envelope_source:
+            raise SystemExit(
+                "--envelope-source is required with a numeric --envelope. An envelope whose "
+                "owner is never named is one nobody checks (`specs/10` §4.2g).\n\n"
+                + ENVELOPE_REQUIRED
+            )
+        envelope_source = args.envelope_source
 
     payload = json.loads(Path(args.scores).read_text())
     arms = {a["arm"]: a for a in payload["arms"]}
@@ -155,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     d = deficits(arm, floor)
-    outcome, boundary, interior = classify(d)
+    outcome, boundary, interior = classify(d, envelope)
     pooled = float(arm["matched"][METRIC])
     reference = RECORDED_POOLED.get((arm["mode"], arm["layout_sampler"]))
     drift = None if reference is None else abs(pooled - reference)
@@ -185,8 +250,14 @@ def main(argv: list[str] | None = None) -> int:
     lines += [
         "",
         f"Boundary deficit **{boundary:.4f}**, interior mean **{interior:.4f}**, gap "
-        f"**{boundary - interior:+.4f}** against a **{ENVELOPE}** envelope "
-        f"(**{abs(boundary - interior) / ENVELOPE:.2f}x**).",
+        + (
+            f"**{boundary - interior:+.4f}** against a **{envelope}** envelope "
+            f"(**{abs(boundary - interior) / envelope:.2f}x**) — envelope source: "
+            f"{envelope_source}."
+            if envelope is not None
+            else f"**{boundary - interior:+.4f}**. 🚩 **No envelope is quoted, and none is "
+            "substituted** — see the verdict below."
+        ),
         "",
         f"## Verdict: **{outcome.replace('_', ' ').upper()}**",
         "",
@@ -205,17 +276,23 @@ def main(argv: list[str] | None = None) -> int:
             "That is not the same as passing: nothing confirms these are the scores an earlier "
             "run produced, because there is no earlier run on this sampler.",
         ]
-    elif drift is not None and drift > ENVELOPE:
+    elif drift is not None and envelope is not None and drift > envelope:
         lines += [
             f"* 🚨 **(b) FIRES** — pooled median **{pooled:.4f}** against the recorded "
             f"**{reference:.4f}** for `{arm['mode']}`/`{arm['layout_sampler']}`, a drift of "
             f"{drift:.4f}, more than one envelope. Not the run the recorded number came from; "
             "the verdict above must not be read.",
         ]
+    elif envelope is None:
+        lines += [
+            f"* **(b) NOT EVALUABLE** — pooled median **{pooled:.4f}** against the recorded "
+            f"**{reference:.4f}**, a drift of {drift:.4f}, and **no envelope to read it "
+            "against**. Not the same as passing (`specs/10` §4.2j).",
+        ]
     else:
         lines += [
             f"* **(b) does not fire** — pooled median **{pooled:.4f}** against the recorded "
-            f"**{reference:.4f}** (drift {drift:.4f}, inside the envelope).",
+            f"**{reference:.4f}** (drift {drift:.4f}, inside the {envelope} envelope).",
         ]
     ratio_text = ", ".join(f"`{s}` {ratios[s]:.2f}x" for s in (BOUNDARY, *INTERIOR))
     if under:
@@ -252,7 +329,8 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "arm": args.arm,
                     "metric": METRIC,
-                    "envelope": ENVELOPE,
+                    "envelope": envelope,
+                    "envelope_source": envelope_source,
                     "floor_per_section": {s: float(floor[s]) for s in (BOUNDARY, *INTERIOR)},
                     "arm_per_section": {s: float(scores[s]) for s in (BOUNDARY, *INTERIOR)},
                     "deficits": d,
@@ -265,7 +343,9 @@ def main(argv: list[str] | None = None) -> int:
                     "density_ratios": ratios,
                     "density_spread": spread,
                     "uninformative_c": bool(under),
-                    "uninformative_b": None if drift is None else drift > ENVELOPE,
+                    "uninformative_b": (
+                        None if drift is None or envelope is None else drift > envelope
+                    ),
                 },
                 indent=2,
             )

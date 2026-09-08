@@ -102,10 +102,40 @@ of its own artifacts** — `r11_starmap_layout_modes.json`, `r11_resample_grid{,
 no `config_hash`, no `text_emb_mode` and no metric-aware weights. §4.2a's own evidence says the gate
 matters: on the `deep_starmap` `text_emb_mode` gate the two arms' envelopes differ by up to 2.6x and
 **the worse arm alternates by metric**. So `medcpt` and `lookup` arms are not interchangeable
-envelope donors, and which one r11 ran is a fact this project no longer holds.
+envelope donors, and which one r11 ran is not recorded in any artifact that cites it.
 
-That is a §8-class provenance gap in a new place: not a missing file, but a **landed file that does
-not record the configuration it describes.**
+✅ **CORRECTION 2026-09-08, and it is the useful half — the configuration was never lost.** The
+first revision of this section implied the arm's identity was gone. It is not:
+`scripts/t10_rescore_saved.py` **writes and reads the model file as**
+``{"config": <every Config field>, "state_dict": ...}``, and its own ``--preflight`` branch already
+prints ``decoder_mu_link``, ``train_steps``, ``layout_sampler``, ``text_emb_mode`` and
+``expr_pca_dim`` from it. The whole `Config` has been sitting in `runs/pilot/model_exp_2400.pt` the
+entire time.
+
+**So the defect is narrower and more ordinary than "a landed file missing its own identity": the
+reporting scripts never copied the block into their own output.** The recovery is one file read,
+not a measurement — `scripts/t09_recover_checkpoint_config.py` prints every envelope-deciding gate
+and, with `--patch`, writes a `recovered_config` block into the r11 artifacts so the next reader
+does not have to ask:
+
+```
+python scripts/t09_recover_checkpoint_config.py runs/pilot/model_exp_2400.pt \
+    --patch reports/r11_starmap_layout_modes.json \
+    --patch reports/r11_resample_grid.json --patch reports/r11_resample_grid_umap.json \
+    --patch reports/r11_determinism_a.json --patch reports/r11_determinism_b.json
+```
+
+⚠️ **It must be run where the checkpoint lives** (the campaign machine); this container has no
+`torch`. The reader's payload logic is exercised without `torch` by
+`python scripts/t09_recover_checkpoint_config.py --self-check`, and the patcher was verified against
+a copy of `r11_determinism_a.json`: it is idempotent, refuses to overwrite without `--force`, and
+leaves every measured field byte-identical.
+
+**What the answer decides.** If the recovered `text_emb_mode` and metric-aware weights match A9's
+arms, four of the six rows in §3 become recomputable immediately from committed files. If they do
+not, that is a three-seed measurement on instrument B and should be costed as one. Either way the
+question is now answerable, and §4.2a-ii's rule stands unchanged: the *artifact* should have carried
+it.
 
 ---
 
@@ -235,7 +265,7 @@ exercise.
 |---|---|---|---|---|
 | `field` **3.5x**, `hybrid` **3.2x**, `resample` *"inside"* below the copy floor | close-out §3; advisor §3; `specs/10` §4.5b | `paper_celltype_localization`, instrument B, **one seed** | The `field`/`hybrid` arms have **no across-seed spread at all** — `r11_starmap_layout_modes.json` is `seed: 1` for all five arms. A9 supplies an envelope for `resample` only, on an arm whose `text_emb_mode` is unrecorded | three seeds of the layout-mode comparison on instrument B, or recording r11's arm config and re-using A9's |
 | `marker_field_r` **7.4x** below its copy floor | close-out §8.6 | `paper_marker_field_r`, instrument B, one seed | same: one seed, and the arm is the **superseded `hybrid` pilot row** the advisor already withdraws (§5). A9's 0.0596 is the right shape and the wrong arm | as above |
-| boundary-vs-interior gap **0.69x** → **BOUNDARY ELIMINATED** | close-out §8.6; advisor §7b | `paper_marker_field_r`, instrument B, one seed | ⚠️ **the strongest case for flagging.** `t10_marker_field_boundary.json` hard-codes `"envelope": 0.0335`. Against A9's `paper_marker_field_r` envelope the gap of −0.0231 is **1.56x**, i.e. the opposite side of the line — but that envelope is fold-aggregated where the effect is **per section** (§4.2d (b) ≥ (a)), and on the wrong arm | three seeds of the shipped arm, read per section |
+| boundary-vs-interior gap **0.69x** → **BOUNDARY ELIMINATED** | close-out §8.6; advisor §7b | `paper_marker_field_r`, instrument B, one seed | ⚠️ **the strongest case for flagging, and the reason is that the two candidate divisors disagree.** `t10_marker_field_boundary.json` hard-codes `"envelope": 0.0335`, giving 0.69x. The same −0.0231 gap is **1.56x** against instrument A's `marker_field_r` envelope (0.0148) — *outside* — and **0.39x** against A9's instrument-B `paper_marker_field_r` (0.0596) — *inside*. Neither is admissible: A is the wrong instrument, B is the wrong arm and is fold-aggregated where the effect is **per section** (§4.2d (b) ≥ (a)). **A verdict that flips with the choice of divisor is not a verdict** | three seeds of the shipped arm, read per section |
 | `gene_mean_spearman` **0.0033 off its copy floor, "inside the envelope"** | close-out §8.6 | `paper_gene_mean_spearman` | The metric is **not in `METRIC_NAMES`** and appears in no fixture or instrument-A envelope — the two-`SIX` defect (advisor §5). A7 and A9 do carry it on instrument B (0.0033–0.1193, 0.0301–0.0400) — spanning the claimed deficit — so "inside" is **not established either way** | extract it from A9 once r11's arm is identified |
 | SpatialZ's **+0.015** localization lead *"inside twice the reproducibility envelope"* | `specs/10` §13.2 | `paper_celltype_localization`, **prior campaign** | rests on the **retired 0.0120** (§4.2, "that defect, not run-to-run variation"), and §13.1 establishes the two sides were scored by **different `evaluate_paper` revisions** | re-run the comparators (§3), which §13.1 already requires |
 | the pilot layout swap at *"~29x the 0.0120 across-seed envelope"* | `specs/10` §4.5b | `paper_celltype_localization` | same retired figure; the row is also superseded by the grid-sampler re-measurement above it | as above |
@@ -292,11 +322,36 @@ span 0.0009 to 0.2894. That is not a 4x error; on the autocorrelation metrics it
 in the direction that **flatters** every clearance. The correction cannot be finished from artifacts
 alone, and §3 is the list of what it is waiting on.
 
-**The cheapest thing that would close most of §3** is not a fit: it is recording, from
-`runs/pilot/model_exp_2400.pt`, the `text_emb_mode` and metric-aware weights of the arm behind the
-six-metric table. If it matches A9's, four of the six flagged rows become recomputable immediately
-from files already committed. If it does not, that is a three-seed measurement on instrument B and
-it should be costed as one.
+**The cheapest thing that would close most of §3 is one file read, and the command exists**:
+`scripts/t09_recover_checkpoint_config.py runs/pilot/model_exp_2400.pt`, run where the checkpoint
+lives. The `Config` was in that file the whole time (§1a). If the recovered `text_emb_mode` and
+metric-aware weights match A9's arms, four of the six flagged rows become recomputable immediately
+from files already committed; if they do not, that is a three-seed measurement on instrument B and
+should be costed as one.
+
+### 5a. The two divisors that would have come back — closed 2026-09-08
+
+A correction that only rewrites prose leaves the defect in the code that generated it. Both
+offenders are fixed, and neither now has a default:
+
+* **`scripts/t10_marker_field_boundary.py`** hard-coded `ENVELOPE = 0.0335` and every branch of its
+  pre-registered criterion compared against it. `--envelope` is now **required**, a numeric value
+  additionally requires `--envelope-source` (§4.2g: an envelope whose owner is never named is one
+  nobody checks), and `--envelope unavailable` returns a new **NOT READABLE** outcome instead of
+  silently returning `boundary_eliminated` — a criterion that cannot fail must not be scored as
+  passed (§4.2j). `reports/t10_marker_field_boundary.{md,json}` are regenerated under it: **every
+  measured field is byte-identical** to the superseded pair, and only `envelope` (0.0335 → `null`)
+  and `outcome` (`boundary_eliminated` → `not_readable`) moved.
+* **`scripts/t09_audit_starmap.py`** printed a `vs 0.0335` column on every gate audit it has ever
+  written. The column is now `vs own envelope`, populated only from `--envelopes` — per metric, with
+  a required `source` naming the dataset, holdout, instrument, arms and seeds — and printing `—`
+  otherwise. `vs fold spread`, which was always the honest column at n = 2, is unchanged.
+
+The eleven `.md` artifacts carrying the old column are annotated in place rather than regenerated
+(regenerating them would need fits). The seven **post-frame-fix** seed reports carry the per-metric
+per-arm replacement, derivable from those same files; the four `t09_audit_*.md` are marked
+**superseded outright** — they are one seed *and* pre-frame-fix, visible in their own tables as a
+negative `marker_field_r`, so their margins are as retired as their divisor.
 
 ---
 
@@ -313,10 +368,23 @@ forces, each from a place the existing rule was followed and still gave the wron
   is exactly why neither set may stand in for the other. The prohibition existed in `specs/10` §5
   while the practice violated it everywhere.
 * **§4.2a-ii — an artifact must record the configuration it describes.** `r11_starmap_layout_modes.json`
-  is a landed, verified, reproducible file whose arm cannot be identified, so a correctly measured
-  envelope cannot be matched to it. §8's provenance tiers assume the problem is a missing file; this
-  is a present file that is missing its own identity.
+  is a landed, verified, reproducible file that does not say which arm it describes, so a correctly
+  measured envelope cannot be matched to it **from the artifact**. §8's provenance tiers assume the
+  problem is a missing file. This is a present file whose identity lives somewhere else — in the
+  checkpoint it was scored from, which had it all along. That makes it cheaper to fix and easier to
+  miss: nothing is absent, so nothing looks wrong.
 * **§4.2a-iii — a per-metric envelope that has been measured must be quoted per metric.** R10
   measured one and said in its own report that it was the right thing to use. It was pooled anyway,
   for three weeks, across three documents. The failure was not measurement and not reasoning; it was
   that a pooled scalar is easier to carry than a table.
+* ⚠️ **And one that is not about envelopes at all: an experiment's record states what it
+  *measured*, not only what it *concluded*.** A9's instrument-B envelope existed for a month and
+  nobody looked, because the run was filed under its verdict — UNINFORMATIVE about the metric-aware
+  weights — while being, at the same time, three seeds of two arms of the shipped-shape
+  configuration on the pinned evaluator. "The project has no real-data envelope on that instrument"
+  and "A9 measured one" were both true and only the first was written down. **This is a retrieval
+  failure, not a measurement one**, and it is the kind that recurs: a null result's *measurements*
+  stay valid long after its *verdict* stops being interesting, and indexing a run by the question it
+  was designed to answer makes them unfindable to anyone asking a different one. §4.2f's shape one
+  level up — not a diagnostic firing where nobody looks, but a measurement filed where nobody will
+  think to look.

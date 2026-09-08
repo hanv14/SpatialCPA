@@ -116,8 +116,8 @@ them is exactly v25's contribution to that pairing, and **it is negative on ever
 
 ## 4. The defects table — read as the contribution
 
-Nine rules (`specs/10` §4.2a–j). They are the transferable half of this project, and the reason is
-not that any one is clever:
+Eleven rules (`specs/10` §4.2a–j, plus §4.2a-i and §4.2a-ii from the envelope correction). They are
+the transferable half of this project, and the reason is not that any one is clever:
 
 > Every claim in this literature has the form **"the margin exceeds the noise."** That sentence
 > hides seven independent choices, and in this project **each one silently decided a verdict before
@@ -177,6 +177,62 @@ ship**.
 `test_both_collapse_alarms_are_armed_with_sefl_off` pinning the gate **from source** (a fit that
 happens not to collapse cannot distinguish "armed and silent" from "never armed", which is the
 defect itself). Every citation of an empty record as a performed check has been corrected.
+
+### 4b. 🚨 Every envelope in this project was measured on a different instrument from the numbers it judged
+
+The newest defect and, by blast radius, the largest of the set — it touches **every** "Nx the
+envelope" this project has ever written about real data, which is every clearance in §2, §3 and §5.
+Found 2026-09-08 by tracing each figure to the script that produced it
+(`reports/envelope_correction.md`).
+
+**There are two scorers in this repository, over the same six metric names:**
+
+| | instrument A | instrument B |
+|---|---|---|
+| scorer | `train/select.py::section_scores` (T08 kernels) | `bench3.evaluate_paper`, SHA-pinned |
+| design | internal LOSO, **interior training** sections (`section_3`, `section_5`) | **`paper_2_4_6`** held-out (`section_2/4/6`) |
+| metric names | `morans_pearson`, … | `paper_morans_pearson`, … |
+| what it produced | the envelope files, the gate audits, the depth ceilings | the six-metric table, R11, A7, A9, the marker deficits, the boundary work |
+
+**Every three-seed envelope this project has ever quoted is instrument A's. Every headline number is
+instrument B's.** `specs/10` §5 forbids the mixture in as many words — *"Numbers … scored on
+internal LOSO with T08 kernels are a different quantity and must not be placed beside these"* — and
+the practice violated it in every division. Measured on tier-1, the per-metric envelopes differ by
+**2.6x to 6.7x** between the two (`morans` 0.0574 → 0.2894, `gearys` 0.0595 → 0.2861, `umap_mixing`
+0.0190 → 0.1281, `marker_field_r` 0.0148 → 0.0596, `marker_depth_r` 0.0472 → 0.1225).
+
+**So the 0.0335 was wrong on three axes, not two.** Pooled across metrics (§4.2a's known defect),
+measured on the synthetic fixture rather than the dataset — and measured by a scorer that never
+touched the numbers it was dividing. The third is the one nobody had named, and it is the one that
+runs in the direction that **flatters** every clearance: on the two autocorrelation metrics the real
+instrument-B envelope is **~9x** the pooled figure that was used.
+
+**What it does and does not change.** It moves no verdict in §3: every negative is a
+within-configuration contrast, so a wrong divisor rescales a margin without touching its sign. It
+does mean that **no "Nx the envelope" attached to a `paper_*` number in this report was ever a
+statement about that number's noise**, and six of them are now flagged rather than numbered (§8).
+
+### 4c. ⚠️ A9's envelope existed for a month and nobody looked, because the run was filed by its verdict
+
+A smaller finding and a different kind, and it is the one most likely to recur.
+
+A9 was run to answer one question — do the metric-aware weights help — and returned
+**UNINFORMATIVE** (§6). It was filed under that verdict, in the reports, in `PROGRESS.md` and in
+this document. What nobody recorded is that the same six fits are **three seeds of two arms of the
+shipped-shape configuration, at 2400 steps, on `paper_2_4_6`, scored by the pinned evaluator** —
+i.e. exactly the instrument-B envelope §4b says the project does not have, including
+`paper_gene_mean_spearman`, which appears in no instrument-A envelope at all.
+
+For a month, "we have no real-data envelope on the pinned instrument" and "A9 measured one" were
+both true and only the first was written down. **The failure is retrieval, not measurement**: a run
+was indexed by the question it was designed to answer, so the quantities it happened to measure
+became unfindable to anyone asking a different question.
+
+**The rule this earns**: an experiment's record states **what it measured**, not only **what it
+concluded** — the arms, seeds, dataset, holdout, instrument and every metric it emitted — because a
+null result's *measurements* stay valid after its *verdict* stops being interesting. This is
+§4.2f's shape one level up: not a diagnostic that fires where nobody looks, but a **measurement
+filed where nobody will think to look.**
 
 ---
 
@@ -473,9 +529,11 @@ boundary-vs-interior gap of **−0.0231** (`reports/t10_marker_field_boundary.js
 gap being *"0.69x the envelope"*, and the instrument hard-codes `"envelope": 0.0335` — the pooled
 **synthetic-fixture** figure, applied to a `bench3.evaluate_paper` number. Against the only
 real-data envelope on that instrument (A9's `paper_marker_field_r`, **0.0596**) the same gap is
-**1.56x** — the other side of the line — and that envelope is itself inadmissible here, being
-fold-aggregated where the effect is per section and measured on an arm r11's artifacts do not
-identify. `reports/envelope_correction.md` §3.
+**0.39x** — still inside — while against instrument A's `marker_field_r` envelope (0.0148) the same
+gap is **1.56x**, outside. ⚠️ **Corrected: an earlier revision attributed the 1.56x to A9's
+envelope; it belongs to instrument A's.** **The two candidate divisors give opposite answers**, and
+neither is admissible — A is the wrong instrument, B is the wrong arm and is fold-aggregated where
+the effect is per section. A verdict that flips with the divisor is not a verdict. `reports/envelope_correction.md` §3.
 
 **What survives without an envelope, and it is what the redirect rests on**: the boundary section
 carries the **smallest** of the three deficits (0.1729 against 0.1877 and 0.2043), so nothing in
@@ -741,7 +799,10 @@ between-cell variation and a fraction of its amplitude, and the ZINB objective c
 dispersion instead of with the structured mean.
 
 **This is a negative-results paper with a methods contribution, and the methods contribution is the
-stronger half** — because it transfers. The negative is about one method on two datasets; §4 is
+stronger half** — because it transfers. The strongest single item in it is §4b: **every envelope in
+this project was measured by a different scorer from the numbers it was used to judge**, a mistake
+that survived a written rule forbidding it, and one that any repeated-seed benchmark with two
+scoring paths can make. The negative is about one method on two datasets; §4 is
 about how anyone should read a repeated-seed benchmark, and none of it is reported in this
 literature.
 

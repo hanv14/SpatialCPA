@@ -69,10 +69,23 @@ from _starmap_run import (
     load_training_volume,
 )
 
-ENVELOPE = 0.0335
-"""R10's measured across-seed envelope (``reports/envelope_synthetic.md``), 9 fits, 3 cells x
-3 seeds. ``Config.claim_tie_break_envelope`` rounds it up to 0.04; the raw number is used here
-so the margin can be read against both."""
+ENVELOPES: dict[str, float] = {}
+"""Per-metric across-seed envelopes for **this** gate, dataset and instrument, from
+``--envelopes``. Empty by default, and an empty mapping prints ``—`` in the envelope column
+rather than a number.
+
+⚠️ **This was ``ENVELOPE = 0.0335`` until 2026-09-08, and that was wrong three ways at once.**
+R10's 0.0335 is the **maximum over six metrics** of a spread measured on the **synthetic
+fixture** by this same scorer — so quoting it here pooled across metrics (§4.2a: the fixture's
+own per-metric envelopes span 0.0068-0.0335, up to 5x apart), across datasets (tier-1 and
+``deep_starmap`` differ by up to 2.6x), and it is in any case an envelope for a *different*
+volume. Every ``vs 0.0335`` column this script ever printed is withdrawn;
+``reports/envelope_correction.md`` has the re-derivation. There is deliberately **no default**:
+`specs/10` §4.2a-i says the nearest available figure is not a fallback."""
+
+ENVELOPE_SOURCE = ""
+"""What measured :data:`ENVELOPES` — dataset, holdout, instrument, arms, seeds. Printed beside
+the column, because an envelope whose owner is never named is one nobody checks (§4.2g)."""
 
 
 def parse_under(values: list[str] | None) -> dict[str, str]:
@@ -120,6 +133,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--workdir", default="runs/audit")
     ap.add_argument("--out", default=None, help="default: reports/t09_audit_<gate>.md")
+    ap.add_argument(
+        "--envelopes",
+        default=None,
+        metavar="JSON",
+        help=(
+            "per-metric across-seed envelopes for THIS gate, dataset and instrument, as "
+            '\'{"metrics": {"morans_pearson": 0.0574, ...}, "source": "..."}\' or a path to '
+            "such a file. Omit and the envelope column prints '—': there is no default, because "
+            "the nearest available figure is not a fallback (specs/10 §4.2a-i)"
+        ),
+    )
     ap.add_argument("--train-steps", type=int, default=None)
     ap.add_argument("--expr-pca-dim", type=int, default=None)
     ap.add_argument("--text-cache", default=None)
@@ -141,6 +165,21 @@ def main(argv: list[str] | None = None) -> int:
     )
     add_path_args(ap)
     args = ap.parse_args(argv)
+
+    if args.envelopes:
+        raw = Path(args.envelopes)
+        spec = json.loads(raw.read_text() if raw.is_file() else args.envelopes)
+        unknown = sorted(set(spec.get("metrics", {})) - set(METRIC_NAMES))
+        if unknown:
+            raise SystemExit(f"--envelopes names non-metrics {unknown}; expected {METRIC_NAMES}")
+        if not spec.get("source"):
+            raise SystemExit(
+                "--envelopes must carry a 'source': dataset, holdout, instrument, arms and "
+                "seeds. An envelope whose owner is never named is one nobody checks "
+                "(specs/10 §4.2g)."
+            )
+        ENVELOPES.update({k: float(v) for k, v in spec["metrics"].items()})
+        globals()["ENVELOPE_SOURCE"] = str(spec["source"])
 
     paths = resolve(args)
     print(paths.describe())
@@ -347,7 +386,7 @@ def _report(rows, args, cfg, under, folds, source, paths, volume) -> list[str]:
     header = lines[-1]
     for sid in fold_ids:
         header += " | " + " | ".join(f"`{r['option']}` {sid}" for r in rows)
-    lines[-1] = header + " | margin (mean) | vs 0.0335 | vs fold spread | fold balance |"
+    lines[-1] = header + " | margin (mean) | vs own envelope | vs fold spread | fold balance |"
     lines.append("|---" * (1 + len(rows) * (1 + len(fold_ids)) + 4) + "|")
     for name in METRIC_NAMES:
         cells = [f"{r['mean'][name]:+.4f}" for r in rows]
@@ -356,10 +395,11 @@ def _report(rows, args, cfg, under, folds, source, paths, volume) -> list[str]:
         margin = (
             abs(rows[0]["mean"][name] - rows[1]["mean"][name]) if len(rows) == 2 else float("nan")
         )
+        env = ENVELOPES.get(name)
         verdict = (
             "—"
-            if margin != margin
-            else ("**inside**" if margin < ENVELOPE else f"{margin / ENVELOPE:.1f}x")
+            if margin != margin or env is None or env <= 0
+            else ("**inside**" if margin < env else f"{margin / env:.1f}x")
         )
         spread = _fold_spread(rows, name)
         vs_spread = (
@@ -397,8 +437,13 @@ def _report(rows, args, cfg, under, folds, source, paths, volume) -> list[str]:
         lines += [
             "",
             f"**Largest separation: `{worst}` at {margin:.4f}** "
-            f"({margin / ENVELOPE:.1f}x the 0.0335 envelope, "
-            f"{margin / max(_fold_spread(rows, worst), 1e-12):.1f}x the worst within-arm fold "
+            + (
+                f"({margin / ENVELOPES[worst]:.1f}x its own across-seed envelope "
+                f"{ENVELOPES[worst]:.4f}, "
+                if ENVELOPES.get(worst)
+                else "(no across-seed envelope supplied for this metric on this gate, "
+            )
+            + f"{margin / max(_fold_spread(rows, worst), 1e-12):.1f}x the worst within-arm fold "
             f"spread). The two folds "
             + (
                 (
@@ -428,6 +473,16 @@ def _report(rows, args, cfg, under, folds, source, paths, volume) -> list[str]:
             "the whole mean (**⚠** below 0.25). A margin with a balance near zero is one fold's "
             "difference halved, whatever its ratio to the envelope.",
             "",
+            "**`vs own envelope` is empty unless `--envelopes` supplied one measured on this "
+            "gate, dataset and instrument** (`specs/10` §4.2a-i). It used to be `vs 0.0335`, a "
+            "pooled synthetic-fixture figure; every such column is withdrawn "
+            "(`reports/envelope_correction.md`). "
+            + (
+                f"Envelope source here: {ENVELOPE_SOURCE}. "
+                if ENVELOPES
+                else "No envelope was supplied for this run, so that column reads `—`. "
+            )
+            + 
             "**`vs fold spread` is the column to read at n = 2.** R10's 0.0335 is an "
             "across-*seed* envelope measured on the fixture; it says nothing about how much a "
             "metric moves between *this* dataset's folds. A margin smaller than the worst "

@@ -1,5 +1,21 @@
 # T09 audit — `expr_mode` measured where it is live, per fold
 
+> 🚩 **The `vs 0.0335` column below is WITHDRAWN, and so are this file's margins (2026-09-08).**
+> Two separate problems, and the second is the larger:
+>
+> 1. **The divisor.** 0.0335 is R10's maximum over six metrics on the **synthetic fixture** —
+>    pooled across metrics and measured on another volume (`specs/10` §4.2a, §4.2a-i).
+> 2. 🚨 **The measurement.** This is a **one-seed** audit taken **before the coordinate-frame
+>    fix**, which is visible in the table itself: `marker_field_r` is **negative** on both arms,
+>    which the fix showed to be the plane-local `(u, v)` coordinates being scored against physical
+>    ones. `claim_min_seeds` is 3 and this is 1.
+>
+> **The successor is the three-seed post-fix run** — `reports/t09_envelope_starmap_seed{2,3,4}.md`
+> for tier-1 and `reports/t09_tenv_deep_seed{2,3,4}.md` for `deep_starmap` — which measures both
+> the margins and their own per-metric per-arm envelopes. Do not quote this file's numbers or its
+> multiples; `reports/envelope_correction.md` §2.1 carries the replacements.
+
+
 Tier-1 STARmap (`starmap_visual_cortex`, `paper_2_4_6`). Config from Config defaults, measured under **`prior_mode=correlated`**, 2400 steps, seed 1.
 
 The selection could not make this measurement: it scored this gate under `expr_mode=cross-mix`, where `_expression` returns from `_cross_mix` before the prior, the flow, the decoder and the gene embeddings are reached — so both options emitted bitwise-identical counts and the gate reported a separation of exactly **0.0000**. That is an absence of measurement, not a tie.
