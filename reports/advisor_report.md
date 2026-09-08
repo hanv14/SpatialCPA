@@ -218,11 +218,18 @@ The shipped deficit is **0.203**.
 `reports/r11_determinism_{a,b}.json`), **not the r11 campaign numbers this table carried until
 2026-09-08.** Those were stale; §Provenance below gives the evidence and the deltas.
 
-⚠️ **The floor and ceiling columns are still r11-era** (`reports/r11_starmap_layout_modes.json`).
-They are carried forward on the argument that `flanking_copy` and `oracle` are **probes that do not
-run the model** — one copies a flanking section, the other reads the true one — so a change to the
-decoder cannot move them. **That is an inference, not a re-measurement**; re-running the two probes
-under today's code would settle it and has not been done. Every `v25 − floor` figure inherits it.
+✅ **The floor and ceiling columns were re-measured on 2026-09-08 and reproduce exactly.** Both
+probes were regenerated from `bench3.selftest` and re-scored under today's code
+(`reports/r11_probes_recheck.json`); all twelve values match the r11-era ones this table carried, to
+four decimals, on both probes and all six metrics. An earlier draft flagged them as an inference —
+that `flanking_copy` and `oracle` are probes that copy rather than run the model, so a decoder
+change cannot move them. **It is now a measurement, and the inference it replaces was correct.** The
+`v25 − floor` column is sound.
+
+  ⚠️ **One cell is still empty and the reason is not what an earlier draft said.** `umap_mixing` has
+  no floor and no ceiling because `scripts/t10_layout_modes_table.py` does not compute it for the
+  probes — see the two-`SIX` defect below. It is not a matter of passing or omitting `--no-umap`; an
+  earlier instruction in this campaign said it was, and that was wrong.
 
 **What this table is not, and every caveat attached:**
 
@@ -279,6 +286,24 @@ under today's code would settle it and has not been done. Every `v25 − floor` 
   the direction is not uniform, though (`morans` rose, `marker_depth_r` fell), so "the leak was
   inflating it" is *not* the story. The point that matters needs no attribution: **a results table
   is only valid for the code state that produced it, and this one had drifted two weeks.**
+
+  🚨 **A second defect this run surfaced: the project has two different six-metric sets under the
+  same name.** `scripts/t09_ship_starmap.py:106` defines `SIX` as morans, gearys, **`umap_mixing`**,
+  marker_field_r, marker_depth_r, celltype_localization. `scripts/t10_layout_modes_table.py:36`
+  defines `SIX` as the same list with **`gene_mean_spearman` substituted for `umap_mixing`**. Neither
+  says it differs from the other.
+
+  The consequence is not cosmetic. **R11's layout-mode table — the evidence that made `resample` the
+  shipped default — was scored on the second set**, so the ranking that decided the default has
+  never included `umap_mixing`, while the headline table above calls its own set "the six metrics"
+  and does include it. A reader comparing the two tables is comparing different panels under one
+  name. This is `specs/10` §4.2j's shape again — an instrument reporting under a label that means
+  something else elsewhere — and it belongs in the rules table as its own instance.
+
+  ⚠️ **Not yet fixed, and the fix is not free.** Adding `umap_mixing` to the layout-mode table means
+  re-scoring both probes and every layout arm with UMAP on. It changes no verdict I can foresee —
+  `resample` beat the field modes by 0.09 on localization, far outside any envelope — but "changes
+  no verdict I can foresee" is exactly the phrase this campaign has now been wrong about twice.
 
   **Scope of the damage, stated honestly.** Within-campaign comparisons are unaffected: r11's
   layout-mode ranking (`field` / `hybrid` / `resample`) was measured in one code state, so the
