@@ -5,8 +5,15 @@ draft, which predates A9, the `marker_field_r` correction and the collapse-alarm
 carried a framing since shown to be wrong (§7).
 
 **Every number below names the file it comes from.** Where no current measurement exists, this
-report says so rather than substituting an older one. §8 lists what cannot be sourced from this
-repository at all — a longer list than it should be, and a finding in its own right.
+report says so rather than substituting an older one. §8 splits the provenance into three tiers:
+**8a** results whose artifacts are being committed now, **8b** results that were measured but whose
+files are not held — attested by a progress entry alone — and **8c** why the split matters. A ⚠️
+against a number in the body means it is 8b.
+
+⚠️ **The six-metric table changed materially since the earlier draft** — `marker_field_r` 0.638 →
+**0.683**, `marker_depth_r` 0.748 → **0.855** — because that draft used the superseded `hybrid`
+pilot arm rather than the shipped `resample` one. The older figures have already been quoted; §5
+states the change and what it affects.
 
 ---
 
@@ -81,7 +88,7 @@ Three claims, all about **encoding** — representing the volume. None is about 
 
 **2.4 One capability claim survives replication.** Text embeddings place genes the model never saw
 above the `shuffled` floor: **2.52x** the shared envelope on `deep_starmap`
-(`reports/t09_zeroshot_deep.md`) and **2.08x** on `cosmx_nsclc_3d` ⚠️ (unsourced, §8). *Which* path
+(`reports/t09_zeroshot_deep.md`) and **2.08x** on `cosmx_nsclc_3d` ⚠️ (artifact being committed, §8a). *Which* path
 in the text channel does it is **not** established — see §6.
 
 ---
@@ -94,9 +101,9 @@ in the text channel does it is **not** established — see §6.
 |---|---|---|---|
 | intensity-field layout | **REFUTED** | `field` **0.6607**, `hybrid` **0.6692** against `resample` **0.7546**, a copy floor of **0.7765** and an oracle ceiling of **0.9808** — both field modes score *below the floor* on the metric the layout head exists to win. `resample` ships. | `reports/r11_starmap_layout_modes.json` |
 | flow-matching expression head | **REFUTED, both datasets** | on `deep_starmap` copying wins **every live metric**; on tier-1 by 4.6–5.3x the envelope on three | `reports/t09_audit_deep_expr_mode.json`, `reports/t09_audit_expr_mode.json` |
-| SEFL — the mechanism the method is named for | **REFUTED, 3 seeds** | the SEFL arm **collapses** the anatomical field: `i_gen` at **1.6–2.4 %** of target against 95.6–97.5 % off; `check_collapse` fired **218 times**. All three weights ship at 0. | ⚠️ **unsourced in this repo** (§8) |
-| the *mechanism* half of the zero-shot claim | **PARTIAL** | A2 − A3 = **+0.0450**, **0.22x** the shared envelope, where `deep_starmap` had +0.2514 at 2.7x. `specs/10` §7's mechanism sentence is **withdrawn**. | ⚠️ unsourced (§8) |
-| the seen/unseen sign flip | **DOES NOT REPLICATE** | signs reversed on **12 of 12** seed x fold cells; **both** magnitudes inside their pool's envelope (0.22x, 0.51x). Direction replicated, effect size did not. | ⚠️ unsourced (§8) |
+| SEFL — the mechanism the method is named for | **REFUTED, 3 seeds** | the SEFL arm **collapses** the anatomical field: `i_gen` at **1.6–2.4 %** of target against 95.6–97.5 % off; `check_collapse` fired **218 times**. All three weights ship at 0. | ⚠️ **artifact being committed** (§8a) |
+| the *mechanism* half of the zero-shot claim | **PARTIAL** | A2 − A3 = **+0.0450**, **0.22x** the shared envelope, where `deep_starmap` had +0.2514 at 2.7x. `specs/10` §7's mechanism sentence is **withdrawn**. | ⚠️ being committed (§8a) |
+| the seen/unseen sign flip | **DOES NOT REPLICATE** | signs reversed on **12 of 12** seed x fold cells; **both** magnitudes inside their pool's envelope (0.22x, 0.51x). Direction replicated, effect size did not. | ⚠️ being committed (§8a) |
 | the metric-aware losses | **UNINFORMATIVE** — see §6 | condition (a) fired: worst primary envelope **0.4323** against the **0.067** bound, **6.5x over** | `reports/t10_a9.md` |
 
 **And the sentence a reader will derive for themselves, so the paper should say it first.** v25
@@ -178,6 +185,24 @@ holdout `paper_2_4_6`, medians over the three held-out sections, ground-truth-ma
 pinned `bench3.evaluate_paper`. Source: `reports/r11_starmap_layout_modes.json` (arm
 `resample-grid`); referents from the same file.
 
+🚨 **These numbers changed materially between drafts, and the older ones have been quoted.** The
+earlier advisor draft built this table from the **superseded `hybrid` pilot row** (rejection
+sampler, `reports/t10_rescore_exp.json`) rather than the shipped `resample` arm. Two cells moved a
+long way:
+
+| metric | earlier draft (`hybrid`, superseded) | this report (`resample`, shipped) | change |
+|---|---|---|---|
+| `marker_field_r` | 0.6384 | **0.6830** | **+0.045** |
+| `marker_depth_r` | 0.7478 | **0.8554** | **+0.108** |
+| `morans_pearson` | 0.5749 | **0.6465** | +0.072 |
+| `celltype_localization` | 0.6572 | **0.7546** | +0.097 |
+
+**The shipped configuration is better than the earlier draft said**, on every cell that moved. The
+cause is R11: `hybrid` was replaced by `resample` as the default, and the grid sampler replaced the
+rejection sampler. Anywhere `marker_field_r = 0.6384` or its "0.247 below the floor" is quoted —
+including in earlier progress entries — it is describing a **layout mode that no longer ships**.
+The shipped deficit is **0.203**.
+
 | metric | v25 shipped | `flanking_copy` floor | `oracle` ceiling | v25 − floor |
 |---|---|---|---|---|
 | `morans_pearson` | 0.6465 | **0.9836** | 1.0000 | **−0.337** |
@@ -198,10 +223,29 @@ pinned `bench3.evaluate_paper`. Source: `reports/r11_starmap_layout_modes.json` 
   average magnitude is right. It is also the easiest of the six.
 * **The two autocorrelation metrics carry the largest deficit** — 0.34 below a floor that a
   literal copy reaches. This is R12, and §7 gives the mechanism.
-* **`umap_mixing` has no current number on the shipped arm.** It is NaN in the r11 run. The
-  superseded pilot arm (`hybrid`, rejection sampler) measured 0.9152
-  (`reports/t10_rescore_exp.json`) — **not substituted here**, because it is a different layout mode
-  and a different sampler.
+* 🚨 **`umap_mixing` is a hole in the shipped configuration's own characterisation, not a missing
+  cell.** It is NaN on **all five** arms of the r11 run, which means `--no-umap` was passed to that
+  whole campaign — a deliberate skip, not a failure. So **one of the six headline metrics has never
+  been measured on the shipped layout mode under the current sampler.** The superseded pilot arm
+  measured 0.9152 (`reports/t10_rescore_exp.json`) and is **not substituted here**: different layout
+  mode, different sampler.
+
+  **Cost to fill it: one generation-and-scoring pass, no fit.** The checkpoint the r11 run used is
+  named in that file — `runs/pilot/model_exp_2400.pt` — and `layout_mode` is a generation-time gate,
+  so nothing needs refitting:
+
+  ```
+  python scripts/t10_rescore_saved.py --model runs/pilot/model_exp_2400.pt \
+      --modes resample --out reports/r11_resample_grid_umap.md
+  ```
+
+  One arm, three sections, UMAP on (omit `--no-umap`). It is the same operation the r11 campaign
+  performed five times, so it is minutes-to-tens-of-minutes rather than the ~56 minutes a fit takes
+  — ⚠️ **I cannot give a measured duration**: `fit_seconds` in these reports times the fit alone and
+  the generation-plus-scoring portion is not separately recorded anywhere. UMAP is the expensive
+  part, which is presumably why the flag exists. **If the checkpoint is gone, this becomes a refit**
+  and the cost is ~1 hour, at which point it should be folded into whatever the next campaign runs
+  rather than done alone.
 * **The superseded pilot row** (`hybrid`, `reports/t10_rescore_exp.json`: morans 0.5749, gearys
   0.5716, marker_field 0.6384, marker_depth 0.7478, localization 0.6572) is the source of several
   numbers in the older write-ups. It is **not** the shipped configuration: R11 replaced `hybrid`
@@ -270,7 +314,9 @@ operation.** Real tissue retains **62.2 %** across the same latent→counts step
 fraction of its *amplitude*, and the ZINB objective closes the gap with **dispersion** rather than
 by sharpening the mean. ⚠️ The supporting figures — `mu`'s Moran's I 0.861 against the tissue's own
 latent 0.745, `theta` carrying 57–63 % of conditional variance, and Spearman **0.068** between
-`theta` and the data's own dispersion over 1017 genes — are **unsourced in this repo** (§8).
+`theta` and the data's own dispersion over 1017 genes — are **measured but unrecoverable** (§8b):
+no artifact is held. The chain figures in the paragraph above **are** sourced, so the *localisation*
+to the count draw survives; what lacks a file is the *attribution to* `theta`.
 
 That is a property of the **objective**, not a tuning error: a likelihood that can be reduced by
 moving explanatory power out of the structured component into the unstructured one will be, and
@@ -319,25 +365,65 @@ layout head from the picture entirely — so it is in the **expression path**, n
 
 ---
 
-## 8. ⚠️ What cannot be sourced from this repository
+## 8. ⚠️ Provenance — what has an artifact, what is recoverable, and what is not
 
-Listed because "flag anything you cannot source" is the instruction, and because the length of this
-list is itself a finding: **several headline results exist only in the progress log and in files on
-the campaign machine.** They are not reproducible from a clone.
+Listed because "flag anything you cannot source" is the instruction, and because the split matters:
+a gap that can be closed by committing a file is bookkeeping, and a gap that cannot is a limit on
+what the paper may assert.
 
-| result | status |
+### 8a. RECOVERABLE — the files exist and are being committed (2026-09-07)
+
+These results were measured, the artifacts are held on the campaign machine, and they are being
+added to the repository at the paths below. Each is a **copy of the file that produced the number**,
+not a regeneration.
+
+| result | destination path(s) |
 |---|---|
-| **A7 — SEFL's three-seed refutation** (`i_gen` 1.6–2.4 %, 218 alarms, the seven-metric table) | **no artifact committed.** Cited from `progress/`; the `runs/a7_*` JSONs were never added. |
-| **The `cosmx_nsclc_3d` replication** — Part 1 PARTIAL, Part 2 DOES NOT REPLICATE, every number in them | **no artifact committed.** The six seed JSONs, the gene split, the coverage and degeneracy reports are all absent. |
-| **A9's six source JSONs** | **not committed** — the derived `reports/t10_a9.md` is, so the aggregate is reproducible from the report but not from the inputs. |
-| **R12/R4's supporting figures** — `mu` Moran's I 0.861, `theta` at 57–63 %, Spearman 0.068 | **no artifact committed.** The chain numbers (§7 first paragraph) *are* sourced; these are not. |
-| **The T09 selection table** that put the metric-aware weights at 0.5 | derived numbers appear in `progress/`; `reports/config_selection_synthetic.md` covers the synthetic selection but the four-cell budget-by-weights table is not in a committed report. |
+| **A9** — six input reports | `reports/t10_a9_0_s1.json`, `_0_s2`, `_0_s3`, `t10_a9_05_s1.json`, `_05_s2`, `_05_s3` (+ the `.md` sibling of each). ⚠️ Fit 1 was written as `t10_a9_off_s1.*`; **rename to `t10_a9_0_s1.*`** so the arm is in the filename in one form only — the aggregator reads the arm from the config, but a reader should not have to. |
+| **A7** — six reports | `reports/t10_a7_off_s1.json`, `_off_s2`, `_off_s3`, `t10_a7_on_s1.json`, `_on_s2`, `_on_s3` (+ `.md` siblings) |
+| **A7** — the `L_thick` binding check | `reports/t10_a7_thick_binding.json` |
+| **cosmx replication** — three scored seeds | `reports/t09_zeroshot_cosmx_seed2.json`, `_seed3`, `_seed4` (matching the existing `t09_zeroshot_deep_seed*.json` convention) |
+| **cosmx** — the gene split | `reports/t09_gene_split_cosmx.json` |
+| **cosmx** — the model-free ceilings | `reports/t09_zeroshot_ceiling_cosmx.json`, `reports/t09_zeroshot_ceiling_morans_cosmx.json` |
+| **cosmx** — descriptor coverage | `reports/t09_text_coverage_cosmx_human.json` |
+| **cosmx** — the degeneracy check | `reports/t09_degeneracy_cosmx.json` |
+| **pool sparsity**, both datasets | `reports/t09_pool_sparsity_cosmx.json`, `reports/t09_pool_sparsity_deep.json` |
+| **the human gene-metadata table** | `resources/gene_meta.cosmx_human.parquet` — needed to reproduce anything on the cosmx side at all |
 
-**The recommendation that follows**: before submission, commit the JSONs behind A7, the replication
-and A9, or accept that those results are attested by a log rather than by an artifact. This is the
-same class of problem as §4.2f — the difference between a measurement and a claim that one was made.
+Once these land, every verdict in §3, §6 and §9 is reproducible from a clone by re-running the
+aggregators already in `scripts/`, and §8b is the whole of the remaining gap.
 
----
+**Two of them carry a caveat worth keeping with the file.** The A7 reports were produced **before**
+the collapse alarm was armed independent of SEFL — but A7 ran SEFL **on**, so its alarm record is a
+real measurement and the 218 firings stand. The A9 reports were produced with SEFL **off**, so their
+empty alarm records mean *never armed* (§4a); the aggregator says so, and the JSONs should not be
+read without it.
+
+### 8b. MEASURED BUT UNRECOVERABLE — no artifact, and no file to commit
+
+Distinct from the above: these numbers were measured and are in the record, and **the file that
+produced them is not held**. They are attested by a progress entry alone. A referee cannot check
+them and neither can we.
+
+| result | what is missing | consequence |
+|---|---|---|
+| **R12/R4's supporting figures** — `mu`'s Moran's I **0.861** against the tissue's own latent 0.745; `theta` carrying **57–63 %** of conditional variance; Spearman **0.068** between `theta` and the data's own dispersion over 1017 genes | the structured-share audit's output and `t09_theta_learned_s2.json` | These are the quantitative core of §7, the paper's strongest mechanism claim. The **chain** figures beside them (0.9714 → 0.9015 → 0.8607 → 0.1297, and real tissue's 62.2 %) **are** sourced, to `reports/chain_2400.md` and `chain_2400_calibrated.md`, so the *localisation* survives; what is unattested is the *attribution to `theta`*. |
+| **The T09 selection table** that put the metric-aware weights at 0.5 — the four `(budget x weights)` cells, ranks 3.0 / 3.5 / 2.0 / 1.0 | the `scripts/t09_report.py` run's output. `reports/config_selection_synthetic.md` covers the synthetic selection but not this table. | §6's recommendation rests on *how* the weights were chosen. The claim "selected on the fixture by an aggregate rank, one seed, margins inside the envelope" is currently attested by `progress/` only. It is **cheap to regenerate** — the fixture run is ~8 minutes a fit — but a regeneration is a new measurement, not the one that made the decision, and should be labelled as such. |
+
+⚠️ **If either of these files does turn out to be held, they belong in 8a and this table shrinks.**
+The split is a claim about what is available, and it is the kind of claim that should be checked
+rather than inherited.
+
+### 8c. Why this section exists at all
+
+The length of 8b, not 8a, is the finding. **A headline result attested only by a progress entry is
+the same class of problem as §4.2f**: the difference between a measurement and a claim that one was
+made. §4.2j sharpens it — an artifact may state a check was performed only if the record shows it
+ran. A progress entry saying a number was measured is not that record.
+
+**The rule this implies, for the next campaign:** the artifact is committed in the same change as
+the claim, or the claim is labelled as attested-by-log. There is no third state, and "we still have
+it locally" is the first state only until someone's disk is reimaged.
 
 ## 9. Claim-by-claim status
 
@@ -349,8 +435,8 @@ same class of problem as §4.2f — the difference between a measurement and a c
 | The learned intensity field places cells better than copying | **REFUTED on real data** — below the copy floor | `reports/r11_starmap_layout_modes.json` |
 | Generated expression beats copying a real section | **REFUTED, both datasets** | `reports/t09_audit_deep_expr_mode.json` |
 | Text embeddings help genes the model was fitted on | **REFUTED, three three-seed negatives** | `reports/t09_zeroshot_deep.md` |
-| Text embeddings place genes the model never saw | ⚠️ **PARTIAL, replicated on two datasets** — clears the floor at 2.52x and 2.08x; *which path* does it is not established | `reports/t09_zeroshot_deep.md`; cosmx half unsourced (§8) |
-| SEFL improves anything | **REFUTED — it makes things worse, 3 seeds** | unsourced (§8) |
+| Text embeddings place genes the model never saw | ⚠️ **PARTIAL, replicated on two datasets** — clears the floor at 2.52x and 2.08x; *which path* does it is not established | `reports/t09_zeroshot_deep.md`; cosmx half being committed (§8a) |
+| SEFL improves anything | **REFUTED — it makes things worse, 3 seeds** | ⚠️ being committed (§8a) |
 | Metric-aware losses improve the metrics they are made of | ⚠️ **UNINFORMATIVE at 3 seeds; ships ON, established by nothing** | `reports/t10_a9.md` |
 | The model reproduces gene–gene covariance | **DOWNGRADED to a mechanism claim** — criterion unsatisfiable as stated | `progress/` |
 | Both collapse alarms watch the shipped model | 🚨 **WAS FALSE until 2026-09-07** — never armed with SEFL off; fixed, with a test | `spatialcpav25_gen/model/spatialcpav25_gen.py`, `tests/test_sefl.py` |
