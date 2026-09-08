@@ -409,6 +409,42 @@ real measurement and the 218 firings stand. The A9 reports were produced with SE
 empty alarm records mean *never armed* (§4a); the aggregator says so, and the JSONs should not be
 read without it.
 
+### 8a-bis. LANDED 2026-09-08 — 24 artifacts that were untracked, not missing
+
+A `git status` on the campaign machine found **45 untracked files** that no one had committed. 24
+are now in the repository, and two of them change what this report can claim:
+
+| landed | what it sources |
+|---|---|
+| `reports/t09_envelope_starmap_seed{2,3,4}.{json,md}` (+ a `_dup`) | the **three-seed real-data envelope** |
+| `reports/t09_ceiling_bootstrap_{deep,starmap}.{json,md}` | the ceiling instrument's uncertainty |
+| `reports/t09_zeroshot_ceiling{,_morans}_deep.md`, `t09_gene_split_deep.json` | the `deep_starmap` zero-shot ceilings and split |
+| `reports/t09_tenv_deep*.{json,md}` (3 seeds) | the `text_emb_mode` envelope on `deep_starmap` |
+| `resources/cosmx_panel_symbols.txt` (959 symbols) | **the input needed to rebuild the cosmx gene-metadata table** |
+
+**✅ `specs/10` §4.2a's table is now sourced, and verified rather than asserted.** Recomputing the
+across-seed spread from the three committed seed files reproduces its every cell:
+
+| metric | `cross-mix` | `zinb-flow` | shared | vs the 0.0335 used throughout |
+|---|---|---|---|---|
+| `morans_pearson` | 0.0054 | 0.0574 | 0.0574 | 1.71x |
+| `gearys_pearson` | 0.0027 | 0.0595 | 0.0595 | 1.78x |
+| `umap_mixing` | 0.0068 | 0.0190 | 0.0190 | 0.57x |
+| `marker_field_r` | 0.0049 | 0.0148 | 0.0148 | 0.44x |
+| `marker_depth_r` | 0.0084 | 0.0472 | 0.0472 | 1.41x |
+
+⚠️ **And that exposes something about the 0.0335 every ratio in this report is divided by.** It is
+**sourced** — `reports/envelope_synthetic.md`, R10, nine fits at three seeds — but it is a
+**pooled figure measured on the synthetic fixture**, while the real-data per-metric envelopes
+above span **0.0148 to 0.0595**, a 4.0x range straddling it. §4.2a states the rule that a pooled
+envelope errs in both directions; the practice throughout this project, this report included, has
+been to divide by the pooled fixture number anyway. **Every "Nx the envelope" here should be read
+as "N times a synthetic pooled figure", not as a real-data noise scale.** The material to redo them
+per-metric is now committed; doing so is a scoring-free re-derivation and is the cheapest
+outstanding correction in this document.
+
+**Still not committed**: the 21 `logs_*.txt` console logs from the same listing.
+
 ### 8b. MEASURED BUT UNRECOVERABLE — no artifact, and no file to commit
 
 Distinct from the above: these numbers were measured and are in the record, and **the file that
