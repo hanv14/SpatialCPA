@@ -279,6 +279,24 @@ live question. Checked:
 | metric-aware | **both** — and it is the one case where the budget flips the sign |
 | **SEFL (A7)** | 🚨 **1200 only** — the default, not the selected budget |
 
+**A7 re-scored at its own budget (2026-09-08), and the verdict strengthens.** With
+`--train-steps 1200` the six checkpoints load, and generation-plus-scoring under today's code gives:
+
+| arm | morans | gearys | umap | marker_field_r | marker_depth_r | localization |
+|---|---|---|---|---|---|---|
+| SEFL **off**, median of 3 | 0.4179 | 0.4205 | 0.8493 | 0.5316 | 0.6973 | 0.7499 |
+| SEFL **on**, median of 3 | 0.1375 | 0.1135 | 0.5090 | 0.1171 | 0.2154 | 0.4167 |
+| off > on | 2/3 | 2/3 | **3/3** | **3/3** | **3/3** | **3/3** |
+
+Sources `reports/t10_a7_{off,on}_s{1,2,3}.json`. **SEFL costs on all six metrics**, four of them with
+signs agreeing 3/3, and on seed 3 the ON arm's `morans_pearson` goes **negative** (−0.0748): the
+generated field is anti-correlated with the real one, not merely uninformative. The recorded
+REFUTED verdict was reached on a different scoring pass; this is an independent re-measurement under
+today's code and it agrees, more strongly.
+
+⚠️ **These are 1200-step numbers and are not comparable to the shipped row's 2400.** They compare
+the two A7 arms to each other, which is the only comparison A7 was built to make.
+
 **Confirmed from the weights themselves, not inferred (2026-09-08).** Re-scoring A7's six
 checkpoints at 2400 was refused by the portability guard, and the guard now names the field: all
 six report `train_steps: checkpoint 1200 -> this run 2400`. The budget in this row is read out of

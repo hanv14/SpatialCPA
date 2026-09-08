@@ -205,83 +205,87 @@ The shipped deficit is **0.203**.
 
 | metric | v25 shipped | `flanking_copy` floor | `oracle` ceiling | v25 − floor |
 |---|---|---|---|---|
-| `morans_pearson` | 0.6465 | **0.9836** | 1.0000 | **−0.337** |
-| `gearys_pearson` | 0.6469 | **0.9840** | 1.0000 | **−0.337** |
-| `marker_field_r` | 0.6830 | **0.8857** | 0.9997 | **−0.203** |
-| `marker_depth_r` | 0.8554 | **0.9794** | 1.0000 | **−0.124** |
+| `morans_pearson` | 0.6541 | **0.9836** | 1.0000 | **−0.329** |
+| `gearys_pearson` | 0.6535 | **0.9840** | 1.0000 | **−0.331** |
+| `umap_mixing` | 0.9262 | — | — | ⚠️ no probe measured |
+| `marker_field_r` | 0.6824 | **0.8857** | 0.9997 | **−0.203** |
+| `marker_depth_r` | 0.8331 | **0.9794** | 1.0000 | **−0.146** |
 | `celltype_localization` | 0.7546 | **0.7765** | 0.9808 | −0.022 |
-| `gene_mean_spearman` | 0.9880 | **0.9863** | 1.0000 | **+0.002** |
-| `umap_mixing` | 0.9262 ⚠️ **not from this run** — see below | — | — | — |
+| `gene_mean_spearman` | 0.9901 | **0.9863** | 1.0000 | **+0.004** |
+
+**Every `v25 shipped` cell is the 2026-09-08 re-measurement**
+(`reports/r11_resample_grid_umap.json`, confirmed bitwise by
+`reports/r11_determinism_{a,b}.json`), **not the r11 campaign numbers this table carried until
+2026-09-08.** Those were stale; §Provenance below gives the evidence and the deltas.
+
+⚠️ **The floor and ceiling columns are still r11-era** (`reports/r11_starmap_layout_modes.json`).
+They are carried forward on the argument that `flanking_copy` and `oracle` are **probes that do not
+run the model** — one copies a flanking section, the other reads the true one — so a change to the
+decoder cannot move them. **That is an inference, not a re-measurement**; re-running the two probes
+under today's code would settle it and has not been done. Every `v25 − floor` figure inherits it.
 
 **What this table is not, and every caveat attached:**
 
 * **It is one seed.** `claim_min_seeds = 3`. Nothing here is a claim; it is a description.
-* **`celltype_localization` is inert.** Under `resample` the cell types come from the copied
-  layout, so this column says nothing about the model's expression path. It is on the floor by
-  construction, not by achievement.
+* ⚠️ **`celltype_localization` is NOT inert — an earlier draft of this report said it was, and
+  A7's re-scores refute it.** The claim was that under `resample` the cell types come from the
+  copied layout, so the column says nothing about the expression path. A7's six re-scores share
+  `layout_mode=resample`, emit **identical cell counts** in all three sections, and differ only in
+  the fitted weights — yet localization ranges **0.3149 to 0.7591** across them
+  (`reports/t10_a7_{off,on}_s{1,2,3}.json`). A quantity that moves by 0.44 when only the weights
+  change is reading generated expression. It is still the metric closest to its floor, but that is
+  a result, not a construction.
 * **`gene_mean_spearman` being *above* the floor is the one genuinely solved thing**: per-gene
   average magnitude is right. It is also the easiest of the six.
 * **The two autocorrelation metrics carry the largest deficit** — 0.34 below a floor that a
   literal copy reaches. This is R12, and §7 gives the mechanism.
-* 🚨 **`umap_mixing` was a hole in the shipped configuration's own characterisation, and filling
-  it opened a larger one.** It was NaN on **all five** arms of the r11 run, because `--no-umap` was
-  passed to that whole campaign — a deliberate skip, not a failure. The costed pass was run on
-  2026-09-08 and it succeeded:
+* 🚨 **Provenance: the r11 numbers this table carried were stale, and the check that found it is
+  now the strongest reproducibility statement the project has.** Filling `umap_mixing` required
+  re-scoring the shipped arm, which re-measured the other five metrics from the same checkpoint,
+  seed, mode and sampler — and five of six disagreed with r11. The pair that separates a code change
+  from broken determinism was then run, and it is decisive:
 
-  ```
-  python scripts/t10_rescore_saved.py --model runs/pilot/model_exp_2400.pt \
-      --modes resample --out reports/r11_resample_grid_umap.md
-  ```
+  | metric | r11 (2026-08-25) | re-score | det_a | det_b |
+  |---|---|---|---|---|
+  | `morans_pearson` | 0.6465 | 0.6541 | 0.6541 | 0.6541 |
+  | `gearys_pearson` | 0.6469 | 0.6535 | 0.6535 | 0.6535 |
+  | `marker_field_r` | 0.6830 | 0.6824 | 0.6824 | 0.6824 |
+  | `marker_depth_r` | 0.8554 | 0.8331 | 0.8331 | 0.8331 |
+  | `gene_mean_spearman` | 0.9880 | 0.9901 | 0.9901 | 0.9901 |
+  | `celltype_localization` | 0.7546 | 0.7546 | 0.7546 | 0.7546 |
+  | `umap_mixing` | (not measured) | 0.9262 | 0.9262 | 0.9262 |
 
-  `paper_umap_mixing = 0.9262` (`reports/r11_resample_grid_umap.json`). **It is quoted in the table
-  with a warning and it is not treated as belonging to that row**, because the same pass re-measured
-  the other five metrics from the same checkpoint, the same seed, the same `layout_mode`, the same
-  sampler — and **five of six disagree with the r11 numbers the table is built from**:
+  **All three of today's runs agree bitwise, on every metric, to full printed precision.**
+  Sources: `reports/r11_resample_grid.json`, `reports/r11_resample_grid_umap.json`,
+  `reports/r11_determinism_a.json`, `reports/r11_determinism_b.json`.
 
-  | metric | r11 (`--no-umap`) | 2026-09-08 re-score | Δ |
-  |---|---|---|---|
-  | `morans_pearson` | 0.6465 | 0.6541 | +0.0076 |
-  | `gearys_pearson` | 0.6469 | 0.6535 | +0.0066 |
-  | `marker_field_r` | 0.6830 | 0.6824 | −0.0006 |
-  | `marker_depth_r` | 0.8554 | 0.8331 | **−0.0223** |
-  | `gene_mean_spearman` | 0.9880 | 0.9901 | +0.0021 |
-  | `celltype_localization` | 0.7546 | 0.7546 | **0.0000** |
+  ✅ **Convention 3 holds.** Generation and scoring are deterministic under a fixed seed. The
+  alternative — that single-seed numbers carry hidden run-to-run noise — is **ruled out**, and with
+  it the worry that every single-seed figure in this report needed an error bar. This is a positive
+  result and it was obtained for the price of two re-scores.
 
-  Sources: `reports/r11_resample_grid.json` and `reports/r11_resample_grid_umap.json`, both
-  single-arm files, both `seed 1`, both `runs/pilot/model_exp_2400.pt`.
+  🚨 **The r11 numbers were stale.** `reports/r11_resample_grid.json` was written on 2026-08-25 and
+  never regenerated. Four commits touching the model and scoring path landed after it:
 
-  **What the pattern localises.** `celltype_localization` is bitwise identical, and so are
-  `section_2` and `section_6` on its per-section raw values. Under `resample` the cell types and
-  coordinates are copied from the donor, so that column is a **layout-path** quantity — the layout
-  reproduces exactly. Every metric that reads generated *expression* moved. The disagreement is in
-  the expression path, not the layout path.
+  | commit | date | what it changed |
+  |---|---|---|
+  | `eedd003` | 2026-08-27 | stopped the `resample` layout copying the section it is scored against |
+  | `ba3c474` | 2026-08-28 | fixed a per-process seeding bug |
+  | `14306d8` | 2026-08-30 | closed the `expr_pca` leak at the size factor |
+  | `b6bf123` | 2026-08-30 | pool-restricted metrics; a fifth leak of the same shape |
 
-  **This is not a seed-envelope effect and must not be read as one.** The per-seed envelopes in this
-  report describe *different* seeds. These two runs share a seed, so `Config`-level determinism
-  (Convention 3, "two runs with the same seed must be bitwise identical") says the difference should
-  be exactly zero. It is not. `marker_depth_r`'s −0.0223 is larger than the smallest per-metric
-  envelope in §8a-bis (0.0148), so the size is not negligible either.
+  ⚠️ **Which one moved the numbers is not established and is not claimed here.** Three of the four
+  are leak or seeding fixes, so the r11 values were measured on a pipeline since found defective;
+  the direction is not uniform, though (`morans` rose, `marker_depth_r` fell), so "the leak was
+  inflating it" is *not* the story. The point that matters needs no attribution: **a results table
+  is only valid for the code state that produced it, and this one had drifted two weeks.**
 
-  **Two candidate causes, and they are cheap to separate.** Either (a) the code changed between the
-  r11 campaign and today — `decoder_theta_mode` and the `gene_theta` buffer both landed in that
-  window and both sit on the decoder's dispersion, which is exactly the expression path this
-  localises to — or (b) generation is not deterministic under a fixed seed, which would be a
-  Convention 3 violation and would put an error bar on **every** single-seed number in this report.
-  ⚠️ **Undetermined as of 2026-09-08.** The distinguishing measurement is one command run twice
-  today, no fit:
-
-  ```
-  python scripts/t10_rescore_saved.py --model runs/pilot/model_exp_2400.pt \
-      --modes resample --out reports/r11_determinism_a.md
-  python scripts/t10_rescore_saved.py --model runs/pilot/model_exp_2400.pt \
-      --modes resample --out reports/r11_determinism_b.md
-  ```
-
-  If the two agree with each other and both differ from r11 → cause (a), a code change, and the
-  five r11 numbers in the table above are **stale** and should be re-measured under today's code
-  before publication. If the two differ from each other → cause (b), and determinism is broken.
-  Until this is run, the six-metric table's five expression rows carry an unquantified provenance
-  risk, and **that is a more serious defect than the missing cell it was opened to fix.**
+  **Scope of the damage, stated honestly.** Within-campaign comparisons are unaffected: r11's
+  layout-mode ranking (`field` / `hybrid` / `resample`) was measured in one code state, so the
+  comparison stands even though the absolute values moved. What is affected is any **absolute**
+  number quoted from a campaign and compared against a number from another campaign — which is what
+  the six-metric table does. ⚠️ **The zero-shot, envelope and ceiling campaigns have not been
+  re-checked this way**, and the same question applies to each.
 
 * **The superseded pilot row** (`hybrid`, `reports/t10_rescore_exp.json`: morans 0.5749, gearys
   0.5716, marker_field 0.6384, marker_depth 0.7478, localization 0.6572) is the source of several
