@@ -374,8 +374,14 @@ def _alarm_chunks(alarms: dict[str, Any] | None) -> list[str]:
     lines = ["", "## Collapse alarms", ""]
     if not variance and not spatial and not inverted:
         lines += [
-            "Neither alarm fired. Both were **checked** — the record below is the trajectory "
-            "each of them read, so this is a measured silence rather than an absent measurement.",
+            "Neither alarm fired. ⚠️ **Whether that is a measured silence depends on the fit's "
+            "SEFL weights.** Until 2026-09-07 `train_ctfflow` armed both alarms only when a SEFL "
+            "weight exceeded zero, so on any run from before that date with `w_cross = w_thick = "
+            "w_prog = 0` — which is the shipped configuration — this line meant **never armed**, "
+            "not *did not fire*, and this report said the opposite. Fits from 2026-09-07 onward "
+            "arm on the step floor alone and the silence is real. Either way the trajectory below "
+            "is the record: read it against `Config.sefl_collapse_warn_fraction` rather than "
+            "trusting an empty list.",
         ]
     else:
         lines += [

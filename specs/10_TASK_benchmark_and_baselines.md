@@ -556,6 +556,45 @@ statement of how well three seeds estimate it, overstates its own precision. Thi
 replacing a measured envelope with a theoretical one: the measurement is what the criterion is
 read against, and the theory is what tells a reader how much to trust it.
 
+### 4.2j An instrument that reports a check it did not perform
+
+§4.2a–d, §4.2g and §4.2h are about **criteria** — the thresholds a claim is read against. This one
+is about the **instrument**, and it is a different failure: a report that states a check was made
+when the check could not have run.
+
+**The instance.** `train_ctfflow` armed both collapse alarms only while SEFL was on — the gate read
+`sefl_teacher is not None`, and the teacher is built only when a SEFL weight exceeds zero. The
+**shipped** configuration has all four at zero, so on it neither alarm ever ran. Two reports then
+described that as a measurement:
+
+* `t09_ship_starmap.py`'s `## Collapse alarms` section printed *"Neither alarm fired. Both were
+  **checked** — this is a measured silence rather than an absent measurement"* on every SEFL-off
+  run;
+* `t10_a9_aggregate.py` — **written after §4.2f, to enforce §4.2f** — printed *"(d) does not fire …
+  and the alarm record was **checked** rather than assumed absent."*
+
+Both sentences assert the exact distinction §4.2f exists to preserve, and both assert the wrong
+side of it. The second is the worse one: the instrument built to stop this failure committed it.
+
+**Why it is not §4.2f.** §4.2f is *an alarm that fires where nobody looks* — the signal exists and
+no one reads it. This is *a report that says it looked when it could not have* — there is no signal
+to read and the artifact claims otherwise. A blind spot that announces itself as a clear view is
+harder to catch than one that stays quiet, because it terminates the enquiry: a reader who sees
+"checked" stops checking.
+
+**The rule.** A report may only state that a check ran if it can establish that the check was
+**armed** on that run, from the run's own record. Where arming is conditional, the condition must
+be evaluated and printed beside the result, and the three outcomes — *fired*, *armed and silent*,
+*never armed* — must be distinguishable in the artifact. "Never armed" is not a pass: a condition
+that cannot fail is not a condition, and an instrument that scores it as satisfied is manufacturing
+evidence. Prefer arming a diagnostic unconditionally over reasoning about when it is relevant; the
+reasoning is where this went wrong, and the diagnostic here cost nothing to run.
+
+**What it cost.** Every SEFL-off campaign in this project — which is every shipped run — went
+unwatched by both alarms, and the empty records were read as health at least twice. A9 found it
+only because the metric-aware arm drove `variance_ratio` to **0.083–0.171** against a 0.25
+threshold, in the regime A7's *collapsed* arm occupied, with nothing armed to say so.
+
 ### 4.2g Not every arm's spread is an envelope — the mirror of §4.2b, found by a replication
 
 §4.2b's rule is that a clearance takes **the largest across-seed envelope among everything the
@@ -674,7 +713,9 @@ Three consequences the methods should state:
 
 **State this in the paper's methods, as one finding.** §4.2a–d, §4.2g and §4.2h below are not six
 housekeeping rules; they are six instances of one thing, and the pattern is more transferable
-than any of them. §4.2i is the reporting requirement they imply.
+than any of them. §4.2i is the reporting requirement they imply, and §4.2j is the same failure one
+level down — not a criterion that decided a verdict, but an **instrument** reporting a check it
+could not have performed.
 
 Every claim-bearing comparison in this literature is of the form *"the margin exceeds the noise"*.
 That sentence hides four independent choices, and **in this project each one silently decided a
@@ -688,6 +729,7 @@ verdict before anyone noticed it was a choice**:
 | **how the spread is aggregated** | 4.2d | an arm effect read 1.12x under fold-averaged noise and 0.75x under per-fold noise; it was reported as standing and is withdrawn |
 | **which arms may contribute a spread at all** | 4.2g | on the `cosmx` replication the envelope was set, on both gene pools, by a **degenerate** member — the void arm and the floor — at 6-18x every informative arm's variance, so an effect consistent on 12 of 12 cells could not clear it |
 | **which side of the threshold refutes** | 4.2h | a "within 1.5x" band on a one-sided hypothesis returned *false* on the result that refuted it most strongly; a nearby case would have read INCONCLUSIVE on a clean refutation, and the same shape sits in the zero-shot void condition |
+| **whether the check ran at all** | 4.2j | both collapse alarms were armed only while SEFL was on, so on the **shipped** configuration neither ever ran — and two reports, one of them written to enforce §4.2f, described that as a check that had been performed |
 
 **A fifth, and it is a different failure.** The four above are all *thresholds placed too close to
 the data* — the cut decided the verdict because nobody had checked where the data would fall. The

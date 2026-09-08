@@ -6014,6 +6014,12 @@ An **empty** `collapse_alarms` on a fit whose SEFL block was live past
 the half the code-level proof cannot supply, and it is one command away as long as those
 checkpoints still exist.
 
+⚠️ **The qualifier in that sentence turned out to be the whole thing (2026-09-07).** "*on a fit
+whose SEFL block was live*" is correct for A7, which ran SEFL on. On a **SEFL-off** fit — which is
+every shipped run — the alarm was **never armed**, so an empty list there is not a negative result
+of any kind. I wrote the qualifier without noticing it excluded the configuration that ships.
+`_log_sefl` now arms on the step floor alone.
+
 ### And the artifact gap that caused the confusion is now closed
 
 `model.pt` carries weights and config, never the history, so once a fit checkpoint is cleaned up
@@ -6164,8 +6170,10 @@ it" is the finding, and it belongs beside the result rather than in a footnote.
 * carries a **`## Collapse alarms`** section in the **markdown report**, not only the JSON. A count
   buried in JSON is barely better than one buried in a `.pt`. When it fired the section leads with
   🚨 and the sentence that no number in the report should be read as a property of the method until
-  it is explained; when it did not, it says **"a measured silence rather than an absent
-  measurement"** and prints the trajectories both alarms read;
+  it is explained; when it did not, it said **"a measured silence rather than an absent
+  measurement"** — ⚠️ **which was false for every SEFL-off run and is corrected 2026-09-07**: the
+  alarms were armed only while SEFL was on, so on the shipped configuration that line described a
+  check that never ran. The section now says so and directs the reader to the trajectory;
 * renders **"not measured on this run"** for a reused fit — because `model.pt` carries weights and
   config but never the history, and that is **not** the same as "did not fire".
 
@@ -7353,9 +7361,12 @@ persisted alarm record for uninformative (d) instead of assuming silence.
   `w_cross = w_thick = w_prog = 0.0`, so SEFL is off in both A9 arms as intended and this is not
   A7 by accident. `train_steps = 2400`, `layout_mode = resample`, `prior_mode = correlated`,
   `expr_mode = zinb-flow`, `decoder_mu_link = exp` — the shipped configuration.
-* **Uninformative (d) does not fire, and it was *checked*.** `collapse_alarms`,
-  `spatial_collapse_alarms` and `spatial_inversion_alarms` are all empty **and persisted**, so this
-  is a measured silence rather than an absent measurement — the distinction §4.2f exists for.
+* ⚠️ **Uninformative (d) — I wrote that it "does not fire, and it was *checked*". That was wrong,
+  and the six-fit aggregate found out why.** The three alarm lists are empty and persisted, but on
+  this run they were **never armed**: `train_ctfflow` gated both alarms on `sefl_teacher is not
+  None`, and A9 runs SEFL off in both arms. An absent measurement, reported by me as a measured
+  silence — §4.2f's own distinction, in the entry that invoked §4.2f. See the A9 result below and
+  the fix in `_log_sefl`.
 * **Density is comparable across sections**: 4073/4187, 4169/4102, 4110/4162 — ratios 0.97 / 1.02 /
   0.99, a spread of **1.05x**. The same regime the boundary stratification found readable, so the
   per-section numbers can carry a §4.2d per-fold envelope.

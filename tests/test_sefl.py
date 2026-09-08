@@ -1349,3 +1349,45 @@ def test_cross_loss_cannot_see_ell_z(built: Built):
         f"{spread:.3f} over 100-1000 um: {values}); re-open the R1 decision, remedy 2 "
         "becomes available as a training-time instrument"
     )
+
+
+def test_both_collapse_alarms_are_armed_with_sefl_off(built: Built):
+    """🚨 The shipped configuration has every SEFL weight at zero, and it must still be watched.
+
+    Until 2026-09-07 `train_ctfflow` armed both alarms only when `sefl_teacher is not None` — and
+    the teacher exists only when a SEFL weight exceeds zero. So on the **shipped** model neither
+    `check_collapse` nor `check_spatial_collapse` ever ran, and every empty
+    `TrainHistory.collapse_alarms` in every SEFL-off campaign meant *never armed* rather than *did
+    not fire*. It was read as health at least twice, including by this project's own reports.
+
+    A9 surfaced it: the shipped metric-aware weights drove `variance_ratio` to 0.083-0.171 against
+    a 0.25 threshold on three seeds, in the regime A7's *collapsed* arm occupied (0.105-0.193),
+    with nothing armed to say so.
+
+    Neither statistic is about SEFL — one reads per-gene variance of generated expression against
+    real, the other their Moran's I ratio — so this pins the gate at the **step floor alone**, on
+    a fit with SEFL off, which is the configuration that ships.
+    """
+    import inspect
+
+    from spatialcpav25_gen.model import spatialcpav25_gen as module
+
+    cfg = built.cfg.replace(w_cross=0.0, w_thick=0.0, w_prog=0.0, w_prog_wrong=0.0)
+    assert max(cfg.w_cross, cfg.w_thick, cfg.w_prog, cfg.w_prog_wrong) == 0.0, "SEFL must be off"
+
+    # 1. The gate reads the step floor and nothing about the teacher or the ramp. Read from the
+    #    source, because the property is about *when* the alarm is armed and a fit that happens
+    #    not to collapse cannot distinguish "armed and silent" from "never armed" — which is the
+    #    entire defect being pinned.
+    source = inspect.getsource(module.train_ctfflow)
+    call = source[source.index("_log_sefl(") : source.index("_log_sefl(") + 1200]
+    assert "alarm=step >= int(cfg.sefl_collapse_min_steps)" in call, call
+    assert "sefl_teacher is not None\n" not in call
+    assert "sefl_ramp(step, steps, cfg) > 0.0" not in call
+
+    # 2. And the checks themselves fire on a SEFL-off config: they read the emission, which every
+    #    configuration has, so nothing about them depends on a consistency loss existing.
+    with pytest.warns(CollapseWarning, match="COLLAPSE WARNING"):
+        assert check_collapse(0.01, 1.0, 500, cfg)
+    with pytest.warns(CollapseWarning, match="SPATIAL COLLAPSE"):
+        assert check_spatial_collapse(0.01, 500, cfg) == "collapse"

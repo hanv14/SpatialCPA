@@ -1287,11 +1287,15 @@ def train_ctfflow(
                 weights,
                 cfg,
                 step=step,
-                alarm=(
-                    sefl_teacher is not None
-                    and sefl_ramp(step, steps, cfg) > 0.0
-                    and step >= int(cfg.sefl_collapse_min_steps)
-                ),
+                # 🚨 ARMED INDEPENDENT OF SEFL since 2026-09-07. It used to also require
+                # `sefl_teacher is not None and sefl_ramp(...) > 0`, and the teacher exists only
+                # when a SEFL weight is above zero -- so on the SHIPPED configuration, which has
+                # all four at zero, neither alarm ever ran. Every empty alarm list in every
+                # SEFL-off campaign meant "never armed", not "did not fire", and A9 found the
+                # shipped metric-aware weights driving `variance_ratio` to 0.083-0.171 against a
+                # 0.25 threshold with nothing to say so. Neither statistic is about SEFL: both
+                # read generated expression against real. Only the step floor remains.
+                alarm=step >= int(cfg.sefl_collapse_min_steps),
             )
         if (step + 1) % int(cfg.checkpoint_every_n_steps) == 0:
             write_checkpoint(step + 1)
@@ -1330,14 +1334,29 @@ def _log_sefl(
     the trajectory is the diagnosis, while a run that ends with either of them firing has a
     result that must be reported rather than quietly used.
 
-    ``alarm`` gates the collapse check on two conditions, and both are needed. The SEFL block
-    must be **live** (past the warm-up, ramp above zero) — the alarm is about a variance that
-    *drops*, so it starts watching when the thing that could push it down does. And the run
-    must be past ``Config.sefl_collapse_min_steps``, because the ramp gate is a *fraction* of
-    the run and opens after a handful of steps on a short one, where an untrained decoder
-    predicting near the panel mean reads 0.008 of the real variance and trips it. That is
-    initialisation, not collapse, and an alarm that cries wolf on every short run is one
-    nobody believes on the long run where it matters.
+    ``alarm`` gates both collapse checks on **one** condition: the run is past
+    ``Config.sefl_collapse_min_steps``. An untrained decoder predicting near the panel mean reads
+    0.008 of the real variance, which is initialisation rather than collapse, and an alarm that
+    cries wolf on every short run is one nobody believes on the long run where it matters.
+
+    🚨 **It used to gate on SEFL as well, and that was a hole in the shipped model.** The old
+    condition also required ``sefl_teacher is not None and sefl_ramp(step, steps, cfg) > 0.0`` —
+    and the teacher is built only when a SEFL weight exceeds zero. The **shipped** configuration
+    has all four at zero, so **neither alarm ever ran on it**: every empty
+    ``TrainHistory.collapse_alarms`` in every SEFL-off campaign meant *never armed*, not *did not
+    fire*, and was read as health at least twice, including by this project's own reports.
+
+    A9 is what surfaced it. The shipped metric-aware weights drove ``variance_ratio`` to
+    **0.083-0.171** against a 0.25 threshold on all three seeds — A7's *collapsed* arm settled at
+    0.105-0.193 on the same statistic — with nothing armed to say so. Neither statistic is about
+    SEFL: ``check_collapse`` reads per-gene variance of generated expression against real, and
+    ``check_spatial_collapse`` reads their Moran's I ratio. Both are properties of the emission,
+    which every configuration has. Gating them on a loss that ships at zero armed the diagnostic
+    only in the arm that does not ship.
+
+    The diagnostic **terms** were always computed and recorded — ``TrainHistory.variance_ratio``
+    and ``spatial_ratio`` carry 241 samples on SEFL-off fits — so only the alarm was missing, and
+    a trajectory already on disk can be re-read against the threshold by hand.
     """
     from spatialcpav25_gen.losses.sefl import (
         ConsistencyDominanceWarning,
@@ -1358,11 +1377,13 @@ def _log_sefl(
                 ConsistencyDominanceWarning,
                 stacklevel=2,
             )
-    if alarm and check_collapse(
-        float(terms[f"{DIAG_PREFIX}gene_variance_gen"].detach()),
-        float(terms[f"{DIAG_PREFIX}gene_variance_real"].detach()),
-        step,
-        cfg,
+    gen = terms.get(f"{DIAG_PREFIX}gene_variance_gen")
+    real = terms.get(f"{DIAG_PREFIX}gene_variance_real")
+    if (
+        alarm
+        and gen is not None
+        and real is not None
+        and check_collapse(float(gen.detach()), float(real.detach()), step, cfg)
     ):
         history.collapse_alarms.append(int(step))
     # Both alarms run, and both are needed - they watch orthogonal statistics, not because the

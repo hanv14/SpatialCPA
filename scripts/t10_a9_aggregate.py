@@ -259,11 +259,13 @@ def main(argv: list[str] | None = None) -> int:
     if not any(r["sefl_on"] for r in records):
         fired.append("d")
         lines.append(
-            "* 🚨 **(d) CANNOT BE EVALUATED — the alarm was NEVER ARMED, not silent.** "
-            "`train_ctfflow` gates it on `sefl_teacher is not None`, and the teacher is built "
-            "only when a SEFL weight is above zero. Both A9 arms run SEFL **off**, so the empty "
-            "alarm lists mean *never checked*, and (d) counts as **fired** rather than passed: a "
-            "condition that cannot fail is not a condition. §4.2f, in a new place."
+            "* 🚨 **(d) CANNOT BE EVALUATED on these fits — the alarm was NEVER ARMED, not "
+            "silent.** `train_ctfflow` gated it on `sefl_teacher is not None`, and the teacher is "
+            "built only when a SEFL weight is above zero. Both A9 arms run SEFL **off**, so the "
+            "empty alarm lists mean *never checked*, and (d) counts as **fired** rather than "
+            "passed: a condition that cannot fail is not a condition. **The gate is fixed as of "
+            "2026-09-07** — both alarms now arm on the step floor alone, so a fit from after that "
+            "date carries a real silence; these six do not. `specs/10` §4.2j."
         )
     elif alarmed:
         fired.append("d")

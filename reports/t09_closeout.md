@@ -147,10 +147,36 @@ not a cheap path either. Two things the run found instead:
   drains: R4's shape in a fifth place. **Candidate, not established** — it decides no A9 branch.
 * Wall clock: the ON arm costs **1.63x** (93 min against 57).
 
-**What honesty requires is cheap: say it.** State that the weights ship at 0.5 on a
-**fixture-selected** aggregate rank with per-metric margins inside the reproducibility envelope,
-that a three-seed real-data test could not resolve their contribution, and that on the diagnostic
-the shipped model does not watch they drive per-gene variance into the collapse regime.
+### 🚨 Standing recommendation: set the three metric-aware weights to **zero**
+
+Not a note. Whoever runs the next campaign should decide this with the evidence in front of them
+rather than inheriting a coin-flip rank, so the recommendation is stated and the reasons are
+listed:
+
+1. **They were selected on the synthetic fixture**, by an aggregate rank over six metrics, with
+   per-metric margins of 0.0052 / 0.0101 / 0.0018 inside a 0.0335 envelope, on **one seed** — and
+   the fixture is documented to over-reward exactly this kind of addition (R11: its flanking
+   baseline sits at 58 % of its ceiling against real tissue's 79 %; the fixture was *"underpowered,
+   not wrong"* and real data reversed its verdict).
+2. **The one real-data test could not resolve them.** A9, three seeds, six fits: UNINFORMATIVE,
+   with the worst primary envelope **6.5x** the condition's bound and both autocorrelation
+   primaries' signs disagreeing across seeds. "More seeds" is not a cheap path — this design was
+   already too noisy at three.
+3. **They cost 1.63x the compute** — 93 minutes a fit against 57.
+4. **On the diagnostic the shipped model does not watch, they sit in the collapse regime.** Median
+   `variance_ratio` **0.14 / 0.08 / 0.17** on against **0.86 / 0.77 / 0.81** off, threshold 0.25,
+   where A7's *collapsed* arm settled at 0.105–0.193. Candidate, not established (§5a) — but it is
+   evidence pointing one way and there is none pointing the other.
+
+**Nothing here was turned off post-hoc, and that is deliberate.** Disabling them now would re-open
+every fitted number in the project for a change that is, by the only real-data test available,
+within noise — a threshold moved after seeing where the data fell. The recommendation is for the
+**next** campaign, which will refit anyway and can adopt it at zero cost.
+
+**And what the paper must say either way**: the weights ship at 0.5 on a **fixture-selected**
+aggregate rank with per-metric margins inside the reproducibility envelope, a three-seed real-data
+test could not resolve their contribution, and every absolute number in this project was produced
+with them active.
 
 **It does not weaken the negatives.** Each of R11, A7 and the zero-shot arms is a
 *within-configuration* contrast with the same weights on both sides. The exposure is to the
@@ -165,6 +191,23 @@ to any of the differences.
 the flow, 0.8607 at the decoded `mu` — then **0.1297** at the sampled counts. Stages 1–3 lose 0.11
 in total; the count draw loses **0.73 in one operation**. Real tissue retains **62 %** across the
 same latent→counts step; the model retains **14 %**.
+
+**5a. A fifth instance, and it is a candidate rather than a result.** A9's metric-aware arm drove
+median `variance_ratio` to **0.140 / 0.083 / 0.171** against the off arm's **0.856 / 0.771 /
+0.813** — below the 0.25 collapse threshold on all three seeds, in the regime A7's *collapsed* arm
+occupied (0.105–0.193). Over the same fits `spatial_ratio` moved the **other way**: **1.64 / 1.39 /
+1.39** off against **2.43 / 2.54 / 2.17** on.
+
+Both at once is not a contradiction, and the reason is the mechanism. **Moran's I is
+variance-normalised** — it measures how much of a field's variance is spatially structured, not how
+much variance there is. So a field can score better on it while the amplitude it is measuring
+drains away, and that is what the autocorrelation term appears to do: it hits its target statistic
+by removing the structure the statistic was meant to certify. Same shape as R4 (i)–(iv), fifth
+place.
+
+⚠️ **Candidate, not established.** Two diagnostic trajectories, one budget, one dataset; it decides
+no A9 branch and the A9 verdict stays UNINFORMATIVE. It is reported because a number that would
+have raised an alarm had the alarm been armed must not reach a reader as silence.
 
 **R4, the trade that explains it.** The decoder reproduces the *pattern* of between-cell variation
 almost perfectly — `mu`'s Moran's I is **0.861**, above the tissue's own latent at 0.745 — at a
