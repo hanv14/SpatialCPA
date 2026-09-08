@@ -6,8 +6,8 @@ carried a framing since shown to be wrong (§7).
 
 **Every number below names the file it comes from.** Where no current measurement exists, this
 report says so rather than substituting an older one. §8 splits the provenance into three tiers:
-**8a** results whose artifacts are being committed now, **8b** results that were measured but whose
-files are not held — attested by a progress entry alone — and **8c** why the split matters. A ⚠️
+**8a** results whose artifacts exist but are **not yet committed**, **8b** results that were measured
+but whose files are not held — attested by a progress entry alone — and **8c** why the split matters. A ⚠️
 against a number in the body means it is 8b.
 
 ⚠️ **The six-metric table changed materially since the earlier draft** — `marker_field_r` 0.638 →
@@ -88,7 +88,7 @@ Three claims, all about **encoding** — representing the volume. None is about 
 
 **2.4 One capability claim survives replication.** Text embeddings place genes the model never saw
 above the `shuffled` floor: **2.52x** the shared envelope on `deep_starmap`
-(`reports/t09_zeroshot_deep.md`) and **2.08x** on `cosmx_nsclc_3d` ⚠️ (artifact being committed, §8a). *Which* path
+(`reports/t09_zeroshot_deep.md`) and **2.08x** on `cosmx_nsclc_3d` ⚠️ (held locally, not committed, §8a). *Which* path
 in the text channel does it is **not** established — see §6.
 
 ---
@@ -101,9 +101,9 @@ in the text channel does it is **not** established — see §6.
 |---|---|---|---|
 | intensity-field layout | **REFUTED** | `field` **0.6607**, `hybrid` **0.6692** against `resample` **0.7546**, a copy floor of **0.7765** and an oracle ceiling of **0.9808** — both field modes score *below the floor* on the metric the layout head exists to win. `resample` ships. | `reports/r11_starmap_layout_modes.json` |
 | flow-matching expression head | **REFUTED, both datasets** | on `deep_starmap` copying wins **every live metric**; on tier-1 by 4.6–5.3x the envelope on three | `reports/t09_audit_deep_expr_mode.json`, `reports/t09_audit_expr_mode.json` |
-| SEFL — the mechanism the method is named for | **REFUTED, 3 seeds** | the SEFL arm **collapses** the anatomical field: `i_gen` at **1.6–2.4 %** of target against 95.6–97.5 % off; `check_collapse` fired **218 times**. All three weights ship at 0. | ⚠️ **artifact being committed** (§8a) |
-| the *mechanism* half of the zero-shot claim | **PARTIAL** | A2 − A3 = **+0.0450**, **0.22x** the shared envelope, where `deep_starmap` had +0.2514 at 2.7x. `specs/10` §7's mechanism sentence is **withdrawn**. | ⚠️ being committed (§8a) |
-| the seen/unseen sign flip | **DOES NOT REPLICATE** | signs reversed on **12 of 12** seed x fold cells; **both** magnitudes inside their pool's envelope (0.22x, 0.51x). Direction replicated, effect size did not. | ⚠️ being committed (§8a) |
+| SEFL — the mechanism the method is named for | **REFUTED, 3 seeds** | the SEFL arm **collapses** the anatomical field: `i_gen` at **1.6–2.4 %** of target against 95.6–97.5 % off; `check_collapse` fired **218 times**. All three weights ship at 0. | ⚠️ **held locally, not committed** (§8a) |
+| the *mechanism* half of the zero-shot claim | **PARTIAL** | A2 − A3 = **+0.0450**, **0.22x** the shared envelope, where `deep_starmap` had +0.2514 at 2.7x. `specs/10` §7's mechanism sentence is **withdrawn**. | ⚠️ held locally, not committed (§8a) |
+| the seen/unseen sign flip | **DOES NOT REPLICATE** | signs reversed on **12 of 12** seed x fold cells; **both** magnitudes inside their pool's envelope (0.22x, 0.51x). Direction replicated, effect size did not. | ⚠️ held locally, not committed (§8a) |
 | the metric-aware losses | **UNINFORMATIVE** — see §6 | condition (a) fired: worst primary envelope **0.4323** against the **0.067** bound, **6.5x over** | `reports/t10_a9.md` |
 
 **And the sentence a reader will derive for themselves, so the paper should say it first.** v25
@@ -371,11 +371,19 @@ Listed because "flag anything you cannot source" is the instruction, and because
 a gap that can be closed by committing a file is bookkeeping, and a gap that cannot is a limit on
 what the paper may assert.
 
-### 8a. RECOVERABLE — the files exist and are being committed (2026-09-07)
+### 8a. HELD LOCALLY — measured, the files exist, NOT COMMITTED (as of 2026-09-08)
 
-These results were measured, the artifacts are held on the campaign machine, and they are being
-added to the repository at the paths below. Each is a **copy of the file that produced the number**,
-not a regeneration.
+⚠️ **This heading said "being committed" and has been corrected.** That was a claim about the
+future, which is the thing §8c says not to do. Two attempts to land these files have failed: the
+first because a push returned 403 on the campaign machine, the second because the artifacts are not
+under the repository working tree at all — a `find` over the checkout matched **none** of them. They
+demonstrably exist (they were transferred out of that machine), but their location is not currently
+known, and until they are in a commit the correct present-tense statement is **held locally, not
+committed**.
+
+These results were measured and the artifacts are held on the campaign machine. The paths below are
+the **destinations**, not current locations. Each should be a **copy of the file that produced the
+number**, not a regeneration.
 
 | result | destination path(s) |
 |---|---|
@@ -390,7 +398,9 @@ not a regeneration.
 | **pool sparsity**, both datasets | `reports/t09_pool_sparsity_cosmx.json`, `reports/t09_pool_sparsity_deep.json` |
 | **the human gene-metadata table** | `resources/gene_meta.cosmx_human.parquet` — needed to reproduce anything on the cosmx side at all |
 
-Once these land, every verdict in §3, §6 and §9 is reproducible from a clone by re-running the
+**Until these land, every verdict in §3, §6 and §9 that cites them is attested by a progress entry
+rather than by an artifact** — the same status as §8b, differing only in that it is expected to be
+fixable. Once they land, those verdicts become reproducible from a clone by re-running the
 aggregators already in `scripts/`, and §8b is the whole of the remaining gap.
 
 **Two of them carry a caveat worth keeping with the file.** The A7 reports were produced **before**
@@ -435,8 +445,8 @@ it locally" is the first state only until someone's disk is reimaged.
 | The learned intensity field places cells better than copying | **REFUTED on real data** — below the copy floor | `reports/r11_starmap_layout_modes.json` |
 | Generated expression beats copying a real section | **REFUTED, both datasets** | `reports/t09_audit_deep_expr_mode.json` |
 | Text embeddings help genes the model was fitted on | **REFUTED, three three-seed negatives** | `reports/t09_zeroshot_deep.md` |
-| Text embeddings place genes the model never saw | ⚠️ **PARTIAL, replicated on two datasets** — clears the floor at 2.52x and 2.08x; *which path* does it is not established | `reports/t09_zeroshot_deep.md`; cosmx half being committed (§8a) |
-| SEFL improves anything | **REFUTED — it makes things worse, 3 seeds** | ⚠️ being committed (§8a) |
+| Text embeddings place genes the model never saw | ⚠️ **PARTIAL, replicated on two datasets** — clears the floor at 2.52x and 2.08x; *which path* does it is not established | `reports/t09_zeroshot_deep.md`; cosmx half held locally, not committed (§8a) |
+| SEFL improves anything | **REFUTED — it makes things worse, 3 seeds** | ⚠️ held locally, not committed (§8a) |
 | Metric-aware losses improve the metrics they are made of | ⚠️ **UNINFORMATIVE at 3 seeds; ships ON, established by nothing** | `reports/t10_a9.md` |
 | The model reproduces gene–gene covariance | **DOWNGRADED to a mechanism claim** — criterion unsatisfiable as stated | `progress/` |
 | Both collapse alarms watch the shipped model | 🚨 **WAS FALSE until 2026-09-07** — never armed with SEFL off; fixed, with a test | `spatialcpav25_gen/model/spatialcpav25_gen.py`, `tests/test_sefl.py` |
