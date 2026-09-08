@@ -107,6 +107,14 @@ selection on aggregate rank, 1.0 against 2.0, taking four of six metrics. That i
 The per-metric margins at 2400 are **0.0052 / 0.0101 / 0.0018** against R10's **0.0335** envelope:
 every one inside it, by factors of 3 to 19, on **one seed**.
 
+🚨 **And the selection ran on the SYNTHETIC FIXTURE** — 19 fits at ~8 minutes each, against the 56
+minutes a real tier-1 fit takes. So the accurate statement is stronger than "one seed with small
+margins": these weights ship on **an aggregate rank over the fixture, and have never been measured
+on real data at all.** That is the pattern R11 already burned, where a fixture tie-break inside the
+envelope put `hybrid` ahead and real data reversed it — the fixture was *"underpowered, not
+wrong"*, its flanking baseline sitting at 58 % of its ceiling against real tissue's 79 %, so it
+over-rewards a generative addition at any number of seeds.
+
 The selection is sound as a selection. It is **not evidence that the losses do what they are named
 for**, and `claim_min_seeds = 3` says one seed cannot resolve it either way.
 

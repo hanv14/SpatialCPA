@@ -40,12 +40,24 @@ EXCLUDED = "paper_celltype_localization"
 R10_ENVELOPE = 0.0335
 """R10's recorded figure. Used ONLY by uninformative (a) as a sanity bound on this run's own
 envelope — never as the threshold a margin is read against."""
-RECORDED_OFF = {
-    "paper_morans_pearson": 0.9316,
-    "paper_gearys_pearson": 0.9022,
-    "paper_umap_mixing": 0.9145,
-}
-"""The `(2x, weights off)` row this experiment is reproducing, for uninformative (c)."""
+RECORDED_OFF: dict[str, float] = {}
+"""🚨 **Uninformative (c) is WITHDRAWN as malformed** — on fit 1's evidence, before the other five
+landed, and the reason is recorded rather than the condition quietly dropped.
+
+As pre-registered, (c) required the `off` arm to reproduce the recorded `(2x, weights off)` row:
+`morans_pearson` 0.9316, `gearys_pearson` 0.9022, `umap_mixing` 0.9145. Fit 1 returned **0.5438 /
+0.5419 / 0.8201**. That is not a reproduction failure — **the two are not the same quantity**. The
+recorded row comes from ``scripts/t09_report.py --steps 1200`` on the **synthetic fixture**, an
+``alternating`` holdout and three interior LOSO folds, scored with **T08 kernels**; A9's fits are
+**real tier-1 STARmap**, the held-out ``paper_2_4_6`` sections, scored with
+**``bench3.evaluate_paper``**. Different dataset, different holdout, different instrument. A
+condition comparing them could only ever fire.
+
+The condition is therefore **removed, not relaxed**: there is no same-instrument prior to reproduce,
+because **these weights have never been measured on real data**. That is also the finding it
+surfaced, and it makes A9 more worth running rather than less — see
+``progress/t09_inference_and_calibration.md`` (2026-09-07). Conditions (a), (b) and (d) stand
+exactly as written."""
 
 
 def load(paths: list[str]) -> list[dict[str, Any]]:
@@ -214,23 +226,15 @@ def main(argv: list[str] | None = None) -> int:
             + (f" (they disagree on {', '.join(f'`{m}`' for m in unstable)})" if unstable else "")
             + "."
         )
-    seed1_off = next((r for r in records if r["seed"] == seeds[0] and r["weight"] == off), None)
-    drifted = []
-    if seed1_off is not None:
-        for metric, recorded in RECORDED_OFF.items():
-            got = float(seed1_off["matched"][metric])
-            env_a, _ = envelopes(records, metric)
-            if abs(got - recorded) > env_a:
-                drifted.append(f"`{metric.replace('paper_', '')}` {got:.4f} vs {recorded}")
-    if drifted:
-        fired.append("c")
-        lines.append(
-            "* 🚨 **(c) FIRES** — the off arm at the first seed does not reproduce the recorded "
-            "`(2x, weights off)` row: " + "; ".join(drifted) + ". These fits are not reproducing "
-            "the selection they are testing."
-        )
-    else:
-        lines.append("* **(c) does not fire** — the off arm reproduces the recorded row.")
+    lines.append(
+        "* **(c) WITHDRAWN as malformed**, on fit 1's evidence and before the other five landed. "
+        "It required the `off` arm to reproduce a recorded `(2x, weights off)` row that comes from "
+        "the **synthetic fixture**, an `alternating` holdout and **T08 kernels**, while these fits "
+        "are **real tier-1**, held-out `paper_2_4_6`, on **`bench3.evaluate_paper`**. Different "
+        "dataset, holdout and instrument: the condition could only ever fire. Removed rather than "
+        "relaxed — there is no same-instrument prior to reproduce, because these weights have "
+        "**never been measured on real data**."
+    )
     alarmed = [
         f"seed {r['seed']} @ {r['weight']:g}"
         for r in records

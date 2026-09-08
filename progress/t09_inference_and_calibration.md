@@ -7342,3 +7342,70 @@ paid once for a run whose name and contents disagreed. It refuses a report whose
 differ, computes both §4.2d constructions, marks any metric where they disagree as **not
 established**, excludes `celltype_localization` rather than scoring it as a tie, and checks the
 persisted alarm record for uninformative (d) instead of assuming silence.
+
+## A9 fit 1 — clean, and it withdraws my own uninformative (c) (2026-09-07)
+
+`runs/a9/s1_off`, config `defd0eec6a179c82`, **3342 s (55.7 min)**, matching the projection.
+
+### What checks out
+
+* **Arms.** `w_autocorr = w_profile = w_distribution = 0.0` — the `off` arm, all three together.
+  `w_cross = w_thick = w_prog = 0.0`, so SEFL is off in both A9 arms as intended and this is not
+  A7 by accident. `train_steps = 2400`, `layout_mode = resample`, `prior_mode = correlated`,
+  `expr_mode = zinb-flow`, `decoder_mu_link = exp` — the shipped configuration.
+* **Uninformative (d) does not fire, and it was *checked*.** `collapse_alarms`,
+  `spatial_collapse_alarms` and `spatial_inversion_alarms` are all empty **and persisted**, so this
+  is a measured silence rather than an absent measurement — the distinction §4.2f exists for.
+* **Density is comparable across sections**: 4073/4187, 4169/4102, 4110/4162 — ratios 0.97 / 1.02 /
+  0.99, a spread of **1.05x**. The same regime the boundary stratification found readable, so the
+  per-section numbers can carry a §4.2d per-fold envelope.
+* **A second healthy `spatial_ratio` trajectory**, n = 241: median **1.644**, last 1.876, minimum
+  **−0.0342**. Against the first fit's median 1.299 and floor 0.5467. Both are **SEFL-off**, so the
+  caveat in `Config.sefl_spatial_collapse_warn_fraction` is unchanged — the population the alarm
+  will actually be applied to is still unobserved — but the 0.05 threshold now has two independent
+  real-data anchors rather than one.
+
+### 🚨 Uninformative (c) is withdrawn as malformed, and the reason is the finding
+
+(c) required the `off` arm to reproduce the recorded `(2x, weights off)` row: `morans_pearson`
+**0.9316**, `gearys_pearson` **0.9022**, `umap_mixing` **0.9145**. Fit 1 returned **0.5438 /
+0.5419 / 0.8201**.
+
+**That is not a reproduction failure. The two are not the same quantity.** The recorded row comes
+from `scripts/t09_report.py --steps 1200` on the **synthetic fixture**, an `alternating` holdout and
+three interior LOSO folds, scored with **T08 kernels**. A9's fits are **real tier-1 STARmap**, the
+held-out `paper_2_4_6` sections, scored with **`bench3.evaluate_paper`**. Different dataset,
+different holdout, different instrument — three ways. A condition comparing them could only ever
+fire, on any run, whatever the model did.
+
+**The condition is removed, not relaxed.** There is no same-instrument prior to reproduce.
+Conditions (a), (b) and (d) stand exactly as written. This is recorded **on fit 1, before the other
+five landed**, so it cannot be a condition dropped once it became inconvenient — and the aggregator
+prints the withdrawal and its reason rather than silently omitting a check.
+
+### ⚠️ And the premise of A9 was understated — the weights were selected on the FIXTURE
+
+This is what (c)'s malformation exposed, and it is more important than the condition.
+
+The pre-registration said the weights ship at 0.5 "established by one seed with margins inside the
+envelope". **That is too kind.** The selection that put them at 0.5 ran on the **synthetic
+fixture** — 19 fits in 9195 s, roughly 8 minutes each, against the 56 minutes a real tier-1 fit
+takes. So the true statement is:
+
+> `w_autocorr = w_profile = w_distribution = 0.5` ship **on**, selected by an aggregate rank over
+> six metrics on the **synthetic fixture**, with per-metric margins inside the envelope, on **one
+> seed** — and **never measured on real data at all.**
+
+That is the same pattern R11 already burned. There, a fixture signal put `hybrid` ahead on a
+tie-break whose margin sat inside R10's envelope, and real data reversed it decisively: the fixture
+was **"underpowered, not wrong"**, because its flanking baseline sits at 58 % of its ceiling against
+real tissue's 79 %, so it over-rewards a generative component at any number of seeds.
+`progress/fixture_limitations.md` records two more cases where a fixture measurement could not have
+surfaced what real data did.
+
+**So A9 is not a confirmation run.** It is the **first real-data measurement** of a component that
+ships on, chosen on a fixture that is documented to over-reward exactly this kind of addition. That
+raises the prior on a null or a negative and it raises the value of the experiment. **No branch,
+threshold or reading changes** — the criteria were fixed before the fits and stay fixed. What
+changes is one sentence of framing, in the direction that makes the shipped configuration look
+*less* well established, which is the direction that costs rather than helps.
