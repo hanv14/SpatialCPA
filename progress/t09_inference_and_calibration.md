@@ -7409,3 +7409,93 @@ raises the prior on a null or a negative and it raises the value of the experime
 threshold or reading changes** — the criteria were fixed before the fits and stay fixed. What
 changes is one sentence of framing, in the direction that makes the shipped configuration look
 *less* well established, which is the direction that costs rather than helps.
+
+---
+
+# A9 — RESULT: **UNINFORMATIVE**, and the two things it found instead (2026-09-07)
+
+Six fits, three seeds, both arms. `reports/t10_a9.md`.
+
+## The pre-registered verdict: UNINFORMATIVE, condition (a)
+
+| metric | role | mean (on−off) | per seed | env (a) | vs | env (b) | vs | signs |
+|---|---|---|---|---|---|---|---|---|
+| `morans_pearson` | PRIMARY | +0.0057 | −0.1685 / +0.0782 / +0.1073 | 0.2894 | 0.02x | 0.3973 | 0.01x | **disagree** |
+| `gearys_pearson` | PRIMARY | +0.0032 | −0.1662 / +0.0684 / +0.1075 | 0.2861 | 0.01x | 0.3929 | 0.01x | **disagree** |
+| `marker_depth_r` | PRIMARY | −0.0709 | −0.0251 / −0.0117 / −0.1759 | 0.1225 | 0.58x | 0.4323 | 0.16x | agree |
+| `umap_mixing` | secondary | −0.1857 | −0.2134 / −0.2121 / −0.1317 | 0.1281 | **1.45x** | 0.1337 | 1.39x | agree |
+| `marker_field_r` | secondary | −0.1278 | −0.0707 / −0.1533 / −0.1593 | 0.0596 | **2.14x** | 0.0989 | 1.29x | agree |
+
+**Condition (a) fires and nothing may be read from the primaries.** The worst primary envelope is
+**0.4323**, against the 2x0.0335 = 0.067 the condition names — **6.5x over**. The design is far
+noisier than the instrument that produced the number being tested, exactly the situation (a) was
+written to catch, and it was written before the fits so it cannot be invoked selectively. Both
+autocorrelation primaries also have signs disagreeing across seeds (one seed at −0.17, two at
++0.07/+0.11), which would have blocked POSITIVE independently.
+
+**So the question A9 asked is not answered.** The weights remain **unestablished**, and the §4
+close-out disposition is unchanged: they ship at 0.5 on a fixture-selected aggregate rank, and the
+paper must say so. What A9 adds is that a three-seed real-data design **could not resolve it** —
+which is itself worth reporting, because it means "run more seeds" is not a cheap path either.
+
+⚠️ **And the common-mode note applies with full force.** The pre-registration recorded before these
+fits that the three known distortions cannot separate the arms but *can* attenuate a real
+difference. With an envelope this wide, that caveat is not decorative.
+
+## 🚨 Finding 1 — the collapse alarm is disarmed whenever SEFL is off
+
+`train_ctfflow` passes `alarm=(sefl_teacher is not None and sefl_ramp(...) > 0 and step >= ...)`,
+and `sefl_teacher` is built **only when `max(w_cross, w_thick, w_prog, w_prog_wrong) > 0`**. The
+shipped configuration has all four at **zero**. Therefore:
+
+> **On the shipped model, `check_collapse` and `check_spatial_collapse` never run.** Both alarm
+> lists are empty on every fit of every campaign that shipped SEFL off — and that emptiness means
+> **"never armed"**, not "did not fire".
+
+My own aggregator printed the wrong one of those two on its first run: *"(d) does not fire — no
+collapse or inversion alarm on any of the six fits, and the alarm record was **checked** rather
+than assumed absent."* That sentence is false, and it is `specs/10` §4.2f's exact distinction — the
+rule I wrote after A7 — failing in a new place, in an instrument I wrote to enforce it. Fixed: (d)
+now reports **CANNOT BE EVALUATED** and counts as **fired**, because a condition that cannot fail
+is not a condition.
+
+**This is a defect in the model code, not only in the report.** The alarm watches a statistic —
+per-gene variance of generated expression against real — that has nothing to do with SEFL. Gating
+it on the teacher's existence means the diagnostic is armed only in the configuration that does not
+ship. Recorded as an owed fix; not fixed here, because changing when an alarm arms mid-campaign
+would change what every subsequent run reports.
+
+## 🚨 Finding 2 — and the disarmed alarm would have fired on all three ON fits
+
+The trajectory is persisted whether or not the alarm is armed, so the threshold can be applied by
+hand:
+
+| arm | median `variance_ratio` (3 seeds) | vs 0.25 |
+|---|---|---|
+| `off` (0.0) | **0.8555 / 0.7707 / 0.8129** | 3x above, all three |
+| `on` (0.5) | **0.1404 / 0.0825 / 0.1705** | 🚨 **below, all three** |
+
+**A7's collapsed SEFL arm settled at 0.105–0.193 on this same statistic.** The metric-aware arm
+sits at **0.083–0.171** — the same regime — on all three seeds, at the weights that **ship**.
+
+⚠️ **Stated at exactly its strength and no more.** This is not a pre-registered test, it decides no
+A9 branch, and the A9 verdict stays UNINFORMATIVE. It is a **diagnostic trajectory**, reported
+because a number that would have raised an alarm had the alarm been armed must not reach a reader
+as silence — which is the whole content of §4.2f.
+
+**A candidate mechanism, and it is R4's shape again.** The `spatial_ratio` medians run
+**2.43 / 2.54 / 2.17** on the ON arm against **1.64 / 1.39 / 1.39** off. So with the autocorrelation
+loss active the generated field's Moran's I relative to real goes **up** — past the target, to
+2.2–2.5x — while the per-gene variance the field carries goes **down** by 5–10x. Moran's I is
+normalised by variance, so a field can score well on it while its amplitude drains. That is a
+likelihood-shaped term being satisfied by removing the structure it was meant to preserve, which is
+R4 (i)–(iv)'s pattern in a fifth place. **Candidate, not established**: it rests on two diagnostic
+trajectories at one budget, and the six metrics cannot separate it from the noise (a) already
+flagged.
+
+## Wall clock — an observation the pre-registration did not name
+
+Arm `off` averages **57 min**, arm `on` **93 min** — **1.63x**. Whatever else the three losses do,
+they cost 63 % more compute per fit. That is not a criterion and changes no verdict; it belongs
+beside the disposition, because "ships on, established by nothing" now reads "ships on, established
+by nothing, and 1.63x the compute".

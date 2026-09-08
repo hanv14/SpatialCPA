@@ -129,9 +129,28 @@ something and the shipped model does not depend on it. A component that ships **
 established by nothing is inside the baseline **every number in this project was measured
 against** — it is not a claim the paper makes, it is a claim the paper's *setup* makes silently.
 
-**What honesty requires is cheap: say it.** State that the weights ship at 0.5 on a one-seed
-aggregate-rank selection with per-metric margins inside the reproducibility envelope, and that
-their contribution is unresolved rather than demonstrated.
+**A9 has now run — six fits, three seeds — and returned UNINFORMATIVE.** Pre-registered condition
+(a) fired: the worst primary envelope is **0.4323** against the 0.067 the condition names, **6.5x
+over**, and both autocorrelation primaries had signs disagreeing across seeds. **The weights remain
+unestablished, and a three-seed real-data design could not resolve them** — so "run more seeds" is
+not a cheap path either. Two things the run found instead:
+
+* 🚨 **The collapse alarm is disarmed whenever SEFL is off** — `train_ctfflow` gates it on
+  `sefl_teacher is not None`, and the teacher exists only when a SEFL weight is above zero. The
+  shipped configuration has all four at zero, so **on the shipped model `check_collapse` never
+  runs**, and every empty alarm list in every SEFL-off campaign means *never armed* rather than
+  *did not fire*. An owed fix, and §4.2f failing in the instrument written to enforce it.
+* 🚨 **Applied by hand, that alarm would have fired on all three ON fits.** Median `variance_ratio`
+  is **0.86 / 0.77 / 0.81** off and **0.14 / 0.08 / 0.17** on, against a 0.25 collapse threshold —
+  and A7's *collapsed* arm settled at 0.105–0.193 on the same statistic. Meanwhile `spatial_ratio`
+  goes **up** (1.4–1.6 → 2.2–2.5), so the autocorrelation term hits its target while the amplitude
+  drains: R4's shape in a fifth place. **Candidate, not established** — it decides no A9 branch.
+* Wall clock: the ON arm costs **1.63x** (93 min against 57).
+
+**What honesty requires is cheap: say it.** State that the weights ship at 0.5 on a
+**fixture-selected** aggregate rank with per-metric margins inside the reproducibility envelope,
+that a three-seed real-data test could not resolve their contribution, and that on the diagnostic
+the shipped model does not watch they drive per-gene variance into the collapse regime.
 
 **It does not weaken the negatives.** Each of R11, A7 and the zero-shot arms is a
 *within-configuration* contrast with the same weights on both sides. The exposure is to the

@@ -87,6 +87,13 @@ def load(paths: list[str]) -> list[dict[str, Any]]:
                 "matched": shipped[0]["matched"],
                 "per_section": shipped[0]["matched_per_section"],
                 "alarms": payload.get("alarms"),
+                # Read from the config, because the collapse alarm is armed only while SEFL is on
+                # and an empty alarm list on a SEFL-off fit means "never checked", not "silent".
+                "sefl_on": max(
+                    float(cfg[k]) for k in ("w_cross", "w_thick", "w_prog", "w_prog_wrong")
+                )
+                > 0.0,
+                "fit_seconds": payload.get("fit_seconds"),
             }
         )
     return out
@@ -244,7 +251,21 @@ def main(argv: list[str] | None = None) -> int:
             for k in ("collapse_alarms", "spatial_collapse_alarms", "spatial_inversion_alarms")
         )
     ]
-    if alarmed:
+    # 🚨 The alarm is ARMED only while SEFL is on: `train_ctfflow` passes
+    # `alarm=(sefl_teacher is not None and ...)`, and `sefl_teacher` is None whenever every SEFL
+    # weight is 0. Both A9 arms run SEFL off, so empty alarm lists here mean **never armed**, not
+    # "did not fire" - the distinction `specs/10` §4.2f exists to force, and the first version of
+    # this line printed the wrong one.
+    if not any(r["sefl_on"] for r in records):
+        fired.append("d")
+        lines.append(
+            "* 🚨 **(d) CANNOT BE EVALUATED — the alarm was NEVER ARMED, not silent.** "
+            "`train_ctfflow` gates it on `sefl_teacher is not None`, and the teacher is built "
+            "only when a SEFL weight is above zero. Both A9 arms run SEFL **off**, so the empty "
+            "alarm lists mean *never checked*, and (d) counts as **fired** rather than passed: a "
+            "condition that cannot fail is not a condition. §4.2f, in a new place."
+        )
+    elif alarmed:
         fired.append("d")
         lines.append(
             "* 🚨 **(d) FIRES** — a collapse alarm fired on " + ", ".join(alarmed) + ". A7's "
@@ -253,9 +274,63 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         lines.append(
-            "* **(d) does not fire** — no collapse or inversion alarm on any of the six fits, "
-            "and the alarm record was **checked** rather than assumed absent."
+            "* **(d) does not fire** — no alarm on any fit, and the record was **checked**."
         )
+
+    # The alarm was disarmed; the TRAJECTORY it would have watched was still recorded, so apply
+    # the threshold by hand rather than inherit a silence that was never a measurement.
+    threshold = 0.25
+    lines += [
+        "",
+        "## The disarmed alarm's trajectory, applied by hand",
+        "",
+        "`variance_ratio` is the statistic `check_collapse` reads, against "
+        f"`Config.sefl_collapse_warn_fraction` = **{threshold}**. It is persisted on every fit "
+        "whether or not the alarm is armed.",
+        "",
+        "| arm | seed | median | min | last | vs 0.25 |",
+        "|---|---|---|---|---|---|",
+    ]
+    below = []
+    for r in sorted(records, key=lambda r: (r["weight"], r["seed"])):
+        vr = (r["alarms"] or {}).get("variance_ratio") or {}
+        med = vr.get("median")
+        if med is None:
+            continue
+        if float(med) < threshold:
+            below.append((r["weight"], r["seed"], float(med)))
+        lines.append(
+            f"| `{r['weight']:g}` | {r['seed']} | **{float(med):.4f}** | "
+            f"{vr.get('min', 0):.4f} | {vr.get('last', 0):.4f} | "
+            + ("🚨 **BELOW**" if float(med) < threshold else "above")
+            + " |"
+        )
+    if below:
+        arms_below = sorted({w for w, _s, _m in below})
+        lines += [
+            "",
+            f"🚨 **{len(below)} of {len(records)} fits sit below the collapse threshold**, all on "
+            f"arm(s) `{', '.join(f'{w:g}' for w in arms_below)}`. A7's collapsed SEFL arm settled "
+            "at **0.105-0.193** on this same statistic. Not a pre-registered test and it decides "
+            "no A9 branch - it is the diagnostic the disarmed alarm would have read, reported "
+            "because a number that would have raised an alarm had it been armed must not reach a "
+            "reader as silence.",
+        ]
+    lines.append("")
+
+    times: dict[float, list[float]] = {}
+    for r in records:
+        if r["fit_seconds"]:
+            times.setdefault(r["weight"], []).append(float(r["fit_seconds"]))
+    if len(times) == 2:
+        lo, hi = sorted(times)
+        mean_lo, mean_hi = float(np.mean(times[lo])), float(np.mean(times[hi]))
+        lines += [
+            f"**Wall clock**, not pre-registered, reported as an observation: arm `{lo:g}` "
+            f"averages **{mean_lo / 60:.0f} min** and arm `{hi:g}` **{mean_hi / 60:.0f} min** - "
+            f"**{mean_hi / mean_lo:.2f}x**. Whatever else the three losses do, they cost that.",
+            "",
+        ]
 
     # ---- the verdict
     positives = [m for m, v in verdicts.items() if v == "positive"]
