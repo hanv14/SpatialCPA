@@ -1,0 +1,94 @@
+[
+  {
+    "option": "cross-mix",
+    "dataset": "starmap_visual_cortex",
+    "holdout": "paper_2_4_6",
+    "n_cells": 16527,
+    "n_genes": 28,
+    "n_sections": 4,
+    "seed": 3,
+    "train_steps": 2400,
+    "expr_pca_dim": 28,
+    "under": {
+      "prior_mode": "correlated"
+    },
+    "config_hash": "aa1e15b15fe824d1",
+    "seconds": 4.8,
+    "mean": {
+      "morans_pearson": 0.9196198177456532,
+      "gearys_pearson": 0.9295084471734723,
+      "umap_mixing": 0.807538311655835,
+      "marker_field_r": 0.7376089182810124,
+      "marker_depth_r": 0.7403672880059731,
+      "celltype_localization": 0.7753715473425793
+    },
+    "per_fold": [
+      {
+        "morans_pearson": 0.8934720941994987,
+        "gearys_pearson": 0.9096754800551701,
+        "umap_mixing": 0.7756855349538336,
+        "marker_field_r": 0.6505393238879009,
+        "marker_depth_r": 0.6867070879819848,
+        "celltype_localization": 0.7473275940041765
+      },
+      {
+        "morans_pearson": 0.9457675412918076,
+        "gearys_pearson": 0.9493414142917745,
+        "umap_mixing": 0.8393910883578363,
+        "marker_field_r": 0.8246785126741237,
+        "marker_depth_r": 0.7940274880299613,
+        "celltype_localization": 0.8034155006809822
+      }
+    ],
+    "fold_ids": [
+      "section_3",
+      "section_5"
+    ]
+  },
+  {
+    "option": "zinb-flow",
+    "dataset": "starmap_visual_cortex",
+    "holdout": "paper_2_4_6",
+    "n_cells": 16527,
+    "n_genes": 28,
+    "n_sections": 4,
+    "seed": 3,
+    "train_steps": 2400,
+    "expr_pca_dim": 28,
+    "under": {
+      "prior_mode": "correlated"
+    },
+    "config_hash": "1cc9bc29214aedc2",
+    "seconds": 6.7,
+    "mean": {
+      "morans_pearson": 0.7690186806478089,
+      "gearys_pearson": 0.7677280626882386,
+      "umap_mixing": 0.6462157379180546,
+      "marker_field_r": 0.7236911385558651,
+      "marker_depth_r": 0.6382957299357457,
+      "celltype_localization": 0.7753715473425793
+    },
+    "per_fold": [
+      {
+        "morans_pearson": 0.755778443123282,
+        "gearys_pearson": 0.7529131608566474,
+        "umap_mixing": 0.6349269600337898,
+        "marker_field_r": 0.6922904351204807,
+        "marker_depth_r": 0.5605219439587831,
+        "celltype_localization": 0.7473275940041765
+      },
+      {
+        "morans_pearson": 0.7822589181723357,
+        "gearys_pearson": 0.7825429645198296,
+        "umap_mixing": 0.6575045158023196,
+        "marker_field_r": 0.7550918419912496,
+        "marker_depth_r": 0.7160695159127083,
+        "celltype_localization": 0.8034155006809822
+      }
+    ],
+    "fold_ids": [
+      "section_3",
+      "section_5"
+    ]
+  }
+]

@@ -1,0 +1,186 @@
+{
+  "meta": {
+    "order": [
+      "medcpt",
+      "lookup"
+    ],
+    "dataset": "deep_starmap",
+    "holdout": "paper_2_4_6",
+    "under": {
+      "expr_mode": "zinb-flow"
+    },
+    "train_steps": 2400,
+    "options": [
+      "lookup",
+      "medcpt"
+    ],
+    "seeds": [
+      2,
+      3,
+      4
+    ],
+    "fold_ids": [
+      "section_3",
+      "section_5"
+    ]
+  },
+  "envelope": 0.0335,
+  "metrics": {
+    "morans_pearson": {
+      "mean": -0.12112512627726839,
+      "sd": 0.01305979365345082,
+      "seed_spread": 0.024976504510840436,
+      "fold_spread": 0.016889256403451403,
+      "checks": {
+        "signs_agree": true,
+        "beats_seed_spread": true,
+        "beats_envelope": true,
+        "beats_fold_spread": true
+      },
+      "stands": true,
+      "per_seed": {
+        "2": -0.11084305971029373,
+        "3": -0.11671275490037725,
+        "4": -0.13581956422113417
+      },
+      "arm_spreads": {
+        "medcpt": 0.02455134646909185,
+        "lookup": 0.007296484010377857
+      },
+      "envelope": 0.02455134646909185,
+      "stands_under_pooled": true,
+      "verdict_changed": false,
+      "duplicate_gap": null
+    },
+    "gearys_pearson": {
+      "mean": -0.11290159165535078,
+      "sd": 0.01085085589330483,
+      "seed_spread": 0.02169381528358244,
+      "fold_spread": 0.07462405139292616,
+      "checks": {
+        "signs_agree": true,
+        "beats_seed_spread": true,
+        "beats_envelope": true,
+        "beats_fold_spread": true
+      },
+      "stands": true,
+      "per_seed": {
+        "2": -0.11256362079325483,
+        "3": -0.10222366944460753,
+        "4": -0.12391748472818997
+      },
+      "arm_spreads": {
+        "medcpt": 0.03978891618646385,
+        "lookup": 0.05012886753511114
+      },
+      "envelope": 0.05012886753511114,
+      "stands_under_pooled": true,
+      "verdict_changed": false,
+      "duplicate_gap": null
+    },
+    "umap_mixing": {
+      "mean": -0.0018269719541815777,
+      "sd": 0.007500729771684595,
+      "seed_spread": 0.013398098227434596,
+      "fold_spread": 0.06417708903687991,
+      "checks": {
+        "signs_agree": false,
+        "beats_seed_spread": false,
+        "beats_envelope": false,
+        "beats_fold_spread": false
+      },
+      "stands": false,
+      "per_seed": {
+        "2": 0.0020689555057589737,
+        "3": 0.0029241134295654447,
+        "4": -0.010473984797869151
+      },
+      "arm_spreads": {
+        "medcpt": 0.006749898478034366,
+        "lookup": 0.020147996705468962
+      },
+      "envelope": 0.020147996705468962,
+      "stands_under_pooled": false,
+      "verdict_changed": false,
+      "duplicate_gap": null
+    },
+    "marker_field_r": {
+      "mean": -0.03959616701125587,
+      "sd": 0.00981895465456354,
+      "seed_spread": 0.019435154873175625,
+      "fold_spread": 0.11399786741416193,
+      "checks": {
+        "signs_agree": true,
+        "beats_seed_spread": true,
+        "beats_envelope": true,
+        "beats_fold_spread": false
+      },
+      "stands": false,
+      "per_seed": {
+        "2": -0.04122120414818309,
+        "3": -0.029066071006204452,
+        "4": -0.04850122587938008
+      },
+      "arm_spreads": {
+        "medcpt": 0.01523862924744429,
+        "lookup": 0.01966204349958689
+      },
+      "envelope": 0.01966204349958689,
+      "stands_under_pooled": false,
+      "verdict_changed": false,
+      "duplicate_gap": null
+    },
+    "marker_depth_r": {
+      "mean": -0.00575188159350735,
+      "sd": 0.01773510748633645,
+      "seed_spread": 0.03445431347972849,
+      "fold_spread": 0.1274022523556274,
+      "checks": {
+        "signs_agree": false,
+        "beats_seed_spread": false,
+        "beats_envelope": false,
+        "beats_fold_spread": false
+      },
+      "stands": false,
+      "per_seed": {
+        "2": -0.020545994409116974,
+        "3": -0.010617969442016595,
+        "4": 0.013908319070611519
+      },
+      "arm_spreads": {
+        "medcpt": 0.018187438492340335,
+        "lookup": 0.04271372700496845
+      },
+      "envelope": 0.04271372700496845,
+      "stands_under_pooled": false,
+      "verdict_changed": false,
+      "duplicate_gap": null
+    },
+    "celltype_localization": {
+      "mean": 0.0,
+      "sd": 0.0,
+      "seed_spread": 0.0,
+      "fold_spread": 0.14296373677018603,
+      "checks": {
+        "signs_agree": false,
+        "beats_seed_spread": false,
+        "beats_envelope": false,
+        "beats_fold_spread": false
+      },
+      "stands": false,
+      "per_seed": {
+        "2": 0.0,
+        "3": 0.0,
+        "4": 0.0
+      },
+      "arm_spreads": {
+        "medcpt": 0.0,
+        "lookup": 0.0
+      },
+      "envelope": 0.0,
+      "stands_under_pooled": false,
+      "verdict_changed": false,
+      "duplicate_gap": null
+    }
+  }
+}
