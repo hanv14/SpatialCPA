@@ -487,3 +487,136 @@ Only then fix the dataset list and commit the ~256 core-h.
 `reports/t10_a9.md` · `benchmark-pbya-v3/README.md` · `benchmark-pbya-v3/src/bench3/survey_datasets.py` ·
 `spatialcpav25_gen/config.py` · `tests/test_noise.py` · `tests/test_checkpoint.py` ·
 `spatialcpav25_gen/train/checkpoint.py`
+
+---
+
+## 7. The decision — build four days, scope to two datasets
+
+**Agreed 2026-09-08.** §4's bill costed the campaign `specs/10` describes. This section costs the
+campaign that is worth running, which is smaller in both directions.
+
+### 7a. Two corrections to §2–§4, both material
+
+1. **Step 4 is a fit, and it is a short one.** The §6 summary that went out said *"none is a fit"*
+   while item 4 was one. It is also cheaper than §6 priced it: peak RSS is reached during load,
+   `cKDTree` construction and the first steps, so `--train-steps 100 --fit-only` measures it in
+   **~10 minutes** rather than the ~4 hours a full 2400-step fit takes. `scripts/campaign_screen.sh`
+   prints the exact invocation.
+2. **`deep_starmap` was charged 88 core-h of selection it does not owe under `specs/10` §12**
+   (*"experiment homes … inherit the shipped config rather than re-running selection"*). §4c's
+   256 core-h should have read ~168 for the same four datasets. **This is not resolved by removing
+   the line — see §7d.**
+
+### 7b. What is built — approximately four days
+
+| build | days | why it earns the time |
+|---|---|---|
+| **`eval/ceiling.py` at all six metrics** | 1–2 | §0a rule 4 — *"report every reconstruction number as a fraction of the measured headroom"* — is the framing the whole negative rests on. The two existing scripts cover `marker_depth_r` and `morans_pearson`; the kernels for the rest are already in `losses/metric_aware.py`. It is also the §1c screen |
+| **Seed/arm results-root convention + `t09_seed_claim.py` reading bench3's `all_metrics.csv`** | 1 | `eval/stats.py`'s useful half: median, min–max across seeds, per-metric **per-arm** envelope (§4.2a). Reads `all_metrics.csv` and `per_section_metrics.csv` only — never `summary_by_method.csv`, which means across holdout ids |
+| **`duplicate_profile_rate`** | hours | The one control metric `specs/10` §2 says T10 must build, and the only one bench3 lacks. When the finding is *copying wins*, the control that detects a method copying real cells is load-bearing, not bookkeeping |
+
+**Not built:** `eval/bench3_driver.py` as a module, `eval/resection.py`, `eval/experiments.py`,
+`cli.py` beyond the existing bench3 wrapper, and the Wilcoxon / BH / bootstrap-CI / Cliff's-delta
+significance layer.
+
+### 7c. Why the significance layer is not built — state this once, plainly
+
+> **Building a significance layer to run at n = 3, when this project's own noise analysis says
+> n = 3 cannot resolve these effects, produces "not significant" in a house style rather than a
+> result.**
+
+The n is not a choice that more effort could improve. `paper_2_4_6` holds out **three** sections
+(`paper_2_4` on CosMx holds out two), and `claim_min_seeds = 3`. So a Wilcoxon runs at n = 3, BH
+corrects across six metrics at that n, Cliff's delta is computed on three values, and a bootstrap CI
+resamples three sections. Against that:
+
+* **§4.2i, a standing requirement of this spec.** A three-seed envelope is an *estimate*. For a
+  correlation over `n` genes the null has `sd ≈ 1/√(n−1)`; the range of three draws has expectation
+  `1.693 sd` and its own `sd = 0.888 sd` — a **CV above 50 %**. The 2.2x gap between two datasets'
+  measured envelopes, which reads like a fact about the datasets, is noise in the noise estimate.
+* **A9, the one time it was tested directly.** Six fits, three seeds, on the question of whether the
+  three metric-aware weights do anything. Verdict **UNINFORMATIVE**: the worst primary envelope was
+  **0.4323** against the 0.067 the pre-registered condition names — **6.5x over** — and both
+  autocorrelation primaries had signs disagreeing across seeds. The closeout's reading is explicit:
+  *"more seeds is not a cheap path — this design was already too noisy at three."*
+
+What this project reports instead, and what its findings are actually carried by: **the median over
+held-out sections (§4.6), the min–max across seeds beside it, and the margin read against a
+per-metric, per-arm envelope measured on that dataset (§4.2a).** That is a stricter instrument than a
+p-value at n = 3, not a weaker one — it states its own reproducibility floor and refuses any effect
+smaller than it. `scripts/t09_seed_claim.py` already computes it.
+
+This is a claim about **statistical power at the n the protocol fixes**, not a preference about
+statistics. If a venue requires the significance layer, build it — but build it knowing what it will
+return, and report the envelope beside it.
+
+### 7d. `deep_starmap`'s configuration — costed as its own line, not defaulted either way
+
+`specs/10` §12 says an experiment home **inherits** the shipped config. The evidence points the
+other way and the two have never been reconciled:
+
+* The pilot's finding was that **fixture-tuned defaults did not transfer to STARmap** — a 28-gene,
+  median-detection-0.9999 panel — and that *"selection is on the critical path for any quality
+  number, not an optimisation to defer."* Transferring a **tier-1**-selected config onto a
+  **1 017-gene, ~113 000-cell** volume is the same move again, one dataset further.
+* `expr_pca_dim` differs **by rule, not by selection**: `clamp_config_to_volume` gives 28 on tier-1
+  and is unconstrained at 1 017 genes. So the inherited config is already not the config that would
+  be fitted.
+* R8 measured what a wrongly-scoped gate costs: at the reduced budget the shipped configuration
+  ranked **fifth of six**.
+
+**Three options, priced. This report does not pick one.**
+
+| option | fits | core-h | what it costs you |
+|---|---|---|---|
+| **(a) Inherit tier-1's config** | 0 | **0** | Every `deep_starmap` number is produced under a config selected on a different panel width and a 7x smaller cell count. Defensible only if stated in the methods as an inherited config, not a selected one |
+| **(b) Reduced selection** ⬅ *recommended* | 20 | **≈ 77** | The 18-cell `layout_mode × prior_mode × expr_mode` joint gate at full budget — irreducible under the training-free-option rule (§3) — plus a 2-cell budget gate. `text_emb_mode` is **not** re-fitted: it already has a three-seed real-data measurement **on this exact dataset** (`lookup` beats `medcpt` on Moran's at 4.9x and Geary's at 2.3x their own envelopes). The metric-aware weights go to **0** per the closeout's standing recommendation, collapsing the 4-cell budget gate to 2 |
+| **(c) Full selection** | 23 | **≈ 88** | (b) plus re-fitting a gate this dataset has already answered at three seeds, and plus two cells of a weights gate the closeout recommends zeroing |
+
+At 3.92 h per cold fit, (b) is ~77 core-h — **~4 h wall six-up**, which is what the E1 replication
+measured for six such fits. The gap between (b) and (c) is 11 core-h; the gap between (a) and (b) is
+whether `deep_starmap`'s rows say *selected* or *inherited* in the methods.
+
+### 7e. The revised bill — two datasets
+
+Tier-1 STARmap as the headline; `deep_starmap` as E1's home and one ceiling-flanked reconstruction
+row. `merfish_thick_hypothalamus` and `exseq_breast_cancer` are **dropped unless §1c's screen shows
+one of them has more headroom than tier-1's +0.1551** — in which case it *replaces* tier-1 as the
+informative benchmark rather than joining it.
+
+| line | fits | core-h |
+|---|---|---|
+| Selection, `starmap_visual_cortex` (22.5 FBE × 1.03 h) | 23 | **23.2** |
+| Headline six-metric table, tier-1, 3 regimes × 3 seeds | 9 | **8.1** |
+| `deep_starmap` reconstruction row, 3 seeds (ceiling beside it, §0a) | 3 | **11.8** |
+| Boundary rows R3, tier-1, both ends × 3 seeds | 6 | **6.2** |
+| E1 zero-shot, `deep_starmap` | 12 | **47.0** |
+| Per-arm envelopes | 0 | **0** |
+| Ceilings, floors, probes, E5, E4 | 0 | **0** |
+| **Subtotal** | **53** | **≈ 96** |
+| **+ `deep_starmap` selection, option (b)** | +20 | **+77** |
+| **Total with (b)** | **73** | **≈ 173** |
+
+**Wall clock: ~4 h at 24-way for the 96, ~7 h with option (b)** — subject to the `deep_starmap` peak
+RSS probe (§2), which is the only thing standing between this schedule and a known one.
+
+**Plus the comparators (§4a), still unmeasured until the screen's step 1 returns.** Zero
+`prediction.h5` exist anywhere in the development tree, re-confirming §3's 2026-08-20 finding; the
+campaign machine is the open question.
+
+> **The campaign was never compute-bound.** ~96 core-hours is a morning on a 192-core box. What
+> gates it is the comparator re-runs, whose cost is unknown until step 1 returns, and the four days
+> above.
+
+### 7f. What would reverse this decision
+
+Each is a measurement, not an opinion, and two of the three come out of the screen:
+
+1. **A dataset with headroom above tier-1's +0.1551 [+0.1075, +0.2186].** Then it is not breadth,
+   it is a **re-based headline**, and the infrastructure to run it properly is worth building.
+2. **Fork A1 — predictions exist on the campaign machine.** Comparators drop from unmeasured to
+   ~12–24 core-h of re-scoring, the tier-1 table closes almost immediately, and the marginal cost of
+   doing everything else properly falls with it.
+3. **A venue that requires the significance layer.** §7c is a statement about power, not about
+   preference. If a reviewer will demand Wilcoxon + BH, the layer gets built — and the envelope is
+   reported beside it, because that is the number that carries the finding.
