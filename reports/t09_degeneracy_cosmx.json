@@ -1,0 +1,89 @@
+{
+  "verdict": "constant_field_is_degenerate",
+  "deep_starmap_cv": [
+    2.6e-07,
+    16.1
+  ],
+  "cells": [
+    {
+      "fold": "section_3",
+      "side": "held_out",
+      "constant_field": {
+        "n_cells": 55339,
+        "n_genes_scored": 191,
+        "bitwise_row_identical": true,
+        "max_abs_row_deviation": 0.0,
+        "cv_median": 8.783837301962194e-08,
+        "cv_max": 3.3625829587435874e-07
+      },
+      "real_counts": {
+        "n_cells": 55339,
+        "n_genes_scored": 191,
+        "bitwise_row_identical": false,
+        "max_abs_row_deviation": 1.0,
+        "cv_median": 6.074212074279785,
+        "cv_max": 13.166348457336426
+      }
+    },
+    {
+      "fold": "section_3",
+      "side": "kept",
+      "constant_field": {
+        "n_cells": 55339,
+        "n_genes_scored": 769,
+        "bitwise_row_identical": true,
+        "max_abs_row_deviation": 0.0,
+        "cv_median": 9.58146628704526e-08,
+        "cv_max": 3.7153367316022923e-07
+      },
+      "real_counts": {
+        "n_cells": 55339,
+        "n_genes_scored": 769,
+        "bitwise_row_identical": false,
+        "max_abs_row_deviation": 0.6458333134651184,
+        "cv_median": 5.769528865814209,
+        "cv_max": 12.684572219848633
+      }
+    },
+    {
+      "fold": "section_5",
+      "side": "held_out",
+      "constant_field": {
+        "n_cells": 58423,
+        "n_genes_scored": 191,
+        "bitwise_row_identical": true,
+        "max_abs_row_deviation": 0.0,
+        "cv_median": 9.670918643678306e-08,
+        "cv_max": 3.6806008552048297e-07
+      },
+      "real_counts": {
+        "n_cells": 58423,
+        "n_genes_scored": 191,
+        "bitwise_row_identical": false,
+        "max_abs_row_deviation": 1.0,
+        "cv_median": 5.712669372558594,
+        "cv_max": 13.28148365020752
+      }
+    },
+    {
+      "fold": "section_5",
+      "side": "kept",
+      "constant_field": {
+        "n_cells": 58423,
+        "n_genes_scored": 769,
+        "bitwise_row_identical": true,
+        "max_abs_row_deviation": 0.0,
+        "cv_median": 1.0276550455046163e-07,
+        "cv_max": 3.992590222878789e-07
+      },
+      "real_counts": {
+        "n_cells": 58423,
+        "n_genes_scored": 769,
+        "bitwise_row_identical": false,
+        "max_abs_row_deviation": 0.6603773832321167,
+        "cv_median": 5.422717094421387,
+        "cv_max": 12.983266830444336
+      }
+    }
+  ]
+}

@@ -1,0 +1,120 @@
+{
+  "thresholds": {
+    "supports_min_fraction": 0.2,
+    "supports_min_ratio_to_reference": 3.0,
+    "rules_out_max_fraction": 0.05,
+    "rules_out_max_ratio_to_reference": 1.5
+  },
+  "summary": {
+    "held_out": {
+      "n_cells": 115830,
+      "n_zero_total": 417,
+      "zero_total_fraction": 0.0036001036001036,
+      "detection_rate_median": 0.016357886136864012
+    },
+    "kept": {
+      "n_cells": 115830,
+      "n_zero_total": 0,
+      "zero_total_fraction": 0.0,
+      "detection_rate_median": 0.016360017370245256
+    }
+  },
+  "sections": [
+    {
+      "section": "section_1",
+      "side": "held_out",
+      "n_cells": 39327,
+      "n_genes": 204,
+      "n_zero_total": 258,
+      "zero_total_fraction": 0.006560378366008086,
+      "n_eff": 39069,
+      "detection_rate_median": 0.00887431027029776,
+      "detection_rate_min": 0.001093396394334681,
+      "median_pool_total": 12.0
+    },
+    {
+      "section": "section_1",
+      "side": "kept",
+      "n_cells": 39327,
+      "n_genes": 813,
+      "n_zero_total": 0,
+      "zero_total_fraction": 0.0,
+      "n_eff": 39327,
+      "detection_rate_median": 0.009789711902764004,
+      "detection_rate_min": 0.0004322729931090599,
+      "median_pool_total": 46.0
+    },
+    {
+      "section": "section_3",
+      "side": "held_out",
+      "n_cells": 29842,
+      "n_genes": 204,
+      "n_zero_total": 27,
+      "zero_total_fraction": 0.0009047650961731788,
+      "n_eff": 29815,
+      "detection_rate_median": 0.01486160445010388,
+      "detection_rate_min": 0.002010589102607064,
+      "median_pool_total": 20.0
+    },
+    {
+      "section": "section_3",
+      "side": "kept",
+      "n_cells": 29842,
+      "n_genes": 813,
+      "n_zero_total": 0,
+      "zero_total_fraction": 0.0,
+      "n_eff": 29842,
+      "detection_rate_median": 0.015615575363581529,
+      "detection_rate_min": 0.0012398632799410227,
+      "median_pool_total": 72.0
+    },
+    {
+      "section": "section_5",
+      "side": "held_out",
+      "n_cells": 28654,
+      "n_genes": 204,
+      "n_zero_total": 46,
+      "zero_total_fraction": 0.0016053605081314999,
+      "n_eff": 28608,
+      "detection_rate_median": 0.019595867941648637,
+      "detection_rate_min": 0.002477839045159489,
+      "median_pool_total": 23.0
+    },
+    {
+      "section": "section_5",
+      "side": "kept",
+      "n_cells": 28654,
+      "n_genes": 813,
+      "n_zero_total": 0,
+      "zero_total_fraction": 0.0,
+      "n_eff": 28654,
+      "detection_rate_median": 0.01999720806868151,
+      "detection_rate_min": 0.001430864800725902,
+      "median_pool_total": 85.0
+    },
+    {
+      "section": "section_7",
+      "side": "held_out",
+      "n_cells": 18007,
+      "n_genes": 204,
+      "n_zero_total": 86,
+      "zero_total_fraction": 0.004775920475370689,
+      "n_eff": 17921,
+      "detection_rate_median": 0.017854167823624145,
+      "detection_rate_min": 0.002665630032765036,
+      "median_pool_total": 17.0
+    },
+    {
+      "section": "section_7",
+      "side": "kept",
+      "n_cells": 18007,
+      "n_genes": 813,
+      "n_zero_total": 0,
+      "zero_total_fraction": 0.0,
+      "n_eff": 18007,
+      "detection_rate_median": 0.01710445937690898,
+      "detection_rate_min": 0.0012772810573665797,
+      "median_pool_total": 61.0
+    }
+  ]
+}

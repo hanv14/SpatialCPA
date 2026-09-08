@@ -1,6 +1,6 @@
 # T09 on real data — shipped config, full calibration, tier-1 STARmap
 
-Dataset `starmap_visual_cortex`, holdout `paper_2_4_6` (**tier 1**, `specs/10` §1). Config `5e143c970d900737` from defaults, seed 1.
+Dataset `starmap_visual_cortex`, holdout `paper_2_4_6` (**tier 1**, `specs/10` §1). Config `19cf1544f0cc5fcc` from defaults, seed 1.
 
 | gate | value |
 |---|---|
@@ -84,7 +84,7 @@ Emitted cell counts (generated / ground truth):
       "section_7"
     ],
     "detection_mae_gen_vs_real": 0.0026703540209965593,
-    "seconds": 7.9
+    "seconds": 8.2
   },
   "anchor": {
     "fitted": false,
@@ -109,19 +109,13 @@ Derived `retrieval_z_window` = **3** spacings (largest section gap 22 um). `Conf
 
 One **global** `ell` is calibrated; this table says whether it serves every gene module equally. It is not a target, and a poor table is evidence for the per-channel-group escalation, which is a design change to be decided explicitly.
 
-⚠️ **`mean |I_gen - I_real|` is a per-gene mean of absolute differences, and does NOT equal the difference of the two columns beside it.** `I_gen` and `I_real` are means over the module's genes; a module whose genes miss in both directions has a small column difference and a large mean absolute one. Measured on tier-1 at module 1: the columns differ by 0.0114 and the per-gene mean by **0.1639**, 14x apart. The old header read `|diff|`, which invited exactly the wrong subtraction.
-
-| module | genes | mean I_gen | mean I_real | mean |I_gen - I_real| |
+| module | genes | I_gen | I_real | |diff| |
 |---|---|---|---|---|
 | 0 | 9 | 0.2556 | 0.3871 | 0.1694 |
 | 1 | 8 | 0.3243 | 0.3357 | 0.1639 |
 | 2 | 6 | 0.1968 | 0.1614 | 0.0364 |
 | 3 | 5 | 0.3646 | 0.4899 | 0.1369 |
 
-
-## Collapse alarms
-
-⚠️ **Not measured on this run** — the fit was reused from `model.pt`, which carries weights and config but never the `TrainHistory`. That is not the same as *did not fire*; nothing here can distinguish the two. Re-fit to get an alarm record.
 ## Provenance
 
 ```
@@ -133,6 +127,4 @@ One **global** `ell` is calibrated; this table says whether it serves every gene
 
 Training volume: 16527 cells x 28 genes over 4 sections, flattened=True. `use_umap=True`.
 
-**One seed.** `specs/09` §3's repeated-seed rule requires `claim_min_seeds` = 3 for any measurement that reaches a paper claim. This table is a single-seed measurement — admissible as a diagnostic, not as a headline.
-
-⚠️ **No envelope is quoted here, deliberately.** This footer used to cite the fixture's 0.0335 (`reports/envelope_synthetic.md`) and call smaller differences ties. `specs/10` §4.2a says an envelope is **per-metric and per-arm**, and A7 measured what carrying a fixture figure to real data costs: on this dataset the per-arm across-seed spreads run **0.0033 to 0.3687**, a **112x** range, with `morans_pearson`'s alone at **0.2684 — 8x** the fixture number. A tie declared against 0.0335 here would be the cross-dataset comparison §4.2a exists to forbid. Measure the envelope on **these** arms, on this metric, before calling anything a tie.
+**One seed.** `specs/09` §3's repeated-seed rule requires `claim_min_seeds` = 3 for any measurement that reaches a paper claim, and the across-seed envelope measured on the fixture is 0.0335 (`reports/envelope_synthetic.md`). Any difference here smaller than that is a tie, and this table is a single-seed measurement — admissible as a diagnostic, not as a headline.

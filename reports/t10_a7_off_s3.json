@@ -4,7 +4,7 @@
       "arm": "uncalibrated",
       "detection_applied": false,
       "shipped": true,
-      "config_hash": "eb632222aa9f8120",
+      "config_hash": "8e0fcee60de7f6a0",
       "seed": 3,
       "n_pred": {
         "section_2": 4073.0,
@@ -79,7 +79,7 @@
       "arm": "detection-calibrated",
       "detection_applied": true,
       "shipped": false,
-      "config_hash": "eb632222aa9f8120",
+      "config_hash": "8e0fcee60de7f6a0",
       "seed": 3,
       "n_pred": {
         "section_2": 4073.0,
@@ -183,15 +183,13 @@
         "section_7"
       ],
       "detection_mae_gen_vs_real": 0.0035723782432295465,
-      "seconds": 7.5
+      "seconds": 6.9
     },
     "anchor": {
       "fitted": false,
       "why": "expr_mode=zinb-flow: w(v) is only read under auto-blend"
     }
   },
-  "fit_seconds": null,
-  "alarms": null,
   "provenance": {
     "source": "defaults",
     "selection_path": null
@@ -330,7 +328,6 @@
     "sefl_ramp_frac": 0.2,
     "sefl_collapse_min_steps": 100,
     "sefl_collapse_warn_fraction": 0.25,
-    "sefl_spatial_collapse_warn_fraction": 0.05,
     "sefl_consistency_ratio_warn": 0.5,
     "sefl_min_segment_nn_multiple": 3.0,
     "sefl_rejection_max_rounds": 96,

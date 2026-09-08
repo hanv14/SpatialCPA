@@ -1,0 +1,29 @@
+{
+  "held_out": {
+    "n": 191,
+    "n_in_table": 191,
+    "n_full_name": 191,
+    "n_summary": 191,
+    "summary_rate": 1.0,
+    "n_orthologue_summary": 0,
+    "n_bare_symbol_only": 0,
+    "descriptor_chars_median": 720,
+    "descriptor_chars_min": 176,
+    "n_unresolved_in_table": 0,
+    "unresolved_symbols": []
+  },
+  "kept": {
+    "n": 769,
+    "n_in_table": 769,
+    "n_full_name": 769,
+    "n_summary": 766,
+    "summary_rate": 0.9960988296488946,
+    "n_orthologue_summary": 0,
+    "n_bare_symbol_only": 0,
+    "descriptor_chars_median": 683,
+    "descriptor_chars_min": 60,
+    "n_unresolved_in_table": 0,
+    "unresolved_symbols": []
+  },
+  "summary_rate_gap": 0.0039011703511053764
+}

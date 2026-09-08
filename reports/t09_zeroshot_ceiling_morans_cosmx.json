@@ -1,0 +1,156 @@
+[
+  {
+    "target": "section_3",
+    "dataset": "cosmx_nsclc_3d",
+    "holdout": "paper_2_4",
+    "held_out": {
+      "n_pool": 191,
+      "n_markers": 191,
+      "marker_names_from_pool": true,
+      "self": 1.0,
+      "split_half": 0.9909635401850491,
+      "noiseless_ceiling": 0.9954715165111703,
+      "shuffled_floor": 0.013708464509775623,
+      "constant_field": 0.23995867506843452,
+      "constant_field_float64": 0.3157612723131167,
+      "constant_field_precision_drift": 0.07580259724468216,
+      "constant_field_input_rows_identical": true,
+      "constant_field_input_std_max": 0.0,
+      "constant_field_is_degenerate": true,
+      "shuffled_input_rows_identical": false,
+      "shuffled_input_std_max": 0.10539275335718096,
+      "shuffled_is_degenerate": false,
+      "best_other_section": 0.9806331650410137,
+      "others": [
+        {
+          "donor": "section_1",
+          "dz": 60.0,
+          "r": 0.9796386709225428
+        },
+        {
+          "donor": "section_5",
+          "dz": 60.0,
+          "r": 0.9806331650410137
+        },
+        {
+          "donor": "section_6",
+          "dz": 90.0,
+          "r": 0.9505096397892485
+        }
+      ]
+    },
+    "kept": {
+      "n_pool": 769,
+      "n_markers": 769,
+      "marker_names_from_pool": true,
+      "self": 1.0,
+      "split_half": 0.9938110812582291,
+      "noiseless_ceiling": 0.9969007379163831,
+      "shuffled_floor": 0.02276053691518774,
+      "constant_field": 0.29728677736067516,
+      "constant_field_float64": 0.2731362809767001,
+      "constant_field_precision_drift": 0.02415049638397504,
+      "constant_field_input_rows_identical": true,
+      "constant_field_input_std_max": 0.0,
+      "constant_field_is_degenerate": true,
+      "shuffled_input_rows_identical": false,
+      "shuffled_input_std_max": 0.05677761032096024,
+      "shuffled_is_degenerate": false,
+      "best_other_section": 0.9698284495675555,
+      "others": [
+        {
+          "donor": "section_1",
+          "dz": 60.0,
+          "r": 0.9698284495675555
+        },
+        {
+          "donor": "section_5",
+          "dz": 60.0,
+          "r": 0.9651146808911807
+        },
+        {
+          "donor": "section_6",
+          "dz": 90.0,
+          "r": 0.9415229722745446
+        }
+      ]
+    }
+  },
+  {
+    "target": "section_5",
+    "dataset": "cosmx_nsclc_3d",
+    "holdout": "paper_2_4",
+    "held_out": {
+      "n_pool": 191,
+      "n_markers": 191,
+      "marker_names_from_pool": true,
+      "self": 1.0,
+      "split_half": 0.9930295030473586,
+      "noiseless_ceiling": 0.9965086567849567,
+      "shuffled_floor": 0.03967678512071183,
+      "constant_field": 0.23208054718220764,
+      "constant_field_float64": 0.38296995863552996,
+      "constant_field_precision_drift": 0.15088941145332233,
+      "constant_field_input_rows_identical": true,
+      "constant_field_input_std_max": 0.0,
+      "constant_field_is_degenerate": true,
+      "shuffled_input_rows_identical": false,
+      "shuffled_input_std_max": 0.11128560709445288,
+      "shuffled_is_degenerate": false,
+      "best_other_section": 0.9806331650410138,
+      "others": [
+        {
+          "donor": "section_1",
+          "dz": 120.0,
+          "r": 0.9719538120566532
+        },
+        {
+          "donor": "section_3",
+          "dz": 60.0,
+          "r": 0.9806331650410138
+        },
+        {
+          "donor": "section_6",
+          "dz": 30.0,
+          "r": 0.9506804276724506
+        }
+      ]
+    },
+    "kept": {
+      "n_pool": 769,
+      "n_markers": 769,
+      "marker_names_from_pool": true,
+      "self": 1.0,
+      "split_half": 0.9943595339420972,
+      "noiseless_ceiling": 0.9971757788585206,
+      "shuffled_floor": -0.016462215383737776,
+      "constant_field": 0.29293272147221133,
+      "constant_field_float64": 0.15951580746687638,
+      "constant_field_precision_drift": 0.13341691400533495,
+      "constant_field_input_rows_identical": true,
+      "constant_field_input_std_max": 0.0,
+      "constant_field_is_degenerate": true,
+      "shuffled_input_rows_identical": false,
+      "shuffled_input_std_max": 0.054232131006019056,
+      "shuffled_is_degenerate": false,
+      "best_other_section": 0.9749593274006277,
+      "others": [
+        {
+          "donor": "section_1",
+          "dz": 120.0,
+          "r": 0.9531668617031716
+        },
+        {
+          "donor": "section_3",
+          "dz": 60.0,
+          "r": 0.9651146808911807
+        },
+        {
+          "donor": "section_6",
+          "dz": 30.0,
+          "r": 0.9749593274006277
+        }
+      ]
+    }
+  }
+]

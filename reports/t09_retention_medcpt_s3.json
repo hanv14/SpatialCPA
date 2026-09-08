@@ -1,0 +1,40 @@
+[
+  {
+    "fold": "section_3",
+    "arm": "medcpt",
+    "seed": 3,
+    "config_hash": "4ceac85c7eba8d80",
+    "n_top_genes": 32,
+    "s": 0.10074499994516373,
+    "s_min": 0.004203542601317167,
+    "s_max": 0.42077529430389404,
+    "counts_morans_top": 0.07440066791695617,
+    "real_morans_top": 0.2906032145674943,
+    "cond_mean_morans_top": 0.7812422529882729,
+    "retention_top": 0.2560214897405279,
+    "mean_vs_real": 2.6883469067986683,
+    "draw_retention": 0.09523379928872458,
+    "f_poisson": 0.29196298122406006,
+    "f_overdispersion": 0.6036595702171326,
+    "f_zero_inflation": 0.08847834914922714
+  },
+  {
+    "fold": "section_5",
+    "arm": "medcpt",
+    "seed": 3,
+    "config_hash": "4ceac85c7eba8d80",
+    "n_top_genes": 32,
+    "s": 0.11633637174963951,
+    "s_min": 0.007602836471050978,
+    "s_max": 0.42663654685020447,
+    "counts_morans_top": 0.08855809803534422,
+    "real_morans_top": 0.28304612687800995,
+    "cond_mean_morans_top": 0.7551906598865983,
+    "retention_top": 0.3128751451649853,
+    "mean_vs_real": 2.6680833552337493,
+    "draw_retention": 0.11726588097453744,
+    "f_poisson": 0.28959202766418457,
+    "f_overdispersion": 0.6139822006225586,
+    "f_zero_inflation": 0.09019572287797928
+  }
+]

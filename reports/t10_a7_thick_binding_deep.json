@@ -1,0 +1,105 @@
+{
+  "dataset": "deep_starmap",
+  "holdout": "paper_2_4_6",
+  "config_hash": "7a89377d0158e71a",
+  "seed": 2,
+  "geometry": {
+    "n_sections": 4,
+    "thickness_median_um": 42.0,
+    "thickness_min_um": 42.0,
+    "thickness_max_um": 42.0,
+    "thickness_is_assumed": true,
+    "spacing_median_um": 42.0,
+    "spacing_min_um": 40.599999999999994,
+    "slabs_overlap": true,
+    "thickness_ratio": 3,
+    "thick_slab_um": 126.0,
+    "bbox_extent_um": [
+      4384.639846801758,
+      4154.559804677963,
+      167.30000591278076
+    ],
+    "thick_slab_over_z_extent": 0.7531380486961138
+  },
+  "load_warnings": [
+    "AssumedThicknessWarning",
+    "CoincidentCoordsWarning"
+  ],
+  "mean_density": 3.960676193402676e-05,
+  "sweep": {
+    "by_relative_error": {
+      "0": {
+        "relative_error": 0.0,
+        "fraction_nonzero": 0.0,
+        "median_total": 0.0,
+        "max_total": 0.0,
+        "fraction_grazed": 1.0,
+        "count": 0.0,
+        "count_by_type": 0.0,
+        "state": 0.0
+      },
+      "0.001": {
+        "relative_error": 0.0009999999999998899,
+        "fraction_nonzero": 0.0,
+        "median_total": 0.0,
+        "max_total": 0.0,
+        "fraction_grazed": 1.0,
+        "count": 0.0,
+        "count_by_type": 0.0,
+        "state": 0.0
+      },
+      "0.003": {
+        "relative_error": 0.0029999999999998916,
+        "fraction_nonzero": 0.0,
+        "median_total": 0.0,
+        "max_total": 0.0,
+        "fraction_grazed": 1.0,
+        "count": 0.0,
+        "count_by_type": 0.0,
+        "state": 0.0
+      },
+      "0.01": {
+        "relative_error": 0.010000000000000009,
+        "fraction_nonzero": 0.0625,
+        "median_total": 0.0,
+        "max_total": 7.297993579413742e-05,
+        "fraction_grazed": 0.9375,
+        "count": 0.0,
+        "count_by_type": 0.0,
+        "state": 0.0
+      },
+      "0.03": {
+        "relative_error": 0.030000000000000027,
+        "fraction_nonzero": 0.0625,
+        "median_total": 0.0,
+        "max_total": 0.0008729819674044847,
+        "fraction_grazed": 0.9375,
+        "count": 0.0,
+        "count_by_type": 0.0,
+        "state": 0.0
+      },
+      "0.1": {
+        "relative_error": 0.10000000000000009,
+        "fraction_nonzero": 0.0625,
+        "median_total": 0.0,
+        "max_total": 0.8728427300229669,
+        "fraction_grazed": 0.9375,
+        "count": 0.0,
+        "count_by_type": 0.0,
+        "state": 0.0
+      },
+      "0.3": {
+        "relative_error": 0.30000000000000004,
+        "fraction_nonzero": 0.0625,
+        "median_total": 0.0,
+        "max_total": 11.91283843666315,
+        "fraction_grazed": 0.9375,
+        "count": 0.0,
+        "count_by_type": 0.0,
+        "state": 0.0
+      }
+    },
+    "smallest_error_noticed": null
+  },
+  "verdict": "ILL-POSED"
+}

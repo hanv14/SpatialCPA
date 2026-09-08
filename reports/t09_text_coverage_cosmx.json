@@ -1,0 +1,25 @@
+{
+  "held_out": {
+    "n": 191,
+    "n_in_table": 28,
+    "n_full_name": 28,
+    "n_summary": 26,
+    "summary_rate": 0.13612565445026178,
+    "n_orthologue_summary": 17,
+    "n_bare_symbol_only": 163,
+    "descriptor_chars_median": 6,
+    "descriptor_chars_min": 4
+  },
+  "kept": {
+    "n": 769,
+    "n_in_table": 93,
+    "n_full_name": 93,
+    "n_summary": 92,
+    "summary_rate": 0.11963589076723016,
+    "n_orthologue_summary": 62,
+    "n_bare_symbol_only": 676,
+    "descriptor_chars_median": 6,
+    "descriptor_chars_min": 3
+  },
+  "summary_rate_gap": 0.016489763683031622
+}

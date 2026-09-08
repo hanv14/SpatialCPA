@@ -378,11 +378,20 @@ operation.** Real tissue retains **62.2 %** across the same latent→counts step
 
 **Why.** The decoder reproduces the *pattern* of between-cell variation almost perfectly and a
 fraction of its *amplitude*, and the ZINB objective closes the gap with **dispersion** rather than
-by sharpening the mean. ⚠️ The supporting figures — `mu`'s Moran's I 0.861 against the tissue's own
-latent 0.745, `theta` carrying 57–63 % of conditional variance, and Spearman **0.068** between
-`theta` and the data's own dispersion over 1017 genes — are **measured but unrecoverable** (§8b):
-no artifact is held. The chain figures in the paragraph above **are** sourced, so the *localisation*
-to the count draw survives; what lacks a file is the *attribution to* `theta`.
+by sharpening the mean. **The three supporting figures landed on 2026-09-08 and were checked against the
+artifact one by one. They do not all survive:**
+
+| figure as stated | in the artifact | status |
+|---|---|---|
+| Spearman **0.068** between `theta` and the data's own dispersion, over **1017 genes** | `log_ratio_spearman = 0.06801`, `n_genes = 1017` (`reports/t09_theta_learned_s2.json`) | ✅ **sourced exactly** |
+| `theta` carrying **57–63 %** of conditional variance | `f_overdispersion` = 0.6110, 0.6304 — the file has two folds and both are 61–63 % | ⚠️ **upper bound sourced, lower bound is not.** The honest range from this artifact is **61–63 %**; where 57 % came from is not in the file |
+| `mu`'s Moran's I **0.861** against the tissue's own latent **0.745** | ❌ **neither number appears.** A scan of all thirteen recovered files finds no value within 0.004 of either. The nearest is `cond_mean_morans_top` = 0.8240 / 0.8153 | 🚨 **unsourced — stays in §8b** |
+
+**So the attribution to `theta` is now two-thirds sourced, not sourced.** The chain figures in the
+paragraph above **are** sourced, so the *localisation* to the count draw survives regardless. ⚠️
+**Until the 0.861 / 0.745 pair is either found or re-measured, this paragraph should quote 61–63 %
+and the Spearman, and drop the Moran's comparison** — it is the one number here with no file behind
+it.
 
 That is a property of the **objective**, not a tuning error: a likelihood that can be reduced by
 moving explanatory power out of the structured component into the unstructured one will be, and
@@ -446,49 +455,54 @@ sharper and is the reason this section is worth its length.
 **Twelve of these landed.** A9's six and A7's six are in the branch, verified by `git ls-files`, and
 A9's fit 1 is already named `t10_a9_0_s1.*` — the rename this table asked for is discharged.
 
-🚨 **A further thirteen were reported as committed and do not exist anywhere.** The report named
-`reports/t09_theta_learned_s2.json`, six `t09_structured_share_*.json` and six
-`t09_retention_*.json`. Four searches, all empty: `git ls-files` on the branch; `git log --all
---diff-filter=A` over the whole history on every branch; a `find` over the campaign checkout; a
-`sudo find /` over the campaign machine. The only matches were
-`scripts/t09_retention_mechanism.py` and its `.pyc` — the **instrument**, caught by the glob, not
-an output.
+✅ **And the remaining thirteen landed too, after a false alarm worth recording.** They were
+reported committed; four searches — branch, full history on all branches, checkout, whole machine —
+found none of them, so §8b took the row back. The cause was then found in the **reflog**: commit
+`571e769` held all thirteen, and a later `git reset` to `origin/…` discarded that commit *and* the
+working-tree copies with it. **Both the report and the searches were correct about different
+moments.** The files were recovered from the reflog — the original commit's content, not a copy —
+and are now in the branch.
 
-**They are not held locally, not committed anywhere, and not on any disk we can see.** They belong
-in §8b, and that is where they now are; a row moved to this table on the strength of the report was
-moved back when the searches came in. **This is the single most useful thing §8 has done**, and it
-is why the rule in §8c is `git ls-files` rather than anyone's recollection — including the
-recollection of the person who ran the fits.
+🚨 **A regeneration had been accepted in place of an original, and this patch exposed it.** The A9
+and A7 reports committed earlier carried `fit_seconds: null` and `alarms: null`: they were
+**re-scores**, not the fitting runs' own output, and this table's own instruction says *"a copy of
+the file that produced the number, not a regeneration."* The originals are now in place. They carry
+identical metrics — verified field by field on all twelve — plus A9's `fit_seconds` and its full
+alarm record (`variance_ratio`, `spatial_ratio`, the three alarm lists). **The rule was written here
+and then broken here**, by me, and nothing in the report would have shown it: the metrics matched,
+so only the provenance fields differed.
 
-These results were measured and the artifacts are held on the campaign machine. The paths below are
-the **destinations**, not current locations. Each should be a **copy of the file that produced the
-number**, not a regeneration.
+⚠️ **A7's alarm record is still not in these files.** Neither the originals nor the re-scores carry
+`collapse_alarms` — the A7 reports predate the schema. So §3's *"`check_collapse` fired 218 times
+across the three ON fits"* remains attested by `progress/`, not by these artifacts.
 
-✅ **Landed 2026-09-08** — in the branch, `git ls-files` verified:
+✅ **Landed 2026-09-08** — every path below is in the branch, `git ls-files` verified, checked
+against the branch of record rather than against a report:
 
 | result | path(s) |
 |---|---|
-| **A9** — six input reports | `reports/t10_a9_{0,05}_s{1,2,3}.{json,md}` |
-| **A7** — six reports | `reports/t10_a7_{off,on}_s{1,2,3}.{json,md}` |
-
-⚠️ **Still held locally, not in the branch of record.** Each should be a **copy of the file that
-produced the number**, not a regeneration:
-
-| result | destination path(s) |
-|---|---|
-| **A7** — the `L_thick` binding check | `reports/t10_a7_thick_binding.json` |
-| **cosmx replication** — three scored seeds | `reports/t09_zeroshot_cosmx_seed2.json`, `_seed3`, `_seed4` (matching the existing `t09_zeroshot_deep_seed*.json` convention) |
+| **A9** — six input reports, **originals** | `reports/t10_a9_{0,05}_s{1,2,3}.{json,md}` |
+| **A7** — six reports, **originals** | `reports/t10_a7_{off,on}_s{1,2,3}.{json,md}` |
+| **R12/R4** — the `theta` attribution | `reports/t09_theta_learned_s2.json`; six `t09_structured_share_deep{,_lookup,_lookup_s3,_lookup_s4,_medcpt_s3,_medcpt_s4}.json`; six `t09_retention_{medcpt,lookup}_s{2,3,4}.json`. ⚠️ **Named wrongly in earlier revisions of this table** — the structured-share files carry a `_deep` segment this table omitted, so the paths it listed matched nothing even once the files existed |
+| **A7** — the `L_thick` binding check | `reports/t10_a7_thick_binding_deep.json`, `t10_a7_thick_binding_tier1.json`. ⚠️ Earlier revisions named **one** file, `t10_a7_thick_binding.json`; there are two, per dataset |
+| **cosmx replication** — three scored seeds | `reports/t09_zeroshot_cosmx_seed{2,3,4}.json` |
 | **cosmx** — the gene split | `reports/t09_gene_split_cosmx.json` |
-| **cosmx** — the model-free ceiling | `reports/t09_zeroshot_ceiling_morans_cosmx.json`. ⚠️ **This row named a second file, `t09_zeroshot_ceiling_cosmx.json`, which was never run** — only the Moran's variant was, on cosmx. Corrected 2026-09-08; the deleted name sources no figure in this report, so nothing is stranded by removing it. Note the asymmetry with `deep_starmap`, which has **both** (`t09_zeroshot_ceiling_deep.json` and `_morans_deep.json`, both landed). |
-| **cosmx** — descriptor coverage | `reports/t09_text_coverage_cosmx_human.json` |
+| **cosmx** — the model-free ceiling | `reports/t09_zeroshot_ceiling_morans_cosmx.{json,md}`. Only the Moran's variant was ever run on cosmx; `deep_starmap` has both |
+| **cosmx** — descriptor coverage | `reports/t09_text_coverage_cosmx_human.json`, and `t09_text_coverage_cosmx.json` — **two** files, where this table named one |
 | **cosmx** — the degeneracy check | `reports/t09_degeneracy_cosmx.json` |
-| **pool sparsity**, both datasets | `reports/t09_pool_sparsity_cosmx.json`, `reports/t09_pool_sparsity_deep.json` |
-| **the human gene-metadata table** | `resources/gene_meta.cosmx_human.parquet` — needed to reproduce anything on the cosmx side at all. Its **input** `resources/cosmx_panel_symbols.txt` has landed (§8a-bis), so this one is rebuildable rather than merely copyable — but a rebuild needs `mygene` and network, and is a new table, not the one the fits read. |
+| **pool sparsity**, both datasets | `reports/t09_pool_sparsity_{cosmx,deep}.json` |
+| **the human gene-metadata table** | `resources/gene_meta.cosmx_human.parquet` — the table the fits actually read, not a rebuild |
 
-**Until these land, every verdict in §3, §6 and §9 that cites them is attested by a progress entry
-rather than by an artifact** — the same status as §8b, differing only in that it is expected to be
-fixable. Once they land, those verdicts become reproducible from a clone by re-running the
-aggregators already in `scripts/`, and §8b is the whole of the remaining gap.
+**This list is empty of outstanding items.** Everything §8a has ever asked for is in the branch.
+
+⚠️ **Landing a file is necessary and not sufficient**, and §7 is the proof: its three supporting
+figures now have an artifact, and checking them against it found one sourced exactly, one whose
+stated range is wider than the file supports, and one that appears nowhere in any of the thirteen.
+**The next revision of this section should verify each cited number against its file**, not merely
+that the file exists — that is the same distinction §4.2f draws, one level up.
+
+**Those verdicts are now reproducible from a clone** by re-running the aggregators already in
+`scripts/`. §8b is the whole of the remaining gap.
 
 **Two of them carry a caveat worth keeping with the file.** The A7 reports were produced **before**
 the collapse alarm was armed independent of SEFL — but A7 ran SEFL **on**, so its alarm record is a
@@ -540,19 +554,18 @@ them and neither can we.
 
 | result | what is missing | consequence |
 |---|---|---|
-| **R12/R4's supporting figures** — `mu`'s Moran's I **0.861** against the tissue's own latent 0.745; `theta` carrying **57–63 %** of conditional variance; Spearman **0.068** between `theta` and the data's own dispersion over 1017 genes | `reports/t09_theta_learned_s2.json`, the six `t09_structured_share_*.json` and the six `t09_retention_*.json`. ⚠️ **Searched for four ways on 2026-09-08 after a report that they existed — branch, full history on all branches, checkout, whole machine. All empty.** | These are the quantitative core of §7, the paper's strongest mechanism claim. The **chain** figures beside them (0.9714 → 0.9015 → 0.8607 → 0.1297, and real tissue's 62.2 %) **are** sourced, to `reports/chain_2400.md` and `chain_2400_calibrated.md`, so the *localisation* survives; what is unattested is the *attribution to `theta`*. ✅ **All three instruments are in the repo** — `scripts/t09_structured_share.py`, `t09_retention_mechanism.py`, `t09_theta_mode.py` — and the first states it measures "on a fit that exists — no refit", so this is regenerable cheaply **if that fit is still held**. As with the row below, a regeneration is a new measurement and must be labelled so. |
+| **§7's Moran's comparison** — `mu`'s Moran's I **0.861** against the tissue's own latent **0.745** | no file. The thirteen recovered artifacts were scanned numerically and **no value falls within 0.004 of either number**; the nearest is `cond_mean_morans_top` = 0.8240 / 0.8153. | ⚠️ **This row is what is left of a bigger one.** Its two companions — the Spearman and the conditional-variance share — landed and check out (§7), so the attribution to `theta` is now mostly sourced. This pair is not, and §7 should drop it until it is found or re-measured. ✅ **Regenerable**: `scripts/t09_theta_mode.py` and `t09_structured_share.py` are in the repo, and the latter states it measures on an existing fit with no refit — so this costs a scoring pass **if that fit is still held**. A regeneration is a new measurement and must be labelled so. |
 | **The T09 selection table** that put the metric-aware weights at 0.5 — the four `(budget x weights)` cells, ranks 3.0 / 3.5 / 2.0 / 1.0 | the `scripts/t09_report.py` run's output. `reports/config_selection_synthetic.md` covers the synthetic selection but not this table. | §6's recommendation rests on *how* the weights were chosen. The claim "selected on the fixture by an aggregate rank, one seed, margins inside the envelope" is currently attested by `progress/` only. It is **cheap to regenerate** — the fixture run is ~8 minutes a fit — but a regeneration is a new measurement, not the one that made the decision, and should be labelled as such. |
 
-⚠️ **This table did not shrink on 2026-09-08 — it was briefly made to, and the reversal is the
-finding.** The `theta` row was moved to §8a on a report that its thirteen files existed and were
-committed. Four searches found none of them, and the row came back. §8b means *no artifact and no
-file to commit*; for this row that is true, and it was true the whole time.
+✅ **This table did shrink on 2026-09-08 — on the third attempt, and only the third one counted.**
+The `theta` row was moved out on a report that its files existed, moved back when four searches
+found nothing, and finally reduced to a fragment when the files were recovered from the reflog and
+**checked figure by figure against their contents**. Only the last of those three was evidence.
 
-**What the round trip cost, and what it bought.** It cost one revision of this section. It bought
-the demonstration that a provenance claim survives exactly as long as no one checks it — and this
-one did not survive first contact with `git ls-files`. Both rows here are now attested by
-`progress/` alone, and both are regenerable from instruments that are in the repo, at the price of
-labelling the result a new measurement rather than the one that made the decision.
+**What each round cost and bought.** The first cost a wrong edit. The second cost a search and
+bought the correct classification at the time. The third cost a reflog recovery and bought the thing
+neither of the others could: the knowledge that two of §7's three figures are sourced and one is
+not — which no amount of confirming that *a file exists* would ever have revealed.
 
 ### 8c. Why this section exists at all
 
@@ -573,10 +586,30 @@ Nobody was being careless — the numbers **were** measured, and the belief that
 be somewhere is the ordinary one.
 
 **That belief is the failure mode.** It moved a row out of this section on nothing but recollection,
-and only a search put it back. So: **`git ls-files` on the branch of record is the only test §8 may
-use**, every revision must re-run it rather than carry the previous split forward, and a report that
-a file exists — from anyone, including whoever ran the campaign — is a hypothesis to check, not a
-provenance.
+and only a search put it back.
+
+🚨 **And a fifth, which is what actually happened here: a local commit that is then reset away.**
+Commit `571e769` really did hold all thirteen files. A later `git reset` to `origin/…` discarded the
+commit and the working-tree copies together, leaving **no trace in `git ls-files`, in `git log
+--all`, or in the checkout** — while the person who made the commit correctly remembers committing
+it. Both parties then asserted the files existed, on the strength of an `ls` from five days earlier,
+and both were describing a state that had ceased to exist. Only the **reflog** still held it.
+
+**The consequences for how §8 is maintained:**
+
+1. **`git ls-files` on the branch of record is the only test this section may use.** Every revision
+   re-runs it rather than carrying the previous split forward.
+2. **A report that a file exists — from anyone, including whoever ran the campaign, and including
+   me — is a hypothesis to check, not a provenance.** Recollection and an old `ls` are the same
+   evidence.
+3. **When a search comes back empty and someone is confident, check `git reflog` before concluding
+   the file was never written.** That step was missing here and it cost a round trip.
+4. **A landed file is not a sourced figure.** Verify the cited number against the artifact's
+   contents — §7 had three figures, one file, and only two of the figures survived contact with it.
+5. ⚠️ **Pushes from the campaign machine return 403, so everything travels by patch.** Until that is
+   fixed, *"committed on the campaign machine"* and *"in the branch of record"* are different states
+   and this section must keep treating them as different. Every landing recorded above went through
+   a patch for that reason.
 
 ## 9. Claim-by-claim status
 

@@ -183,15 +183,31 @@
         "section_7"
       ],
       "detection_mae_gen_vs_real": 0.002043430697832404,
-      "seconds": 8.0
+      "seconds": 7.4
     },
     "anchor": {
       "fitted": false,
       "why": "expr_mode=zinb-flow: w(v) is only read under auto-blend"
     }
   },
-  "fit_seconds": null,
-  "alarms": null,
+  "fit_seconds": 3542.7395536899567,
+  "alarms": {
+    "collapse_alarms": [],
+    "spatial_collapse_alarms": [],
+    "spatial_inversion_alarms": [],
+    "variance_ratio": {
+      "min": 0.1261503306139353,
+      "median": 0.7707136557406654,
+      "last": 0.8608480388333719,
+      "n": 241.0
+    },
+    "spatial_ratio": {
+      "min": -0.039324428886175156,
+      "median": 1.3915292024612427,
+      "last": 1.4242531061172485,
+      "n": 241.0
+    }
+  },
   "provenance": {
     "source": "defaults",
     "selection_path": null
