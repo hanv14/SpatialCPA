@@ -446,18 +446,19 @@ sharper and is the reason this section is worth its length.
 **Twelve of these landed.** A9's six and A7's six are in the branch, verified by `git ls-files`, and
 A9's fit 1 is already named `t10_a9_0_s1.*` — the rename this table asked for is discharged.
 
-🚨 **A further thirteen were reported as "committed" and are not in the branch.** The report named
+🚨 **A further thirteen were reported as committed and do not exist anywhere.** The report named
 `reports/t09_theta_learned_s2.json`, six `t09_structured_share_*.json` and six
-`t09_retention_*.json`. `git ls-files` matches none of them; neither does `git log --all
---diff-filter=A` over the whole history; neither does the working tree. They are committed on the
-**campaign machine**, whose pushes return 403, so they exist in a repository no referee and no
-clone can reach.
+`t09_retention_*.json`. Four searches, all empty: `git ls-files` on the branch; `git log --all
+--diff-filter=A` over the whole history on every branch; a `find` over the campaign checkout; a
+`sudo find /` over the campaign machine. The only matches were
+`scripts/t09_retention_mechanism.py` and its `.pyc` — the **instrument**, caught by the glob, not
+an output.
 
-**That is not a quibble, it is this section's entire subject.** "Committed" on a machine that cannot
-push is indistinguishable, from the outside, from not measured. The correct present-tense statement
-for all thirteen remains **held locally, not in the branch of record** — the same status as the rest
-of this table, and the reason the split below is re-checked against `git ls-files` on every revision
-rather than inherited from the previous one.
+**They are not held locally, not committed anywhere, and not on any disk we can see.** They belong
+in §8b, and that is where they now are; a row moved to this table on the strength of the report was
+moved back when the searches came in. **This is the single most useful thing §8 has done**, and it
+is why the rule in §8c is `git ls-files` rather than anyone's recollection — including the
+recollection of the person who ran the fits.
 
 These results were measured and the artifacts are held on the campaign machine. The paths below are
 the **destinations**, not current locations. Each should be a **copy of the file that produced the
@@ -475,7 +476,6 @@ produced the number**, not a regeneration:
 
 | result | destination path(s) |
 |---|---|
-| **R12/R4** — the `theta` attribution *(moved here from §8b, 2026-09-08)* | `reports/t09_theta_learned_s2.json`; the structured-share audit's six outputs `reports/t09_structured_share_{deep,lookup,lookup_s3,lookup_s4,medcpt_s3,medcpt_s4}.json`; the six retention outputs `reports/t09_retention_{medcpt,lookup}_s{2,3,4}.json` |
 | **A7** — the `L_thick` binding check | `reports/t10_a7_thick_binding.json` |
 | **cosmx replication** — three scored seeds | `reports/t09_zeroshot_cosmx_seed2.json`, `_seed3`, `_seed4` (matching the existing `t09_zeroshot_deep_seed*.json` convention) |
 | **cosmx** — the gene split | `reports/t09_gene_split_cosmx.json` |
@@ -540,25 +540,24 @@ them and neither can we.
 
 | result | what is missing | consequence |
 |---|---|---|
+| **R12/R4's supporting figures** — `mu`'s Moran's I **0.861** against the tissue's own latent 0.745; `theta` carrying **57–63 %** of conditional variance; Spearman **0.068** between `theta` and the data's own dispersion over 1017 genes | `reports/t09_theta_learned_s2.json`, the six `t09_structured_share_*.json` and the six `t09_retention_*.json`. ⚠️ **Searched for four ways on 2026-09-08 after a report that they existed — branch, full history on all branches, checkout, whole machine. All empty.** | These are the quantitative core of §7, the paper's strongest mechanism claim. The **chain** figures beside them (0.9714 → 0.9015 → 0.8607 → 0.1297, and real tissue's 62.2 %) **are** sourced, to `reports/chain_2400.md` and `chain_2400_calibrated.md`, so the *localisation* survives; what is unattested is the *attribution to `theta`*. ✅ **All three instruments are in the repo** — `scripts/t09_structured_share.py`, `t09_retention_mechanism.py`, `t09_theta_mode.py` — and the first states it measures "on a fit that exists — no refit", so this is regenerable cheaply **if that fit is still held**. As with the row below, a regeneration is a new measurement and must be labelled so. |
 | **The T09 selection table** that put the metric-aware weights at 0.5 — the four `(budget x weights)` cells, ranks 3.0 / 3.5 / 2.0 / 1.0 | the `scripts/t09_report.py` run's output. `reports/config_selection_synthetic.md` covers the synthetic selection but not this table. | §6's recommendation rests on *how* the weights were chosen. The claim "selected on the fixture by an aggregate rank, one seed, margins inside the envelope" is currently attested by `progress/` only. It is **cheap to regenerate** — the fixture run is ~8 minutes a fit — but a regeneration is a new measurement, not the one that made the decision, and should be labelled as such. |
 
-✅ **This table shrank on 2026-09-08, and the mechanism that shrank it is the point.** It held a
-second row — R12/R4's `theta` attribution, the quantitative core of §7 — classified unrecoverable
-because no file was believed to exist. One does. It moves to §8a: **not** to "sourced", because it
-is not in the branch, but out of "unrecoverable", because §8b means *no file to commit* and that is
-now false. The previous revision of this section invited exactly this correction; it was taken.
+⚠️ **This table did not shrink on 2026-09-08 — it was briefly made to, and the reversal is the
+finding.** The `theta` row was moved to §8a on a report that its thirteen files existed and were
+committed. Four searches found none of them, and the row came back. §8b means *no artifact and no
+file to commit*; for this row that is true, and it was true the whole time.
 
-⚠️ **The move is a downgrade in severity, not a resolution.** Until `t09_theta_learned_s2.json` and
-the twelve structured-share and retention outputs are in a commit a referee can clone, §7's
-strongest mechanism claim is still attested by a progress entry. The *localisation* survives on its
-own artifacts either way — the chain figures are sourced to `reports/chain_2400.md` and
-`chain_2400_calibrated.md`; it is the *attribution to `theta`* that waits on these files.
+**What the round trip cost, and what it bought.** It cost one revision of this section. It bought
+the demonstration that a provenance claim survives exactly as long as no one checks it — and this
+one did not survive first contact with `git ls-files`. Both rows here are now attested by
+`progress/` alone, and both are regenerable from instruments that are in the repo, at the price of
+labelling the result a new measurement rather than the one that made the decision.
 
 ### 8c. Why this section exists at all
 
-**8b is now one row, and that is not the reassurance it looks like.** It shrank because a file
-turned out to exist, not because anything was published; the row it lost moved to §8a, where eleven
-entries still sit. The length of §8a **plus** §8b, not §8b alone, is the finding. **A headline result attested only by a progress entry is
+**8b is two rows and did not shrink.** The length of §8a **plus** §8b, not §8b alone, is the
+finding. **A headline result attested only by a progress entry is
 the same class of problem as §4.2f**: the difference between a measurement and a claim that one was
 made. §4.2j sharpens it — an artifact may state a check was performed only if the record shows it
 ran. A progress entry saying a number was measured is not that record.
@@ -567,12 +566,17 @@ ran. A progress entry saying a number was measured is not that record.
 the claim, or the claim is labelled as attested-by-log. There is no third state, and "we still have
 it locally" is the first state only until someone's disk is reimaged.
 
-⚠️ **2026-09-08 adds a fourth failure mode to guard against, found by checking this section rather
-than inheriting it: "committed" on a machine that cannot push.** Thirteen files were reported
-committed and are in no reachable repository. From a referee's position — and from a fresh clone's —
-that is identical to never measured. **`git ls-files` on the branch of record is the only test this
-section may use**, and every revision of §8 must re-run it rather than carry the previous split
-forward.
+⚠️ **2026-09-08 adds a fourth failure mode, and it is worse than the three above: an artifact
+believed to exist that does not.** Thirteen files were reported measured and committed. They are in
+no branch, in no commit on any branch, in no checkout and nowhere on the machine that ran the fits.
+Nobody was being careless — the numbers **were** measured, and the belief that a file must therefore
+be somewhere is the ordinary one.
+
+**That belief is the failure mode.** It moved a row out of this section on nothing but recollection,
+and only a search put it back. So: **`git ls-files` on the branch of record is the only test §8 may
+use**, every revision must re-run it rather than carry the previous split forward, and a report that
+a file exists — from anyone, including whoever ran the campaign — is a hypothesis to check, not a
+provenance.
 
 ## 9. Claim-by-claim status
 
