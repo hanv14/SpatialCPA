@@ -437,6 +437,48 @@ def _alarm_record(history: Any) -> dict[str, Any]:
     }
 
 
+def config_mismatch_report(saved: dict, current: Config) -> str:
+    """Name the fields that make a saved config hash differently from ``current``.
+
+    The guard above compares two 16-character hashes, which say *that* a checkpoint is not
+    portable and nothing about *why* — and "why" is the only part a caller can act on. Written
+    2026-09-08 after A7's three re-scores each reported a different pair of hashes and the field
+    behind them had to be guessed.
+
+    Two categories, and they are not the same thing:
+
+    * **differs** — the field exists on both sides with different values. This is what the hash
+      is objecting to, and it is usually a flag the re-score omitted (``--train-steps``,
+      ``--selected``, one of the A7/A9 weights).
+    * **absent from the checkpoint** — a ``Config`` field added since the fit was written. These
+      are *invisible* to the hash comparison, because ``Config(**saved)`` fills them with today's
+      default before hashing, so both sides carry the same value. Listed anyway: they say what
+      the fit could not have been trained under, which matters when reading its numbers.
+
+    Returns a report as a string; ``saved`` is the raw ``checkpoint["config"]`` mapping, not a
+    rehydrated ``Config``, because the absent keys are only visible before rehydration.
+    """
+    live = current.to_dict()
+    differs = sorted(k for k, v in live.items() if k in saved and saved[k] != v)
+    added = sorted(k for k in live if k not in saved)
+    lines = []
+    if differs:
+        lines.append(f"  {len(differs)} field(s) differ (this is what the hash objects to):")
+        lines += [f"    {k}: checkpoint {saved[k]!r} -> this run {live[k]!r}" for k in differs]
+    else:
+        lines.append(
+            "  No field differs in value, yet the hashes do. That means `Config` gained or lost "
+            "a field AND `Config(**saved)` did not reproduce it -- report this, it is a bug in "
+            "the hash or in `to_dict`, not a usage error."
+        )
+    if added:
+        lines.append(
+            f"  {len(added)} field(s) absent from the checkpoint and defaulted before hashing, "
+            "so they are NOT the cause; the fit simply predates them: " + ", ".join(added)
+        )
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -656,7 +698,8 @@ def main(argv: list[str] | None = None) -> int:
         if saved_hash != cfg.content_hash():
             raise SystemExit(
                 f"{model_path} was fitted under config {saved_hash}, not {cfg.content_hash()}. "
-                "A fit is not portable across configs; delete it or point --model elsewhere."
+                "A fit is not portable across configs; delete it or point --model elsewhere.\n"
+                + config_mismatch_report(checkpoint["config"], cfg)
             )
         model.load_state_dict(checkpoint["state_dict"])
         model.eval()

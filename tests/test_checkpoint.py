@@ -358,3 +358,39 @@ def test_checkpoint_write_leaves_no_partial_file(completed: Completed):
     """
     assert completed.path.is_file()
     assert not list(completed.path.parent.glob("*.tmp"))
+
+
+def test_config_mismatch_report_separates_a_changed_value_from_an_added_field() -> None:
+    """A non-portable checkpoint must name the field, and must not blame a field it predates.
+
+    `t09_ship_starmap.py` refuses to load a fit whose `content_hash` differs from the run's.
+    Until 2026-09-08 it printed only the two hashes, and A7's three re-scores each reported a
+    different pair with no way to act on them.
+
+    The distinction this pins is the one that made the guessing necessary. `Config(**saved)`
+    fills a field the checkpoint predates with today's default *before* hashing, so an added
+    field is invisible to the comparison and can never be the cause -- yet it is exactly what
+    a reader reaches for first. The report has to say which category each field is in.
+    """
+    import sys
+    from pathlib import Path as _Path
+
+    sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "scripts"))
+    from t09_ship_starmap import config_mismatch_report
+
+    cfg = Config()
+    saved = cfg.to_dict()
+    saved["train_steps"] = int(cfg.train_steps) + 1200  # a real difference
+    absent = saved.pop("w_prog")  # a field the fit predates
+    assert absent == cfg.w_prog, "fixture assumes w_prog is unchanged from the default"
+
+    report = config_mismatch_report(saved, cfg)
+    changed, added = report.split("field(s) absent")
+    assert "train_steps" in changed
+    assert "w_prog" not in changed
+    assert "w_prog" in added
+    assert "NOT the cause" in added
+
+    # And a rehydrated saved config hashes equal on the added field alone, which is the whole
+    # reason it may not be blamed.
+    assert Config(**saved).replace(train_steps=cfg.train_steps).content_hash() == cfg.content_hash()
