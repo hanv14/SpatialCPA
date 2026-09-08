@@ -7296,3 +7296,49 @@ three is the floor at which it becomes so.
    and prints the six-fit projection; every later fit **refuses to start** without it.
 2. Report the projection and **stop**, for the same reason the last two campaigns did.
 3. Five more fits, then score, aggregate under both constructions, and read the verdict.
+
+## A9 — fit 1 timed, and the common-mode note the warnings require (2026-09-07)
+
+**Fit 1: ~56 min, six fits projected at 5.6 core-hours, ~4.7 remaining.** The cheapest campaign in
+the project by a wide margin — A7 cost roughly four times this and the replication twenty. The
+timing gate has now been honoured on three consecutive campaigns.
+
+### The three warnings, and the asymmetry they carry
+
+Fit 1 raised three, all known: `expr_pca_dim` clamping 32 to 28 (`specs/10` §0's owed fix),
+thickness defaulting to 22 µm under the assumed flag, and 81 coincident coordinates from
+z-flattening.
+
+**Both arms carry all three, so none of them can separate the arms.** That is right and it is the
+important half — a common-mode nuisance cannot manufacture a difference between two arms that
+share it, so **none of these can produce a false POSITIVE or a false NEGATIVE.**
+
+⚠️ **But the protection is one-sided, and the pre-registration should have said so.** A common-mode
+distortion cannot *create* a difference; it can *attenuate* one. Two of the three plausibly do:
+
+* **Thickness at an assumed 22 µm** feeds the slab geometry that `soft_depth_profile` reads, and
+  `w_profile` is built on that profile. If the assumed thickness is wrong, the profile term is
+  mis-scaled in **both** arms — which leaves the contrast unbiased in sign and **smaller in
+  magnitude** than it would be at the true thickness.
+* **81 coincident coordinates** put zero-distance pairs into every kNN graph, which is what
+  `morans_pearson` and `gearys_pearson` are computed on. Again identical in both arms, again a
+  compression of whatever difference exists.
+
+**So the caveat attaches to the NULL, not to the positive.** A POSITIVE under these conditions is
+if anything understated. A NULL means *no detectable effect on this configuration, with three known
+distortions present in both arms* — **not** "no effect". That is a materially weaker statement than
+the one A9's null branch was written to support, and it is being recorded **before the results**
+rather than discovered in them.
+
+It does not change the pre-registration's branches, thresholds or readings. It changes one sentence
+in what a null licenses, and `scripts/t10_a9_aggregate.py`'s NULL reading now carries it.
+
+### The aggregator exists before the data does
+
+`scripts/t10_a9_aggregate.py` is written and lint-clean **before any of the six reports landed**,
+so the outcome cannot have shaped the instrument. It reads the arm from each report's persisted
+**config**, not from its filename — a filename is not a measurement, and this project has already
+paid once for a run whose name and contents disagreed. It refuses a report whose three weights
+differ, computes both §4.2d constructions, marks any metric where they disagree as **not
+established**, excludes `celltype_localization` rather than scoring it as a tie, and checks the
+persisted alarm record for uninformative (d) instead of assuming silence.
