@@ -211,7 +211,7 @@ The shipped deficit is **0.203**.
 | `marker_depth_r` | 0.8554 | **0.9794** | 1.0000 | **−0.124** |
 | `celltype_localization` | 0.7546 | **0.7765** | 0.9808 | −0.022 |
 | `gene_mean_spearman` | 0.9880 | **0.9863** | 1.0000 | **+0.002** |
-| `umap_mixing` | ⚠️ **NaN in this run** — no current measurement on the shipped arm | — | — | — |
+| `umap_mixing` | 0.9262 ⚠️ **not from this run** — see below | — | — | — |
 
 **What this table is not, and every caveat attached:**
 
@@ -223,29 +223,66 @@ The shipped deficit is **0.203**.
   average magnitude is right. It is also the easiest of the six.
 * **The two autocorrelation metrics carry the largest deficit** — 0.34 below a floor that a
   literal copy reaches. This is R12, and §7 gives the mechanism.
-* 🚨 **`umap_mixing` is a hole in the shipped configuration's own characterisation, not a missing
-  cell.** It is NaN on **all five** arms of the r11 run, which means `--no-umap` was passed to that
-  whole campaign — a deliberate skip, not a failure. So **one of the six headline metrics has never
-  been measured on the shipped layout mode under the current sampler.** The superseded pilot arm
-  measured 0.9152 (`reports/t10_rescore_exp.json`) and is **not substituted here**: different layout
-  mode, different sampler.
-
-  **Cost to fill it: one generation-and-scoring pass, no fit.** The checkpoint the r11 run used is
-  named in that file — `runs/pilot/model_exp_2400.pt` — and `layout_mode` is a generation-time gate,
-  so nothing needs refitting:
+* 🚨 **`umap_mixing` was a hole in the shipped configuration's own characterisation, and filling
+  it opened a larger one.** It was NaN on **all five** arms of the r11 run, because `--no-umap` was
+  passed to that whole campaign — a deliberate skip, not a failure. The costed pass was run on
+  2026-09-08 and it succeeded:
 
   ```
   python scripts/t10_rescore_saved.py --model runs/pilot/model_exp_2400.pt \
       --modes resample --out reports/r11_resample_grid_umap.md
   ```
 
-  One arm, three sections, UMAP on (omit `--no-umap`). It is the same operation the r11 campaign
-  performed five times, so it is minutes-to-tens-of-minutes rather than the ~56 minutes a fit takes
-  — ⚠️ **I cannot give a measured duration**: `fit_seconds` in these reports times the fit alone and
-  the generation-plus-scoring portion is not separately recorded anywhere. UMAP is the expensive
-  part, which is presumably why the flag exists. **If the checkpoint is gone, this becomes a refit**
-  and the cost is ~1 hour, at which point it should be folded into whatever the next campaign runs
-  rather than done alone.
+  `paper_umap_mixing = 0.9262` (`reports/r11_resample_grid_umap.json`). **It is quoted in the table
+  with a warning and it is not treated as belonging to that row**, because the same pass re-measured
+  the other five metrics from the same checkpoint, the same seed, the same `layout_mode`, the same
+  sampler — and **five of six disagree with the r11 numbers the table is built from**:
+
+  | metric | r11 (`--no-umap`) | 2026-09-08 re-score | Δ |
+  |---|---|---|---|
+  | `morans_pearson` | 0.6465 | 0.6541 | +0.0076 |
+  | `gearys_pearson` | 0.6469 | 0.6535 | +0.0066 |
+  | `marker_field_r` | 0.6830 | 0.6824 | −0.0006 |
+  | `marker_depth_r` | 0.8554 | 0.8331 | **−0.0223** |
+  | `gene_mean_spearman` | 0.9880 | 0.9901 | +0.0021 |
+  | `celltype_localization` | 0.7546 | 0.7546 | **0.0000** |
+
+  Sources: `reports/r11_resample_grid.json` and `reports/r11_resample_grid_umap.json`, both
+  single-arm files, both `seed 1`, both `runs/pilot/model_exp_2400.pt`.
+
+  **What the pattern localises.** `celltype_localization` is bitwise identical, and so are
+  `section_2` and `section_6` on its per-section raw values. Under `resample` the cell types and
+  coordinates are copied from the donor, so that column is a **layout-path** quantity — the layout
+  reproduces exactly. Every metric that reads generated *expression* moved. The disagreement is in
+  the expression path, not the layout path.
+
+  **This is not a seed-envelope effect and must not be read as one.** The per-seed envelopes in this
+  report describe *different* seeds. These two runs share a seed, so `Config`-level determinism
+  (Convention 3, "two runs with the same seed must be bitwise identical") says the difference should
+  be exactly zero. It is not. `marker_depth_r`'s −0.0223 is larger than the smallest per-metric
+  envelope in §8a-bis (0.0148), so the size is not negligible either.
+
+  **Two candidate causes, and they are cheap to separate.** Either (a) the code changed between the
+  r11 campaign and today — `decoder_theta_mode` and the `gene_theta` buffer both landed in that
+  window and both sit on the decoder's dispersion, which is exactly the expression path this
+  localises to — or (b) generation is not deterministic under a fixed seed, which would be a
+  Convention 3 violation and would put an error bar on **every** single-seed number in this report.
+  ⚠️ **Undetermined as of 2026-09-08.** The distinguishing measurement is one command run twice
+  today, no fit:
+
+  ```
+  python scripts/t10_rescore_saved.py --model runs/pilot/model_exp_2400.pt \
+      --modes resample --out reports/r11_determinism_a.md
+  python scripts/t10_rescore_saved.py --model runs/pilot/model_exp_2400.pt \
+      --modes resample --out reports/r11_determinism_b.md
+  ```
+
+  If the two agree with each other and both differ from r11 → cause (a), a code change, and the
+  five r11 numbers in the table above are **stale** and should be re-measured under today's code
+  before publication. If the two differ from each other → cause (b), and determinism is broken.
+  Until this is run, the six-metric table's five expression rows carry an unquantified provenance
+  risk, and **that is a more serious defect than the missing cell it was opened to fix.**
+
 * **The superseded pilot row** (`hybrid`, `reports/t10_rescore_exp.json`: morans 0.5749, gearys
   0.5716, marker_field 0.6384, marker_depth 0.7478, localization 0.6572) is the source of several
   numbers in the older write-ups. It is **not** the shipped configuration: R11 replaced `hybrid`

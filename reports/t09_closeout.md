@@ -279,6 +279,11 @@ live question. Checked:
 | metric-aware | **both** — and it is the one case where the budget flips the sign |
 | **SEFL (A7)** | 🚨 **1200 only** — the default, not the selected budget |
 
+**Confirmed from the weights themselves, not inferred (2026-09-08).** Re-scoring A7's six
+checkpoints at 2400 was refused by the portability guard, and the guard now names the field: all
+six report `train_steps: checkpoint 1200 -> this run 2400`. The budget in this row is read out of
+the saved configs, not reconstructed from a launch command.
+
 **It touches A7 alone**, and the record already scoped it that way: *"SEFL adds nothing at the
 default budget of 1200 steps"*, not "to the shipped model". The metric-aware reversal is proof the
 objection is not hypothetical.
