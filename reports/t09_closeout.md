@@ -210,7 +210,7 @@ no A9 branch and the A9 verdict stays UNINFORMATIVE. It is reported because a nu
 have raised an alarm had the alarm been armed must not reach a reader as silence.
 
 **R4, the trade that explains it.** The decoder reproduces the *pattern* of between-cell variation
-almost perfectly — `mu`'s Moran's I is **0.8607**, above the tissue's own latent at 0.7449 (`reports/chain_2400.md`) — at a
+almost perfectly — `mu`'s Moran's I is **0.8607**, above the tissue's own latent at 0.7449 (`reports/chain_2400.md`) — ⚠️ a comparison **between two latents**, the 0.8607 measured on the encoder's latent for a real section and never on the flow's latent at generated positions, so it says structure is present where a latent is decoded, **not** that the conditional mean is healthy in the generative path — at a
 fraction of its *amplitude*, and the ZINB objective closes the gap with dispersion. `theta` carries
 **61–63 %** of the conditional variance and correlates with the data's own dispersion at Spearman
 **0.068** over 1017 genes. It is absorbing unpredicted mean variation, not estimating noise.

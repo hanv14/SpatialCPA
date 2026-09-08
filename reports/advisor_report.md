@@ -378,7 +378,28 @@ operation.** Real tissue retains **62.2 %** across the same latent→counts step
 
 **Why.** The decoder reproduces the *pattern* of between-cell variation almost perfectly and a
 fraction of its *amplitude*, and the ZINB objective closes the gap with **dispersion** rather than
-by sharpening the mean. **The three supporting figures were checked against artifacts on 2026-09-08, one by one:**
+by sharpening the mean.
+
+🚨 **The `mu` = 0.8607 vs latent 0.7449 comparison licenses less than it has been quoted for, and
+the limitation belongs here rather than in a footnote.** The 0.8607 was measured on **the encoder's
+latent for a real section** — never on the flow's latent at generated positions — so the comparison
+is **between two latents**, not between the generator's output and the tissue. What it supports is
+narrow and worth stating exactly:
+
+> At the stage where a latent is decoded to a mean, spatial structure is present and is not the
+> thing being lost.
+
+It does **not** support "the conditional mean is healthy in the generative path", which is the
+stronger reading this project has used it for in review. The generative path's own conditional mean
+at generated positions is a different measurement and was not made here.
+(`progress/t09_inference_and_calibration.md`.)
+
+**The localisation to the count draw does not depend on it.** That rests on the chain — 0.9714 →
+0.9015 → 0.8607 → 0.1297, and real tissue's 62.2 % retention — all four sourced to
+`reports/chain_2400.md` and `chain_2400_calibrated.md`. The narrower reading of the pair leaves §7's
+conclusion standing and removes a claim that was travelling on it.
+
+**The three supporting figures were checked against artifacts on 2026-09-08, one by one:**
 
 | figure | artifact | status |
 |---|---|---|
@@ -393,12 +414,10 @@ never in those files because it belongs to the chain measurement, whose artifact
 cited as sourced throughout. A withdrawal of the figure was authorised on the strength of that
 finding and is **not being carried out**, because its premise does not hold.
 
-⚠️ **A separate, live objection to the same comparison, which is about meaning and not provenance.**
-`progress/t09_inference_and_calibration.md` records that this 0.8607 was measured on **the encoder's
-latent for a real section**, never on the flow's latent at generated positions, and that the
-comparison is **between two latents**. That is a real limit on what the pair licenses, it is
-independent of whether a file exists, and it is the ground on which the figure might still be
-dropped. Recorded, not acted on.
+⚠️ **Provenance is not the only test the pair has to pass, and the other one is stated above where
+the number appears** — not here and not in `progress/` alone, because a reader meets the figure
+before they reach a provenance table. The pair is sourced *and* its claim is narrower than the way
+it has been quoted.
 
 That is a property of the **objective**, not a tuning error: a likelihood that can be reduced by
 moving explanatory power out of the structured component into the unstructured one will be, and
