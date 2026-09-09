@@ -667,6 +667,63 @@ in the next pre-registration, not in this one's reading.
 This is §4.2c one level up: *not every referent is a floor* becomes *not every arm's spread is an
 envelope*.
 
+### 4.2f-i ⚠️ An alarm that fires into the run whose report says nothing about it
+
+§4.2f is *an alarm that fires where nobody looks*. This is the same failure one turn tighter: the
+alarm fired **into the very run that then wrote a report**, and the report does not carry it.
+
+**The instance.** The shipped-arm `deep_starmap` chain run (`reports/chain_shipped_deep.md`).
+`check_spatial_collapse` fired at **122 of the checked training steps**, 79 of them *inversions* —
+the generated field anti-correlated where the tissue is correlated, worst ratio **−0.8314** — and it
+was still firing at **step 2399, the last step checked**, at **−0.0129**. The alarm's own docstring
+records the reference: on the one healthy real-data fit measured, the floor after
+`sefl_collapse_min_steps` was **+0.5467**. Tier-1, run from the same script the same day, matched
+that reference and was silent after step 360.
+
+The warnings went to stderr. The report the run wrote carries a provenance block, a stage table, a
+verdict section and a variance decomposition, and **not one word about the alarm**. Read on its own
+— which is how a report is read — it is a clean measurement, and its `+0.0729` was carried into a
+review as a result before the log was opened.
+
+**Why it is not §4.2f.** In §4.2f the alarm was recorded in a checkpoint nobody read back: the
+signal and the artifact were in different places, and finding it required knowing to look. Here the
+signal and the artifact are **produced by the same process, seconds apart**, and the artifact
+selects against it. That is not an oversight in retrieval; it is an artifact that is wrong about its
+own run.
+
+**The rule.** Every report a run writes must carry that run's alarm state — the count, the
+trajectory, and the value at the **last** checked step — and must **refuse to print a verdict**
+when the last checked step is beyond the alarm threshold. A run whose model reported itself broken
+at its final step does not get to produce a document that reads as a measurement. "Did not fire",
+"was never checked" and "fired and is still firing" are three different states and the artifact must
+say which.
+
+### 4.2k A report describing an operation that did not happen
+
+Not a criterion, not an alarm: the run's own provenance block asserting a transformation that was a
+no-op.
+
+**Two instances, in one report, from the same run** (`reports/chain_shipped_tier1.md`):
+
+* **A vacuous panel described as a selection.** `--top-k-by real --top-k 32` on a **28-gene** panel
+  selects all 28 genes. The report said *"gene panel: top 28 by Moran's I on the **real** side"* and
+  listed them. Every gene in the volume is in that list. Meanwhile `deep_starmap` got the top 32 of
+  1017 — the top **3.1 %** — so the cross-dataset comparison the panel rule existed to make possible
+  was between an unselected panel and a heavily selected one, described identically.
+* **A vacuous density match described as a match.** `--match-density` asked for 4 187 cells; the
+  layout produced 4 073, so no subsampling occurred. The console said so. The report's table said
+  *"cell density: matched to the real section: 4073 generated -> 4073 kept (seed 1)"*.
+
+Neither is a wrong number — both runs are numerically fine, and the tier-1 densities happen to agree
+to 2.7 %. The defect is that **an operation that did not run is described in the past tense**, so a
+reader comparing the two datasets cannot see that they were not treated alike. This is §4.2j's shape
+applied to a *transformation* rather than to a *check*: the instrument reports work it did not do.
+
+**The rule.** A provenance line states what happened, not what was requested. A selection that keeps
+every column says *"vacuous: 28 of 28 genes"*. A density match that subsampled nothing says
+*"requested 4 187, produced 4 073, NOT matched"*. Where a flag is meant to make two runs comparable,
+the report must say whether it actually did — for both runs, in the same words.
+
 ### 4.2f ⚠️ An alarm that fires where nobody looks
 
 State this beside §4.2e, because it is the same run and the same lesson from the other side.
@@ -748,6 +805,8 @@ was written:
 | **whether the check ran at all** | 4.2j | both collapse alarms were armed only while SEFL was on, so on the **shipped** configuration neither ever ran — and two reports, one of them written to enforce §4.2f, described that as a check that had been performed |
 | **which instrument the envelope came from** | 4.2a-i | two scorers over the same six metric names, and **every three-seed envelope ever quoted came from the one the headline numbers were not scored on** — a 2.6x–6.7x difference on tier-1, forbidden in prose by §5 while every "Nx the envelope" in the project performed it |
 | **whether the record's value exists in any artifact** | 4.2a-iv | `w_autocorr/w_profile/w_distribution = 0.5` is written everywhere as shipped and appears in **no** artifact the project produced — not `Config`, not any recorded fit config, not the one persisted selection. Two standing arguments were reasoned from it. Nothing is missing, every artifact agrees at `0.0`, and every document is wrong |
+| **whether the run's own alarm reached the run's own report** | 4.2f-i | the `deep_starmap` chain run's spatial-collapse alarm fired at **122 checked steps, 79 of them inversions, and was still firing at the last step (2399, −0.0129)** against a healthy floor of +0.5467 — into stderr, while the report that run wrote carries a provenance block, a stage table and a verdict and says nothing about it. Its `+0.0729` entered a review as a result before the log was opened |
+| **whether the report describes work that was done** | 4.2k | one report said *"top 28 by Moran's I on the real side"* for a selection that kept all 28 genes of a 28-gene panel, and *"matched to the real section: 4073 -> 4073 kept"* for a density match that subsampled nothing — while the other dataset in the same comparison got a genuine top-3.1 % selection, described in the same words |
 | **whether the artifact says which arm it is** | 4.2a-ii | the committed, bitwise-reproducible files behind the six-metric table record no `config_hash`, no `text_emb_mode` and no metric-aware weights, so a correctly measured envelope cannot be matched to them — six clearance figures are flagged rather than numbered for this reason alone |
 
 **A fifth, and it is a different failure.** The four above are all *thresholds placed too close to
@@ -757,6 +816,17 @@ fifth is the opposite mistake and it is worse, because it produces a **positive*
 | choice | the verdict it decided |
 |---|---|
 | **what would have to be true for the test to fail** | a pre-registered Spearman criterion returned **+0.9720** and read as confirming a mechanism. The quantity tested is `retention = mean_vs_real x draw`, where `draw ≈ s` by the law of total variance for *any* correct sampler and `mean_vs_real` varied by 7%. The correlation was **near-guaranteed by arithmetic**; the test confirmed that the sampler obeys a conservation law, not that the mechanism was identified |
+
+**A second instance, found the same way and against the same rule.** `reports/emission_repair_options.md`
+§8.3 pre-registered a gate on `Var(log mu_generated) / Var(log mu_encoder_real)`, with `>= 0.8` to
+mean *the structured component is intact*. **Both sides of that ratio pass through the same
+decoder.** If the decoder's `mu` head is itself the narrow thing, both columns are pinned by it and
+the ratio is ~1 whatever the tissue does — so the gate could not return the informative answer. It
+returned **0.983** and **1.917**, and the proof that it was pinned rather than measuring is that
+generated `sd(log mu)` came back **0.7269** on 28 genes at ~100 % detection and **0.7254** on 1017
+genes at 1.6 % detection: two datasets with nothing in common, agreeing to three decimals. The gate
+reads **NOT EVALUATED**, and under the stop rule that **suspends** the work it gated — a gate that
+could not be read is not a gate that passed.
 
 **The rule: before pre-registering a test, ask what would have to be true for it to fail.** A
 criterion that cannot fail is not a weak test, it is not a test — and unlike a badly placed

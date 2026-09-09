@@ -335,6 +335,123 @@ def density_subsample(n_available: int, n_target: int, seed: int) -> np.ndarray:
     return np.sort(rng.choice(int(n_available), size=int(n_target), replace=False)).astype(np.int64)
 
 
+def knn_mean_field(xy: np.ndarray, values: np.ndarray, k: int) -> np.ndarray:
+    """Row-stochastic kNN mean of ``values``, self included. ``(N, 2)``, ``(N, G)`` -> ``(N, G)``.
+
+    A shrinkage estimate of the tissue's own mean field: ``E[y_i]`` approximated by the average
+    over cell ``i`` and its ``k`` nearest neighbours, on the same graph the metric uses. Column
+    means are preserved up to boundary effects, because the weight matrix is row-stochastic —
+    which is what makes an oracle-``mu`` arm comparable to the real counts in *level* as well as
+    in structure.
+
+    Built as a sparse product rather than ``values[idx].mean(axis=1)``: that intermediate is
+    ``(N, k+1, G)``, which on ``deep_starmap`` is 30 097 x 11 x 1017 float64 = 2.4 GB.
+
+    Smoothing **creates** autocorrelation, so ``I(knn_mean_field(y))`` is an upper bound on the
+    tissue's own ``I(mu)``. Every arm built on it inherits that, and reads as an upper bound.
+    """
+    from scipy.sparse import csr_matrix
+
+    n = int(xy.shape[0])
+    kk = min(int(k), n - 1)
+    idx = cKDTree(xy).query(xy, k=kk + 1)[1]
+    rows = np.repeat(np.arange(n), kk + 1)
+    weights = np.full(rows.size, 1.0 / (kk + 1))
+    w = csr_matrix((weights, (rows, idx.ravel())), shape=(n, n))
+    return np.asarray(w @ np.asarray(values, dtype=np.float64))
+
+
+def emission_ablation(
+    model,
+    cfg: Config,
+    real: RealSection,
+    h1,
+    k: int,
+    seed: int,
+    panel: np.ndarray | None = None,
+) -> tuple[list[dict], dict]:
+    """A1 — which stage of the emission loses the structure. Measured at the REAL cells.
+
+    Every arm is drawn at ``real.xy``, so the kNN graph, the cell count and the density are the
+    ground truth's own and identical to the ``REF real counts`` row. Nothing here touches the
+    layout, the prior or the flow: positions are held at the tissue's, and the only thing that
+    varies between the arms is what the counts were drawn from.
+
+    The arms, in the order the pre-registration reads them
+    (``reports/a1_preregistration.md``):
+
+    ``A1c`` ``Poisson(mu_oracle)``
+        **Model-free.** The tissue's own mean field through the leanest possible emission. If
+        this cannot reach the real section's ``I``, no independent per-cell draw can, whatever
+        the mean model — and the deficit is counting statistics, not the decoder.
+    ``A1b`` ``ZINB(mu_oracle, theta_model, pi_model)``
+        The same mean field through **this model's dispersion and dropout**. A1c minus A1b is
+        what the fitted ``theta``/``pi`` cost.
+    ``A1a`` ``ZINB(decode(h1))``
+        The model's whole emission on the best latent it can form from the truth. A1b minus A1a
+        is what the decode path costs.
+
+    ``A1n`` is the permutation null: the real counts shuffled across cells, which is what "no
+    spatial structure" measures as on this panel and this graph.
+
+    Returns the summary rows and a dict of per-arm level ratios (median over the panel of the
+    arm's per-gene mean over the real section's), because an arm at a different count level is
+    not comparable in ``I`` however it was drawn.
+    """
+    from spatialcpav25_gen.infer.generate import _decode
+    from spatialcpav25_gen.model.expression import sample_counts
+
+    def sel(a: np.ndarray) -> np.ndarray:
+        return a if panel is None else a[:, panel]
+
+    real_counts = np.asarray(real.counts, dtype=np.float64)
+    with torch.no_grad():
+        mu1, theta1, pi1 = _decode(model, h1, cfg, None)
+    mu1_np, theta1_np, pi1_np = mu1.numpy(), theta1.numpy(), pi1.numpy()
+    mu_oracle = knn_mean_field(real.xy, real.counts, k)
+
+    counts_a = sample_counts(mu1_np, theta1_np, pi1_np, np.random.default_rng(seed)).numpy()
+    counts_b = sample_counts(mu_oracle, theta1_np, pi1_np, np.random.default_rng(seed)).numpy()
+    # Not through sample_counts: A1c is a Poisson draw, not a ZINB one with theta pushed to an
+    # extreme the sampler's own docstring flags. Saying "Poisson" and drawing Poisson is the
+    # whole point of the arm.
+    counts_c = np.random.default_rng(seed).poisson(np.maximum(mu_oracle, 0.0)).astype(np.float64)
+    perm = np.random.default_rng(seed + 1).permutation(real_counts.shape[0])
+    counts_n = real_counts[perm]
+
+    rows = [
+        summarise("A1a'. mu decoded from h1", real.xy, sel(mu1_np), k),
+        summarise("A1a. counts ~ emission(mu | h1)", real.xy, rank_normalize(sel(counts_a)), k),
+        summarise("A1b'. mu_oracle = kNN mean of real counts", real.xy, sel(mu_oracle), k),
+        summarise(
+            "A1b. counts ~ ZINB(mu_oracle, model theta/pi)",
+            real.xy,
+            rank_normalize(sel(counts_b)),
+            k,
+        ),
+        summarise(
+            "A1c. counts ~ Poisson(mu_oracle)   [model-free]",
+            real.xy,
+            rank_normalize(sel(counts_c)),
+            k,
+        ),
+        summarise(
+            "A1n. permutation null (real counts shuffled)",
+            real.xy,
+            rank_normalize(sel(counts_n)),
+            k,
+        ),
+    ]
+
+    ref_mean = sel(real_counts).mean(axis=0)
+    ok = ref_mean > 0
+    levels = {}
+    for name, arm in (("A1a", counts_a), ("A1b", counts_b), ("A1c", counts_c)):
+        ratio = sel(np.asarray(arm, dtype=np.float64)).mean(axis=0)[ok] / ref_mean[ok]
+        levels[name] = float(np.median(ratio)) if ratio.size else float("nan")
+    return rows, levels
+
+
 def real_section_reference(
     cfg: Config,
     model: CTFFlow,
@@ -610,6 +727,27 @@ def _self_check() -> int:
         )
     )
 
+    counts = np.abs(rng.normal(size=(600, 5))) * np.array([0.05, 0.5, 1.0, 5.0, 50.0])
+    cxy = rng.random((600, 2)) * 100.0
+    smoothed = knn_mean_field(cxy, counts, 10)
+    noisy = counts[:, 2:3] + np.sin(cxy[:, 0:1] / 20.0)
+    i_raw = float(morans_i(cxy, noisy, 8)[0])
+    i_sm = float(morans_i(cxy, knn_mean_field(cxy, noisy, 10), 8)[0])
+    checks += [
+        ("knn_mean_field preserves shape", smoothed.shape == counts.shape),
+        (
+            "it is row-stochastic, so per-column means are preserved",
+            bool(np.allclose(smoothed.mean(axis=0), counts.mean(axis=0), rtol=0.05, atol=1e-9)),
+        ),
+        ("it keeps non-negative input non-negative", bool(smoothed.min() >= 0.0)),
+        ("it is deterministic", bool(np.array_equal(smoothed, knn_mean_field(cxy, counts, 10)))),
+        (
+            f"it RAISES Moran's I ({i_raw:.4f} -> {i_sm:.4f}), which is why every oracle-mu arm "
+            "reads as an upper bound",
+            i_sm > i_raw,
+        ),
+    ]
+
     terms = {"var_shape": np.array([1.0, 4.0, 9.0]), "var_logsize": np.ones(3), "cov": np.zeros(3)}
     terms["total"] = terms["var_shape"] + terms["var_logsize"] + 2.0 * terms["cov"]
     d = summarise_mu_terms(terms)
@@ -684,6 +822,28 @@ def main(argv: list[str] | None = None) -> int:
         "it exists and matches this config, seed and budget.",
     )
     ap.add_argument(
+        "--load-model",
+        default=None,
+        help="read a model saved by --save-model and skip the fit entirely. The CONFIG comes "
+        "from the checkpoint, not from this command line, so a measurement on a saved fit is a "
+        "measurement of the arm that was fitted. --text-emb-mode / --expr-pca-dim / "
+        "--decoder-mu-link are refused with it, and --steps is ignored.",
+    )
+    ap.add_argument(
+        "--emission-ablation",
+        action="store_true",
+        help="A1: draw counts at the REAL cells from three mean fields — the model's decode of "
+        "encoder(real counts), the tissue's own kNN mean field through the model's theta/pi, and "
+        "the same field through a bare Poisson draw — and report each against the real section. "
+        "Pre-registered in reports/a1_preregistration.md; read that before reading the numbers.",
+    )
+    ap.add_argument(
+        "--ablation-seed",
+        type=int,
+        default=SEED,
+        help="generator seed for --emission-ablation's draws (Convention 3).",
+    )
+    ap.add_argument(
         "--fit-only",
         action="store_true",
         help="fit, save, and stop — skip the chain measurement. For producing the checkpoint "
@@ -745,6 +905,29 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_check:
         return _self_check()
 
+    # Before path resolution: this is a pure argument check, and it should fail on the command
+    # line rather than after a missing-file error has sent the operator looking somewhere else.
+    if args.load_model:
+        refused = [
+            name
+            for name, value in (
+                ("--text-emb-mode", args.text_emb_mode),
+                ("--expr-pca-dim", args.expr_pca_dim),
+                ("--decoder-mu-link", args.decoder_mu_link),
+            )
+            if value is not None
+        ]
+        if refused:
+            raise SystemExit(
+                f"--load-model was given with {', '.join(refused)}. Those three shape the FIT, "
+                "and the weights being loaded were fitted under the checkpoint's values; "
+                "honouring the flags would report one arm's config over another arm's weights "
+                "(specs/10 §4.2a-ii). Drop them — the checkpoint supplies its own config — or "
+                "refit. --layout-sampler is allowed because generation does not change the fit."
+            )
+        if args.save_model:
+            raise SystemExit("--save-model with --load-model would rewrite the checkpoint it read.")
+
     global INPUT, GROUND_TRUTH
     paths = resolve(args)
     INPUT, GROUND_TRUTH = str(paths.input), str(paths.ground_truth)
@@ -772,7 +955,19 @@ def main(argv: list[str] | None = None) -> int:
     # four other scripts import build_embeddings from this file for its zero-vector branch.
     from _starmap_run import clamp_config_to_input
 
-    cfg = clamp_config_to_input(cfg, paths.input)
+    checkpoint = None
+    if args.load_model:
+        checkpoint = torch.load(args.load_model, map_location="cpu")
+        cfg = Config(**checkpoint["config"])
+        if args.layout_sampler is not None:
+            cfg = cfg.replace(layout_sampler=args.layout_sampler)
+        print(
+            f"  loaded {args.load_model}: train_steps={cfg.train_steps}, "
+            f"text_emb_mode={cfg.text_emb_mode}, expr_pca_dim={cfg.expr_pca_dim}, "
+            f"decoder_mu_link={cfg.decoder_mu_link} (--steps ignored)"
+        )
+    else:
+        cfg = clamp_config_to_input(cfg, paths.input)
     live_text = args.text_emb_mode is not None
     print(f"  decoder_mu_link = {cfg.decoder_mu_link}")
     print(f"  layout_sampler  = {cfg.layout_sampler}, layout_mode = {cfg.layout_mode}")
@@ -812,16 +1007,29 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  !! {z_note}", file=sys.stderr)
 
     data = TrainingData.build(vol, cfg)
-    model = CTFFlow(cfg, data, build_embeddings(cfg, vol, live_text=live_text), grf_seed=SEED)
-    t0 = time.time()
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", BBoxClampWarning)
-        train_ctfflow(
-            model, cfg, steps=int(cfg.train_steps), seed=SEED, checkpoint=args.fit_checkpoint
-        )
-        if cfg.repulsion:
-            model.repulsion = fit_repulsion(vol, cfg, seed=SEED + 1)
-    print(f"  fit: {cfg.train_steps} steps in {time.time() - t0:.1f}s", flush=True)
+    if checkpoint is not None:
+        # Zero text vectors here even for a medcpt checkpoint: ``text_vecs`` is a registered
+        # buffer, so ``load_state_dict`` restores the fitted MedCPT vectors and this path needs
+        # no encoder and no network. A shape mismatch raises — the load is strict.
+        model = CTFFlow(cfg, data, build_embeddings(cfg, vol), grf_seed=SEED)
+        model.load_state_dict(checkpoint["state_dict"])
+        model.eval()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", BBoxClampWarning)
+            if cfg.repulsion:
+                model.repulsion = fit_repulsion(vol, cfg, seed=SEED + 1)
+        print("  weights loaded; no fit run", flush=True)
+    else:
+        model = CTFFlow(cfg, data, build_embeddings(cfg, vol, live_text=live_text), grf_seed=SEED)
+        t0 = time.time()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", BBoxClampWarning)
+            train_ctfflow(
+                model, cfg, steps=int(cfg.train_steps), seed=SEED, checkpoint=args.fit_checkpoint
+            )
+            if cfg.repulsion:
+                model.repulsion = fit_repulsion(vol, cfg, seed=SEED + 1)
+        print(f"  fit: {cfg.train_steps} steps in {time.time() - t0:.1f}s", flush=True)
 
     # Save before anything else runs. The chain stages below generate a section, and under a
     # broken layout that is exactly where a run dies; losing the fit to it would cost the hour
@@ -958,6 +1166,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {r['stage']:<48s} median I = {r['median_I']:+.4f}  (n={r['n_channels']})")
     real_decomposition: dict[str, float] | None = None
     mu_var_ratio = float("nan")
+    ablation_rows: list[dict] = []
+    ablation_levels: dict[str, float] = {}
     try:
         ref_rows, h1 = real_section_reference(
             cfg, model, args.section, k, paths.ground_truth, real=real, panel=panel
@@ -971,6 +1181,14 @@ def main(argv: list[str] | None = None) -> int:
         ok = denom > 0
         if ok.any():
             mu_var_ratio = float(np.median(gen_terms["total"][ok] / denom[ok]))
+        if args.emission_ablation:
+            t2 = time.time()
+            ablation_rows, ablation_levels = emission_ablation(
+                model, cfg, real, h1, k, int(args.ablation_seed), panel
+            )
+            print(f"  emission ablation in {time.time() - t2:.1f}s", flush=True)
+            for r in ablation_rows:
+                print(f"  {r['stage']:<48s} median I = {r['median_I']:+.4f}  (n={r['n_channels']})")
     except Exception as exc:  # a reference failure must not discard the chain above
         print(
             f"  !! reference stage failed ({type(exc).__name__}: {exc}); "
@@ -1095,6 +1313,62 @@ def main(argv: list[str] | None = None) -> int:
             "version.",
         ]
     )
+    if ablation_rows:
+        i_model = next(
+            (r["median_I"] for r in rows if r["stage"].startswith("4. sampled counts")),
+            float("nan"),
+        )
+        i_real = next(
+            (r["median_I"] for r in rows if r["stage"].startswith("REF real counts")),
+            float("nan"),
+        )
+        deficit = i_real - i_model
+        width_a = max(len(r["stage"]) for r in ablation_rows)
+        lines += [
+            "",
+            "## A1 — emission ablation, at the real cells",
+            "",
+            "Every arm is drawn at the ground truth's own positions, so the kNN graph, the cell",
+            "count and the density are identical to `REF real counts` and to each other. The",
+            "layout, the prior and the flow are held out of it entirely: only what the counts",
+            "were drawn from varies.",
+            "",
+            "**Read `reports/a1_preregistration.md` before reading these numbers.** The outcome",
+            "table, the thresholds, the level guard and the two stated asymmetries were committed",
+            "before the run.",
+            "",
+            f"| {'arm':<{width_a}} | median I | p25 | p75 | channels | level | recovery R |",
+            f"|{'-' * (width_a + 2)}|---|---|---|---|---|---|",
+        ]
+        for r in ablation_rows:
+            key = r["stage"].split(".")[0]
+            level = ablation_levels.get(key)
+            level_s = "—" if level is None else f"{level:.2f}x"
+            recovery = (
+                (r["median_I"] - i_model) / deficit
+                if np.isfinite(deficit) and deficit > 0 and not r["stage"].endswith("'. mu")
+                else float("nan")
+            )
+            rec_s = "—" if not np.isfinite(recovery) else f"**{recovery:+.2f}**"
+            lines.append(
+                f"| {r['stage']:<{width_a}} | **{r['median_I']:+.4f}** | {r['p25']:+.4f} "
+                f"| {r['p75']:+.4f} | {r['n_channels']} | {level_s} | {rec_s} |"
+            )
+        lines += [
+            "",
+            f"Anchors from this run: `I(model counts)` = **{i_model:+.4f}**, "
+            f"`I(real counts)` = **{i_real:+.4f}**, deficit = **{deficit:+.4f}**.",
+        ]
+        if not (np.isfinite(deficit) and deficit > 0):
+            lines += [
+                "",
+                "🚩 `I(model counts)` is at or above `I(real counts)` on this dataset, so there is",
+                "no deficit to recover and **`R` is undefined**. This run is the",
+                "pre-registration's",
+                "**instrument control**: every drawn arm must reach 0.6x `I(real counts)` = "
+                f"**{0.6 * i_real:+.4f}**, or the ablation is measuring something other than what",
+                "it claims and no result on the other dataset may be read.",
+            ]
     if real_decomposition is None:
         lines += [
             "",
@@ -1134,6 +1408,12 @@ def main(argv: list[str] | None = None) -> int:
             "indices": [int(i) for i in panel] if panel is not None else None,
         },
         "stages": rows,
+        "emission_ablation": {
+            "ran": bool(ablation_rows),
+            "seed": int(args.ablation_seed),
+            "arms": ablation_rows,
+            "level_vs_real": ablation_levels,
+        },
         "mu_variance": {
             "generated": decomposition,
             "real_latent": real_decomposition,

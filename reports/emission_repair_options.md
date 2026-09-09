@@ -528,7 +528,35 @@ the unbounded share R12's 15.3 % / 61.4 % / 62.2 % are on. The unbounded one is 
 1** (a negative covariance makes the total smaller than `Var(shape)`; `t09_structured_share.py`
 measured 1.21), and only the bounded one can carry a threshold.
 
-**Pre-registered reading for step 1**, unchanged and now computed and printed by the script:
+### 8.3a 🚨 STATUS: gate 2 reads NOT EVALUATED, and §10 is SUSPENDED
+
+Measured: **0.983** (tier-1), **1.917** (`deep_starmap`). Both are `>= 0.8`, which on the face of it
+fails gate 2 and, under §10's stop rule, would stop half 2 of the redesign.
+
+**It does not fail. It did not evaluate, and the fault is in this pre-registration.** Both sides of
+the ratio pass through the same decoder, so a narrow `mu` head pins both columns and the ratio is ~1
+by construction; the gate cannot return the informative answer. The proof it was pinned rather than
+measuring: generated `sd(log mu)` is **0.7269** on 28 genes at ~100 % detection and **0.7254** on
+1017 genes at 1.6 % detection — two datasets with nothing in common, agreeing to three decimals.
+Full account in `reports/chain_shipped_review.md` §3; recorded as a second instance of `specs/10`
+§4.2's closing rule.
+
+**What NOT EVALUATED does to the stop rule, stated so it cannot be read the other way:**
+
+> **§10 is SUSPENDED, not re-opened.** A gate that could not be read is **not** a gate that passed.
+> Neither half of the redesign is built, costed further, or resumed on the strength of this
+> reclassification. The suspension lifts only when a *replacement* gate — one whose reference is not
+> the model's own decoder — is pre-registered and run, and returns a readable answer.
+
+`reports/a1_preregistration.md` is that replacement's first half: A1's model-free arm (A1c) puts the
+tissue's own mean field through a bare Poisson draw, so its reference is counting statistics rather
+than this decoder. A1's decision table (§4 there) is what resumes or ends §10, and three of its four
+rows end it.
+
+Until then: **gate 1 has not been run, gate 2 did not evaluate, and no part of §10 proceeds.**
+
+**Pre-registered reading for step 1**, as written before the run, and now to be read only alongside
+§8.3a:
 `Var(log mu_generated) / Var(log mu_encoder_real)`, per gene, median over the top-32 panel.
 **≥ 0.8** means the structured component is intact and §2's binding constraint does not exist;
 **≤ 0.4** confirms it; between is uninformative and needs the three-seed version.
@@ -599,6 +627,14 @@ would be — because it tells them when the method works, which is what a method
 ---
 
 ## 10. The combination, costed as one T06 redesign
+
+
+> 🚨 **SUSPENDED as of the step-0 runs.** Gate 1 has not been run and gate 2 **did not evaluate**
+> (§8.3a) — its two sides shared a decoder, so it could not fail informatively. A gate that could
+> not be read is not a gate that passed: nothing below is built, costed further, or resumed until
+> `reports/a1_preregistration.md`'s decision table returns a readable answer, and **three of its
+> four rows end this section rather than resuming it**. Everything below stands as the costing it
+> was, not as a plan in progress.
 
 Asked for, because §6's answer is that no single candidate closes it. **The two halves are not equal
 partners, and that is the main finding of costing them together.**

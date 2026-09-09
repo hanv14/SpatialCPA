@@ -8233,3 +8233,87 @@ real header, the encoder path, both decompositions. `--self-check` should be run
 machine before the fits; it exercises the import as well.
 
 The two commands are in `reports/emission_repair_options.md` §8.2.
+
+---
+
+## 2026-09-09 (b) — `--load-model`, A1 built and pre-registered, two §4.2 rules recorded
+
+**Step 0 reported, and it moved three things.** Tier-1 ran clean and emits counts at **1.11x** the
+real section's Moran's I (+0.5134 against +0.4635) — no deficit to repair on the headline dataset.
+`deep_starmap` came back at **+0.0729 against +0.3236**, which is §9's pre-registered reversal
+condition — and the number is **inadmissible on two independent grounds**, both accepted:
+
+1. **The fit never converged spatially.** `check_spatial_collapse` fired at **122 of the checked
+   steps**, 79 of them *inversions* (worst ratio −0.8314), and was **still firing at step 2399, the
+   last checked**, at −0.0129. The alarm's own healthy reference floors at **+0.5467**. Tier-1 from
+   the same script the same day was silent after step 360.
+2. **It ran under tier-1's GRF length-scale.** `main()` hardcodes `ell=(116.3, 116.3, 132.0)`, which
+   `reports/pilot.md` records as the fit *on tier-1*. `CTFFlow` reads `cfg.ell_*` straight into the
+   GRF; T03 ships `fit_lengthscale_from_sections` and the script bypasses it. The prior's `I` is
+   0.9284 on deep against 0.9362 on tier-1 — identical, because `ell` is identical — while deep's
+   own tissue latent is at 0.2415 against tier-1's 0.6253.
+
+**Gate 2 reads NOT EVALUATED, and §10 is SUSPENDED, not re-opened.** Both sides of §8.3's
+`Var(log mu)` ratio pass through the same decoder, so a narrow `mu` head pins both and the ratio is
+~1 by construction. Proof it was pinned: generated `sd(log mu)` is **0.7269** on 28 genes at ~100 %
+detection and **0.7254** on 1017 genes at 1.6 % detection — three decimals, two unrelated datasets.
+A gate that could not be read is not a gate that passed: neither half of the redesign is built,
+costed further or resumed on the reclassification, and the suspension banner is on §10 itself.
+
+**Built** (`scripts/t10_chain_diagnostic.py`):
+
+* `--load-model` — reads a `--save-model` checkpoint and skips the fit. **The config comes from the
+  checkpoint, not the command line**, and `--text-emb-mode` / `--expr-pca-dim` /
+  `--decoder-mu-link` are *refused* with it (§4.2a-ii: honouring them would report one arm's config
+  over another arm's weights). The guard fires before path resolution, so it fails on the command
+  line rather than behind a missing-file error. `--save-model` with `--load-model` is refused too.
+  Text vectors need no re-encode: `text_vecs` is a registered buffer, so a strict `load_state_dict`
+  restores the fitted MedCPT vectors into a zero-vector construction.
+* `--emission-ablation` (A1) + `--ablation-seed` — four arms drawn **at the real cells**, so the kNN
+  graph, cell count and density are the ground truth's and identical between arms: `A1c`
+  Poisson(`mu_oracle`) — **model-free**; `A1b` ZINB(`mu_oracle`, model `theta`/`pi`); `A1a`
+  ZINB(decode(`h1`)); `A1n` permutation null. Plus `I(mu_oracle)` and `I(decode(h1))` so the reader
+  sees what went into each draw. `knn_mean_field` is a sparse row-stochastic product — the
+  `values[idx].mean(axis=1)` form is a 2.4 GB intermediate on `deep_starmap`.
+
+**Pre-registered before the run** in `reports/a1_preregistration.md`, committed ahead of the
+command: the recovery statistic `R = (I(X) − I_model)/(I_real − I_model)` with bands
+**>= 0.70 / <= 0.30** and a deliberate 40-point dead band; a four-row decision table read A1c first;
+a **level guard** ([0.5, 2.0] on per-gene means); the stated asymmetry that `mu_oracle` is a kNN mean
+and so every oracle arm is an **upper bound** (the self-check measures the size of that: I
+0.5494 -> 0.9704, so *low is conclusive, high is permissive*); the stated contamination ordering
+(A1c model-free and admissible; A1b uses only `theta`/`pi`; **A1a provisional** on the failed deep
+fit); tier-1 as the **instrument control** whose failure voids every deep row; and §7's list of the
+four reachable ways the test can fail — the check the previous gate did not get.
+
+**Two rules into `specs/10` §4.2, both from these runs:**
+
+* **§4.2f-i — an alarm that fires into the run whose own report says nothing about it.** §4.2f was a
+  signal recorded in a checkpoint nobody read back. This is tighter: the alarm and the artifact are
+  produced by the same process seconds apart, and the artifact selects against it. The rule: every
+  report carries its run's alarm count, trajectory and **last-checked value**, and **refuses to
+  print a verdict** when the last checked step is past the threshold.
+* **§4.2k — a report describing an operation that did not happen.** Tier-1's `--top-k 32` on a
+  28-gene panel kept all 28 and the report called it *"top 28 by Moran's I on the real side"*;
+  `--match-density` asked for 4 187, the layout produced 4 073, no subsampling ran, and the report
+  said *"matched ... 4073 kept"*. Neither is a wrong number; the defect is that a comparison built
+  to make two datasets alike described an unselected panel and a top-3.1 % selection in the same
+  words. The rule: a provenance line states what happened, not what was requested.
+
+Also recorded, against §4.2's closing rule and as its second instance: the gate-2 mis-specification
+is mine, and it is the same failure — a criterion whose reference could not disagree with it.
+
+**Standing instruction:** every future `deep_starmap` run uses `--section section_4 --target-z 68.6`.
+`section_2` at 30.8 sits between `section_1` (6.3) and `section_3` (43.4) and is boundary-adjacent;
+R3 is a 20–35 % deficit there. A1 therefore re-measures its own anchors and does not inherit
+`section_2`'s.
+
+**B1 is not run until A1 reports.** If A1 exonerates the emission, B1's `ell` refit is the right next
+step; if A1 convicts it, B1 tests the wrong thing. `+0.0729` is not quoted anywhere, including as a
+negative result.
+
+**Verification.** No torch in this container. `ruff` clean; the module imports; every command line
+parses and all three refusal paths fire with the right message; `--self-check` **25/25**, now
+covering `knn_mean_field` (shape, row-stochasticity preserving column means, non-negativity,
+determinism, and that smoothing *raises* `I`). Nothing touching torch was executed: the checkpoint
+load, the decode arms and the draws are unrun here.

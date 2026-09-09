@@ -105,8 +105,18 @@ data-driven quantity. Meanwhile the *encoder-latent* column does move with the d
 0.4663), so the decoder can produce different ranges — it is the flow's latent that lands in the same
 place both times. The clamp is not the explanation (`zinb_mu_min/max` give a ±18.4 log window).
 
-**Correct verdict: gate 2 is uninformative as specified.** §10's half 2 is neither confirmed nor
-ruled out, and the stop rule should not be applied on this reading.
+**Correct verdict: gate 2 reads NOT EVALUATED.** And that is not a reclassification that frees the
+work it gated:
+
+> **§10 is SUSPENDED, not re-opened.** A gate that could not be read is **not** a gate that passed.
+> Half 2 is neither confirmed nor ruled out, and neither half is built, costed further or resumed on
+> the strength of the reclassification. Gate 1 has not been run either. The suspension lifts only
+> when a replacement gate — one whose reference is not the model's own decoder — is pre-registered,
+> run, and returns a readable answer.
+
+`reports/a1_preregistration.md` is that replacement's first half, and **three of its four decision
+rows end §10 rather than resuming it**. Recorded in `emission_repair_options.md` §8.3a and as a
+second instance of `specs/10` §4.2's closing rule.
 
 ---
 
@@ -193,8 +203,14 @@ Beyond §§1–2, four more:
 
 **7.1 The plane is a boundary plane.** The run's own flag: *"`--target-z 30.8` is a boundary plane
 (within 0.5 median spacings of the stack's end)"*. T04 measured a **20–35 % reconstruction deficit**
-there (R3). `section_2` sits in the first gap of the `deep_starmap` stack; `section_4` would be
-interior. The headline deep number carries R3 uncorrected.
+there (R3). The stack settles it: `section_2` at z = 30.8 sits between **`section_1` at 6.3** and
+**`section_3` at 43.4**, so it is the boundary-adjacent held-out section; **`section_4` at z = 68.6
+is interior**. The headline deep number carries R3 uncorrected.
+
+🔁 **Standing instruction for every future `deep_starmap` run: use `--section section_4
+--target-z 68.6`.** The script's defaults are tier-1's `section_2` at z = 30.0 and do not transfer.
+A1's pre-registration (§6.5 there) already fixes this, and it means A1 re-measures its own anchors —
+the `section_2` values in this report are **not** carried across.
 
 **7.2 The two datasets are not on the same panel regime.** Tier-1: all 28 genes. `deep_starmap`: the
 top 32 of 1017 = 3.1 %. Selection lifts the real side on `deep_starmap` and not at all on tier-1, so
