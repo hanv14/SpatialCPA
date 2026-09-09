@@ -3,6 +3,23 @@
 Sources: `chain_tier1.log`, `chain_deep.log` (the runs of `reports/emission_repair_options.md` §8.2).
 **No code was changed for this report.** Everything below is a proposal.
 
+> ## 🚩 Two corrections, from A1 (`reports/a1_review.md`)
+>
+> **1. The 1.11x is over-smoothing, not fidelity.** This report calls tier-1 "healthy and good" on
+> the strength of the model emitting counts at 1.11x the real section's Moran's I, and §4 reads that
+> as "no deficit to repair". A1 shows what produces it: on the **same emission**, the tissue's own
+> latent yields **+0.4053** and the model's yields **+0.5134**. The model's latent is smoother than
+> the tissue's — **1.28x** on tier-1, **2.46x** on `deep_starmap` — and the extra smoothness survives
+> the draw better than the tissue's own structure does. **1.11x is not a reconstruction result and
+> must not be quoted as one.** Everywhere below that reads it as fidelity is wrong; §4's "no deficit
+> to repair" survives only in the narrow sense that the model is not *under* the tissue on `I`.
+>
+> **2. The deep deficit is 3.06x, not 4.4x.** §0 and §7.1 quote `+0.0729` against `+0.3236` on the
+> boundary-adjacent `section_2`. On the interior `section_4` the model reads **+0.1021** and the
+> tissue **+0.3123** — a **3.06x** deficit. **R3 was worth about a quarter of the apparent gap**,
+> which is what §7.1 predicted and A1 confirmed. The real-side anomaly cleared with it too
+> (encoder-latent retention 134% -> 98.5%). Neither `+0.0729` nor `+0.1021` is quoted as a result.
+
 ---
 
 ## 0. The headline, in one paragraph
@@ -133,8 +150,10 @@ Nothing in §§1–3 touches tier-1. It ran clean, and on it:
 | REF real counts | **+0.4635** |
 | REF real latent `h1` | +0.6253 |
 
-* **The model emits counts at 1.11× the real section's autocorrelation.** §9's branch 1 holds: on the
-  dataset the paper is about, there is no deficit to repair.
+* **The model emits counts at 1.11× the real section's autocorrelation** — 🚩 **and A1 shows this is
+  over-smoothing, not fidelity** (see the correction box at the top). On the same emission the
+  tissue's own latent yields +0.4053 against the model's +0.5134. §9's branch 1 holds only in the
+  narrow sense that the model is not *under* the tissue on `I`; it is not a reconstruction claim.
 * The emission costs 64.1 % against the tissue's own 74.1 % — a 1.16× gap, not a 7× one.
 * Mean-variance slope 1.846 against the tissue's 1.738.
 * `sd(log mu)` 0.7269 vs the reference's 0.7333; bounded structured share 99.8 % vs 99.7 %.

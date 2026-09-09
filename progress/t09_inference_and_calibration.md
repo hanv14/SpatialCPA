@@ -8240,6 +8240,9 @@ The two commands are in `reports/emission_repair_options.md` §8.2.
 
 **Step 0 reported, and it moved three things.** Tier-1 ran clean and emits counts at **1.11x** the
 real section's Moran's I (+0.5134 against +0.4635) — no deficit to repair on the headline dataset.
+🚩 **Corrected by A1 (2026-09-09 c): that 1.11x is over-smoothing, not fidelity.** On the same
+emission the tissue's own latent yields +0.4053 and the model's +0.5134; the model's latent is 1.28x
+smoother than the tissue's on tier-1 and 2.46x on deep. It is not a reconstruction claim.
 `deep_starmap` came back at **+0.0729 against +0.3236**, which is §9's pre-registered reversal
 condition — and the number is **inadmissible on two independent grounds**, both accepted:
 
