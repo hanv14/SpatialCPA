@@ -146,6 +146,13 @@ Two things follow that nothing before could show:
 
 The emission retention table says the same thing from the third side:
 
+> ⚠️ **OVERSTATED — see `reports/ceiling_review.md` §2.** Every ratio in this table divides a
+> **rank-normalised** count stage by a **raw** mean-field stage. Rank-normalising a heavy-tailed
+> field raises its Moran's I, so the denominators are too small and these percentages are too high
+> by an amount nobody has measured. The **ordering** and the **cross-dataset contrast** survive —
+> both sides of every comparison carry the same bias — but the percentages themselves do not. The
+> arm-vs-arm conclusions elsewhere in this report are count-vs-count and are unaffected.
+
 | step | tier-1 | `deep_starmap` |
 |---|---|---|
 | `mu_oracle` → Poisson (sparsity alone) | 98.2 % | 55.2 % |

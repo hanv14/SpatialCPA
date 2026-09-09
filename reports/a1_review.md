@@ -111,6 +111,14 @@ no anchors, no `R`; these are ratios inside one report.
 | net: `mu_oracle` -> model emission (A1b / A1b') | 58.7 % | 19.0 % |
 | for comparison, the model end to end (stage 4 / stage 3) | 64.8 % | 13.7 % |
 
+> ⚠️ **The `mu_oracle`-denominated rows are OVERSTATED — `reports/ceiling_review.md` §2.** They
+> divide a **rank-normalised** count stage by a **raw** mean-field stage. Rank-normalising a
+> heavy-tailed field raises its Moran's I, so the denominator is too small and the percentage is too
+> high by an unmeasured amount. The **ordering** and the **cross-dataset contrast** survive, since
+> both sides carry the same bias; the percentages do not. The `A1b / A1c` row is count-vs-count and
+> is unaffected.
+
+
 Two multiplicative causes:
 
 1. **Sparsity is real and large on `deep_starmap`** — a bare Poisson draw costs **45 %** of the mean

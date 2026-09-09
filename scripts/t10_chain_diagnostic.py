@@ -939,6 +939,12 @@ def _verdict(
         "**Retention across the latent -> counts step** — what the emission costs, against what",
         "the tissue's own sampling noise costs.",
         "",
+        "⚠️ **The retention column is OVERSTATED and is not a like-for-like ratio.** Its numerator",
+        "is a **rank-normalised** count stage and its denominator a **raw** latent stage; rank-",
+        "normalising a heavy-tailed field raises its Moran's I, so the denominator is too small.",
+        "Both arms carry the same bias, so the *comparison* between them stands and the",
+        "*percentages* do not (`reports/ceiling_review.md` §2).",
+        "",
         "| arm | counts I | latent I | retention | slope | tissue slope |",
         "|---|---|---|---|---|---|",
     ]
