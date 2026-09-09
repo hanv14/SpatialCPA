@@ -13,6 +13,7 @@
     "decoder_mu_link": "exp",
     "layout_mode": "resample",
     "layout_sampler": "grid",
+    "decoder_theta_floor": 0.0,
     "calibrated": false,
     "z_note": null,
     "plane_note": null
@@ -24,6 +25,7 @@
     "n_generated": 29842,
     "n_used": 29544
   },
+  "theta": null,
   "panel": {
     "rule": "real",
     "top_k": 32,
@@ -212,6 +214,54 @@
         ]
       },
       {
+        "stage": "A1b-t. counts ~ NB(mu_oracle, model theta), pi=0",
+        "median_I": 0.27178223405905466,
+        "p25": 0.23355946005550757,
+        "p75": 0.33870437793662167,
+        "n_channels": 32,
+        "min_I": 0.27164214097542,
+        "max_I": 0.2774494648356543,
+        "n_seeds": 3,
+        "per_seed": [
+          {
+            "seed": 1,
+            "median_I": 0.27178223405905466
+          },
+          {
+            "seed": 2,
+            "median_I": 0.27164214097542
+          },
+          {
+            "seed": 3,
+            "median_I": 0.2774494648356543
+          }
+        ]
+      },
+      {
+        "stage": "A1b-p. counts ~ A1c's Poisson draw, then model pi",
+        "median_I": 0.29111181337944037,
+        "p25": 0.1975596135088073,
+        "p75": 0.42871765022202996,
+        "n_channels": 32,
+        "min_I": 0.2873025168818606,
+        "max_I": 0.29501147674969497,
+        "n_seeds": 3,
+        "per_seed": [
+          {
+            "seed": 1,
+            "median_I": 0.29501147674969497
+          },
+          {
+            "seed": 2,
+            "median_I": 0.2873025168818606
+          },
+          {
+            "seed": 3,
+            "median_I": 0.29111181337944037
+          }
+        ]
+      },
+      {
         "stage": "A1c. counts ~ Poisson(mu_oracle)   [model-free]",
         "median_I": 0.5006559625530255,
         "p25": 0.43695503545225656,
@@ -263,6 +313,8 @@
     "level_vs_real": {
       "A1a": 0.9272871316402097,
       "A1b": 0.6386052866508878,
+      "A1b-t": 0.9953664083233147,
+      "A1b-p": 0.6209548636909135,
       "A1c": 1.000211993687822
     },
     "mu_spread": [
