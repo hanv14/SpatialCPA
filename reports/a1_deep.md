@@ -21,14 +21,15 @@ The panel restricts the **gene-space stages only** — 3, 4, their calibrated tw
 
 ## The chain
 
-| stage                                     | median I | p25 | p75 | channels |
-|-------------------------------------------|---|---|---|---|
-| 1. prior h0 = GRF at generated xyz        | **+0.9272** | +0.9239 | +0.9300 | 64 |
-| 2. latent h after the flow                | **+0.7782** | +0.7590 | +0.8379 | 64 |
-| 3. decoded mu (before sampling)           | **+0.7451** | +0.7286 | +0.8000 | 32 |
-| 4. sampled counts (rank-normalised)       | **+0.1154** | +0.0613 | +0.2030 | 32 |
-| REF real counts (rank-normalised)         | **+0.3123** | +0.2654 | +0.3433 | 32 |
-| REF real latent h1 = encoder(real counts) | **+0.3171** | +0.2892 | +0.4276 | 64 |
+| stage                                             | median I | p25 | p75 | channels |
+|---------------------------------------------------|---|---|---|---|
+| 1. prior h0 = GRF at generated xyz                | **+0.9272** | +0.9239 | +0.9300 | 64 |
+| 2. latent h after the flow                        | **+0.7782** | +0.7590 | +0.8379 | 64 |
+| 3. decoded mu (before sampling)                   | **+0.7451** | +0.7286 | +0.8000 | 32 |
+| 4. sampled counts (rank-normalised)               | **+0.1154** | +0.0613 | +0.2030 | 32 |
+| 4p. counts ~ Poisson(mu) — emission noise removed | **+0.2594** | +0.1825 | +0.3965 | 32 |
+| REF real counts (rank-normalised)                 | **+0.3123** | +0.2654 | +0.3433 | 32 |
+| REF real latent h1 = encoder(real counts)         | **+0.3171** | +0.2892 | +0.4276 | 64 |
 
 ## The three numbers
 
@@ -39,6 +40,10 @@ the tissue's own sampling noise costs.
 |---|---|---|---|---|---|
 | **real tissue** | +0.3123 | +0.3171 | **98.5%** | 1.277 | — |
 | uncalibrated | +0.1154 | +0.7782 | **14.8%** | 1.268 | 1.277 |
+
+### Stage 4p — the emission-free ceiling
+
+With the emission's noise removed from the model's **own** mean field, `I` = **+0.2594** against the real section's **+0.3123** (0.83x). That is the most any repair to `theta` or `pi` can reach on this fit — it bounds the emission-side work from above. **If it exceeds the tissue, the emission is not the only defect** (`reports/n5_and_m3_review.md` §5), and a repair to it alone cannot land the model on the tissue.
 
 ## Candidate 2 — is `mu`'s dynamic range the size factor?
 

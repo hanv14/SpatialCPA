@@ -21,14 +21,15 @@ The panel restricts the **gene-space stages only** — 3, 4, their calibrated tw
 
 ## The chain
 
-| stage                                     | median I | p25 | p75 | channels |
-|-------------------------------------------|---|---|---|---|
-| 1. prior h0 = GRF at generated xyz        | **+0.9362** | +0.9274 | +0.9433 | 64 |
-| 2. latent h after the flow                | **+0.8011** | +0.7224 | +0.8563 | 64 |
-| 3. decoded mu (before sampling)           | **+0.7920** | +0.6965 | +0.8388 | 28 |
-| 4. sampled counts (rank-normalised)       | **+0.5134** | +0.3995 | +0.5998 | 28 |
-| REF real counts (rank-normalised)         | **+0.4635** | +0.3587 | +0.5637 | 28 |
-| REF real latent h1 = encoder(real counts) | **+0.6253** | +0.5092 | +0.7254 | 64 |
+| stage                                             | median I | p25 | p75 | channels |
+|---------------------------------------------------|---|---|---|---|
+| 1. prior h0 = GRF at generated xyz                | **+0.9362** | +0.9274 | +0.9433 | 64 |
+| 2. latent h after the flow                        | **+0.8011** | +0.7224 | +0.8563 | 64 |
+| 3. decoded mu (before sampling)                   | **+0.7920** | +0.6965 | +0.8388 | 28 |
+| 4. sampled counts (rank-normalised)               | **+0.5134** | +0.3995 | +0.5998 | 28 |
+| 4p. counts ~ Poisson(mu) — emission noise removed | **+0.8358** | +0.8062 | +0.8775 | 28 |
+| REF real counts (rank-normalised)                 | **+0.4635** | +0.3587 | +0.5637 | 28 |
+| REF real latent h1 = encoder(real counts)         | **+0.6253** | +0.5092 | +0.7254 | 64 |
 
 ## The three numbers
 
@@ -39,6 +40,22 @@ the tissue's own sampling noise costs.
 |---|---|---|---|---|---|
 | **real tissue** | +0.4635 | +0.6253 | **74.1%** | 1.738 | — |
 | uncalibrated | +0.5134 | +0.8011 | **64.1%** | 1.846 | 1.738 |
+
+## Why the model sits ABOVE the tissue here, and why that is not fidelity
+
+`I(model counts)` = **+0.5134** against the real section's **+0.4635** — 1.11x. That is **not** a reconstruction result. Two defects point in opposite directions on this dataset and partly cancel:
+
+| defect | this run | direction on `I` |
+|---|---|---|
+| the latent is **1.28x smoother** than the tissue's (+0.8011 against `h1`'s +0.6253) | too smooth | pushes `I` **up** |
+| `mu`'s spread is **0.7269** against the tissue's model-free bracket [0.7165, 0.9438] | too narrow | — |
+| the emission adds spatially independent noise (`theta`, and `pi` where it is non-zero) | too much | pushes `I` **down** |
+
+So a number at or above the tissue's says the two happen to cancel, not that either is right. Repairing one alone moves `I` **away** from the tissue: a faithful latent lowers it (A1's `A1a` arm), and removing the emission's noise raises it (stage 4p).
+
+### Stage 4p — the emission-free ceiling
+
+With the emission's noise removed from the model's **own** mean field, `I` = **+0.8358** against the real section's **+0.4635** (1.80x). That is the most any repair to `theta` or `pi` can reach on this fit — it bounds the emission-side work from above. **If it exceeds the tissue, the emission is not the only defect** (`reports/n5_and_m3_review.md` §5), and a repair to it alone cannot land the model on the tissue.
 
 ## Candidate 2 — is `mu`'s dynamic range the size factor?
 

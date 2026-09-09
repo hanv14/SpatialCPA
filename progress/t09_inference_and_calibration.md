@@ -8648,3 +8648,73 @@ the tissue.**
 and its empty case); `t10_reallocation_table --self-check` **13/13**, including that the same arm
 reads MECHANISM CONFIRMED in one role and NO BENEFIT in the other, which is the correction P2 exists
 for. Stage 4p and the amended verdict are unexecuted here.
+
+---
+
+## 2026-09-09 (h) — the ceiling bounds the emission programme, and exposes a transform mismatch
+
+**The ceiling (stage 4p), against the prediction committed in `n5_and_m3_review.md` §7.**
+
+| | model now | ceiling | tissue | predicted ceiling |
+|---|---|---|---|---|
+| tier-1 | +0.5134 (1.11x) | **+0.8358 (1.80x)** | +0.4635 | +0.7775 (1.68x) |
+| `deep_starmap` | +0.1154 (0.37x) | **+0.2594 (0.83x)** | +0.3123 | +0.4116 (1.32x) |
+
+Tier-1 was close and the conclusion is unchanged. **Deep was wrong in the direction that changes the
+conclusion** — predicted an overshoot, measured an undershoot. Both pre-registered branches fired,
+one per dataset: on tier-1 the coupled reading is **established** (an emission repair alone cannot
+land it on the tissue; it goes to 1.80x), and on deep the emission does **not** overshoot — it closes
+**73.1 %** of the deficit and leaves 17 % to the mean field.
+
+**This bounds §10's whole programme without a redesign.** A *perfect* emission repair gives a
+**regression** on tier-1 (1.11x -> 1.80x) and **83 %** of the tissue on deep. §10 stays suspended —
+a bound is not the readable gate answer it waits on — but the bound belongs beside the costing.
+
+**🚩 The tier-1 run contradicted itself, and that is how the defect was found.** `4p` is
+`Poisson(mu)`: independent noise dilutes autocorrelation and cannot create it, so `I(4p) <= I(3)`
+must hold. It does not — **+0.8358 against +0.7920**. Confirmed in the code afterwards: **every
+mean-field and latent stage is raw; every count stage is rank-normalised.** Rank-normalising a
+heavy-tailed field raises its Moran's I, and `mu` is log-normal, so **every `counts / mu` or
+`counts / latent` retention in the campaign is overstated** by an unmeasured amount — including the
+"three numbers" table (64.1 %, 14.8 %, and the tissue's 74.1 % and 98.5 %) and
+`a1_escalation_review.md` §5's table, now flagged in place.
+
+**What survives**, which is most of the record: everything comparing a count stage with a count
+stage — the ceiling itself, every A1 arm and every `R`, N5's shares, the deep 2x2, and the
+cancelling-defects table (raw-vs-raw latents, and `sd(log mu)` is not Moran's I).
+
+**The rule:** *a ratio is only a ratio if both sides were computed under the same transform.* The
+stage names disclosed it — ranked rows say "(rank-normalised)", raw rows say nothing — but a label is
+not a guard. The invariant that catches it is `I(4p) <= I(3)`, it is free, and it should be asserted
+at runtime rather than noticed by a reader.
+
+**The deep 2x2, now fully measured, every cell count-vs-count** (tissue +0.3123): model `mu` +
+model emission **0.37x**; `mu_oracle` + model emission 0.55x; model `mu` + Poisson **0.83x**;
+`mu_oracle` + Poisson 1.60x. So the **emission is the larger lever on deep** (closes 73 % against
+`mu`'s 29 %) and **the two together over-correct**. The `mu_oracle` column is optimistic — a kNN mean
+creates autocorrelation — so the left column is the trustworthy one.
+
+**The narrow-`mu` mechanism, quantified end-to-end for the first time**, and with neither side
+passing through the decoder: the same Poisson draw on the model's mean field against the tissue's
+gives **0.917** on tier-1 and **0.518** on deep, tracking `sd(log mu)` against the tissue's bracket
+exactly (0.6728 just below [0.7165, 0.9438]; 0.6725 far below [1.0994, 1.3699]). Caveat: the two
+fields differ in spatial pattern as well as spread, so 0.518 is an upper bound on what spread alone
+costs.
+
+**M3's value goes UP.** The narrow `mu` costs 48 % of the achievable `I` on deep *even with a perfect
+emission*, so an intervention that bounds `theta` **and** widens `mu` attacks both measured defects at
+once — and M3 is the test of whether one lever does both. Its verdict is also **unaffected** by the
+transform defect: `m3_verdict` reads `sd(log mu)`, stage 4, `REF real counts`, their distance, the
+`CV²` share and the `paper_*` metrics, every one count-vs-count or not an `I` ratio.
+
+**Order proposed:** Q1 fix the transform mismatch and assert the invariant (free); Q2 run M3 at 2.599
+in the mechanism role (~1 h); Q3 B1 (~3.3 h); Q4 M3 on deep in the benefit role. Q1 before Q2 only
+because it is free and Q2's report would otherwise print contaminated retention rows beside a clean
+verdict.
+
+**Where I was wrong.** The deep prediction transferred `A1c`'s Poisson retention at `mu_oracle`
+(0.5525) onto `mu_gen`; the measured retention there is **0.3481**. Retention is not transferable
+across mean fields of different spread. Part of the error was the transform mismatch itself — the
+transferred factor divided a ranked count stage by a raw `mu` stage. **The failed prediction measured
+the mechanism more directly than a correct one would have**: had the transfer held, the 0.518 would
+never have been computed.
