@@ -8513,3 +8513,74 @@ Verification now: `ruff` clean; `pytest tests/test_config.py --noconftest` **7 p
 `t10_chain_diagnostic --self-check` **40/40**; `t10_reallocation_table --self-check` **9/9**. Still
 no torch here, so the decoder's use of the floor, `--theta-floor` and `--report-theta` remain
 unexecuted — but the config now constructs, which is what the three runs needed.
+
+---
+
+## 2026-09-09 (f) — N5 read out; M3's criterion is wrong and M3 has not run
+
+**M1 verified in production.** Both A1 reports read `live, text_emb_mode=medcpt, 28/28 gene rows
+non-zero — from runs/chain/shipped_tier1.pt`, the console agrees, and the vacuous density and panel
+lines fire correctly on tier-1. §4.2k's instances are closed on real data.
+
+**N5, as pre-registered.** Tier-1: **over-dispersion**, `L_theta` 100.0 %, `L_pi` 0.0 %, additivity
+gap 0.0000, multiplicative prediction exact, `A1b-t` level 1.00x. `A1b-t` equals `A1b` to four
+decimals across all three seeds because `pi` is already ~0 there. **On a converged fit, the
+emission's entire cost is over-dispersion** — M3's floor is aimed at the right term.
+`deep_starmap`: **not decomposable**, gap 0.1100 against a 0.0200 criterion. The practical reading is
+sharper than the verdict: as retention against `A1c`, **`theta` costs 45.7 % and `pi` costs 41.9 %**,
+both together 65.6 %. Neither is a passenger.
+
+⚠️ **The additivity clause was placed in the wrong space.** Losses in `I` cannot be additive — `I` is
+a bounded ratio, and independent noise sources add *variances*, so retentions compose closer to
+multiplicatively. The multiplicative prediction lands within **0.0142** of the measured `I(A1b)`,
+inside the tolerance the additivity clause was given, and it under-predicts, which is the direction
+the interaction term requires. Verdict unaffected; the criterion should have been on retention.
+
+**🚩 A defect in M3's criteria, caught before M3 runs.** `m3_verdict`'s outcome 4 requires
+`d I(counts) > 0`. **On tier-1 the model is already above the tissue** (+0.5134 against +0.4635), so
+`I` rising is movement *away* from it, and M3 would report REALLOCATION WORKS for it. Removing
+`theta` entirely from the model's own mean field is predicted to give ~**+0.78** on tier-1 — 1.68x
+the tissue — so every point of the achievable range increases the distance. This is the
+over-smoothing correction, in the record since round 11 and the reason M4 is a condition, not applied
+to my own gate. **The numbers were on the table when I wrote the criterion**; M3 has not run.
+
+Proposed fix, to be pre-registered before M3: **tier-1 is a mechanism test only** — success is
+`sd(log mu)` rising from 0.6728 toward the tissue's bracket [0.7165, 0.9438] without overshooting,
+`I` reported but not a criterion there — and the benefit statistic on both datasets becomes
+**`d abs(I - I_real)`**, which is signed correctly on each and encodes *be like the tissue* rather
+than a proxy for it.
+
+**The picture: two defects that partly cancel.** Measured, all on deep: a correct latent with the
+current emission gives **+0.0426** — *worse* than the model's own +0.1154 — because `decode(h1)` is
++0.3399 against `decode(h)`'s +0.7451 and the model's latent is **2.45x smoother** than the tissue's;
+while removing the emission noise from the model's own mean field is predicted to **overshoot** at
++0.41 against +0.3123. Fix either alone and it gets worse in one direction or the other. On tier-1
+the two errors cancel to within 11 %, **which is why tier-1 looked healthy for three rounds**.
+
+🚩 **This corrects my assessment of B1, in the user's favour.** I read *"`decode(h1)` gives less `mu`
+spread than `decode(h)`"* — a statement about `mu`'s **spread** — as settling that the latent is not
+the bottleneck. The latent's **smoothness** is a different quantity, wrong by 2.45x on deep, and
+`ell` is the only handle on it. **B1 is not a 3.3 h purchase of trustworthy `theta`/`pi`; it is the
+only test of the second of two coupled defects.** Its priority goes up.
+
+**The floor is 2.599** (the median `theta` at the real cells; percentiles 1/25/50/75/99 =
+0.369/1.394/2.599/5.165/13.65), binding on **50 %** of pairs by construction, so the null-experiment
+guard passes without a further read. ⚠️ It is a **modest dose** — the floored half moves up ~1.9x and
+the other half is untouched — so if `sd(log mu)` does not move, *"the dose was too small"* is a live
+explanation alongside *"capacity-limited"*. Proposed: one higher floor at the **75th percentile
+(5.165)** before outcome 1 may be declared. Outcome 1 is a strong claim and should not be reachable
+from one weak intervention.
+
+**The missing measurement, one draw:** `I(counts ~ Poisson(mu_gen))` — the model's own mean field
+with all emission noise removed, i.e. the **ceiling for any emission repair on the model as it
+actually is**. Nothing in the campaign has it; every arm is either on `mu_oracle` or keeps the
+emission. Pre-registered prediction before measuring: **+0.7775** tier-1 and **+0.4116** deep, i.e.
+**1.68x and 1.32x the tissue**. At or above those, no emission repair reaches the tissue without the
+latent being fixed too; at or below the tissue on deep, the transfer is invalid and the emission
+repair stands alone.
+
+**Order proposed:** P1 the `Poisson(mu_gen)` arm (minutes) — it tells you what M3 is aiming at; P2
+amend M3's pre-registration; P3 M3 at floor 2.599; P4 M3 at 5.165 if the dose condition fires; P5 B1.
+**P1 and P2 come before P3**, both cheap, and both change what P3 means. Full reasoning in
+`reports/n5_and_m3_review.md`. **§10 stays suspended** — N5 answered the mechanism question it was
+asked and did not return a readable answer to the decision table, which still reads row 5 for `A1b`.

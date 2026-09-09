@@ -103,6 +103,12 @@ within-realisation contrast.
 
 🔎 **Instrument self-check**: `A1b-t`'s level ratio is **1.00x**. `theta` cannot move the mean, so anything away from 1.00x means that arm is not what it claims and the verdict above does not stand.
 
+### `theta` at the real cells
+
+| percentile | 1 | 5 | 10 | 25 | 50 | 75 | 90 | 99 |
+|---|---|---|---|---|---|---|---|---|
+| `theta` | 0.3689 | 0.7087 | 0.8834 | 1.394 | 2.599 | 5.165 | 9.343 | 13.65 |
+
 ### N2 — the tissue's own `sd(log mu)`, two model-free routes
 
 Both use `sd(log mu) = sqrt(log(1 + CV^2))` — an approximation — so neither

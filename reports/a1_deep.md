@@ -73,14 +73,16 @@ were drawn from varies.
 table, the thresholds, the level guard and the two stated asymmetries were committed
 before the run.
 
-| arm                                             | median I | across seeds | ch | level | R | band |
-|-------------------------------------------------|---|---|---|---|---|---|
-| A1a'. mu decoded from h1                        | **+0.3399** | — | 32 | — | — | — |
-| A1a. counts ~ emission(mu | h1)                 | **+0.0426** | +0.0395 .. +0.0433 (3) | 32 | 0.93x | **-0.37** | DOES NOT RECOVER |
-| A1b'. mu_oracle = kNN mean of real counts       | **+0.9063** | — | 32 | — | — | — |
-| A1b. counts ~ ZINB(mu_oracle, model theta/pi)   | **+0.1722** | +0.1701 .. +0.1799 (3) | 32 | 0.64x | **+0.29** | DOES NOT RECOVER |
-| A1c. counts ~ Poisson(mu_oracle)   [model-free] | **+0.5007** | +0.4994 .. +0.5039 (3) | 32 | 1.00x | **+1.96** | RECOVERS |
-| A1n. permutation null (real counts shuffled)    | **+0.0002** | +0.0001 .. +0.0007 (3) | 32 | — | **-0.59** | DOES NOT RECOVER |
+| arm                                               | median I | across seeds | ch | level | R | band |
+|---------------------------------------------------|---|---|---|---|---|---|
+| A1a'. mu decoded from h1                          | **+0.3399** | — | 32 | — | — | — |
+| A1a. counts ~ emission(mu | h1)                   | **+0.0426** | +0.0395 .. +0.0433 (3) | 32 | 0.93x | **-0.37** | DOES NOT RECOVER |
+| A1b'. mu_oracle = kNN mean of real counts         | **+0.9063** | — | 32 | — | — | — |
+| A1b. counts ~ ZINB(mu_oracle, model theta/pi)     | **+0.1722** | +0.1701 .. +0.1799 (3) | 32 | 0.64x | **+0.29** | DOES NOT RECOVER |
+| A1b-t. counts ~ NB(mu_oracle, model theta), pi=0  | **+0.2718** | +0.2716 .. +0.2774 (3) | 32 | 1.00x | **+0.79** | RECOVERS |
+| A1b-p. counts ~ A1c's Poisson draw, then model pi | **+0.2911** | +0.2873 .. +0.2950 (3) | 32 | 0.62x | **+0.89** | RECOVERS |
+| A1c. counts ~ Poisson(mu_oracle)   [model-free]   | **+0.5007** | +0.4994 .. +0.5039 (3) | 32 | 1.00x | **+1.96** | RECOVERS |
+| A1n. permutation null (real counts shuffled)      | **+0.0002** | +0.0001 .. +0.0007 (3) | 32 | — | **-0.59** | DOES NOT RECOVER |
 
 Anchors from this run: `I(model counts)` = **+0.1154**, `I(real counts)` = **+0.3123**, deficit = **+0.1969**.
 
@@ -90,8 +92,27 @@ Anchors from this run: `I(model counts)` = **+0.1154**, `I(real counts)` = **+0.
 |---|---|---|---|
 | A1a | -0.37, -0.39, -0.37 | DOES NOT RECOVER | DOES NOT RECOVER |
 | A1b | +0.29, +0.33, +0.28 | DOES NOT RECOVER, UNINFORMATIVE | **UNRESOLVED** (seeds straddle) |
+| A1b-t | +0.79, +0.79, +0.82 | RECOVERS | RECOVERS |
+| A1b-p | +0.91, +0.87, +0.89 | RECOVERS | RECOVERS |
 | A1c | +1.95, +1.96, +1.97 | RECOVERS | RECOVERS |
 | A1n | -0.58, -0.59, -0.59 | DOES NOT RECOVER | DOES NOT RECOVER |
+
+### N5 — which of `theta` and `pi` costs the `A1c -> A1b` loss
+
+Criteria fixed in `a1_escalation_preregistration.md` §2, before these arms were
+built. `A1b-p` shares `A1c`'s Poisson realisation, so `A1c -> A1b-p` is an exact
+within-realisation contrast.
+
+| quantity | value |
+|---|---|
+| `L_total = I(A1c) - I(A1b)` | +0.3284 |
+| `L_theta = I(A1c) - I(A1b-t)` | +0.2289 (**69.7%** of total) |
+| `L_pi = I(A1c) - I(A1b-p)` | +0.2095 (**63.8%** of total) |
+| additivity gap `abs(L_theta + L_pi - L_total)` | 0.1100 (criterion <= 0.0200) |
+| multiplicative prediction of `I(A1b)` | +0.1580 against the measured +0.1722, gap 0.0142 |
+| **verdict** | **not decomposable** — the two interact |
+
+🔎 **Instrument self-check**: `A1b-t`'s level ratio is **1.00x**. `theta` cannot move the mean, so anything away from 1.00x means that arm is not what it claims and the verdict above does not stand.
 
 ### N2 — the tissue's own `sd(log mu)`, two model-free routes
 
