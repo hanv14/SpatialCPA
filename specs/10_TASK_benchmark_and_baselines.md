@@ -893,6 +893,27 @@ outputs and not only to bench3 predictions. A number whose arm cannot be identif
 artifact** cannot be given a noise scale by whoever reads it next, however carefully it was
 measured and however recoverable the config turns out to be from somewhere else.
 
+🚨 **Run 2026-09-09, and the corollary is sharper than the rule.** The recovery read the pilot
+checkpoint's gates into all five r11 artifacts, and they are **`text_emb_mode=lookup`,
+`expr_pca_dim=16`, metric-aware weights `0/0/0`, fitted `layout_mode=field`**. Two consequences,
+neither of them about envelopes:
+
+1. **A9's envelope is inadmissible after all** — it is `medcpt` at `expr_pca_dim=28`, so the arms
+   differ on two fit-time gates. Matching on the gate the question was about (the weights, which do
+   agree) is not matching.
+2. 🚨 **The column this project calls "v25 shipped" is not the shipped configuration.**
+   `text_emb_mode=lookup` is **ablation A3** — §3 of this spec says so in as many words: *"any local
+   run is forced to `text_emb_mode="lookup"` — which is ablation A3, not the shipped method."*
+   `expr_pca_dim=16` is the pilot stand-in the clamp rule replaced with 28. `layout_mode` is the one
+   gate that *is* fine, being in `FIT_INVARIANT_GATES` and applied at generation.
+
+**The rule that follows, and it belongs beside `test_bare_invocation_reproduces_shipped_config`
+(§10.1): a table may be labelled with a configuration only when every *fit-time* gate has been read
+out of the artifact and compared, not just the gate under test.** Checking one gate and inheriting
+the label is how a column headed "shipped" spent three drafts being an ablation arm — corrected once
+from `hybrid` to `resample` on the layout gate, and left wrong on the expression gates because only
+the layout gate was in question at the time.
+
 ### 4.2a-iii ⚠️ An experiment's record states what it *measured*, not only what it *concluded*
 
 Not an envelope rule, and it is why §4.2a-i went a month without being noticed.

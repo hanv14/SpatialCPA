@@ -236,12 +236,48 @@ filed where nobody will think to look.**
 
 ---
 
-## 5. The six-metric table — the shipped configuration, with floor and ceiling
+## 5. The six-metric table — ⚠️ **NOT the shipped configuration**, with floor and ceiling
 
-`layout_mode=resample` (shipped), `decoder_mu_link=exp`, 2400 steps, **one seed**, tier-1 STARmap,
-holdout `paper_2_4_6`, medians over the three held-out sections, ground-truth-matched density,
-pinned `bench3.evaluate_paper`. Source: `reports/r11_starmap_layout_modes.json` (arm
-`resample-grid`); referents from the same file.
+🚨 **MISLABELLED, and corrected 2026-09-09 when the arm was finally read out of its own checkpoint.**
+This column has been headed "v25 shipped" through every draft. It is not. Every cell comes from
+`runs/pilot/model_exp_2400.pt` (via `reports/r11_resample_grid_umap.json`, confirmed bitwise by
+`r11_determinism_{a,b}.json`, all five r11 arms sharing that one checkpoint), and the recovery run
+of `scripts/t09_recover_checkpoint_config.py` reads its gates directly:
+
+| gate | this column | shipped | when it is applied | verdict |
+|---|---|---|---|---|
+| `layout_mode` | fitted `field`, **generated `resample`** | `resample` | **generation-time, and provably fit-invariant** | ✅ **sound** |
+| `layout_sampler` | `grid` | `grid` | generation-time | ✅ |
+| `expr_mode` / `prior_mode` / `decoder_mu_link` / `train_steps` | `zinb-flow` / `correlated` / `exp` / 2400 | same | fit | ✅ |
+| **`text_emb_mode`** | **`lookup`** | **`medcpt`** | **fit — not overridable** | ❌ **this is ablation A3** |
+| **`expr_pca_dim`** | **16** | **28** (`clamp_config_to_volume`) | **fit — not overridable** | ❌ the pilot's stand-in |
+| metric-aware weights | 0 / 0 / 0 | see §6a — the record says 0.5 | fit | ⚠️ **inverts a claim, §6a** |
+
+**The layout half is sound and that matters**, because it is what R11 turns on:
+`FIT_INVARIANT_GATES = ("layout_mode",)`, and `tests/test_select.py::test_layout_mode_does_not_enter_the_fit`
+asserts **bitwise identical weights across all 96 parameter and buffer tensors** when only that gate
+moves. So the arm really does generate under `resample`, and R11's *ordering* across the five arms is
+if anything **firmer** than before: they are now provably one checkpoint differing only in
+generation-time gates.
+
+**The expression half is not.** `text_emb_mode=lookup` is **ablation A3**, and this report already
+says so in §3's own words, quoting `specs/10` §3: *"any local run is forced to
+`text_emb_mode="lookup"` — which is ablation A3, not the shipped method."* The rule was written,
+and then applied to everything except this table. `expr_pca_dim=16` is the pilot stand-in that
+`PROGRESS.md` already records as superseded by the clamp rule's 28.
+
+⚠️ **This is the same failure the table was corrected FOR.** The 2026-09-08 revision fixed it from
+the superseded `hybrid` pilot row to the `resample` arm and called the result "shipped". The layout
+label became right and the expression label stayed wrong, because only the layout gate was checked.
+**A column is not the shipped configuration until every fit-time gate has been read out of the
+artifact** — §4.2a-ii, arriving one level up from where it was written.
+
+**What the table is, stated exactly**: tier-1 STARmap, `paper_2_4_6`, 2400 steps, **one seed**,
+medians over the three held-out sections, ground-truth-matched density, pinned
+`bench3.evaluate_paper`, `layout_mode=resample` at generation — on a model fitted with the
+**lookup** gene embedding at **`expr_pca_dim=16`** and the metric-aware terms off. It is a valid
+measurement of that arm and every within-r11 comparison built on it stands. It is not a
+characterisation of the shipped method, and no absolute number in it should be quoted as one.
 
 🚨 **These numbers changed materially between drafts, and the older ones have been quoted.** The
 earlier advisor draft built this table from the **superseded `hybrid` pilot row** (rejection
@@ -425,13 +461,64 @@ which refits anyway and can adopt it at no cost.
 
 **What the paper must say either way**: the weights ship at 0.5 on a **fixture-selected** aggregate
 rank with margins inside the reproducibility envelope, a three-seed real-data test could not resolve
-their contribution, and **every absolute number in this project was produced with them active**.
+their contribution, and — ⚠️ **corrected 2026-09-09, see §6a** — the claim that **every absolute
+number in this project was produced with them active is backwards**: `Config` ships them at `0.0`,
+and A9's `05` arm is the only run in the corpus that had them on.
 
 ⚠️ **A pre-registered condition was withdrawn as malformed**, on fit 1 and before the other five
 landed: it compared these real-data, held-out, `bench3.evaluate_paper` numbers against a
 **synthetic-fixture**, T08-kernel, `alternating`-holdout row. Different dataset, holdout and
 instrument — it could only ever fire. Withdrawing it established the §6.1 point above: **these
 weights had never been measured on real data at all.**
+
+### 6a. 🚨 "Every absolute number was produced with them active" is backwards
+
+Found 2026-09-09 by the same checkpoint recovery, and it inverts a sentence this report and the
+close-out both carry.
+
+**`Config` ships the three weights at `0.0`, not 0.5.** `config.py` declares
+`w_autocorr = w_profile = w_distribution = 0.0`; `scripts/_starmap_run.py::base_config` overrides
+only the four data keys in `BENCH3_KEYS` and never the weights; and
+`t09_ship_starmap.py --w-metric-aware` is an **override flag defaulting to unset**. Read off the
+artifacts, every real-data fit in this repository:
+
+| run | weights | text_emb_mode | expr_pca_dim | steps |
+|---|---|---|---|---|
+| the six-metric table's checkpoint (r11, all five arms) | **0 / 0 / 0** | lookup | 16 | 2400 |
+| A7, both arms (SEFL) | **0 / 0 / 0** | medcpt | 28 | 1200 |
+| A9 `0` arm | **0 / 0 / 0** | medcpt | 28 | 2400 |
+| **A9 `05` arm** | **0.5 / 0.5 / 0.5** | medcpt | 28 | 2400 |
+
+**So the exposure runs the other way.** *"Every absolute number in this project was produced with
+them active"* is false: **A9's `05` arm is the only thing in the corpus produced with them active,
+and it is the experiment that tested them.** Everything else — the six-metric table, A7, A9's own
+control — was produced with them at zero.
+
+⚠️ **And the fixture envelope was the opposite way round again.** `scripts/t09_envelope.py` sets
+`w_autocorr = w_profile = w_distribution = 0.5` explicitly for all nine of its fits. So R10's
+**0.0335**, the figure every real-data clearance was divided by until 2026-09-08, was measured on
+the **weights-on** arm while every number it judged was **weights-off** — the wrong arm on the very
+gate §6 is about, on top of being pooled, off-dataset and off-instrument (§4b). A fourth axis, in
+the one place it is most embarrassing.
+
+**What survives and what changes.** §6's *experiment* is untouched: A9 compared 0.5 against 0 at
+three seeds and returned UNINFORMATIVE. What changes is the framing around it:
+
+* **The absolute numbers are cleaner than claimed, not dirtier.** They were not produced with an
+  unestablished component active. The paragraph warning that they were is withdrawn.
+* **But they were not produced with the configuration the record calls shipped, either** — which is
+  §5's finding arriving from the other side. The gap between "the value T09's selection chose" and
+  "the value any code path produces" is the real defect, and it is a labelling failure rather than a
+  contamination one.
+* **The standing recommendation to set the weights to zero is now nearly a no-op**, because
+  `Config` already does. What the next campaign needs is not a decision to turn them off; it is for
+  the record to stop saying they are on.
+
+⚠️ **One thing I cannot check from here.** `runs/` is not in this checkout, so I cannot rule out a
+persisted `selected.yaml` carrying 0.5 on the campaign machine. What is checkable is that **no run
+whose artifact is in this repository resolved one** — A9's provenance reads
+`source: "defaults"`, `selection_path: null` — so if such a file exists, nothing in the corpus used
+it. Worth confirming before the next campaign, since `--require-config` would read it.
 
 ---
 

@@ -7725,3 +7725,71 @@ envelope on the pinned instrument" and "A9 measured one" were both true, and onl
 written down. **Retrieval, not measurement**, and the kind that recurs: a null result's measurements
 stay valid long after its verdict stops being interesting, and indexing a run by the question it was
 designed to answer makes them unfindable to anyone asking a different one. §4.2f one level up.
+
+### Recovery ran (2026-09-09) — the arms do not match, and it found two things it was not looking for
+
+`scripts/t09_recover_checkpoint_config.py runs/pilot/model_exp_2400.pt --patch ...` was run on the
+campaign machine; the five r11 artifacts now carry a `recovered_config` block on every arm. Every
+gate is a **direct read**:
+
+```
+text_emb_mode lookup | expr_mode zinb-flow | prior_mode correlated | layout_mode field
+layout_sampler grid  | decoder_mu_link exp | train_steps 2400      | expr_pca_dim 16
+w_autocorr/profile/distribution 0.0/0.0/0.0 | w_cross/thick/prog 0.0 | seed 1
+```
+
+**1. It closes none of the six flagged figures, and my prediction that it would close four was
+wrong.** A9's arms are `medcpt` at `expr_pca_dim=28`; the r11 checkpoint is `lookup` at 16. They
+agree on the metric-aware weights — the gate the flag was *about* — and differ on two other
+**fit-time** gates, so A9 is not an admissible donor under §4.2a. The way the prediction was wrong
+is the useful part: **I checked the gate in question and did not ask what else would have to agree**,
+which is §4.2a's own failure mode committed while writing the correction for it.
+
+What it did settle: each row moves from *"no candidate donor known"* to *"the one candidate is
+measurably the wrong arm"* — determinate, with a costed remedy (three seeds of the shipped arm on
+instrument B). And the **within-r11** comparison got firmer: all five arms are provably one fit
+differing only in generation-time gates, and `layout_mode` is in `FIT_INVARIANT_GATES`, asserted
+bitwise across all 96 tensors by `test_layout_mode_does_not_enter_the_fit`. R11's ordering is a
+clean within-fit contrast; what it lacks is an across-seed spread, which one checkpoint cannot
+supply.
+
+**2. 🚨 The six-metric "v25 shipped" column is mislabelled.** It sources
+`r11_resample_grid_umap.json`, i.e. this checkpoint. Gate by gate: `layout_mode` is **sound**
+(generation-time, provably fit-invariant, so the arm really does generate under `resample`);
+`expr_mode`, `prior_mode`, `decoder_mu_link`, `train_steps`, `layout_sampler` all match. But
+**`text_emb_mode=lookup` is ablation A3** — `specs/10` §3 says so in as many words — and
+**`expr_pca_dim=16`** is the pilot stand-in the clamp rule replaced with 28. Both are fit-time and
+not overridable.
+
+⚠️ **This is the same failure the table was corrected FOR.** The 2026-09-08 revision moved it from
+the superseded `hybrid` pilot row to the `resample` arm and called the result shipped. The layout
+label became right; the expression labels stayed wrong, because only the layout gate was in
+question. **A column is not the shipped configuration until every fit-time gate has been read out of
+the artifact.** Corrected in `reports/advisor_report.md` §5 with the gate-by-gate table; the
+measurement is valid and every within-r11 comparison built on it stands.
+
+**3. 🚨 "Every absolute number was produced with the metric-aware weights active" is backwards.**
+`config.py` declares `w_autocorr = w_profile = w_distribution = **0.0**`; `_starmap_run.base_config`
+overrides only `BENCH3_KEYS`; `t09_ship_starmap.py --w-metric-aware` defaults to unset. Read off the
+artifacts: the r11 checkpoint **0/0/0**, A7 both arms **0/0/0**, A9's `0` arm **0/0/0**, and A9's
+`05` arm the **only** run in the corpus at 0.5 — the experiment that tested them.
+
+So the absolute numbers are *cleaner* than the close-out claimed, not dirtier, and the defect is the
+other one: **a value the selection chose, recorded everywhere as shipped, that no code path
+produces.** The standing recommendation to zero the weights is now nearly a no-op, because `Config`
+already does; what the next campaign needs is for the record to stop saying they are on.
+
+⚠️ **And the fixture envelope ran the opposite way**: `scripts/t09_envelope.py` sets all three to
+**0.5** for its nine fits, so R10's 0.0335 was measured on the weights-**on** arm while every number
+it judged was weights-**off** — a fourth axis of mismatch (metric, dataset, instrument, arm) in the
+one place it is most embarrassing.
+
+⚠️ **Not checkable from this checkout**: whether a persisted `selected.yaml` carrying 0.5 exists on
+the campaign machine (`runs/` is not in the repo). What is checkable is that **no run whose artifact
+is in this repository resolved one** — A9's provenance reads `source: "defaults"`,
+`selection_path: null`. Worth confirming before the next campaign, since `--require-config` reads it.
+
+**Rule earned**, added to `specs/10` §4.2a-ii beside §10.1's
+`test_bare_invocation_reproduces_shipped_config`: *a table may be labelled with a configuration only
+when every fit-time gate has been read out of the artifact and compared — not just the gate under
+test.*

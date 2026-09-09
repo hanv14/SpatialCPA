@@ -82,7 +82,7 @@ contrast that would say *how* the text channel reaches an unseen gene. See §3.
 
 | component | result | measurement |
 |---|---|---|
-| intensity-field layout | **REFUTED** | `field` 0.6607, `hybrid` 0.6692 against `resample` **0.7546**; the model-free copy floor is 0.7765 and the oracle ceiling 0.9808. Both field modes score **below the floor** on the metric the layout head exists to win, by **0.1158 and 0.1073 raw**. 🚩 **The "3.5x and 3.2x the envelope" this row carried is withdrawn and not replaced**: it divided by the pooled synthetic-fixture 0.0335, and no envelope exists for `paper_celltype_localization` on the `field`/`hybrid` arms — all five r11 arms are **one seed** (`reports/envelope_correction.md` §3). The raw deficits are what the verdict rests on and they are large; the multiple is not available. `resample` ships. |
+| intensity-field layout | **REFUTED** | `field` 0.6607, `hybrid` 0.6692 against `resample` **0.7546**; the model-free copy floor is 0.7765 and the oracle ceiling 0.9808. Both field modes score **below the floor** on the metric the layout head exists to win, by **0.1158 and 0.1073 raw**. 🚩 **The "3.5x and 3.2x the envelope" this row carried is withdrawn and not replaced**: it divided by the pooled synthetic-fixture 0.0335, and no envelope exists for `paper_celltype_localization` on the `field`/`hybrid` arms — all five r11 arms are **one seed** (`reports/envelope_correction.md` §3). The raw deficits are what the verdict rests on and they are large; the multiple is not available. ✅ **The comparison itself got firmer on 2026-09-09**: the checkpoint recovery shows all five r11 arms are provably **one fit** differing only in generation-time gates, and `layout_mode` is in `FIT_INVARIANT_GATES` — bitwise identical weights across all 96 tensors when only it moves (`test_layout_mode_does_not_enter_the_fit`). So the ordering is a clean within-fit contrast; what it lacks is an across-seed spread, which one checkpoint can never supply. `resample` ships. |
 | flow-matching expression head | **REFUTED, both datasets** | on `deep_starmap` `cross-mix` (copying) wins **every live metric**; on tier-1 by **2.2x, 2.3x and 7.4x** their own per-metric per-arm envelopes on three (`gearys`, `morans`, `umap_mixing`; margins +0.1303 / +0.1313 / +0.1415 against 0.0595 / 0.0574 / 0.0190, three seeds). ⚠️ **Corrected 2026-09-08** from "4.6–5.3x the envelope", which was one seed on the pre-frame-fix code state, divided by the pooled fixture 0.0335 — the two autocorrelation metrics carry less than half the weight quoted and `umap_mixing` carries more (`reports/envelope_correction.md` §2.1). The one metric where generation had won was an artifact of the frame defect and reversed when it was fixed. |
 | SEFL — the mechanism the method is named for | **REFUTED, 3 seeds** | the SEFL arm **collapses** the anatomical field: `i_gen` at **1.6–2.4 %** of target against the off arm's 95.6–97.5 %; five of seven metrics cost with signs agreeing 3/3 at 1.31x–4.68x. `check_collapse` fired **218 times** across the three ON fits, from step 250 of 1200. All three weights ship at **0**. |
 | the mechanism half of the zero-shot claim | **PARTIAL** | A2 − A3 — the pure-text projection against the distillation head — is **+0.0450, 0.22x** the shared envelope, where `deep_starmap` had +0.2514 at 2.7x. `specs/10` §7's mechanism sentence is **withdrawn**. |
@@ -96,14 +96,21 @@ this out; the paper should say it first.
 
 ---
 
-## 4. The one component that ships ON while established by nothing
+## 4. The one component recorded as shipping ON while established by nothing — and no code path produces it
 
 Flagged here rather than left in a table, because it is a different kind of problem from everything
 in §3.
 
-`w_autocorr = w_profile = w_distribution = **0.5**` ship **on**. At 1200 steps they lose (rank 3.5
+⚠️ **Heading corrected 2026-09-09.** It read *"the one component that ships ON"*. The checkpoint
+recovery showed that is not what the code does: **`Config` declares all three weights at `0.0`**,
+and every real-data fit in the corpus ran at 0.0 except A9's `05` arm. The problem is real and it is
+a different one — **a value the selection chose, recorded everywhere as shipped, that nothing
+implements**. The correction is stated in full at the end of this section.
+
+`w_autocorr = w_profile = w_distribution = **0.5**` were **selected**. At 1200 steps they lose (rank 3.5
 against 3.0, a cost on every metric); at **2400** — the budget T09 selected — they win the
-selection on aggregate rank, 1.0 against 2.0, taking four of six metrics. That is why they ship.
+selection on aggregate rank, 1.0 against 2.0, taking four of six metrics. That is why the record
+says they ship — though see the correction below: no code path sets them.
 The per-metric margins at 2400 are **0.0052 / 0.0101 / 0.0018**, and against the fixture's **own
 per-metric** envelopes — `morans_pearson` 0.0160, `gearys_pearson` 0.0335 — every one is still
 inside, **by factors of 1.6 to 19**, on **one seed**. ⚠️ **Corrected 2026-09-08** from "against
@@ -135,7 +142,7 @@ for**, and `claim_min_seeds = 3` says one seed cannot resolve it either way.
 |---|---|
 | ships **off**, evidence against | SEFL's three weights, `w_cross`, the intensity-field layout |
 | ships **on**, evidence for | `prior_mode="correlated"`, `layout_mode="resample"`, `decoder_mu_link="exp"` |
-| 🚨 ships **on**, established by nothing | the three metric-aware weights at 0.5 |
+| 🚨 **recorded as shipping on at 0.5, established by nothing — and no code path produces it** | the three metric-aware weights. `Config` declares them **0.0** and every real-data fit in the corpus ran at 0.0 except A9's `05` arm (corrected 2026-09-09, §4) |
 
 A component that ships **off** with evidence against it is an honest negative: the reader learns
 something and the shipped model does not depend on it. A component that ships **on** while
@@ -191,10 +198,25 @@ every fitted number in the project for a change that is, by the only real-data t
 within noise — a threshold moved after seeing where the data fell. The recommendation is for the
 **next** campaign, which will refit anyway and can adopt it at zero cost.
 
-**And what the paper must say either way**: the weights ship at 0.5 on a **fixture-selected**
-aggregate rank with per-metric margins inside the reproducibility envelope, a three-seed real-data
-test could not resolve their contribution, and every absolute number in this project was produced
-with them active.
+**And what the paper must say either way**: the weights were **selected** at 0.5 on a
+**fixture-selected** aggregate rank with per-metric margins inside their own envelopes, and a
+three-seed real-data test could not resolve their contribution.
+
+🚨 **CORRECTED 2026-09-09 — "every absolute number in this project was produced with them active"
+is backwards.** The checkpoint recovery read the gates out of the fits: **`Config` declares all
+three at `0.0`**, `base_config` never overrides them, and `t09_ship_starmap.py --w-metric-aware` is
+an override flag that defaults to unset. The six-metric table's checkpoint, A7's two arms and A9's
+own control arm are all at **0 / 0 / 0**; **A9's `05` arm is the only run in the corpus that had
+them on, and it is the experiment that tested them.** So the absolute numbers are *cleaner* than
+this section claimed, not dirtier — and the real defect is the other one: **they were not produced
+with the configuration the record calls shipped.** The standing recommendation above is now nearly
+a no-op, because `Config` already does what it asks; what the next campaign needs is for the record
+to stop saying the weights are on. ⚠️ Not checkable from this checkout: whether a persisted
+`selected.yaml` carrying 0.5 exists on the campaign machine. What is checkable is that no run whose
+artifact is in this repository resolved one (A9: `source: "defaults"`, `selection_path: null`).
+⚠️ And the fixture envelope ran the other way round — `scripts/t09_envelope.py` sets all three to
+**0.5** for its nine fits, so R10's 0.0335 was measured on the weights-**on** arm while every
+number it judged was weights-**off**.
 
 **It does not weaken the negatives.** Each of R11, A7 and the zero-shot arms is a
 *within-configuration* contrast with the same weights on both sides. The exposure is to the

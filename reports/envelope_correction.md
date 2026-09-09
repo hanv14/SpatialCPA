@@ -96,13 +96,13 @@ the pooled fixture figure claims 0.0335. A9 also supplies `paper_gene_mean_spear
 ⚠️ **It still cannot be substituted into the r11-derived figures**, and this is the §4.2a
 distinction doing real work rather than pedantry. A9's arms are `text_emb_mode=medcpt` fitted from
 `Config` defaults (`provenance.source = "defaults"`, `selection_path = null`). The arm behind the
-six-metric table is `runs/pilot/model_exp_2400.pt`, and **its configuration is not recorded in any
-of its own artifacts** — `r11_starmap_layout_modes.json`, `r11_resample_grid{,_umap}.json` and
-`r11_determinism_{a,b}.json` carry `model`, `decoder_mu_link`, `train_steps` and `seed`, and carry
-no `config_hash`, no `text_emb_mode` and no metric-aware weights. §4.2a's own evidence says the gate
-matters: on the `deep_starmap` `text_emb_mode` gate the two arms' envelopes differ by up to 2.6x and
-**the worse arm alternates by metric**. So `medcpt` and `lookup` arms are not interchangeable
-envelope donors, and which one r11 ran is not recorded in any artifact that cites it.
+six-metric table is `runs/pilot/model_exp_2400.pt`, whose gates the r11 artifacts did not record —
+they carried `model`, `decoder_mu_link`, `train_steps` and `seed`, and no `config_hash`, no
+`text_emb_mode` and no metric-aware weights. **They now carry a `recovered_config` block on every
+arm** (2026-09-09), and §1b reports what it says: the two arms differ on **two fit-time gates**, so
+A9 is not an admissible donor. §4.2a's own evidence says `text_emb_mode` is not a gate to wave
+through — on the `deep_starmap` gate the two arms' envelopes differ by up to 2.6x and **the worse
+arm alternates by metric**.
 
 ✅ **CORRECTION 2026-09-08, and it is the useful half — the configuration was never lost.** The
 first revision of this section implied the arm's identity was gone. It is not:
@@ -131,11 +131,39 @@ python scripts/t09_recover_checkpoint_config.py runs/pilot/model_exp_2400.pt \
 a copy of `r11_determinism_a.json`: it is idempotent, refuses to overwrite without `--force`, and
 leaves every measured field byte-identical.
 
-**What the answer decides.** If the recovered `text_emb_mode` and metric-aware weights match A9's
-arms, four of the six rows in §3 become recomputable immediately from committed files. If they do
-not, that is a three-seed measurement on instrument B and should be costed as one. Either way the
-question is now answerable, and §4.2a-ii's rule stands unchanged: the *artifact* should have carried
-it.
+### 1b. 🚨 RAN 2026-09-09 — the arms do not match, and the answer is worse than either branch
+
+I predicted that if the recovered gates matched A9's, four of the six §3 rows would become
+recomputable. **They do not match, and the recovery closes none of them.** Every gate is a direct
+read (`reports/r11_*.json` now carry a `recovered_config` block on every arm):
+
+| gate | r11 checkpoint | A9's arms | applied at | admissible donor? |
+|---|---|---|---|---|
+| `expr_mode` / `prior_mode` / `decoder_mu_link` / `train_steps` / `layout_sampler` | zinb-flow / correlated / exp / 2400 / grid | same | fit / gen | ✅ agree |
+| `layout_mode` | fitted `field`, generated per arm | `resample` | **generation-time, provably fit-invariant** | ✅ irrelevant to the fit |
+| **`w_autocorr` / `w_profile` / `w_distribution`** | **0 / 0 / 0** | `0` arm: **0 / 0 / 0** | fit | ✅ agree with A9's `0` arm |
+| 🚩 **`text_emb_mode`** | **`lookup`** | **`medcpt`** | fit | ❌ **differs** |
+| 🚩 **`expr_pca_dim`** | **16** | **28** | fit | ❌ **differs** |
+
+**Two fit-time gates apart, so A9's envelope is inadmissible for every r11-derived figure** — and
+`text_emb_mode` is not a gate that can be waved through: §4.2a's own evidence is that on the
+`deep_starmap` `text_emb_mode` gate the two arms' envelopes differ by up to **2.6x** and the worse
+arm **alternates by metric**. Matching on the metric-aware weights alone is not matching.
+
+✅ **What the recovery did settle, and it is not nothing.** Each flagged row moves from *"no
+envelope, and we do not know whether one exists"* to *"no envelope, and here are exactly the two
+gates that would have to agree"* — a determinate negative with a stated remedy, instead of an
+open question. And it made the **within-r11** comparison firmer: all five arms are provably one
+fit differing only in generation-time gates, one of which (`layout_mode`) is asserted fit-invariant
+bitwise across all 96 tensors by `tests/test_select.py::test_layout_mode_does_not_enter_the_fit`.
+R11's *ordering* is a clean within-fit contrast; what it lacks is an across-seed spread, which one
+checkpoint can never supply.
+
+🚨 **And it surfaced two things the envelope question was not looking for**, both in
+`reports/advisor_report.md`: the six-metric table is **not the shipped configuration** (§5 there —
+`lookup` is ablation A3 and `expr_pca_dim=16` is the pilot stand-in), and *"every absolute number in
+this project was produced with [the metric-aware weights] active"* is **backwards** (§6a there —
+`Config` ships them at 0.0 and A9's `05` arm is the only run in the corpus that had them on).
 
 ---
 
@@ -257,13 +285,19 @@ Three things this does and does not do:
 
 ## 3. 🚩 Cannot be recomputed — flagged, not substituted
 
+🚩 **STATUS AFTER THE 2026-09-09 RECOVERY: still six. None closed.** The checkpoint recovery was
+expected to close four of these; it closed none, because the r11 arm differs from A9's on
+`text_emb_mode` and `expr_pca_dim` (§1b). What changed is the *reason* each row is flagged — from
+"no candidate donor is known" to "the one candidate donor is measurably the wrong arm" — and rows
+1–4 now have a stated, costed remedy instead of an open question. Rows 5–6 never had a candidate.
+
 For each: the metric, why no admissible envelope exists, and the one measurement that would supply
 one. **None of these has been given a substitute envelope**, which is the whole point of the
 exercise.
 
 | figure | where | metric / instrument | why it cannot be recomputed | what would fix it |
 |---|---|---|---|---|
-| `field` **3.5x**, `hybrid` **3.2x**, `resample` *"inside"* below the copy floor | close-out §3; advisor §3; `specs/10` §4.5b | `paper_celltype_localization`, instrument B, **one seed** | The `field`/`hybrid` arms have **no across-seed spread at all** — `r11_starmap_layout_modes.json` is `seed: 1` for all five arms. A9 supplies an envelope for `resample` only, on an arm whose `text_emb_mode` is unrecorded | three seeds of the layout-mode comparison on instrument B, or recording r11's arm config and re-using A9's |
+| `field` **3.5x**, `hybrid` **3.2x**, `resample` *"inside"* below the copy floor | close-out §3; advisor §3; `specs/10` §4.5b | `paper_celltype_localization`, instrument B, **one seed** | The `field`/`hybrid` arms have **no across-seed spread at all** — `r11_starmap_layout_modes.json` is `seed: 1` for all five arms. A9 supplies an envelope for `resample` only, on an arm whose `text_emb_mode` is unrecorded | three seeds of the layout-mode comparison on instrument B. ⚠️ **Re-using A9's is now ruled out by measurement** (§1b), not merely unverified |
 | `marker_field_r` **7.4x** below its copy floor | close-out §8.6 | `paper_marker_field_r`, instrument B, one seed | same: one seed, and the arm is the **superseded `hybrid` pilot row** the advisor already withdraws (§5). A9's 0.0596 is the right shape and the wrong arm | as above |
 | boundary-vs-interior gap **0.69x** → **BOUNDARY ELIMINATED** | close-out §8.6; advisor §7b | `paper_marker_field_r`, instrument B, one seed | ⚠️ **the strongest case for flagging, and the reason is that the two candidate divisors disagree.** `t10_marker_field_boundary.json` hard-codes `"envelope": 0.0335`, giving 0.69x. The same −0.0231 gap is **1.56x** against instrument A's `marker_field_r` envelope (0.0148) — *outside* — and **0.39x** against A9's instrument-B `paper_marker_field_r` (0.0596) — *inside*. Neither is admissible: A is the wrong instrument, B is the wrong arm and is fold-aggregated where the effect is **per section** (§4.2d (b) ≥ (a)). **A verdict that flips with the choice of divisor is not a verdict** | three seeds of the shipped arm, read per section |
 | `gene_mean_spearman` **0.0033 off its copy floor, "inside the envelope"** | close-out §8.6 | `paper_gene_mean_spearman` | The metric is **not in `METRIC_NAMES`** and appears in no fixture or instrument-A envelope — the two-`SIX` defect (advisor §5). A7 and A9 do carry it on instrument B (0.0033–0.1193, 0.0301–0.0400) — spanning the claimed deficit — so "inside" is **not established either way** | extract it from A9 once r11's arm is identified |
@@ -322,12 +356,24 @@ span 0.0009 to 0.2894. That is not a 4x error; on the autocorrelation metrics it
 in the direction that **flatters** every clearance. The correction cannot be finished from artifacts
 alone, and §3 is the list of what it is waiting on.
 
-**The cheapest thing that would close most of §3 is one file read, and the command exists**:
-`scripts/t09_recover_checkpoint_config.py runs/pilot/model_exp_2400.pt`, run where the checkpoint
-lives. The `Config` was in that file the whole time (§1a). If the recovered `text_emb_mode` and
-metric-aware weights match A9's arms, four of the six flagged rows become recomputable immediately
-from files already committed; if they do not, that is a three-seed measurement on instrument B and
-should be costed as one.
+⚠️ **The cheapest thing was one file read. It was run on 2026-09-09 and it closed nothing** —
+the r11 arm is `lookup` at `expr_pca_dim=16` where A9 is `medcpt` at 28, so A9's envelope is
+inadmissible for every r11-derived figure (§1b). My prediction that it would close four of six was
+wrong, and the way it was wrong is worth keeping: **I assumed the only gate in question was the one
+the flag was about** — the metric-aware weights, which do match — and did not ask what *else* would
+have to agree. That is §4.2a's own failure mode, committed while writing the correction for it.
+
+**So §3's remaining cost is a measurement, not a lookup**: three seeds of the shipped arm on
+instrument B, at `paper_2_4_6`, on the pinned evaluator. A9 shows the shape of that spend — six
+fits, ~93 and ~57 minutes each.
+
+🚨 **And the recovery's real yield was elsewhere.** Reading the gates out of the checkpoint showed
+that the column this project calls **"v25 shipped" is not the shipped configuration** (`lookup` is
+ablation A3; `expr_pca_dim=16` is the pilot stand-in) and that *"every absolute number was produced
+with the metric-aware weights active"* is **backwards** (`Config` ships them at 0.0). Both are in
+`reports/advisor_report.md` §5 and §6a. Neither is an envelope finding, and neither would have been
+found without asking an envelope question — which is the argument for asking provenance questions
+of artifacts that are not currently in dispute.
 
 ### 5a. The two divisors that would have come back — closed 2026-09-08
 
