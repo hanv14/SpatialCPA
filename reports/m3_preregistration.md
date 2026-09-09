@@ -146,13 +146,16 @@ python scripts/t10_reallocation_table.py --self-check
 # 1. read the baseline's theta distribution; the floor is its MEDIAN (percentile 50)
 python scripts/t10_chain_diagnostic.py \
     --dataset starmap_visual_cortex --load-model runs/chain/shipped_tier1.pt \
-    --layout-sampler grid --report-theta \
+    --layout-sampler grid --match-density --top-k-by real --top-k 32 \
+    --report-theta --emission-ablation --ablation-seed 1 2 3 \
     --out reports/m3_tier1_baseline.md
 
 # 2. the floored refit — substitute the median from step 1 for <FLOOR>.  ~1 h
 python scripts/t10_chain_diagnostic.py --steps 2400 \
     --dataset starmap_visual_cortex --decoder-mu-link exp --layout-sampler grid \
-    --text-emb-mode medcpt --expr-pca-dim 32 --theta-floor <FLOOR> --report-theta \
+    --text-emb-mode medcpt --expr-pca-dim 32 --theta-floor <FLOOR> \
+    --match-density --top-k-by real --top-k 32 \
+    --report-theta --emission-ablation --ablation-seed 1 2 3 \
     --out reports/m3_tier1_floored.md --save-model runs/chain/tier1_thetafloor.pt \
     --fit-checkpoint runs/chain/tier1_thetafloor.ckpt
 
@@ -170,6 +173,13 @@ python scripts/t10_reallocation_table.py \
     --floored-bench  reports/m3_bench_floored.json \
     --out reports/m3_reallocation.md
 ```
+
+⚠️ **`--emission-ablation` is required on both, not optional.** The `sd(log mu)` table this test
+turns on — the N2 block — is produced inside the ablation, so without it the joiner reads NaN for
+every spread and the table comes back empty. On tier-1 the ablation costs about a second. The same
+flags (`--match-density --top-k-by real --top-k 32`) are passed to both arms and are the A1 runs'
+own, so the two are comparable to `reports/a1_tier1.md` as well as to each other — both are vacuous
+on tier-1's 28-gene panel and say so in the provenance block.
 
 ⚠️ Step 2 passes `--expr-pca-dim 32` and lets `specs/10` §0's clamp narrow it to the panel width,
 which is the rule rather than a hand-picked 28. Step 1 is a `--load-model` read and takes its config
