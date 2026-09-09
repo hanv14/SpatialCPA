@@ -1,0 +1,167 @@
+{
+  "run": {
+    "dataset": "deep_starmap",
+    "holdout": "paper_2_4_6",
+    "section": "section_2",
+    "target_z": 30.8,
+    "section_z": 31.499999999999996,
+    "steps": 2400,
+    "seed": 1,
+    "text_channel": "live",
+    "text_emb_mode": "medcpt",
+    "expr_pca_dim": 32,
+    "decoder_mu_link": "exp",
+    "layout_mode": "resample",
+    "layout_sampler": "grid",
+    "calibrated": false,
+    "z_note": null,
+    "plane_note": "--target-z 30.8 is a boundary plane (within 0.5 median spacings of the stack's end): evidence there is one-sided, which T04 measured as a 20-35% reconstruction deficit (R3)"
+  },
+  "density": {
+    "matched": true,
+    "n_target": 30097,
+    "seed": 1,
+    "n_generated": 39327,
+    "n_used": 30097
+  },
+  "panel": {
+    "rule": "real",
+    "top_k": 32,
+    "n_genes": 32,
+    "genes": [
+      "APOD",
+      "AQP1",
+      "CLDN11",
+      "CLIC6",
+      "DKK3",
+      "FOLR1",
+      "GABBR2",
+      "GFAP",
+      "GM5741",
+      "IGF2",
+      "IGFBP2",
+      "KL",
+      "LAMP5",
+      "LBP",
+      "LEF1",
+      "MBP",
+      "NEUROD6",
+      "NPTX1",
+      "NRGN",
+      "OLFR558",
+      "PENK",
+      "PPP1R1B",
+      "PRKCD",
+      "PTGDS",
+      "PVALB",
+      "SATB2",
+      "SPARC",
+      "SULF1",
+      "TMEM72",
+      "TRF",
+      "TTR",
+      "VAMP1"
+    ],
+    "indices": [
+      39,
+      41,
+      157,
+      162,
+      234,
+      300,
+      306,
+      328,
+      343,
+      432,
+      433,
+      478,
+      488,
+      490,
+      493,
+      530,
+      579,
+      608,
+      621,
+      639,
+      687,
+      721,
+      726,
+      744,
+      754,
+      804,
+      875,
+      895,
+      949,
+      967,
+      977,
+      991
+    ]
+  },
+  "stages": [
+    {
+      "stage": "1. prior h0 = GRF at generated xyz",
+      "median_I": 0.9283848452415637,
+      "p25": 0.9253307337602326,
+      "p75": 0.9321057177779691,
+      "n_channels": 64
+    },
+    {
+      "stage": "2. latent h after the flow",
+      "median_I": 0.7857712982745275,
+      "p25": 0.7588189343658651,
+      "p75": 0.8397972871413186,
+      "n_channels": 64
+    },
+    {
+      "stage": "3. decoded mu (before sampling)",
+      "median_I": 0.7965501613283963,
+      "p25": 0.7373989934612126,
+      "p75": 0.8283593305444973,
+      "n_channels": 32
+    },
+    {
+      "stage": "4. sampled counts (rank-normalised)",
+      "median_I": 0.07293503838680945,
+      "p25": 0.01864573250715667,
+      "p75": 0.1872525726573738,
+      "n_channels": 32
+    },
+    {
+      "stage": "REF real counts (rank-normalised)",
+      "median_I": 0.32360673327177697,
+      "p25": 0.28041202164713896,
+      "p75": 0.3993857524370515,
+      "n_channels": 32
+    },
+    {
+      "stage": "REF real latent h1 = encoder(real counts)",
+      "median_I": 0.24145093195519504,
+      "p25": 0.21822144965430015,
+      "p75": 0.35943868477759267,
+      "n_channels": 64
+    }
+  ],
+  "mu_variance": {
+    "generated": {
+      "n_genes_decomposed": 32,
+      "var_shape": 0.5266159176826477,
+      "var_logsize": 0.014713509008288383,
+      "cov": -0.00016559135224839908,
+      "share_shape": 0.9810277874651194,
+      "share_logsize": 0.027971800104383004,
+      "share_shape_bounded": 0.9728120565414429,
+      "sd_log_mu": 0.7253692826382466
+    },
+    "real_latent": {
+      "n_genes_decomposed": 32,
+      "var_shape": 0.23374056816101074,
+      "var_logsize": 0.015782993286848068,
+      "cov": -0.009710631317453599,
+      "share_shape": 1.0090887803001742,
+      "share_logsize": 0.0726355536382364,
+      "share_shape_bounded": 0.9366275072097778,
+      "sd_log_mu": 0.46627399024454724
+    },
+    "var_log_mu_ratio_gen_over_real": 1.9167653542302188
+  }
+}
