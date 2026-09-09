@@ -170,6 +170,15 @@ on tier-1 the panel rule was a no-op. Tier-1's number is an unselected full-pane
 variance in the structured mean against real tissue's 62.2 %. Measured here, panel-matched,
 density-matched, on the shipped `exp` link:
 
+> 🚨 **WITHDRAWN 2026-09-09 (`reports/a1_escalation_review.md` §3).** R12's claim is about
+> **counts** — *"only 9-19% of the emitted count variance survives as between-cell structure"* — and
+> the bounded share used here decomposes `Var(log mu)` into its latent-driven and size-factor parts,
+> which never touches the sampling noise. Measured model-free on the shipped arm, the count-level
+> structured share is **10.4%** for the model against **>= 42.5%** for the tissue on `deep_starmap` —
+> inside R12's own range. **R12 stands.** What was refuted is a differently-defined quantity that
+> shares its name because `t09_structured_share.py` implements the decoder-internal one.
+
+
 | bounded structured share | generated | real latent |
 |---|---|---|
 | tier-1 | **99.8 %** | 99.7 % |

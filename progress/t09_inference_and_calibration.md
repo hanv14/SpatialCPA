@@ -8320,3 +8320,71 @@ parses and all three refusal paths fire with the right message; `--self-check` *
 covering `knn_mean_field` (shape, row-stochasticity preserving column means, non-negativity,
 determinism, and that smoothing *raises* `I`). Nothing touching torch was executed: the checkpoint
 load, the decode arms and the draws are unrun here.
+
+---
+
+## 2026-09-09 (c) — N1–N4 read out: the mechanism is located, and R12 is withdrawn from refutation
+
+**A1b came back UNRESOLVED**, exactly as `a1_escalation_preregistration.md` §4 predicted. Per-seed
+`R` = +0.29, +0.33, +0.28 — two seeds DOES NOT RECOVER, one UNINFORMATIVE, so the stability override
+fires and the decision table returns **row 5 again**. N5 is the escalation. A1a is DOES NOT RECOVER
+stably (−0.37/−0.39/−0.37); A1c RECOVERS stably (+1.95..+1.97), so row 1 stays refuted. The tier-1
+control passes at three seeds. **§10 remains SUSPENDED.**
+
+**N2 answered, and it locates the mechanism.** The decoder's `mu` head produces `sd(log mu)`
+**0.6728** on tier-1 and **0.6725** on `deep_starmap` — 28 genes against 1017, three decimals — while
+the tissue's model-free bracket is **0.72–0.94** (tier-1) and **1.10–1.37** (deep). Pre-registered
+reading: **SUPPORTED on deep** (lower bound 1.54x the decoder, whole bracket 1.54–1.93x),
+**UNTESTED STILL on tier-1** (0.99x–1.30x). The deep pass clears the 1.5x line by only 3 %, which is
+acceptable here for a structural reason and not a convenient one: **N2's quantities carry no draw
+randomness** — `mu_oracle` is a deterministic kNN mean, the real counts are fixed — so unlike A1b
+there is no seed noise to straddle the line, and the criterion was placed on the pessimistic end of
+the bracket by design. The estimator is verified on the real data too: the A1c check row recovers
+`mu_oracle`'s own spread from Poisson draws of it, 0.7162 vs 0.7165 and 1.1005 vs 1.0994.
+
+**Two facts that together name the failure.** (1) It is not the latent: on deep, `h1` is faithful
+(`I(h1)` +0.3171 against real counts +0.3123) and decoding it gives **less** `mu` spread (0.6035)
+than decoding the model's own over-smooth latent (0.6725). (2) It is not a shortage of variance: the
+model's implied total is **1.4131** against the tissue's **1.3699** — slightly more. The variance is
+present and ~90 % of it sits in `theta`/`pi`, which is spatially unstructured, instead of in `mu`,
+which is not. The ZINB likelihood is near-indifferent to that split at the margin, which is R4's
+trade with the mechanism measured rather than inferred.
+
+**Consequence for §10, and it lowers its cost:** the two halves are one constrained move, not two
+independent ones. The total variance is already right, so bounding `theta` forces the likelihood to
+put it into `mu` — **half 1 may deliver half 2 for free**, and that is a one-hour tier-1 experiment
+rather than a 3–4 day redesign. It still needs its own pre-registration and it does not lift the
+suspension.
+
+🚨 **R12's refutation is WITHDRAWN.** Last round I recorded *"R12 is refuted on the shipped arm"* on
+the strength of the bounded share `Var(shape)/(Var(shape)+Var(log s))` reading 97.4 % / 93.3 %. That
+statistic decomposes `Var(log mu)` into latent-driven and size-factor parts and **never touches the
+sampling noise**. R12's claim is about counts — *"only 9–19 % of the emitted count variance survives
+as between-cell structure"*. Computed model-free from N2, the count-level structured share is
+**10.4 %** for the model against **>= 42.5 %** for the tissue on `deep_starmap`: **inside R12's own
+range**. R12 stands, on an estimator that does not pass through the decoder. This is the second time
+in three rounds I read a statistic by its name rather than its definition — gate 2 was the first —
+and the rule it earns is: **a refutation must restate the claim in the claim's own terms before it
+counts.**
+
+**The deficit keeps shrinking as confounds come out**: 4.44x (`section_2`, z = 30.8) → 3.06x
+(`section_4`, z = 68.6) → **2.71x** (`section_4` at its own z = 73.5, +0.1154 against +0.3123). None
+of the three is a modelling change. 2.71x is the figure to quote, with the caveat that the trend
+means more confounds may remain and the underlying deep fit is still the one whose alarm fired last.
+
+**N1 is half-done and published a contradiction.** The report line now reads the `text_vecs` buffer
+and correctly says "live, medcpt, 28/28 non-zero — from the checkpoint"; the **console** line in
+`build_embeddings` still prints "ZERO VECTORS" because it fires at construction, before
+`load_state_dict`. One run, two artifacts, opposite claims — §4.2k's fifth instance, all mine.
+
+**Also recorded:** `chain_shipped_review.md` §6's prediction that the tissue's `sd(log mu)` would be
+`>= 2` (3–5x the decoder) was **too large**; measured 1.5–1.9x. Direction and criterion hold on deep,
+the magnitude did not. And tier-1's chain reproduced bitwise for a third time, across a code change —
+a real determinism check on `--load-model`.
+
+Next, in order: fix the console line; run N5 (pre-registered, minutes); pre-register and run the
+reallocation test on tier-1 (~1 h) — which is §10 half 1 and a candidate for the gate that could lift
+the suspension; add the pinned `bench3` `paper_*` metrics beside Moran's `I` before any repair is
+judged, since the over-smoothing correction proved `I` alone can be raised by making the model worse;
+then B1, with its expected value revised **down** — `ell` fixes the latent and the latent is not the
+bottleneck. Full reasoning in `reports/a1_escalation_review.md`.
