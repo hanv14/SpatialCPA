@@ -8045,3 +8045,63 @@ did not drive development); v25 characterised on ablation A3 rather than its shi
 (A9 already fixes this at zero cost, and the negative is *stronger* there); and asymmetric rigour,
 which generalises the first two. **The one thing that would make it dishonest is spending v25's audit
 as credibility while exempting v20/v21 from the audit** — §4.2j one level up, on the paper itself.
+
+### Emission-repair design comparison — and the premise it does not survive (2026-09-09)
+
+Report: **`reports/emission_repair_options.md`**. Design work only; nothing built.
+
+🚨 **The brief's headline chain is the superseded `softplus` arm.** `reports/chain_2400.md` (and
+`_calibrated`) is the arm the mu-link candidate was run *against*. `t10_chain_diagnostic.py` carries
+`--decoder-mu-link {softplus,exp}` documented as *"T10 candidate 1: softplus compresses dynamic
+range"*; `Config.decoder_mu_link` has defaulted to **`exp`** since 2026-08-21; and the record states
+the swap as **+0.1297 → +0.4782** against tissue's +0.4635. On the shipped link the same step reads
+**0.9008 → 0.5253** (`chain_2400_explink.md`) and **0.9098 → 0.5408** (`chain_2400_grid.md`) —
+retention **60.5 / 61.0 %** against real tissue's **79.8 / 81.1 %**, with the generated counts *more*
+autocorrelated than the real section's. So *"one operation destroys the result"* describes a link
+this project stopped shipping a month ago.
+
+🚨 **And "0.09–0.19 against 0.62" is a cross-panel comparison the record itself rejects.** The
+0.09–0.19 is `deep_starmap`'s 1017 genes, most carrying no spatial signal; the 0.62 is tier-1's
+28-gene marker panel where every gene is structured by construction. `progress/` names this error
+against its own voided run *and* against the record's numbers: *"The panel-transfer problem that
+voided the previous run applies to the record's numbers too."*
+
+**The panel-matched failure that does exist**: `deep_starmap`, exp link, top-32 structured kept
+genes — model I **0.071–0.097** against real **0.283–0.291**, retention **25–34 %**. Tier-1 at exp
+shows ~103 %, which the record forbids quoting as a shipped-decoder property. **No measurement
+separates dataset from saved-model artifact**, and the record already names that as the next step.
+⚠️ Also unremarked until now: every chain artifact runs at `expr_pca_dim=16`, the pilot stand-in.
+
+**An arithmetic bound rules out two candidates from data already held.** With `s = V/(V+N)` and R4
+(v)'s decomposition (overdispersion 0.568–0.614, Poisson 0.290–0.336, ZI 0.080–0.101), scaling the
+noise by `f` gives `s' = s/(s + f(1-s))`. Removing overdispersion entirely (`f = 0.41`) reaches
+0.194–0.364; **pure Poisson (`f = 0.31`) reaches 0.242–0.431**. Reaching 0.62 needs `f = 0.061–0.144`
+— **2.2× to 5.6× below the Poisson floor**, i.e. a Fano factor near 0.3. So **candidate A (theta
+prior/floor) and candidate C (Poisson + dispersion floor) cannot be sufficient**, by algebra, not by
+opinion. Equivalently: with noise at Poisson, **`Var(mu)` must rise 2.2–5.1×** — and the independent
+dynamic-range statistic (`sd(log mu)` 0.777 vs tissue 1.213, a variance ratio of 2.44×) agrees in
+order of magnitude. Two routes, same answer.
+
+**Candidates costed** (A–D as briefed, plus three the brief omits): **E** raise `Var(mu)` — the
+binding constraint, and nothing in A–D targets it except B if B is specified against `Var(mu)` rather
+than the share; **F** emit the conditional mean instead of counts — a framing decision, not a repair,
+and `duplicate_profile_rate` exists to catch it; **G** replace the ZINB likelihood with a proper
+scoring rule — the only candidate aimed at R4's stated root cause.
+
+⚠️ **B and D each carry A9's gaming surface.** B penalises a *variance-normalised* ratio, which can
+be satisfied by shrinking the denominator — exactly what drove `variance_ratio` to 0.08–0.17 while
+`spatial_ratio` rose. D breaks the conditional independence the retention statistic is *defined*
+under, so it can raise retention with no per-cell gain; both need that failure mode pre-registered as
+the expected one, with fidelity controls reported beside the target.
+
+**Recommended order: two measurements before any design.** (0) re-run the chain on the shipped
+configuration — exp link, `expr_pca_dim=28`, GT-matched density, both datasets, one panel definition
+— generation only, no fits; (1) measure `Var(mu)` against the real latent's per gene, hours. Then A
+as a *cheap test of the diagnosis*, B as the first candidate fix, D and G after.
+
+**Honest view, recorded because it was asked for plainly**: the 0.09→0.62 gap is not a measured gap
+and I would not fund work against it. Against the real 25–34 % gap, **no single candidate closes it**
+— the noise side is bounded at ~0.43 and the target needs `Var(mu)` to rise as well, so the fix is a
+combination (bound the dispersion **and** raise `Var(mu)`), which is a T06 redesign and should be
+costed as one. And nothing should start before step 0: weeks of design against a superseded arm is
+the expensive version of the mistake this project has spent five rounds catching cheaply.
