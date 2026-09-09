@@ -8584,3 +8584,67 @@ amend M3's pre-registration; P3 M3 at floor 2.599; P4 M3 at 5.165 if the dose co
 **P1 and P2 come before P3**, both cheap, and both change what P3 means. Full reasoning in
 `reports/n5_and_m3_review.md`. **§10 stays suspended** — N5 answered the mechanism question it was
 asked and did not return a readable answer to the decision table, which still reads row 5 for `A1b`.
+
+---
+
+## 2026-09-09 (g) — P1 and P2 built; the B1 reversal and the cancelling-defects table filed
+
+**P1 — the emission-free ceiling.** `4p. counts ~ Poisson(mu) — emission noise removed`, a new chain
+stage. It belongs at the **generated** cells, not in the ablation: `mu` lives there, and every A1 arm
+is at the real ones. Drawn on the panel only (Moran's `I` is per column, so selecting before or after
+the draw is identical) and at the run seed like stage 4, so the two differ in the emission and in
+nothing else. It is the ceiling any repair to `theta`/`pi` can reach **on the model as it actually
+is** — the first such bound in the campaign; every previous arm either used the tissue's mean field
+or kept the emission. Predicted before measuring, in `n5_and_m3_review.md` §7: **+0.7775** tier-1 and
+**+0.4116** deep, i.e. 1.68x and 1.32x the tissue.
+
+**The cancelling-defects explanation now prints beside the numbers**, not only in a report the reader
+may not have — `specs/10` §4.2f-i's lesson applied to an explanation rather than to an alarm. When a
+run comes back with `I(model counts)` above its tissue reference, `cancelling_defects_block` emits the
+latent's smoothness ratio, `mu`'s spread against the tissue's model-free bracket, and the emission's
+direction, from the run's own rows so it cannot disagree with the table above it. Stage 4p's ceiling
+prints either way. Both branches are asserted in `--self-check`, because report-generating code that
+silently produces nothing is what §4.2k is about.
+
+**P2 — M3's pre-registration amended before either arm ran**, with an AMENDED banner stating that
+both corrections come from numbers already on the table when the first version was written.
+
+* **`I` rising is not the goal, and on tier-1 it is the wrong direction.** The old outcome 4 would
+  have reported REALLOCATION WORKS for a run that moved the model *away* from the tissue. The benefit
+  statistic is now `d abs(I - I_real)`; **tier-1 runs as `--role mechanism`, in which it is reported
+  and is not a criterion** (§3c). Success on tier-1 is `sd(log mu)` rising from 0.6728 toward the
+  tissue's bracket [0.7165, 0.9438] without passing its upper bound — a new **OVERSHOT** outcome,
+  since more spread than the tissue has is not a repair.
+* **The dose condition is a precondition, in the outcome table** (§3d). CAPACITY-LIMITED closes §10,
+  so it is not declarable from one modest intervention: a median floor binds on 50 % of pairs and
+  moves them up ~1.9x while leaving the rest untouched, and a null there has two explanations. Until
+  the 75th-percentile floor (5.165) has also run, the verdict is **UNDER-DOSED**, which is not a
+  result and closes nothing. `m3_verdict` refuses CAPACITY-LIMITED without `--escalated`.
+
+The floor is **2.599** and binds on 50 % by construction, so the null-experiment guard passes without
+a further read. Step 5 of §6 is the escalation command, run only if step 4 reads UNDER-DOSED.
+
+**🔄 The B1 reversal, recorded as a reversal.** *What I read*: a faithful latent decodes to **less**
+`mu` spread (0.6035) than the model's over-smooth one (0.6725), so the latent is not the bottleneck.
+*What that covers*: `mu`'s **spread** — still true, the `mu` head is not spread-limited by its latent.
+*What I now read*: the latent's **smoothness** is a different quantity — `I(h)` +0.7782 against the
+tissue's +0.3171, **2.45x** on deep and 1.28x on tier-1 — and nothing in the spread measurement bears
+on it. *The correction*: B1 is not a 3.3 h purchase of trustworthy `theta`/`pi`; it is the only
+handle on the second of two coupled defects, and its priority goes **up**. Filed both where B1 was
+first costed (`chain_shipped_review.md` §9) and where I revised it down
+(`a1_escalation_review.md` §6.5). The error was conflating two properties of one object, measured by
+different statistics, and reading one measurement as if it covered both.
+
+**The cancelling-defects table is now in `chain_shipped_review.md` §4a**, where a reader meets
+tier-1's numbers rather than only in the review that found it. It states the whole of tier-1's
+apparent health: the latent is 1.28x too smooth (pushes `I` up), the emission adds 40.7 % of
+retention in unstructured noise (pushes `I` down), and **the two cancel to within 11 %**. Both
+directions are measured, not inferred — a faithful latent drops `I` to +0.4053, removing the
+emission's noise raises it to a predicted +0.7775 — so **repairing either alone moves `I` away from
+the tissue.**
+
+**Verification.** No torch. `ruff` clean; `pytest tests/test_config.py --noconftest` 7 passed;
+`t10_chain_diagnostic --self-check` **47/47** (7 new, covering both branches of the explanation block
+and its empty case); `t10_reallocation_table --self-check` **13/13**, including that the same arm
+reads MECHANISM CONFIRMED in one role and NO BENEFIT in the other, which is the correction P2 exists
+for. Stage 4p and the amended verdict are unexecuted here.

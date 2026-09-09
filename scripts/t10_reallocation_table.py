@@ -108,16 +108,39 @@ def bench_metrics(bench: dict) -> dict[str, float]:
     return {m: rows[0]["matched"].get(m) for m in METRICS}
 
 
-def m3_verdict(base: dict, floor: dict, binding: float) -> tuple[str, list[str]]:
+def m3_verdict(
+    base: dict,
+    floor: dict,
+    binding: float,
+    *,
+    i_real: float,
+    bracket: tuple[float, float],
+    role: str,
+    escalated: bool,
+) -> tuple[str, list[str]]:
     """Apply `reports/m3_preregistration.md` §3's criteria. Returns the verdict and its reasons.
 
-    Four outcomes, all reachable, and the third is **not** a failure of the experiment — it is a
-    stronger finding than the first, because it says the objective is not the constraint.
+    Two things this encodes that the first version did not, both corrected before M3 ran
+    (`reports/n5_and_m3_review.md` §4):
+
+    **`I` rising is not the goal.** On tier-1 the model already sits *above* the tissue
+    (+0.5134 against +0.4635), so `d I > 0` there is movement **away** from it — and the
+    emission-free ceiling is ~+0.78, so every point a `theta` floor can reach increases the
+    distance. The benefit statistic is therefore `d abs(I - I_real)`, which is signed correctly on
+    both datasets, and it is a **criterion only in the `benefit` role**. Tier-1 runs as
+    `mechanism`: it has a converged fit and no deficit, so it can answer *does flooring `theta`
+    move variance into `mu`* and nothing else.
+
+    **CAPACITY-LIMITED is not declarable from one dose.** It closes §10, so it requires
+    ``escalated`` — the 75th-percentile floor having been run too. A median floor binds on half
+    the pairs and moves them up about 1.9x; "the dose was too small" is a live explanation for a
+    null at that dose, and it is a different claim from "the head cannot".
     """
     reasons: list[str] = []
     d_sd = floor["sd_log_mu"] - base["sd_log_mu"]
     d_i = floor["i_counts"] - base["i_counts"]
     d_share = floor["share"] - base["share"]
+    d_distance = abs(floor["i_counts"] - i_real) - abs(base["i_counts"] - i_real)
     worst = min(
         (
             (floor["bench"][m] - base["bench"][m], m)
@@ -127,24 +150,42 @@ def m3_verdict(base: dict, floor: dict, binding: float) -> tuple[str, list[str]]
         ),
         default=(float("nan"), "—"),
     )
+    lo, hi = bracket
     reasons.append(
-        f"`sd(log mu)` {base['sd_log_mu']:.4f} -> {floor['sd_log_mu']:.4f} ({d_sd:+.4f})"
+        f"`sd(log mu)` {base['sd_log_mu']:.4f} -> {floor['sd_log_mu']:.4f} ({d_sd:+.4f}); "
+        f"the tissue's bracket is [{lo:.4f}, {hi:.4f}]"
     )
     reasons.append(f"`I(counts)` {base['i_counts']:+.4f} -> {floor['i_counts']:+.4f} ({d_i:+.4f})")
+    reasons.append(
+        f"distance to the tissue `abs(I - {i_real:+.4f})` "
+        f"{abs(base['i_counts'] - i_real):.4f} -> {abs(floor['i_counts'] - i_real):.4f} "
+        f"({d_distance:+.4f}) — "
+        + ("a criterion" if role == "benefit" else "reported, not a criterion")
+    )
     reasons.append(f"structured share {base['share']:.1%} -> {floor['share']:.1%} ({d_share:+.1%})")
     reasons.append(f"worst `paper_*` move {worst[0]:+.4f} on `{worst[1]}`")
-    reasons.append(f"floor binds on {binding:.1%} of (cell, gene) pairs")
+    reasons.append(
+        f"floor binds on {binding:.1%} of (cell, gene) pairs; role={role}, "
+        f"75th-percentile escalation {'RUN' if escalated else 'NOT RUN'}"
+    )
 
     if binding < 0.05:
         return "NULL EXPERIMENT — the floor bound on almost nothing", reasons
-    fidelity_held = math.isnan(worst[0]) or worst[0] >= -FIDELITY_TOLERANCE
     if d_sd < 0.05:
+        if not escalated:
+            return (
+                "UNDER-DOSED — capacity-limited is NOT declarable until the 75th-percentile "
+                "floor has run",
+                reasons,
+            )
         return "CAPACITY-LIMITED — the mu head, not the objective", reasons
-    if d_i <= 0.0:
-        return "MANUFACTURING UNCONDITIONED VARIANCE", reasons
-    if not fidelity_held:
-        return "REFUSED — I rose while the benchmark fell", reasons
-    return "REALLOCATION WORKS", reasons
+    if floor["sd_log_mu"] > hi:
+        return "OVERSHOT — mu's spread passed the tissue's upper bound", reasons
+    if not (math.isnan(worst[0]) or worst[0] >= -FIDELITY_TOLERANCE):
+        return "HARMED — a pinned benchmark metric fell past the tolerance", reasons
+    if role == "benefit" and d_distance >= 0.0:
+        return "NO BENEFIT — I did not move toward the tissue", reasons
+    return ("MECHANISM CONFIRMED" if role == "mechanism" else "REALLOCATION WORKS"), reasons
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -153,6 +194,21 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--floored-chain")
     ap.add_argument("--baseline-bench")
     ap.add_argument("--floored-bench")
+    ap.add_argument(
+        "--role",
+        default="mechanism",
+        choices=["mechanism", "benefit"],
+        help="mechanism (the default, and what tier-1 can answer): success is sd(log mu) moving "
+        "into the tissue's bracket, and the distance to the tissue is reported but is not a "
+        "criterion, because tier-1's model already sits above the tissue. benefit: the distance "
+        "becomes a criterion. See m3_preregistration.md §3.",
+    )
+    ap.add_argument(
+        "--escalated",
+        action="store_true",
+        help="the 75th-percentile floor has also been run. Required before CAPACITY-LIMITED may "
+        "be declared, since that outcome closes §10 and a median floor is a modest dose.",
+    )
     ap.add_argument("--out", default="reports/m3_reallocation.md")
     ap.add_argument(
         "--self-check",
@@ -194,15 +250,35 @@ def main(argv: list[str] | None = None) -> int:
     floor = arm(args.floored_chain, args.floored_bench)
     theta = (floor["chain"].get("theta") or {}) or (base["chain"].get("theta") or {})
     binding = float(theta.get("fraction_at_or_below_floor", float("nan")))
-    verdict, reasons = m3_verdict(base, floor, binding)
-
     i_real = stage_i(base["chain"], "REF real counts")
+    bracket = (
+        spread(base["chain"], "mu_oracle"),
+        spread(base["chain"], "real counts (Poisson-deconvolved)"),
+    )
+    if not all(math.isfinite(x) for x in (i_real, *bracket)):
+        raise SystemExit(
+            "the baseline chain sidecar carries no `REF real counts` stage or no N2 spread table, "
+            "so neither the distance to the tissue nor its sd(log mu) bracket can be read. Re-run "
+            "the baseline with --emission-ablation (m3_preregistration.md §6)."
+        )
+    verdict, reasons = m3_verdict(
+        base,
+        floor,
+        binding,
+        i_real=i_real,
+        bracket=bracket,
+        role=args.role,
+        escalated=args.escalated,
+    )
     lines = [
         "# M3 — the reallocation test",
         "",
-        f"Baseline against `decoder_theta_floor = {floor['theta_floor']:g}`. Criteria fixed in",
+        f"Baseline against `decoder_theta_floor = {floor['theta_floor']:g}`, role **{args.role}**."
+        " Criteria fixed in",
         "`reports/m3_preregistration.md` before either arm ran; applied here by `m3_verdict`,",
-        "not by the reader.",
+        "not by the reader. In the `mechanism` role the distance to the tissue is **reported and",
+        "is not a criterion**, because a dataset whose model already sits above the tissue cannot",
+        "answer whether a repair helped.",
         "",
         f"## Verdict: **{verdict}**",
         "",
@@ -260,6 +336,10 @@ def main(argv: list[str] | None = None) -> int:
                 "verdict": verdict,
                 "reasons": reasons,
                 "binding_fraction": binding,
+                "role": args.role,
+                "escalated": bool(args.escalated),
+                "i_real": i_real,
+                "bracket": list(bracket),
                 "baseline": {k: v for k, v in base.items() if k != "chain"},
                 "floored": {k: v for k, v in floor.items() if k != "chain"},
             },
@@ -283,24 +363,66 @@ def _self_check() -> int:
         }
 
     base = arm(0.70, 0.10, 0.10, 0.60)
+    kw = {"i_real": 0.30, "bracket": (0.72, 0.95), "role": "mechanism", "escalated": True}
     cases = [
-        ("REALLOCATION WORKS", arm(0.95, 0.20, 0.30, 0.60), 0.40),
-        ("CAPACITY-LIMITED — the mu head, not the objective", arm(0.71, 0.10, 0.10, 0.60), 0.40),
-        ("MANUFACTURING UNCONDITIONED VARIANCE", arm(0.95, 0.09, 0.30, 0.60), 0.40),
-        ("REFUSED — I rose while the benchmark fell", arm(0.95, 0.20, 0.30, 0.50), 0.40),
-        ("NULL EXPERIMENT — the floor bound on almost nothing", arm(0.95, 0.20, 0.30, 0.60), 0.01),
+        ("MECHANISM CONFIRMED", arm(0.90, 0.20, 0.30, 0.60), 0.40, kw),
+        (
+            "CAPACITY-LIMITED — the mu head, not the objective",
+            arm(0.71, 0.10, 0.10, 0.60),
+            0.40,
+            kw,
+        ),
+        (
+            "UNDER-DOSED — capacity-limited is NOT declarable until the 75th-percentile floor "
+            "has run",
+            arm(0.71, 0.10, 0.10, 0.60),
+            0.40,
+            {**kw, "escalated": False},
+        ),
+        (
+            "OVERSHOT — mu's spread passed the tissue's upper bound",
+            arm(1.10, 0.20, 0.30, 0.60),
+            0.40,
+            kw,
+        ),
+        (
+            "HARMED — a pinned benchmark metric fell past the tolerance",
+            arm(0.90, 0.20, 0.30, 0.50),
+            0.40,
+            kw,
+        ),
+        (
+            "NULL EXPERIMENT — the floor bound on almost nothing",
+            arm(0.90, 0.20, 0.30, 0.60),
+            0.01,
+            kw,
+        ),
     ]
-    for want, floored, binding in cases:
-        got, _ = m3_verdict(base, floored, binding)
+    for want, floored, binding, kwargs in cases:
+        got, _ = m3_verdict(base, floored, binding, **kwargs)
         checks.append((f"m3_verdict returns {want.split(' —')[0]}", got == want))
+
+    benefit = {**kw, "role": "benefit"}
+    # i_real 0.30, baseline I 0.10 -> distance 0.20. Moving to 0.25 shrinks it, to 0.05 grows it.
+    toward, _ = m3_verdict(base, arm(0.90, 0.25, 0.30, 0.60), 0.40, **benefit)
+    away, _ = m3_verdict(base, arm(0.90, 0.05, 0.30, 0.60), 0.40, **benefit)
+    # the SAME arm that moved away reads as a pass in the mechanism role, which is the point
+    away_mech, _ = m3_verdict(base, arm(0.90, 0.05, 0.30, 0.60), 0.40, **kw)
     checks += [
+        ("in the benefit role, moving toward the tissue passes", toward == "REALLOCATION WORKS"),
+        ("and moving away from it does not", away.startswith("NO BENEFIT")),
+        (
+            "while the mechanism role reads that same arm as confirmed — the correction that "
+            "stops tier-1 scoring a move away from the tissue as a win",
+            away_mech == "MECHANISM CONFIRMED",
+        ),
         (
             "the null-experiment check comes FIRST, so a bound-on-nothing win is not a win",
-            m3_verdict(base, arm(0.95, 0.20, 0.30, 0.60), 0.01)[0].startswith("NULL"),
+            m3_verdict(base, arm(0.90, 0.20, 0.30, 0.60), 0.01, **kw)[0].startswith("NULL"),
         ),
         (
             "a fidelity drop inside the tolerance does not refuse",
-            m3_verdict(base, arm(0.95, 0.20, 0.30, 0.59), 0.40)[0] == "REALLOCATION WORKS",
+            m3_verdict(base, arm(0.90, 0.20, 0.30, 0.59), 0.40, **kw)[0] == "MECHANISM CONFIRMED",
         ),
         (
             "structured_share is CV2(mu)/CV2(counts), not a ratio of sds",

@@ -234,6 +234,28 @@ with a latent 1.28x too smooth. **Any repair must be judged on `I` *and* on the 
 
 ### 6.5 B1, with its expected value revised down
 
+> ### 🔄 REVERSED 2026-09-09 — B1's value was under-read, and the reading conflated two quantities
+>
+> **What I read.** A1 showed `decode(h1)`, the decoder applied to a *faithful* latent, producing
+> **less** `mu` spread (0.6035) than `decode(h)` on the model's own over-smooth latent (0.6725). I
+> took that as settling that the latent is not the bottleneck, and revised B1 down to *"it buys
+> trustworthy deep `theta`/`pi` and nothing else."*
+>
+> **What that measurement actually covers.** `mu`'s **spread** — `sd(log mu)`, how far apart the
+> per-cell means are. It is a statement about the decoder's output range, and it is still true: the
+> `mu` head is not spread-limited by its latent.
+>
+> **What I now read.** The latent's **smoothness** is a different quantity: `I(h)` = +0.7782 against
+> the tissue's `I(h1)` = +0.3171, so the model's latent is **2.45x more spatially autocorrelated
+> than the tissue's** on `deep_starmap` (1.28x on tier-1). Nothing in the spread measurement bears
+> on it. `ell` — fitted on tier-1 and applied unchanged to `deep_starmap` — is a plausible cause,
+> and B1 is the only test of it.
+>
+> **The correction.** B1 is not a 3.3 h purchase of trustworthy `theta`/`pi`. It is **the only
+> handle anyone has on the second of two coupled defects** (§4a below), and its priority goes **up**,
+> not down. The error was conflating spread with smoothness — two properties of the same object,
+> measured by different statistics, and one measurement was read as if it covered both.
+
 **M5 — B1** (`ell` refit on `deep_starmap`, ~3.3 h). Still needed: the deep checkpoint's spatial alarm
 fired at its last step, so every `theta`/`pi` conclusion on that dataset is provisional. But §4 has
 changed what it can be expected to do — **`ell` fixes the latent, and the latent is not the

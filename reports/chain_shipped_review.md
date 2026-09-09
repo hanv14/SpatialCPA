@@ -174,6 +174,31 @@ on tier-1 the panel rule was a no-op. Tier-1's number is an unselected full-pane
 
 ---
 
+### 4a. Why tier-1 read healthy for three rounds — two defects that cancel
+
+This is the explanation for every tier-1 number above, and it is why "1.11x the tissue" survived
+three rounds of review before anything caught it.
+
+| defect | tier-1 | `deep_starmap` | direction on `I` |
+|---|---|---|---|
+| the latent is too smooth | **1.28x** the tissue's (`I(h)` +0.8011 vs `I(h1)` +0.6253) | **2.45x** (+0.7782 vs +0.3171) | pushes `I` **up** |
+| `mu`'s spread is too narrow | 0.6728 against the tissue's bracket [0.7165, 0.9438] | 0.6725 against **[1.0994, 1.3699]** | — |
+| the emission adds spatially independent noise | `theta`, 40.7 % of retention; `pi` ~0 | `theta` **and** `pi`, 65.6 % | pushes `I` **down** |
+| **net** | **+0.5134 vs +0.4635 — 1.11x over** | **+0.1154 vs +0.3123 — 0.37x under** | |
+
+**On tier-1 the two errors cancel to within 11 %.** That is the whole of tier-1's apparent health:
+not fidelity, and not a reconstruction result. Both directions are measured, not inferred —
+
+* give the model a **faithful latent** and keep the emission: `I` **falls** to +0.4053 (tier-1) and
+  +0.0426 (deep), *worse* than the model's own on deep;
+* remove the **emission's noise** and keep the latent: `I` **rises**, predicted +0.7775 and +0.4116,
+  overshooting the tissue by 1.68x and 1.32x.
+
+**So repairing either one alone moves `I` away from the tissue.** Any repair has to be judged on
+whether it moves the model *toward* the tissue — which is why `m3_preregistration.md` §3c now uses
+`d abs(I - I_real)` rather than `d I`, and why tier-1 can only test a mechanism, never a benefit.
+The chain diagnostic prints this beside the numbers whenever a run comes back above its tissue.
+
 ## 5. Two entries in the record are settled by these runs
 
 **R12 is refuted on the shipped arm.** R12 says the decoder carries 15.3 % of its between-cell
@@ -309,6 +334,14 @@ with a single forward pass, and every design decision downstream depends on whic
 
 **B1 is the highest-value fit in the plan**, and I would not run any of §10's redesign fits before it.
 Fitting `ell` per dataset is not a design change — it is what T03 exists for, and the run bypassed it.
+
+> 🔄 **This assessment was revised DOWN in `a1_review.md` §8 and is now REVERSED back.** The
+> revision read A1's finding that a *faithful* latent decodes to **less** `mu` spread (0.6035) than
+> the model's own (0.6725) as settling that the latent is not the bottleneck. That measurement is
+> about `mu`'s **spread** and is still true. The latent's **smoothness** is a different quantity —
+> `I(h)` +0.7782 against the tissue's +0.3171, **2.45x** — and nothing in the spread measurement
+> bears on it. `ell` is the only handle on it, so B1's priority stands as written here. Full
+> reversal in `a1_escalation_review.md` §6.5.
 
 ### Tier C — reporting and process, no compute
 

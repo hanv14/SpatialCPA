@@ -454,6 +454,86 @@ def theta_report(
     return out
 
 
+def cancelling_defects_block(
+    rows: list[dict], decomposition: dict[str, float], mu_spread: list[dict]
+) -> list[str]:
+    """Why a generative model can sit **above** real tissue on Moran's I — beside the number.
+
+    Tier-1 read healthy for three rounds on exactly this: the latent is too smooth, which pushes
+    ``I`` up; the emission adds spatially independent noise, which pushes it down; and on that
+    dataset the two cancel to within 11 %. A number at or above the tissue's therefore says the
+    two errors cancel, **not** that either is right — and repairing one of them alone moves ``I``
+    *away* from the tissue, in whichever direction that one was wrong.
+
+    Built entirely from the run's own rows, so it cannot disagree with the table above it, and
+    printed here rather than left to a report the reader may not have — ``specs/10`` §4.2f-i's
+    lesson applied to an explanation rather than to an alarm.
+
+    Returns the markdown lines, or ``[]`` when the run lacks the stages to say anything.
+    """
+
+    def find(prefix: str) -> float | None:
+        for row in rows:
+            if str(row["stage"]).startswith(prefix):
+                return float(row["median_I"])
+        return None
+
+    i_model, i_real = find("4. sampled counts"), find("REF real counts")
+    i_h, i_h1 = find("2. latent h"), find("REF real latent")
+    i_ceiling = find("4p.")
+    if i_real in (None, 0.0):
+        return []
+
+    bracket = {
+        row["quantity"].split(" (")[0]: row["sd_log_mu"]
+        for row in mu_spread
+        if "bound" in str(row.get("quantity", ""))
+    }
+    lower, upper = bracket.get("mu_oracle"), bracket.get("real counts")
+
+    out: list[str] = []
+    if None not in (i_model, i_h, i_h1) and i_model > i_real and i_h1:
+        out += [
+            "",
+            "## Why the model sits ABOVE the tissue here, and why that is not fidelity",
+            "",
+            f"`I(model counts)` = **{i_model:+.4f}** against the real section's **{i_real:+.4f}** "
+            f"— {i_model / i_real:.2f}x. That is **not** a reconstruction result. Two defects "
+            "point in opposite directions on this dataset and partly cancel:",
+            "",
+            "| defect | this run | direction on `I` |",
+            "|---|---|---|",
+            f"| the latent is **{i_h / i_h1:.2f}x smoother** than the tissue's ({i_h:+.4f} "
+            f"against `h1`'s {i_h1:+.4f}) | too smooth | pushes `I` **up** |",
+        ]
+        if lower is not None and upper is not None:
+            out.append(
+                f"| `mu`'s spread is **{decomposition['sd_log_mu']:.4f}** against the tissue's "
+                f"model-free bracket [{lower:.4f}, {upper:.4f}] | too narrow | — |"
+            )
+        out += [
+            "| the emission adds spatially independent noise (`theta`, and `pi` where it is "
+            "non-zero) | too much | pushes `I` **down** |",
+            "",
+            "So a number at or above the tissue's says the two happen to cancel, not that either "
+            "is right. Repairing one alone moves `I` **away** from the tissue: a faithful latent "
+            "lowers it (A1's `A1a` arm), and removing the emission's noise raises it (stage 4p).",
+        ]
+    if i_ceiling is not None:
+        out += [
+            "",
+            "### Stage 4p — the emission-free ceiling",
+            "",
+            f"With the emission's noise removed from the model's **own** mean field, `I` = "
+            f"**{i_ceiling:+.4f}** against the real section's **{i_real:+.4f}** "
+            f"({i_ceiling / i_real:.2f}x). That is the most any repair to `theta` or `pi` can "
+            "reach on this fit — it bounds the emission-side work from above. **If it exceeds the "
+            "tissue, the emission is not the only defect** (`reports/n5_and_m3_review.md` §5), and "
+            "a repair to it alone cannot land the model on the tissue.",
+        ]
+    return out
+
+
 def n5_verdict(i_c: float, i_b: float, i_t: float, i_p: float) -> dict[str, float | str]:
     """Attribute the ``A1c -> A1b`` loss to ``theta``, to ``pi``, to both, or to neither.
 
@@ -1046,6 +1126,42 @@ def _self_check() -> int:
         ),
     ]
 
+    # The report block that explains a model sitting above the tissue. Report-generating code
+    # that silently produces nothing is what §4.2k is about, so both branches are asserted.
+    def stage(name, value):
+        return {"stage": name, "median_I": value, "p25": 0.0, "p75": 0.0, "n_channels": 1}
+
+    tier1_like = [
+        stage("2. latent h after the flow", 0.8011),
+        stage("4. sampled counts (rank-normalised)", 0.5134),
+        stage("4p. counts ~ Poisson(mu) — emission noise removed", 0.7775),
+        stage("REF real counts (rank-normalised)", 0.4635),
+        stage("REF real latent h1 = encoder(real counts)", 0.6253),
+    ]
+    spread_rows = [
+        {"quantity": "real counts (Poisson-deconvolved) — UPPER bound", "sd_log_mu": 0.9438},
+        {"quantity": "mu_oracle (kNN mean field) — LOWER bound", "sd_log_mu": 0.7165},
+    ]
+    above = "\n".join(cancelling_defects_block(tier1_like, {"sd_log_mu": 0.6728}, spread_rows))
+    below = "\n".join(
+        cancelling_defects_block(
+            [r for r in tier1_like if not r["stage"].startswith("4.")]
+            + [stage("4. sampled counts (rank-normalised)", 0.1154)],
+            {"sd_log_mu": 0.6728},
+            spread_rows,
+        )
+    )
+    bare = cancelling_defects_block([r for r in tier1_like if "4p." not in r["stage"]][:2], {}, [])
+    checks += [
+        ("the cancelling-defects block fires when the model is above the tissue", "ABOVE" in above),
+        ("it quotes the latent's smoothness ratio", "1.28x smoother" in above),
+        ("it quotes mu against the tissue's bracket", "[0.7165, 0.9438]" in above),
+        ("it always reports stage 4p's ceiling", "emission-free ceiling" in above),
+        ("it does NOT claim cancellation when the model is below the tissue", "ABOVE" not in below),
+        ("but still reports the ceiling there", "emission-free ceiling" in below),
+        ("and returns nothing when the run has no real reference", bare == []),
+    ]
+
     seed_rows = [
         {"stage": "A1b. x", "median_I": 0.10, "p25": 0.0, "p75": 0.0, "n_channels": 3, "seed": 1},
         {"stage": "A1b. x", "median_I": 0.30, "p25": 0.0, "p75": 0.0, "n_channels": 3, "seed": 2},
@@ -1488,6 +1604,24 @@ def main(argv: list[str] | None = None) -> int:
     rows.append(
         summarise("4. sampled counts (rank-normalised)", xy, rank_normalize(_sel(counts_np)), k)
     )
+    # P1: the same mean field with the emission's noise removed — the ceiling any repair to
+    # theta/pi could reach on the model as it actually is. It belongs here and not in the
+    # ablation because ``mu`` lives at the *generated* cells; every A1 arm is at the real ones.
+    # Drawn on the panel only (Moran's I is per column, so selecting before or after the draw is
+    # the same) and at the run seed, like stage 4, so the two differ in the emission and nothing
+    # else.
+    rows.append(
+        summarise(
+            "4p. counts ~ Poisson(mu) — emission noise removed",
+            xy,
+            rank_normalize(
+                np.random.default_rng(SEED)
+                .poisson(np.maximum(_sel(mu.numpy()), 0.0))
+                .astype(np.float64)
+            ),
+            k,
+        )
+    )
     emitted = {"uncalibrated": counts_np}
     gen_terms = mu_log_variance_terms(model, h, cfg, panel)
     decomposition = summarise_mu_terms(gen_terms)
@@ -1663,6 +1797,7 @@ def main(argv: list[str] | None = None) -> int:
             f"| {r['p75']:+.4f} | {r['n_channels']} |"
         )
     lines.extend(_verdict(rows, emitted, cfg, args, real, panel))
+    lines.extend(cancelling_defects_block(rows, decomposition, mu_spread))
 
     def _column(d: dict[str, float] | None, key: str, fmt: str) -> str:
         if d is None:
