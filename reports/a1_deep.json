@@ -1,0 +1,324 @@
+{
+  "run": {
+    "dataset": "deep_starmap",
+    "holdout": "paper_2_4_6",
+    "section": "section_4",
+    "target_z": 73.5,
+    "section_z": 73.5,
+    "steps": 1200,
+    "seed": 1,
+    "text_channel": "zero_vectors",
+    "text_emb_mode": "medcpt",
+    "expr_pca_dim": 32,
+    "decoder_mu_link": "exp",
+    "layout_mode": "resample",
+    "layout_sampler": "grid",
+    "calibrated": false,
+    "z_note": null,
+    "plane_note": null
+  },
+  "density": {
+    "matched": true,
+    "n_target": 29544,
+    "seed": 1,
+    "n_generated": 29842,
+    "n_used": 29544
+  },
+  "panel": {
+    "rule": "real",
+    "top_k": 32,
+    "n_genes": 32,
+    "genes": [
+      "APOD",
+      "AQP1",
+      "C4B",
+      "CLDN11",
+      "DKK3",
+      "FOLR1",
+      "GABBR2",
+      "GFAP",
+      "LEF1",
+      "MBP",
+      "MEIS2",
+      "NEFH",
+      "NEUROD6",
+      "NPTX1",
+      "NRGN",
+      "NTNG1",
+      "OLFR558",
+      "PCP4",
+      "PENK",
+      "PPP1R1B",
+      "PRKCD",
+      "PTGDS",
+      "PVALB",
+      "SATB1",
+      "SATB2",
+      "SLC6A11",
+      "SPARC",
+      "TCF7L2",
+      "TMSB4X",
+      "TRF",
+      "TTR",
+      "VAMP1"
+    ],
+    "indices": [
+      39,
+      41,
+      79,
+      157,
+      234,
+      300,
+      306,
+      328,
+      493,
+      530,
+      535,
+      573,
+      579,
+      608,
+      621,
+      627,
+      639,
+      674,
+      687,
+      721,
+      726,
+      744,
+      754,
+      803,
+      804,
+      853,
+      875,
+      920,
+      951,
+      967,
+      977,
+      991
+    ]
+  },
+  "stages": [
+    {
+      "stage": "1. prior h0 = GRF at generated xyz",
+      "median_I": 0.9272423976522336,
+      "p25": 0.9239236362693555,
+      "p75": 0.9299671282610494,
+      "n_channels": 64
+    },
+    {
+      "stage": "2. latent h after the flow",
+      "median_I": 0.7782498196766376,
+      "p25": 0.7590098595449346,
+      "p75": 0.8379328445915698,
+      "n_channels": 64
+    },
+    {
+      "stage": "3. decoded mu (before sampling)",
+      "median_I": 0.7451457509422788,
+      "p25": 0.728598656880854,
+      "p75": 0.7999805100497707,
+      "n_channels": 32
+    },
+    {
+      "stage": "4. sampled counts (rank-normalised)",
+      "median_I": 0.11539606879307318,
+      "p25": 0.06125598244955199,
+      "p75": 0.20302637359683595,
+      "n_channels": 32
+    },
+    {
+      "stage": "REF real counts (rank-normalised)",
+      "median_I": 0.31233103484527275,
+      "p25": 0.2653906122573587,
+      "p75": 0.34328534642123887,
+      "n_channels": 32
+    },
+    {
+      "stage": "REF real latent h1 = encoder(real counts)",
+      "median_I": 0.31710372628145517,
+      "p25": 0.28923349953742805,
+      "p75": 0.4276410548881242,
+      "n_channels": 64
+    }
+  ],
+  "emission_ablation": {
+    "ran": true,
+    "seeds": [
+      1,
+      2,
+      3
+    ],
+    "arms": [
+      {
+        "stage": "A1a'. mu decoded from h1",
+        "median_I": 0.3399345552513776,
+        "p25": 0.2615520150386327,
+        "p75": 0.3678699696047217,
+        "n_channels": 32
+      },
+      {
+        "stage": "A1a. counts ~ emission(mu | h1)",
+        "median_I": 0.04255310263981277,
+        "p25": 0.01700292149799064,
+        "p75": 0.09470855187576567,
+        "n_channels": 32,
+        "min_I": 0.03954793621407965,
+        "max_I": 0.04330693197243038,
+        "n_seeds": 3,
+        "per_seed": [
+          {
+            "seed": 1,
+            "median_I": 0.04330693197243038
+          },
+          {
+            "seed": 2,
+            "median_I": 0.03954793621407965
+          },
+          {
+            "seed": 3,
+            "median_I": 0.04255310263981277
+          }
+        ]
+      },
+      {
+        "stage": "A1b'. mu_oracle = kNN mean of real counts",
+        "median_I": 0.9062676966489378,
+        "p25": 0.8944945571064147,
+        "p75": 0.9358248017356833,
+        "n_channels": 32
+      },
+      {
+        "stage": "A1b. counts ~ ZINB(mu_oracle, model theta/pi)",
+        "median_I": 0.1722267921523417,
+        "p25": 0.10914336870638766,
+        "p75": 0.26903356682197993,
+        "n_channels": 32,
+        "min_I": 0.1700933614353432,
+        "max_I": 0.17991915866673436,
+        "n_seeds": 3,
+        "per_seed": [
+          {
+            "seed": 1,
+            "median_I": 0.1722267921523417
+          },
+          {
+            "seed": 2,
+            "median_I": 0.17991915866673436
+          },
+          {
+            "seed": 3,
+            "median_I": 0.1700933614353432
+          }
+        ]
+      },
+      {
+        "stage": "A1c. counts ~ Poisson(mu_oracle)   [model-free]",
+        "median_I": 0.5006559625530255,
+        "p25": 0.43695503545225656,
+        "p75": 0.5795108819099928,
+        "n_channels": 32,
+        "min_I": 0.49942871514091935,
+        "max_I": 0.5038852665002752,
+        "n_seeds": 3,
+        "per_seed": [
+          {
+            "seed": 1,
+            "median_I": 0.49942871514091935
+          },
+          {
+            "seed": 2,
+            "median_I": 0.5006559625530255
+          },
+          {
+            "seed": 3,
+            "median_I": 0.5038852665002752
+          }
+        ]
+      },
+      {
+        "stage": "A1n. permutation null (real counts shuffled)",
+        "median_I": 0.00018689921294703265,
+        "p25": -0.0007633832107553939,
+        "p75": 0.0020548658473117545,
+        "n_channels": 32,
+        "min_I": 6.053434587732903e-05,
+        "max_I": 0.0006569918453222664,
+        "n_seeds": 3,
+        "per_seed": [
+          {
+            "seed": 1,
+            "median_I": 0.0006569918453222664
+          },
+          {
+            "seed": 2,
+            "median_I": 6.053434587732903e-05
+          },
+          {
+            "seed": 3,
+            "median_I": 0.00018689921294703265
+          }
+        ]
+      }
+    ],
+    "level_vs_real": {
+      "A1a": 0.9272871316402097,
+      "A1b": 0.6386052866508878,
+      "A1c": 1.000211993687822
+    },
+    "mu_spread": [
+      {
+        "quantity": "real counts (Poisson-deconvolved) \u2014 UPPER bound",
+        "sd_log_mu": 1.3698855520631879,
+        "n_genes": 32
+      },
+      {
+        "quantity": "mu_oracle (kNN mean field) \u2014 LOWER bound",
+        "sd_log_mu": 1.0993842588817346,
+        "n_genes": 32
+      },
+      {
+        "quantity": "mu decoded from h1",
+        "sd_log_mu": 0.6035427571603249,
+        "n_genes": 32
+      },
+      {
+        "quantity": "mu decoded from the generated h",
+        "sd_log_mu": 0.6725320457072679,
+        "n_genes": 32
+      },
+      {
+        "quantity": "model counts (Poisson-deconvolved)",
+        "sd_log_mu": 1.4130912674252682,
+        "n_genes": 32
+      },
+      {
+        "quantity": "A1c counts (Poisson-deconvolved) \u2014 estimator check",
+        "sd_log_mu": 1.1005398037277132,
+        "n_genes": 32
+      }
+    ]
+  },
+  "mu_variance": {
+    "generated": {
+      "n_genes_decomposed": 32,
+      "var_shape": 0.5039446353912354,
+      "var_logsize": 0.013601977378129959,
+      "cov": 0.0020556074845985315,
+      "share_shape": 0.9771749439893802,
+      "share_logsize": 0.026871473147977373,
+      "share_shape_bounded": 0.9737162590026855,
+      "sd_log_mu": 0.7118103017773553
+    },
+    "real_latent": {
+      "n_genes_decomposed": 32,
+      "var_shape": 0.23869588971138,
+      "var_logsize": 0.017061220481991768,
+      "cov": -0.002517722138207653,
+      "share_shape": 0.9533771265509747,
+      "share_logsize": 0.07434346087719476,
+      "share_shape_bounded": 0.9332708120346069,
+      "sd_log_mu": 0.47965540212619057
+    },
+    "var_log_mu_ratio_gen_over_real": 2.0561001231966856
+  }
+}
