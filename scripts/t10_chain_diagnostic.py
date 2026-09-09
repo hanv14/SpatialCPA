@@ -163,7 +163,9 @@ def load_training_volume(cfg: Config, input_path: str | Path | None = None) -> T
     )
 
 
-def build_embeddings(cfg: Config, vol: TrainingVolume, *, live_text: bool = False):
+def build_embeddings(
+    cfg: Config, vol: TrainingVolume, *, live_text: bool = False, for_checkpoint: bool = False
+):
     """The entity embeddings this run fits under. **There are three states, not two.**
 
     ``live_text=False`` (the default, and what every artifact under ``reports/chain_*`` was
@@ -180,6 +182,14 @@ def build_embeddings(cfg: Config, vol: TrainingVolume, *, live_text: bool = Fals
     which is what makes A3 a comparison in one variable. It **raises** if the table or the encoder
     is not reachable and does not fall back to zeros: a silent fall back to zeros is how every
     prior STARmap number became a ``lookup`` measurement under a ``medcpt`` label (Convention 6).
+
+    ``for_checkpoint`` says the caller is about to ``load_state_dict`` over this module. The zero
+    vectors then exist for microseconds and never reach the model — ``text_vecs`` is a registered
+    buffer, so the checkpoint's own vectors replace them — and **saying "ZERO VECTORS" in that
+    case publishes the opposite of what the run measured**. It did: the A1 runs' console said
+    ``ZERO VECTORS`` while the report they wrote said ``live, medcpt, 28/28 non-zero``, one run
+    asserting two arms (``specs/10`` §4.2k). The report line reads the tensor
+    (:func:`describe_text_state`); this one now declines to name an arm it is about to lose.
 
     The default is kept so ``reports/chain_2400*.md`` still reproduces. It prints what it is,
     rather than leaving the reader to find this docstring.
@@ -199,11 +209,18 @@ def build_embeddings(cfg: Config, vol: TrainingVolume, *, live_text: bool = Fals
 
     from spatialcpav25_gen.model.embeddings import EntityEmbeddings
 
-    print(
-        f"  text channel: ZERO VECTORS (cfg.text_emb_mode={cfg.text_emb_mode!r} is NOT "
-        "exercised here; this is neither A3 arm — pass --text-emb-mode for a live channel)",
-        flush=True,
-    )
+    if for_checkpoint:
+        print(
+            "  text channel: constructed with zero vectors, to be REPLACED by the checkpoint's "
+            "own text_vecs buffer — the arm this run measures is reported after the load",
+            flush=True,
+        )
+    else:
+        print(
+            f"  text channel: ZERO VECTORS (cfg.text_emb_mode={cfg.text_emb_mode!r} is NOT "
+            "exercised here; this is neither A3 arm — pass --text-emb-mode for a live channel)",
+            flush=True,
+        )
     zeros = torch.zeros((vol.n_genes, cfg.text_dim_in), dtype=torch.float32)
     types = torch.zeros((len(vol.celltype_names), cfg.text_dim_in), dtype=torch.float32)
     return EntityEmbeddings(cfg, zeros, types, None)
@@ -398,6 +415,42 @@ def log_mu_sd_from_counts(counts: np.ndarray) -> np.ndarray:
     return np.sqrt(np.log1p(cv2))
 
 
+def n5_verdict(i_c: float, i_b: float, i_t: float, i_p: float) -> dict[str, float | str]:
+    """Attribute the ``A1c -> A1b`` loss to ``theta``, to ``pi``, to both, or to neither.
+
+    The decision rule of ``reports/a1_escalation_preregistration.md`` §2, in code rather than in
+    the reader's head, because a pre-registered rule executed by hand is a rule that drifts.
+
+    ``L_total = I(A1c) - I(A1b)``, ``L_theta = I(A1c) - I(A1b-t)``, ``L_pi = I(A1c) - I(A1b-p)``;
+    the verdict is **over-dispersion** at ``L_theta/L_total >= 0.70`` with ``L_pi/L_total <= 0.30``,
+    **dropout** at the reverse, **both, additively** when each share is in ``(0.30, 0.70)`` *and*
+    the additivity gap is ``<= 0.02`` in ``I``, and **not decomposable** otherwise — which is the
+    honest outcome when zero-inflation and over-dispersion interact rather than compose.
+    """
+    l_total, l_theta, l_pi = i_c - i_b, i_c - i_t, i_c - i_p
+    share_t = l_theta / l_total if l_total else float("nan")
+    share_p = l_pi / l_total if l_total else float("nan")
+    gap = abs(l_theta + l_pi - l_total)
+    if share_t >= 0.70 and share_p <= 0.30:
+        verdict = "**over-dispersion**"
+    elif share_p >= 0.70 and share_t <= 0.30:
+        verdict = "**dropout**"
+    elif 0.30 < share_t < 0.70 and 0.30 < share_p < 0.70 and gap <= 0.02:
+        verdict = "**both, additively**"
+    else:
+        verdict = "**not decomposable** — the two interact"
+    return {
+        "l_total": l_total,
+        "l_theta": l_theta,
+        "l_pi": l_pi,
+        "share_theta": share_t,
+        "share_pi": share_p,
+        "additivity_gap": gap,
+        "predicted_i_b": (i_t * i_p / i_c) if i_c else float("nan"),
+        "verdict": verdict,
+    }
+
+
 def describe_text_state(model, cfg: Config) -> str:
     """What the text channel **holds**, read off the buffer rather than inferred from a flag.
 
@@ -472,6 +525,17 @@ def emission_ablation(
         The model's whole emission on the best latent it can form from the truth. A1b minus A1a
         is what the decode path costs.
 
+    ``A1b-t`` ``NB(mu_oracle, theta_model)``, ``pi`` forced to 0
+        over-dispersion alone. ``theta`` cannot move the mean, so this arm's level ratio must come
+        back at ~1.00x — a self-check that can fail.
+    ``A1b-p`` the **same Poisson realisation as A1c**, then zeroed with ``pi_model``
+        dropout alone. Sharing A1c's draw rather than taking a fresh one is deliberate: it makes
+        A1c -> A1b-p an exact within-realisation contrast, so the difference is the dropout and
+        nothing else.
+
+    N5, pre-registered in ``reports/a1_escalation_preregistration.md`` §2, which fixes the shares
+    that attribute the ``A1c -> A1b`` loss and the additivity check reported either way.
+
     ``A1n`` is the permutation null: the real counts shuffled across cells, which is what "no
     spatial structure" measures as on this panel and this graph.
 
@@ -497,22 +561,30 @@ def emission_ablation(
     mu1_np, theta1_np, pi1_np = mu1.numpy(), theta1.numpy(), pi1.numpy()
     mu_oracle = knn_mean_field(real.xy, real.counts, k)
 
+    zero_pi = np.zeros_like(pi1_np)
+
     def draw(seed: int) -> dict[str, np.ndarray]:
         # Not through sample_counts for A1c: that arm is a Poisson draw, not a ZINB one with theta
         # pushed to an extreme the sampler's own docstring flags. Saying "Poisson" and drawing
         # Poisson is the whole point of the arm.
+        poisson = np.random.default_rng(seed).poisson(np.maximum(mu_oracle, 0.0)).astype(np.float64)
+        dropout = np.random.default_rng(seed + 2).random(pi1_np.shape) < pi1_np
         return {
             "A1a": sample_counts(mu1_np, theta1_np, pi1_np, np.random.default_rng(seed)).numpy(),
             "A1b": sample_counts(mu_oracle, theta1_np, pi1_np, np.random.default_rng(seed)).numpy(),
-            "A1c": np.random.default_rng(seed)
-            .poisson(np.maximum(mu_oracle, 0.0))
-            .astype(np.float64),
+            "A1bt": sample_counts(
+                mu_oracle, theta1_np, zero_pi, np.random.default_rng(seed)
+            ).numpy(),
+            "A1bp": np.where(dropout, 0.0, poisson),
+            "A1c": poisson,
             "A1n": real_counts[np.random.default_rng(seed + 1).permutation(real_counts.shape[0])],
         }
 
     labels = {
         "A1a": "A1a. counts ~ emission(mu | h1)",
         "A1b": "A1b. counts ~ ZINB(mu_oracle, model theta/pi)",
+        "A1bt": "A1b-t. counts ~ NB(mu_oracle, model theta), pi=0",
+        "A1bp": "A1b-p. counts ~ A1c's Poisson draw, then model pi",
         "A1c": "A1c. counts ~ Poisson(mu_oracle)   [model-free]",
         "A1n": "A1n. permutation null (real counts shuffled)",
     }
@@ -536,9 +608,15 @@ def emission_ablation(
     rows.append(_over_seeds(per_seed["A1a"]))
     rows.append(summarise("A1b'. mu_oracle = kNN mean of real counts", real.xy, sel(mu_oracle), k))
     rows.append(_over_seeds(per_seed["A1b"]))
+    rows.append(_over_seeds(per_seed["A1bt"]))
+    rows.append(_over_seeds(per_seed["A1bp"]))
     rows.append(_over_seeds(per_seed["A1c"]))
     rows.append(_over_seeds(per_seed["A1n"]))
-    levels = {key: float(np.median(vals)) for key, vals in per_seed_level.items() if key != "A1n"}
+    levels = {
+        labels[key].split(".")[0]: float(np.median(vals))
+        for key, vals in per_seed_level.items()
+        if key != "A1n"
+    }
 
     # N2: two model-free routes to the tissue's own sd(log mu), bracketing it from below and above,
     # neither passing through the decoder. Reported beside the decoder's own figure so the
@@ -906,6 +984,29 @@ def _self_check() -> int:
         ),
     ]
 
+    # N5's decision rule, against the four outcomes a1_escalation_preregistration.md §2 names.
+    n5_cases = [
+        ("over-dispersion", 0.50, 0.17, 0.20, 0.48, "**over-dispersion**"),
+        ("dropout", 0.50, 0.17, 0.48, 0.20, "**dropout**"),
+        ("both, additively", 0.50, 0.20, 0.35, 0.35, "**both, additively**"),
+        ("interaction", 0.50, 0.20, 0.45, 0.45, "**not decomposable** — the two interact"),
+    ]
+    for name, i_c, i_b, i_t, i_p in [(c[0], *c[1:5]) for c in n5_cases]:
+        want = next(c[5] for c in n5_cases if c[0] == name)
+        got = n5_verdict(i_c, i_b, i_t, i_p)
+        checks.append((f"n5_verdict reads the {name} case as written", got["verdict"] == want))
+    lopsided = n5_verdict(0.50, 0.17, 0.20, 0.48)
+    checks += [
+        (
+            "its shares are of the total loss, not of I",
+            abs(lopsided["share_theta"] - (0.50 - 0.20) / (0.50 - 0.17)) < 1e-12,
+        ),
+        (
+            "and the additivity gap is reported even when the verdict does not use it",
+            abs(lopsided["additivity_gap"] - abs(0.30 + 0.02 - 0.33)) < 1e-12,
+        ),
+    ]
+
     seed_rows = [
         {"stage": "A1b. x", "median_I": 0.10, "p25": 0.0, "p75": 0.0, "n_channels": 3, "seed": 1},
         {"stage": "A1b. x", "median_I": 0.30, "p25": 0.0, "p75": 0.0, "n_channels": 3, "seed": 2},
@@ -1203,9 +1304,10 @@ def main(argv: list[str] | None = None) -> int:
         # Zero text vectors here even for a medcpt checkpoint: ``text_vecs`` is a registered
         # buffer, so ``load_state_dict`` restores the fitted MedCPT vectors and this path needs
         # no encoder and no network. A shape mismatch raises — the load is strict.
-        model = CTFFlow(cfg, data, build_embeddings(cfg, vol), grf_seed=SEED)
+        model = CTFFlow(cfg, data, build_embeddings(cfg, vol, for_checkpoint=True), grf_seed=SEED)
         model.load_state_dict(checkpoint["state_dict"])
         model.eval()
+        print(f"  text channel: {describe_text_state(model, cfg)}", flush=True)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", BBoxClampWarning)
             if cfg.repulsion:
@@ -1616,6 +1718,41 @@ def main(argv: list[str] | None = None) -> int:
                     + ", ".join(f"{x:+.2f}" for x in recoveries)
                     + f" | {', '.join(dict.fromkeys(bands))} | {verdict} |"
                 )
+        # N5 (a1_escalation_preregistration.md §2): attribute the A1c -> A1b loss to
+        # over-dispersion, to dropout, to both additively, or to neither. Criteria fixed there;
+        # applied here so the verdict is not left to whoever reads the table.
+        by_arm = {r["stage"].split(".")[0]: r["median_I"] for r in ablation_rows}
+        i_c, i_b = by_arm.get("A1c"), by_arm.get("A1b")
+        i_t, i_p = by_arm.get("A1b-t"), by_arm.get("A1b-p")
+        if None not in (i_c, i_b, i_t, i_p):
+            n5 = n5_verdict(i_c, i_b, i_t, i_p)
+            l_total, l_theta, l_pi = n5["l_total"], n5["l_theta"], n5["l_pi"]
+            share_t, share_p = n5["share_theta"], n5["share_pi"]
+            additive_gap, predicted = n5["additivity_gap"], n5["predicted_i_b"]
+            level_t = ablation_levels.get("A1b-t", float("nan"))
+            lines += [
+                "",
+                "### N5 — which of `theta` and `pi` costs the `A1c -> A1b` loss",
+                "",
+                "Criteria fixed in `a1_escalation_preregistration.md` §2, before these arms were",
+                "built. `A1b-p` shares `A1c`'s Poisson realisation, so `A1c -> A1b-p` is an exact",
+                "within-realisation contrast.",
+                "",
+                "| quantity | value |",
+                "|---|---|",
+                f"| `L_total = I(A1c) - I(A1b)` | {l_total:+.4f} |",
+                f"| `L_theta = I(A1c) - I(A1b-t)` | {l_theta:+.4f} (**{share_t:.1%}** of total) |",
+                f"| `L_pi = I(A1c) - I(A1b-p)` | {l_pi:+.4f} (**{share_p:.1%}** of total) |",
+                f"| additivity gap `abs(L_theta + L_pi - L_total)` | {additive_gap:.4f} "
+                f"(criterion <= 0.0200) |",
+                f"| multiplicative prediction of `I(A1b)` | {predicted:+.4f} against the measured "
+                f"{i_b:+.4f}, gap {abs(predicted - i_b):.4f} |",
+                f"| **verdict** | {n5['verdict']} |",
+                "",
+                f"🔎 **Instrument self-check**: `A1b-t`'s level ratio is **{level_t:.2f}x**. "
+                "`theta` cannot move the mean, so anything away from 1.00x means that arm is not "
+                "what it claims and the verdict above does not stand.",
+            ]
         if mu_spread:
             lines += [
                 "",
