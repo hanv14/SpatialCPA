@@ -14,11 +14,21 @@ Sources: `chain_tier1.log`, `chain_deep.log` (the runs of `reports/emission_repa
 > must not be quoted as one.** Everywhere below that reads it as fidelity is wrong; §4's "no deficit
 > to repair" survives only in the narrow sense that the model is not *under* the tissue on `I`.
 >
-> **2. The deep deficit is 3.06x, not 4.4x.** §0 and §7.1 quote `+0.0729` against `+0.3236` on the
-> boundary-adjacent `section_2`. On the interior `section_4` the model reads **+0.1021** and the
-> tissue **+0.3123** — a **3.06x** deficit. **R3 was worth about a quarter of the apparent gap**,
-> which is what §7.1 predicted and A1 confirmed. The real-side anomaly cleared with it too
-> (encoder-latent retention 134% -> 98.5%). Neither `+0.0729` nor `+0.1021` is quoted as a result.
+> **2. The deep deficit is 2.71x, and it has moved three times without a modelling change.**
+> §0 and §7.1 quote `+0.0729` against `+0.3236` on the boundary-adjacent `section_2`. Each
+> provenance fix has moved it toward the tissue:
+>
+> | measurement | model | tissue | ratio |
+> |---|---|---|---|
+> | `section_2`, z = 30.8 — boundary-adjacent, and not the section's own plane | +0.0729 | +0.3236 | 4.44x |
+> | `section_4`, z = 68.6 — interior, still not its own plane | +0.1021 | +0.3123 | 3.06x |
+> | **`section_4` at its own z = 73.5** | **+0.1154** | **+0.3123** | **2.71x** |
+>
+> **2.71x is the figure to quote, and the trend is part of the figure**: three corrections, none of
+> them a modelling change, each one shrinking the gap, which means **the remaining number may still
+> carry confounds nobody has found**. R3 alone was worth about a quarter of the original gap — what
+> §7.1 predicted and A1 confirmed — and the real-side anomaly cleared with it (encoder-latent
+> retention 134% -> 98.5%). None of `+0.0729`, `+0.1021` or `+0.1154` is quoted as a result.
 
 ---
 

@@ -708,8 +708,13 @@ class ZINBDecoder(nn.Module):
             theta = self._fixed_theta(gene_idx, gene_emb.shape[0]).expand(h.shape[0], -1)
         else:
             theta = torch.nn.functional.softplus(self.head_theta(features).squeeze(-1)) + eps
+        # ``decoder_theta_floor`` is an experimental constraint, ``zinb_theta_min`` a numerical
+        # guard; the binding one is whichever is larger, and the two are kept separate so a run
+        # that sets the floor is legible as a different arm (Config.decoder_theta_floor).
         theta = torch.clamp(
-            theta, min=float(self.cfg.zinb_theta_min), max=float(self.cfg.zinb_theta_max)
+            theta,
+            min=max(float(self.cfg.zinb_theta_min), float(self.cfg.decoder_theta_floor)),
+            max=float(self.cfg.zinb_theta_max),
         )
         pi = torch.clamp(torch.sigmoid(self.head_pi(features).squeeze(-1)), min=eps, max=1.0 - eps)
         if self.cfg.debug_shapes:

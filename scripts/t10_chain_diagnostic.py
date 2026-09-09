@@ -415,6 +415,45 @@ def log_mu_sd_from_counts(counts: np.ndarray) -> np.ndarray:
     return np.sqrt(np.log1p(cv2))
 
 
+def theta_report(
+    model, cfg: Config, real: RealSection, panel: np.ndarray | None, floor: float
+) -> dict:
+    """Percentiles of the decoder's learned ``theta`` at the real cells, and what a floor binds on.
+
+    M3's floor has to be chosen by a rule fixed in advance rather than by eye, and its failure
+    mode — *"the floor binds on so few genes it does nothing"*
+    (``reports/emission_repair_options.md`` §5) — is invisible unless the binding fraction is
+    measured. This produces both: the distribution the pre-registration picks the floor from, and,
+    given a floor, the fraction of ``(cell, gene)`` pairs at or below it.
+
+    Read at the **real** section's cells through ``encoder(real counts)``, so the same quantity is
+    comparable between a baseline and a floored refit without either depending on what the layout
+    or the flow produced.
+    """
+    from spatialcpav25_gen.infer.generate import _decode
+
+    gene_idx = torch.arange(real.counts.shape[1], dtype=torch.long)
+    with torch.no_grad():
+        gene_emb = model.embeddings.gene(gene_idx)
+        totals = torch.from_numpy(real.counts.sum(axis=1))
+        size_factor = totals / max(float(model.stats.median_total), 1.0)
+        h1 = model.encoder(torch.from_numpy(real.counts), gene_emb, size_factor)
+        _mu, theta, _pi = _decode(model, h1, cfg, None)
+    t = theta.numpy()
+    t = t if panel is None else t[:, panel]
+    out: dict = {
+        "n_pairs": int(t.size),
+        "percentiles": {str(q): float(np.percentile(t, q)) for q in (1, 5, 10, 25, 50, 75, 90, 99)},
+        "median_per_gene": float(np.median(np.median(t, axis=0))),
+        "floor": float(floor),
+    }
+    if floor > 0:
+        out["fraction_at_or_below_floor"] = float((t <= floor).mean())
+        out["genes_with_any_binding"] = int((t.min(axis=0) <= floor).sum())
+        out["n_genes"] = int(t.shape[1])
+    return out
+
+
 def n5_verdict(i_c: float, i_b: float, i_t: float, i_p: float) -> dict[str, float | str]:
     """Attribute the ``A1c -> A1b`` loss to ``theta``, to ``pi``, to both, or to neither.
 
@@ -1109,6 +1148,22 @@ def main(argv: list[str] | None = None) -> int:
         "--decoder-mu-link are refused with it, and --steps is ignored.",
     )
     ap.add_argument(
+        "--theta-floor",
+        type=float,
+        default=None,
+        help="fit under Config.decoder_theta_floor: a lower bound on the ZINB theta, i.e. an "
+        "upper bound on over-dispersion. M3's instrument. Refused with --load-model, whose "
+        "config comes from the checkpoint — except with --report-theta, where it names the "
+        "candidate floor to measure the binding fraction of rather than to fit under.",
+    )
+    ap.add_argument(
+        "--report-theta",
+        action="store_true",
+        help="report the decoder's learned theta at the real cells — percentiles, and with "
+        "--theta-floor the fraction of (cell, gene) pairs that floor would bind on. Combine "
+        "with --load-model to measure a baseline before M3's floor is chosen.",
+    )
+    ap.add_argument(
         "--emission-ablation",
         action="store_true",
         help="A1: draw counts at the REAL cells from three mean fields — the model's decode of "
@@ -1196,6 +1251,9 @@ def main(argv: list[str] | None = None) -> int:
                 ("--text-emb-mode", args.text_emb_mode),
                 ("--expr-pca-dim", args.expr_pca_dim),
                 ("--decoder-mu-link", args.decoder_mu_link),
+                # --theta-floor shapes the fit, so it is refused with a checkpoint — unless
+                # --report-theta, where it is only the candidate value being measured against.
+                ("--theta-floor", None if args.report_theta else args.theta_floor),
             )
             if value is not None
         ]
@@ -1250,6 +1308,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         cfg = clamp_config_to_input(cfg, paths.input)
+        if args.theta_floor is not None:
+            cfg = cfg.replace(decoder_theta_floor=float(args.theta_floor))
+    print(f"  decoder_theta_floor = {cfg.decoder_theta_floor}")
     live_text = args.text_emb_mode is not None
     print(f"  decoder_mu_link = {cfg.decoder_mu_link}")
     print(f"  layout_sampler  = {cfg.layout_sampler}, layout_mode = {cfg.layout_mode}")
@@ -1458,6 +1519,18 @@ def main(argv: list[str] | None = None) -> int:
 
     for r in rows:  # print the generated chain before anything else can fail
         print(f"  {r['stage']:<48s} median I = {r['median_I']:+.4f}  (n={r['n_channels']})")
+    theta_stats: dict | None = None
+    if args.report_theta:
+        theta_stats = theta_report(
+            model, cfg, real, panel, float(args.theta_floor or cfg.decoder_theta_floor)
+        )
+        print(f"  theta percentiles at the real cells: {theta_stats['percentiles']}")
+        if "fraction_at_or_below_floor" in theta_stats:
+            print(
+                f"  a floor at {theta_stats['floor']} would bind on "
+                f"{theta_stats['fraction_at_or_below_floor']:.1%} of (cell, gene) pairs and "
+                f"{theta_stats['genes_with_any_binding']}/{theta_stats['n_genes']} genes"
+            )
     real_decomposition: dict[str, float] | None = None
     mu_var_ratio = float("nan")
     ablation_rows: list[dict] = []
@@ -1753,6 +1826,32 @@ def main(argv: list[str] | None = None) -> int:
                 "`theta` cannot move the mean, so anything away from 1.00x means that arm is not "
                 "what it claims and the verdict above does not stand.",
             ]
+        if theta_stats:
+            lines += [
+                "",
+                "### `theta` at the real cells"
+                + (
+                    f", and what a floor at {theta_stats['floor']} binds on"
+                    if "fraction_at_or_below_floor" in theta_stats
+                    else ""
+                ),
+                "",
+                "| percentile | " + " | ".join(theta_stats["percentiles"]) + " |",
+                "|---" * (len(theta_stats["percentiles"]) + 1) + "|",
+                "| `theta` | "
+                + " | ".join(f"{v:.4g}" for v in theta_stats["percentiles"].values())
+                + " |",
+            ]
+            if "fraction_at_or_below_floor" in theta_stats:
+                lines += [
+                    "",
+                    f"A floor at **{theta_stats['floor']}** binds on "
+                    f"**{theta_stats['fraction_at_or_below_floor']:.1%}** of (cell, gene) pairs "
+                    f"and touches **{theta_stats['genes_with_any_binding']} of "
+                    f"{theta_stats['n_genes']}** genes. 🚩 **A floor that binds on nothing is a "
+                    "null experiment, not a null result** — this figure must travel with any "
+                    "conclusion drawn from the floored arm.",
+                ]
         if mu_spread:
             lines += [
                 "",
@@ -1823,11 +1922,13 @@ def main(argv: list[str] | None = None) -> int:
             "decoder_mu_link": cfg.decoder_mu_link,
             "layout_mode": cfg.layout_mode,
             "layout_sampler": cfg.layout_sampler,
+            "decoder_theta_floor": float(cfg.decoder_theta_floor),
             "calibrated": bool(args.calibrate),
             "z_note": z_note or None,
             "plane_note": plane_note or None,
         },
         "density": density,
+        "theta": theta_stats,
         "panel": {
             "rule": args.top_k_by,
             "top_k": int(args.top_k) if panel is not None else None,

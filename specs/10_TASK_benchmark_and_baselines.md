@@ -667,6 +667,35 @@ in the next pre-registration, not in this one's reading.
 This is §4.2c one level up: *not every referent is a floor* becomes *not every arm's spread is an
 envelope*.
 
+### 4.2l A refutation that answers a differently-defined question of the same name
+
+**The instance.** R12 says *"only **9–19 %** of the emitted count variance survives as between-cell
+structure … the term that eats it is overdispersion"* — a statement about `Var(mu) / Var(y)`, i.e.
+the structured share of the **counts**. It was reported refuted on the shipped arm, at 97.4 % /
+93.3 %, on the strength of `Var(shape) / (Var(shape) + Var(log s))`.
+
+That second statistic decomposes `Var(log mu)` into its **latent-driven** and **size-factor** parts.
+It answers *"is `mu`'s dynamic range the size factor?"* and **never touches the sampling noise**,
+which is the entire subject of R12's claim. The two share the name "structured share" because
+`scripts/t09_structured_share.py` implements the decoder-internal one.
+
+Measured in R12's own terms, model-free, on the shipped arm at matched panel and density: the
+count-level structured share is **10.4 %** for the model against **>= 42.5 %** for the tissue on
+`deep_starmap` — **inside R12's own range**. R12 stands, and the refutation is withdrawn.
+
+**Why it is not §4.2a's family.** Those are about *which* envelope, referent or arm a number is read
+against — the comparison is well posed and the wrong side of it was chosen. This one is about the
+**quantity**: the comparison was between two different measurements, one of which the claim was
+never about. It is the same shape as the gate whose two sides shared a decoder (§8.3a of
+`reports/emission_repair_options.md`): a statistic selected by its name rather than its definition.
+Both instances are this project's, one round apart.
+
+**The rule.** *A refutation must restate the claim in the claim's own terms before it counts.* Write
+the claim's quantity as an expression, write the statistic being used as an expression, and show
+they are the same expression — or the refutation is of something else. A statistic's **name is not
+its definition**, and a name shared with the implementation that happens to be nearest to hand is
+the likeliest way to get this wrong.
+
 ### 4.2f-i ⚠️ An alarm that fires into the run whose report says nothing about it
 
 §4.2f is *an alarm that fires where nobody looks*. This is the same failure one turn tighter: the
@@ -805,6 +834,7 @@ was written:
 | **whether the check ran at all** | 4.2j | both collapse alarms were armed only while SEFL was on, so on the **shipped** configuration neither ever ran — and two reports, one of them written to enforce §4.2f, described that as a check that had been performed |
 | **which instrument the envelope came from** | 4.2a-i | two scorers over the same six metric names, and **every three-seed envelope ever quoted came from the one the headline numbers were not scored on** — a 2.6x–6.7x difference on tier-1, forbidden in prose by §5 while every "Nx the envelope" in the project performed it |
 | **whether the record's value exists in any artifact** | 4.2a-iv | `w_autocorr/w_profile/w_distribution = 0.5` is written everywhere as shipped and appears in **no** artifact the project produced — not `Config`, not any recorded fit config, not the one persisted selection. Two standing arguments were reasoned from it. Nothing is missing, every artifact agrees at `0.0`, and every document is wrong |
+| **whether the statistic is the claim's own quantity** | 4.2l | R12's *"9-19 % of the emitted count variance survives as between-cell structure"* was reported refuted at 97.4 % using a statistic that decomposes `Var(log mu)` into latent and size-factor parts and never touches the sampling noise. In R12's own terms the model reads **10.4 %** against the tissue's **>= 42.5 %** — inside R12's range. The refutation is withdrawn; the two quantities share a name because one script implements the other one |
 | **whether the run's own alarm reached the run's own report** | 4.2f-i | the `deep_starmap` chain run's spatial-collapse alarm fired at **122 checked steps, 79 of them inversions, and was still firing at the last step (2399, −0.0129)** against a healthy floor of +0.5467 — into stderr, while the report that run wrote carries a provenance block, a stage table and a verdict and says nothing about it. Its `+0.0729` entered a review as a result before the log was opened |
 | **whether the report describes work that was done** | 4.2k | one report said *"top 28 by Moran's I on the real side"* for a selection that kept all 28 genes of a 28-gene panel, and *"matched to the real section: 4073 -> 4073 kept"* for a density match that subsampled nothing — while the other dataset in the same comparison got a genuine top-3.1 % selection, described in the same words |
 | **whether the artifact says which arm it is** | 4.2a-ii | the committed, bitwise-reproducible files behind the six-metric table record no `config_hash`, no `text_emb_mode` and no metric-aware weights, so a correctly measured envelope cannot be matched to them — six clearance figures are flagged rather than numbered for this reason alone |

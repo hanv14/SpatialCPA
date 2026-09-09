@@ -8388,3 +8388,78 @@ the suspension; add the pinned `bench3` `paper_*` metrics beside Moran's `I` bef
 judged, since the over-smoothing correction proved `I` alone can be raised by making the model worse;
 then B1, with its expected value revised **down** — `ell` fixes the latent and the latent is not the
 bottleneck. Full reasoning in `reports/a1_escalation_review.md`.
+
+---
+
+## 2026-09-09 (d) — M1, M2 and M3 built; two record items filed
+
+**M1.** `build_embeddings` printed `ZERO VECTORS ... neither A3 arm` at construction, before
+`load_state_dict` restores the `text_vecs` buffer, so the A1 runs' **console** asserted one arm while
+the **report** they wrote asserted the other. Under `--load-model` it now says the vectors are about
+to be replaced and declines to name an arm it is about to lose; the arm is printed after the load
+from `describe_text_state`, which reads the tensor. §4.2k's fifth instance, closed.
+
+**M2 — N5's split, pre-registered in `a1_escalation_preregistration.md` §2 before it was built.**
+`A1b-t` is `NB(mu_oracle, theta)` with `pi` forced to zero; `A1b-p` takes **A1c's own Poisson
+realisation** and applies the model's `pi` to it, so `A1c -> A1b-p` is an exact within-realisation
+contrast and the difference is the dropout and nothing else. The decision rule is `n5_verdict()`
+rather than prose — shares of the `A1c -> A1b` loss at the pre-registered 0.70/0.30 criteria, an
+explicit *not decomposable* outcome, the additivity gap and the multiplicative prediction of `I(A1b)`
+reported either way — because a pre-registered rule executed by hand is a rule that drifts. Its four
+outcomes are asserted in `--self-check`. The report also carries `A1b-t`'s level ratio as an
+instrument check that can fail: `theta` cannot move the mean, so anything away from 1.00x means that
+arm is not what it claims.
+
+**M3 — built and pre-registered; the run is one fit.** New `Config.decoder_theta_floor` (a lower
+bound on `theta`, i.e. an upper bound on over-dispersion), kept **separate from `zinb_theta_min`**
+because one is a numerical guard and the other an experimental constraint that enters the content
+hash. Chosen over `decoder_theta_mode="moment_matched"` for a recorded reason: the moment-matched
+estimator is **7.5x smaller** than the learned head, so it pulls dispersion *up* and deepens the
+trade — candidate A's named failure. A floor can only move it down.
+
+`--theta-floor` fits under it; `--report-theta` reads the learned `theta` at the real cells and, given
+a candidate floor, the fraction of `(cell, gene)` pairs it would bind on — because *a floor that
+binds on nothing is a null experiment, not a null result*, and that is invisible unless measured.
+`scripts/t10_reallocation_table.py` joins the two chain sidecars and the two `t10_rescore_saved`
+sidecars into **one table** and applies `m3_verdict()`.
+
+`reports/m3_preregistration.md` fixes, before either arm runs: the floor's **selection rule** (the
+median learned `theta` over `(cell, gene)` on the panel, a deterministic read of the existing
+baseline checkpoint — no choice, and it binds on ~half by construction); four ordered outcomes with
+**NULL EXPERIMENT checked first**, so a favourable result resting on a floor that did nothing cannot
+be reported as a win; and §5's four reachable failures.
+
+⚠️ **Outcome 1, "capacity-limited — the `mu` head, not the objective", is written as a result and not
+a disappointment**, and §3a says why: it converts *"the ZINB objective allows the trade"* from a
+mechanism into a **bound**, explains `sd(log mu)` coming back at 0.6728 / 0.6725 on 28 genes and 1017
+and a faithful latent decoding to **less** spread (0.6035) than an over-smooth one, and makes every
+loss-side candidate in §10 unnecessary to try. **It closes §10 rather than failing it.**
+
+**M4 is a condition on M3, not a later step.** Every pinned `bench3` `paper_*` metric sits in the
+same table as `I`, at matched density, and outcome 3 refuses the repair on a drop of more than 0.02
+in any of them. The reason is measured: the model already beats real tissue on tier-1's `I` (+0.5134
+against +0.4635) with a latent 1.28x smoother than the tissue's, so **`I` can be raised by making the
+model worse** and a table reporting `I` alone would hide the most likely way this test fails.
+
+**M5 (B1) is held**, as agreed: `ell` fixes the latent and the latent is not the bottleneck. It buys
+trustworthy deep `theta`/`pi` and nothing else, at 3.3 h.
+
+**Two record items filed.**
+
+* **`specs/10` §4.2l — a refutation that answers a differently-defined question of the same name.**
+  R12's claim is `Var(mu)/Var(y)`; it was refuted with `Var(shape)/(Var(shape)+Var(log s))`, which
+  never touches the sampling noise. In R12's own terms the model reads **10.4 %** against the
+  tissue's **>= 42.5 %** — inside R12's range. Refutation withdrawn. The rule: *a refutation must
+  restate the claim in the claim's own terms before it counts* — write both as expressions and show
+  they are the same expression. Second instance a round apart, after the gate whose two sides shared
+  a decoder; both this project's.
+* **The deficit trend now sits beside the number** in `chain_shipped_review.md`, as a table rather
+  than a note: **4.44x -> 3.06x -> 2.71x**, three corrections, none of them a modelling change, each
+  shrinking the gap. The reading travels with it: **the remaining number may still carry confounds
+  nobody has found.**
+
+**Verification.** No torch here. `ruff` clean on all three files; `t10_chain_diagnostic --self-check`
+**40/40**, `t10_reallocation_table --self-check` **9/9** (including that the null-experiment guard is
+checked *first*, and that `structured_share` reproduces both the 10.4 % and the 42.5 %). Nothing
+touching torch ran: the new `Config` field, the decoder clamp, `--theta-floor`, `--report-theta` and
+both N5 arms are unexecuted here.

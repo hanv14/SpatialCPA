@@ -1092,6 +1092,33 @@ class Config:
     ``softplus`` remains selectable and is the right choice for a fixture-like panel — modest
     means, real zeros — where the compression costs little and the extra freedom buys noise."""
 
+    decoder_theta_floor: float = 0.0
+    """A lower bound on the ZINB ``theta``, i.e. an **upper bound on over-dispersion**. ``0.0``
+    (the default, and everything measured up to here) means inactive.
+
+    Distinct from ``zinb_theta_min``, which is a numerical guard against a degenerate draw and is
+    not a claim about the data. This is an **experimental constraint**: it enters
+    :meth:`content_hash`, it is reported, and a run that sets it is a different arm.
+
+    **What it is for.** A1's emission ablation measured the model's total between-cell count
+    variance as *correct* — implied ``sd(log mu)`` 1.4131 against the tissue's 1.3699 on
+    ``deep_starmap`` — with roughly 90 % of it carried by ``theta`` and ``pi``, which are
+    spatially independent, rather than by ``mu``, which is not. The ZINB likelihood is close to
+    indifferent to that split at the margin: a narrow ``mu`` with a wide ``theta`` fits the
+    marginal counts about as well as the reverse, and only the reverse carries spatial structure.
+    Flooring ``theta`` removes the cheap half of that trade and leaves the likelihood to put the
+    variance into ``mu``.
+
+    **Why a floor rather than ``decoder_theta_mode="moment_matched"``.** The moment-matched
+    estimator came out **7.5x smaller** than the learned head, so fixing ``theta`` to it pulls
+    dispersion *up* and deepens the trade — the failure mode
+    ``reports/emission_repair_options.md`` §5 names for candidate A. A floor can only move
+    dispersion down.
+
+    ⚠️ **A floor that binds on nothing is a null experiment, not a null result.** The fraction of
+    ``(cell, gene)`` pairs it binds on must be reported beside any conclusion drawn from it;
+    ``scripts/t10_chain_diagnostic.py --report-theta`` measures it before and after."""
+
     decoder_theta_mode: str = "learned"
     """One of ``THETA_MODES``: where the ZINB dispersion comes from.
 
@@ -1984,6 +2011,7 @@ class Config:
             "ode_steps": self.ode_steps,
             "genes_per_step": self.genes_per_step,
             "zinb_eps": self.zinb_eps,
+            "decoder_theta_floor": self.decoder_theta_floor,
             "zinb_theta_min": self.zinb_theta_min,
             "zinb_theta_max": self.zinb_theta_max,
             "zinb_mu_min": self.zinb_mu_min,
@@ -2240,6 +2268,17 @@ class Config:
             raise ConfigError(
                 f"Config.decoder_layers={self.decoder_layers} must be >= 2; a single layer "
                 "makes every ZINB parameter a linear read-out of u_ig"
+            )
+        if self.decoder_theta_floor < 0.0:
+            raise ConfigError(
+                f"Config.decoder_theta_floor must be >= 0 (0 disables it), got "
+                f"{self.decoder_theta_floor}"
+            )
+        if self.decoder_theta_floor >= self.zinb_theta_max:
+            raise ConfigError(
+                f"Config.decoder_theta_floor={self.decoder_theta_floor} is at or above "
+                f"zinb_theta_max={self.zinb_theta_max}, which would pin every theta to one value "
+                "and make the run a measurement of the floor rather than of the model"
             )
         if not self.zinb_theta_min < self.zinb_theta_max:
             raise ConfigError(
