@@ -8105,3 +8105,58 @@ and I would not fund work against it. Against the real 25–34 % gap, **no singl
 combination (bound the dispersion **and** raise `Var(mu)`), which is a T06 redesign and should be
 costed as one. And nothing should start before step 0: weeks of design against a superseded arm is
 the expensive version of the mistake this project has spent five rounds catching cheaply.
+
+### Steps 0 and 1 specified; the combination costed; two premises withdrawn (2026-09-09)
+
+Added as §§7–10 of `reports/emission_repair_options.md`.
+
+**Two corrections, both from the brief and both recorded as findings.** (1) `chain_2400.md` was
+handed over as the diagnosis without checking its arm — it is `softplus`; the shipped `exp` link
+gives 0.9008 → 0.5253 and emits counts **1.13× more autocorrelated than the real section's**.
+(2) The 0.09-vs-0.62 comparison was repeated across panels after this project had already voided a
+run for that error and extended the criticism to its own numbers. ⚠️ **Both are the same shape and
+it is the third instance this week**: neither was a mistake about a number, both were **an arm or a
+panel inherited with a number** — the r11 six-metric table (§4.2a-ii) and the 0.5 weights
+(§4.2a-iv) are the other two. The companion rule: *a number carries its panel and its arm, and
+quoting it without them is quoting a different number.*
+
+🚨 **Step 0 cannot be run as specified.** `t10_chain_diagnostic.py:341–345` **hardcodes**
+`text_emb_mode="lookup"` and `expr_pca_dim=16` with no CLI override, so **every chain artifact in
+`reports/` is a `lookup`/`pca16` arm** — the six-metric table's mislabelling, in a second instrument.
+Four flags are needed first (~half a day): `--text-emb-mode`, `--expr-pca-dim`, `--match-density`
+(the artifacts emitted 11k/48k/268k cells against a GT of 4 187, and kNN Moran's I rises with
+density), and **`--top-k-by real`** — selecting the panel by the *real* section's I, identically on
+both datasets, which is what §0a's error was made of and which must never select on the model side.
+Commands are in §8.2. Step 1 (`Var(mu)` against the encoder latent's, per gene) is one more block in
+the same run and **costs nothing extra if added before step 0 launches**.
+
+**The number step 0 exists to produce** is `I(model counts)` **and** `I(real counts)` on the same
+top-32 real-selected panel on both datasets — not the model's retention, which has different
+denominators on the two sides.
+
+**Judgement, asked for plainly.** If step 0 returns 60 % tier-1 and 25–34 % `deep_starmap`, that is a
+**dataset property to characterise and report, not a defect worth a redesign**: tier-1 is already at
+1.13× real tissue and is the dataset §0a calls the informative reconstruction benchmark; the deficit
+sits on a dataset §0a says **cannot carry a reconstruction claim** (copying reaches 98 % of its
+ceiling); there is an untested mechanism that predicts the split (`deep_starmap`'s median gene is
+detected in **1.6 %** of cells against tier-1's **0.9999** detection rate, and sparse counts are
+Poisson-bounded for real tissue too); and adopting a new emission re-opens every absolute number in
+the project. 🚩 **Reversed if** step 0 shows real tissue's own I on that panel is high (≥ 0.28) while
+the model's stays at 0.07–0.10 — then sparsity does not explain it and it is the emission's defect.
+Either branch is publishable as *"retention is panel-dependent: at parity on a 28-gene curated panel,
+3–4× below on a 1017-gene panel whose median gene is detected in 1.6 % of cells."*
+
+**The combination, costed as one T06 redesign.** The two halves are **not equal partners**: the
+dispersion floor buys a noise factor of 1.0 → 0.41 with high certainty (the term is a measured
+57–61 % of conditional variance, arm-independent), while raising `Var(mu)` must then buy **2.9×–6.8×**
+in the signal with low certainty — it may be small because the model cannot predict more. **The
+uncertain half does most of the work.** Validation is a 2×2 (floor × `Var(mu)` term) at three seeds
+= 12 fits: **11.5 core-hours tier-1** (18.7 with A9's measured 1.63× penalty if half 2 is a loss
+term), **45.6 on `deep_starmap`**; implementation 3–4 days. **Three pre-registered gates, each able
+to stop the work**: (1) after half 1 alone, `f_overdispersion` → ~0 and `s` must land in **0.19–0.36**
+— §2 predicts that interval, so landing outside it means the decomposition is wrong; one fit, ~1
+hour, and the most informative hour in the plan; (2) step 1's `Var(mu)` ratio must be ≤ 0.4, since
+≥ 0.8 means half 2 has nothing to fix; (3) after half 2, `Var(mu)` up **and** fidelity held, or the
+term is manufacturing unconditioned variance — A9's failure in a new place. **Stop rule: if gate 1
+or gate 2 fails, half 2 is not built.** Beyond the fits, adoption re-opens every absolute number,
+re-derives T06's acceptance criteria, and needs a calibration branch (`calibrate.py` is ZINB-only).

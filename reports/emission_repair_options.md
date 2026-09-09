@@ -395,3 +395,203 @@ which is a T06 redesign, and it should be costed as one.
 link that operation takes 0.9008 → 0.5253, above the real section's 0.4635. **Weeks of design work
 against a superseded arm is the expensive version of the mistake this project has spent five rounds
 catching cheaply.**
+
+
+---
+
+## 7. The two corrections, recorded
+
+Both premises came from the brief and both were wrong; recorded here because this project's rule is
+that a withdrawn premise is a finding, not an embarrassment.
+
+**7.1 `chain_2400.md` was handed over as the diagnosis without checking which arm it was.** It is the
+`softplus` arm. The shipped `exp` link gives 0.9008 → 0.5253 at the same step, and the generated
+counts are *more* autocorrelated than the real section's. §0.
+
+**7.2 The 0.09-vs-0.62 comparison was repeated across panels** — `deep_starmap`'s 1017 mostly
+unstructured genes against tier-1's 28 marker genes — **after this project had already voided a run
+for exactly that error**, and after the record had extended the criticism to its own numbers. §0a.
+
+⚠️ **The common shape, and it is worth naming because it is the third instance this week.** Neither
+error was a mistake about a number; both were **an arm or a panel inherited with a number**. The
+r11 six-metric table was mislabelled the same way (§4.2a-ii), and the 0.5 weights were carried the
+same way (§4.2a-iv). `specs/10` §4.2a-ii's rule — *read every fit-time gate out of the artifact, not
+just the gate under test* — has a companion this adds: **a number carries its panel and its arm, and
+quoting it without them is quoting a different number.**
+
+---
+
+## 8. Step 0 and step 1 — what to run, and what must be added first
+
+🚨 **`scripts/t10_chain_diagnostic.py` cannot express step 0 as specified**, and issuing a command
+that silently runs the wrong arm would be §4.2j a third time. `main()` **hardcodes**
+`text_emb_mode="lookup"` and `expr_pca_dim=16` (lines 341–345) with no CLI override. Every chain
+artifact in `reports/` is therefore a `lookup` / `pca16` arm — the same ablation-A3 mislabelling
+found in the six-metric table, in a second instrument.
+
+### 8.1 The four flags step 0 needs (a half-day, and it is the whole of the build)
+
+| flag | why | default to keep |
+|---|---|---|
+| `--text-emb-mode {medcpt,lookup}` | the shipped arm is `medcpt`; the script cannot currently produce it | `lookup`, so existing artifacts reproduce |
+| `--expr-pca-dim N` | the clamp rule gives 28 on tier-1, 32 on `deep_starmap`; the script is pinned at the pilot's 16 | 16 |
+| `--match-density` | Moran's I on a kNN graph rises with density, and the artifacts emitted 11k / 48k / 268k cells against a ground truth of 4 187. Subsample to the GT count per section, one fixed seed | off |
+| `--top-k-by real` | **the decisive one.** Select the panel by the *real* section's Moran's I, identically on both datasets, and report the model and the real reference on that same selection | all channels |
+
+The fourth is what makes tier-1 and `deep_starmap` comparable at all, and it is what §0a's error was
+made of. It must select on the **real** side, never the model's, or the panel is chosen by the answer.
+
+### 8.2 Step 0 — the commands, once those flags exist
+
+```bash
+# tier-1 STARmap, shipped arm, GT-matched density, top-32 by the real section's own I
+python scripts/t10_chain_diagnostic.py --steps 2400 \
+    --dataset starmap_visual_cortex --decoder-mu-link exp --layout-sampler grid \
+    --text-emb-mode medcpt --expr-pca-dim 28 --match-density --top-k-by real --top-k 32 \
+    --out reports/chain_shipped_tier1.md
+
+# deep_starmap, the same arm and the same panel rule
+python scripts/t10_chain_diagnostic.py --steps 2400 \
+    --dataset deep_starmap --decoder-mu-link exp --layout-sampler grid \
+    --text-emb-mode medcpt --expr-pca-dim 32 --match-density --top-k-by real --top-k 32 \
+    --out reports/chain_shipped_deep.md
+```
+
+**Cost**: one fit per dataset if no checkpoint is reusable — **~1 h tier-1, ~3.5–4 h `deep_starmap`**.
+Pass `--fit-checkpoint` to resume, and `--save-model` so step 1 needs no refit.
+
+**The number step 0 exists to produce** is not the model's retention. It is **`I(model counts)` and
+`I(real counts)` on the same top-32 panel, on both datasets** — because that pair, and only that
+pair, decides §9.
+
+### 8.3 Step 1 — `Var(mu)` against the real latent's, per gene
+
+The chain diagnostic already reports `Var(shape)`, `Var(log s)` and `sd(log mu)` for the generated
+cells (the "Candidate 2" block in `chain_2400_explink.md`). **What is missing is the matched
+real-tissue quantity** — `sd(log mu)` from the encoder's latent on the real section, per gene, same
+panel — which is where the unsourced "tissue's 1.213" ought to come from.
+
+That is one additional block in the same script and the same run, so **step 1 costs nothing beyond
+step 0** if it is added before step 0 is launched. Do that rather than running twice.
+
+```bash
+# reads step 0's saved model; no refit
+python scripts/t10_chain_diagnostic.py --steps 2400 --dataset starmap_visual_cortex \
+    --load-model runs/chain/shipped_tier1.pt --report-mu-variance \
+    --out reports/mu_variance_tier1.md
+```
+
+⚠️ `--load-model` does not exist either — the script has `--save-model` and no reader. Either add it,
+or fold step 1's block into step 0's run and accept that a re-measurement means a refit.
+
+**Pre-registered reading for step 1**: `Var(mu_generated) / Var(mu_encoder_real)`, per gene, median
+over the top-32 panel. **≥ 0.8** means the structured component is intact and §2's binding constraint
+does not exist; **≤ 0.4** confirms it; between is uninformative and needs the three-seed version.
+
+---
+
+## 9. Is a 60 % / 25–34 % split a defect or a dataset property?
+
+**On that evidence: a dataset property to characterise and report, not a defect worth a redesign.**
+Four reasons, and one condition that reverses it.
+
+**1. On the headline dataset there is no deficit to repair.** Tier-1 at the shipped link emits counts
+at **1.13× the real section's** autocorrelation (0.5253 against 0.4635). §0a establishes tier-1 as
+*the informative reconstruction benchmark* — 3.3× its own envelope of genuine headroom. The dataset
+the paper is about does not exhibit the failure.
+
+**2. The deficit is on a dataset the spec forbids reconstruction claims on.** §0a, measured
+model-free: *"`deep_starmap` cannot carry a reconstruction claim against an optimal copier"* —
+copying already reaches **98 %** of the achievable ceiling there. Redesigning the emission on the
+strength of a reconstruction deficit measured on that dataset would be justifying a change by a
+number the spec says may not carry that kind of claim.
+
+**3. There is a mechanism, and it predicts the split.** `deep_starmap`'s median gene is detected in
+**1.6 %** of cells against `cosmx`'s 9.3 % (the density note). A gene present in 1.6 % of cells has
+counts that are almost all zero, so the Poisson term dominates and the structured share is bounded
+low **for any method — and for the real tissue too**. Tier-1's 28-gene curated panel has a median
+detection rate of **0.9999** (§0's data-contract note). **Sparsity, not the emission, is the obvious
+difference between the two datasets**, and it is the one nobody has tested.
+
+**4. The cost asymmetry is severe.** Adopting a new emission re-opens **every absolute number in the
+project** and re-derives T06's acceptance criteria — for a deficit on a Tier-2 dataset, while the
+Tier-1 headline is already at parity with real tissue.
+
+🚩 **The condition that reverses this.** If step 0 shows, on the **same top-32 real-selected panel at
+GT-matched density**, that *real tissue's own* `I(counts)` on `deep_starmap` is **high** (say ≥ 0.28,
+as the record's top-32 figure suggests) while the model's stays at 0.07–0.10, then sparsity does
+**not** explain it and the deficit is the emission's. **That is a defect**, and §10's combination
+becomes the right response. The whole judgement turns on one pair of numbers that step 0 produces.
+
+**What I would publish either way**, because it is a result in both branches:
+
+> The emission's retention of spatial structure is **panel-dependent**: at parity with real tissue on
+> a 28-gene curated panel with ~100 % detection, and 3–4× below it on a 1017-gene panel whose median
+> gene is detected in 1.6 % of cells. Whether that is the sparsity bound or the emission is settled by
+> the real section's own retention on the same panel.
+
+That is a **characterisation**, it costs two runs, and it is more useful to a reader than a repair
+would be — because it tells them when the method works, which is what a method paper owes.
+
+---
+
+## 10. The combination, costed as one T06 redesign
+
+Asked for, because §6's answer is that no single candidate closes it. **The two halves are not equal
+partners, and that is the main finding of costing them together.**
+
+### 10.1 What each half contributes
+
+| | half 1 — bound the dispersion | half 2 — raise `Var(mu)` |
+|---|---|---|
+| mechanism | per-gene `theta` **floor** (candidate A's floor form, not the prior form) | an objective term on `Var(mu)` against the tissue's, or a capacity/flow change (candidate E) |
+| what it buys | noise factor `f` **1.0 → 0.41** | signal factor **2.9×–6.8×** (after half 1) |
+| share reached alone | s 0.09–0.19 → **0.19–0.36** | not meaningful alone — raising `Var(mu)` without bounding the noise is partly re-absorbed |
+| certainty | **high** — the term is a measured 57–61 % of conditional variance, arm-independent | **low** — `Var(mu)` may be small because the model cannot predict more (§5) |
+| cost | ~0.5 day | 1–2 days, or open-ended if it is a flow/capacity problem |
+
+**So the combination is one cheap, near-certain half and one expensive, uncertain half — and the
+uncertain half does most of the work.** A 2.9–6.8× increase in the structured component is not a
+tuning change; it is a claim that the model can predict three to seven times more of the between-cell
+variation than it currently does. **Nothing in the record says it can.**
+
+### 10.2 The validation design and its cost
+
+A **2 × 2** — dispersion floor {off, on} × `Var(mu)` term {off, on} — because that is the only design
+that attributes the result to a half rather than to the pair.
+
+| | tier-1 | `deep_starmap` |
+|---|---|---|
+| 12 fits (4 arms × 3 seeds) | **11.5 core-hours** | **45.6 core-hours** |
+| ×1.63 if half 2 is a loss term (A9's measured penalty) | **18.7 core-hours** | 74 core-hours |
+
+Implementation **3–4 days**. Total to a claim-bearing answer on tier-1: **~4 days and ~19
+core-hours**; on both datasets, ~5 days and ~65–90 core-hours.
+
+### 10.3 What would show the combination is working, before the full thing is built
+
+Three gates, in order, each cheap and each able to stop the work:
+
+1. **After half 1 alone, `f_overdispersion` must fall from 0.57–0.61 to near zero and `s` must land
+   in 0.19–0.36.** This is arithmetic, not hope — §2 predicts the interval. **If `s` lands outside
+   it, the variance decomposition is wrong and the whole design is mis-aimed.** One tier-1 fit,
+   ~1 hour. **This is the single most informative hour in the plan.**
+2. **Step 1's `Var(mu)` ratio must be ≤ 0.4.** If it is ≥ 0.8, half 2 has nothing to fix and the
+   combination collapses to half 1, which §2 says cannot reach the target — meaning the target is
+   wrong, not the model.
+3. **After half 2, `Var(mu)` must rise *and* per-cell fidelity must hold** — gene–gene Frobenius
+   against the independent-donor baseline, and `variance_ratio` ≥ 0.5. **If `Var(mu)` rises while
+   Frobenius worsens, the term is manufacturing unconditioned variance**, which is A9's failure in a
+   new place and must be published as such.
+
+**Stop rule, pre-registered**: if gate 1 fails, do not build half 2. If gate 2 returns ≥ 0.8, do not
+build half 2. **Either outcome ends the redesign for the price of one fit and one diagnostic**, which
+is the point of ordering them this way.
+
+### 10.4 What adopting it costs beyond the fits
+
+Every absolute number in the project is re-opened — the emission is upstream of all of them. T06's
+acceptance criteria (detection MAD, mean–variance slope, gene–gene Frobenius) need re-deriving for
+the new emission. `infer/calibrate.py` is ZINB-only and would need a branch or an explicit
+disabling. And the shipped configuration changes, so §5.1's three-seed table is measured again.
+**That is the real cost of the combination, and it is larger than the fits.**
