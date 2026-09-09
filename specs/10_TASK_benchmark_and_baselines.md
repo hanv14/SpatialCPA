@@ -2467,6 +2467,11 @@ it did not.
    would need every prediction re-scored on the pinned evaluator. bench3's
    `evaluate_all --force` does exactly that **without re-running any method**, so if the predictions
    are ever recovered, re-scoring is cheap and is the first thing to do.
+
+   ✅ **2026-09-09 — the predictions were kept.** Every
+   `results/<method>/<dataset>/<holdout>/` carries `prediction.h5` beside `metrics.json`, so this
+   is now the live path and it is the cheapest remaining item in the campaign. §13.1a gives the
+   command.
 2. **No number in §13.2–13.4 enters a paper table.** They are read as *directional signals* that set
    the pilot's criteria (§11.1), and every one of them is re-measured on the pinned instrument
    before it is quoted.
@@ -2475,6 +2480,68 @@ Also missing from that campaign: **`v22`, `v23` and `v24` were never run**, so t
 development table has a three-version gap, and `v19` appears on only 17 rows over a different
 dataset subset than the others — its apparent wide-regime strength (§13.3) is not comparable with
 the rest and must not be read as one.
+
+### 13.1a ✅ The re-score — the command, and what it must not overwrite
+
+**Verified 2026-09-09 in this checkout**: `benchmark-pbya-v3/src/bench3/evaluate_paper.py` is
+**764 lines** and hashes to
+`7362669200bbd2be905adf1715c4c6d44842ef1652edb2f4aba697c039538992` — §0's pin, unchanged. So the
+instrument the re-score would use is the pinned one, today.
+
+🚨 **Copy the tree first. `evaluate_all` writes `metrics.json` in place, and the old values are
+evidence.** `evaluate_prediction` writes to `pred_path.parent / "metrics.json"`, so `--force`
+**destroys the prior campaign's scores**. Those scores are the only record of what the *older*
+evaluator revisions returned, and §13.1 says the drift between revisions on the *shared* metrics is
+**unknown and cannot be determined from the CSV**. Re-scoring into a copy makes it determinable —
+old and new side by side, per section, per metric. **That delta is itself a result**, and it is the
+only chance to measure it. Overwriting in place throws it away and leaves §13.1's caveat permanently
+unresolvable.
+
+```bash
+# 0. preserve the evidence, and work on the copy
+cp -a "$BENCH_V3_RESULTS_OLD" results_rescored
+
+# 1. pin the instrument, before
+sha256sum benchmark-pbya-v3/src/bench3/evaluate_paper.py   # must equal §0's hash
+
+# 2. tier-1 first: the comparator set on the protocol dataset, UMAP ON
+BENCH_V3_RESULTS=results_rescored \
+python -m src.bench3.evaluate_all --force \
+    --results-dir results_rescored \
+    --dataset-name starmap_visual_cortex \
+    --methods spatialz feast isost spatialcpav20_gen spatialcpav21_gen
+
+# 3. pin the instrument, after — a mismatch at either end aborts and names the file (§0)
+sha256sum benchmark-pbya-v3/src/bench3/evaluate_paper.py
+```
+
+**Cost, stated as what is known and what is not.**
+
+* **No method re-runs.** This is scoring only: `evaluate_prediction` reads `prediction.h5` and the
+  ground truth. The expensive half of a campaign is not paid.
+* **The unit of work is one prediction**, and the tier-1 scope is small — count it before starting:
+  `find results_rescored -path '*starmap_visual_cortex*' -name prediction.h5 | wc -l`.
+* ⚠️ **No per-prediction scoring time exists anywhere in this project's artifacts.** Every recorded
+  duration is a *fit* (`fit_seconds`) or a calibration; the r11 re-scores were never timed, and the
+  advisor already records that as a gap. **So do not model it — measure it**: run step 2 with
+  `--methods spatialz` alone first, time it, and multiply. That is `specs/10` §11's own discipline
+  (the pilot replaced a cost model with a number) applied to the one line item that still has a
+  model instead of a measurement.
+* **UMAP dominates and must stay on.** `--no-umap` is what left `paper_umap_mixing` unmeasured on
+  the r11 arms and produced the two-`SIX` defect; passing it here would reproduce that hole in the
+  comparator set. Budget for UMAP rather than switching it off.
+
+**What the re-score buys, beyond comparability.** §13.1's specific defect is that
+`paper_marker_field_ssim`, `paper_gene_detection_spearman` and `paper_rare_celltype_localization`
+are populated on **132/132** rows for v18/v20/v21 and **0/3** for `spatialz` on tier-1. One pass on
+one evaluator populates every column for every method, which is what makes a tier-1 headline table
+possible at all — and `field_ssim` beside `field_r` is §13.4's own requirement.
+
+⚠️ **Two checks the run must pass before its output is used.** `evaluate_all` counts failures and
+keeps going: **require `failed 0`**, because a partially re-scored tree is a cross-instrument tree
+again, silently. And predictions written by older method code may not carry what today's evaluator
+reads — a failure there is a finding about the recovered tree, not a reason to fall back to the old
+`metrics.json`.
 
 ### 13.2 C1 — cell-type localization is where the competitor leads
 

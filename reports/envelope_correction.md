@@ -424,6 +424,50 @@ negative `marker_field_r`, so their margins are as retired as their divisor.
 
 ---
 
+## 5b. ✅ The envelope replacement, propagated (2026-09-09)
+
+A9's `w = 0` arm is the shipped configuration (`reports/advisor_report.md` §6c), so its per-metric
+across-seed spreads are **the only envelope this project has ever measured on what it ships** — on
+`bench3.evaluate_paper`, at `paper_2_4_6`, at three seeds. Every ratio still quoted against 0.0335
+or against its per-metric fixture decomposition was checked against it. **Substituted where the
+instrument and arm match; flagged where they do not.**
+
+| figure | instrument | arm | A9 `w=0` admissible? | outcome |
+|---|---|---|---|---|
+| **the shipped table's deficits below the floor** (advisor §5.1a) | B | **A9 `w=0` itself** | ✅ **yes** | **substituted** — the first admissible envelope multiples in the project |
+| A9's own margins and both §4.2d constructions | B | A9 | ✅ yes | already its own; unchanged |
+| A7's six ratios | B | A7, **1200 steps** | ❌ different budget | unchanged — A7 uses its own per-arm spreads, correctly |
+| the six §3 rows (r11 layout, `marker_field_r`, boundary, `gene_mean_spearman`, §13.2, the pilot 29x) | B | r11: **`lookup`, `expr_pca_dim=16`** | ❌ two fit-time gates differ (§1b) | **stay flagged** |
+| §2.1 `expr_mode` tier-1 (2.2x / 2.3x / 7.4x) | **A** | its own two arms | ❌ wrong instrument | unchanged — measured on its own run, which is correct |
+| §2.2 headroom (3.3x / 0.37x / 2.0x / 2.7x) | **A** | instrument-A `zinb-flow` | ❌ wrong instrument | unchanged |
+| §2.3 metric-aware margins, §2.4 fixture tie-break | fixture | the **orphan `w=0.5`** arm | ❌ wrong instrument *and* an arm with no other instance | unchanged, flagged above |
+
+**What the substitution moved**, and it moved in both directions — §4.2a's claim once more:
+
+| metric | deficit | vs 0.0335 | **vs the shipped arm's own envelope** |
+|---|---|---|---|
+| `paper_morans_pearson` | −0.4262 | 12.7x | **21.1x** |
+| `paper_gearys_pearson` | −0.4297 | 12.8x | **17.8x** |
+| `paper_marker_field_r` | −0.3201 | 9.6x | **10.4x** |
+| `paper_marker_depth_r` | −0.2566 | 7.7x | **2.1x** |
+| `paper_gene_mean_spearman` | −0.0142 | 0.4x | **0.4x — inside, a tie** |
+| `paper_celltype_localization` | −0.0174 | 0.5x | 🚩 **not readable** |
+
+🚩 **`celltype_localization` is the one place the replacement must not be applied, and the reason is
+new.** Its `w=0` spread is 0.0009, with `n_pred` **bitwise identical across all three seeds**
+because `resample` copies the donor's layout and cell types — two of three seeds return exactly
+0.7591. Dividing by that manufactures an 18.9x deficit out of an arm that barely moves. §4.2g says a
+member **degenerate by construction** contributes its level and not its spread; it was written about
+a *referent*, and **here the degenerate member is the arm under test**, which the rule does not
+cover. Reported as unreadable, with the raw −0.017 beside it.
+
+⚠️ **And `gene_mean_spearman` corrects a claim from 2026-09-09's own earlier revision.** Its deficit
+is **0.4x** its own envelope — a tie. The point estimate does cross the floor, so *"the one
+genuinely solved thing"* is still withdrawn; but "flips sign against its floor" overstates it, and
+the metric is **not established as worse** either.
+
+---
+
 ## 6. The rule this earns
 
 §4.2a says *measure the envelope per metric, per arm, per gate*. Three additions this exercise

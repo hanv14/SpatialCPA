@@ -96,8 +96,19 @@ shipped-configuration measurement existed all along in **A9's fits** (medcpt, `e
 `resample`, 2400 steps, three seeds, pinned evaluator), filed under A9's verdict. Re-read at zero
 fits, it moves the negatives **further from the floor, not closer**: `marker_field_r` 0.203 below →
 **0.320**, the two autocorrelation metrics ~0.33 below → **~0.43**, and `gene_mean_spearman` — this
-project's "one genuinely solved thing" — flips from **+0.0038 above** its copy floor to **−0.0142
-below** it. Table and derivation: `reports/advisor_report.md` §5.0–5.2.
+project's "one genuinely solved thing" — no longer clears its copy floor (+0.0038 above → −0.0142
+below).
+
+✅ **And these are the first deficits in the project readable against an admissible envelope.** A9's
+`w=0` arm *is* the shipped configuration, so its own three-seed spreads decide (§4.2b: the referent
+is a fixed probe, envelope zero). `morans` **21.1x**, `gearys` **17.8x**, `marker_field_r`
+**10.4x**, `marker_depth_r` **2.1x** — and the retired pooled figure was mis-scaling in *both*
+directions, reading the autocorrelation pair at 12.7x/12.8x and `marker_depth_r` at 7.7x. ⚠️ Two
+cells do not survive the reading: `gene_mean_spearman`'s deficit is **0.4x its own envelope — a
+tie**, so it is not established as worse either, and `celltype_localization` is 🚩 **not readable**
+(its `w=0` spread is 0.0009 with bitwise-identical cell counts across seeds, because `resample`
+copies the layout — §4.2g's degeneracy, arriving on the arm under test rather than on a referent).
+Table and derivation: `reports/advisor_report.md` §5.0–5.2, §5.1a.
 
 **The sentence that follows, and which had not been written down.** v25 ships `resample` +
 `zinb-flow`: real positions with generated expression. v20's fallback is `resample` + `cross-mix`:
@@ -479,8 +490,9 @@ negative column and were measured at the selected budget. Writing the caveat bro
 
    **What makes it worth opening rather than noting.** The tier-1 deficit is not expression
    magnitude: `gene_mean_spearman` sits **0.0033** off its copy floor **on the A3 arm** — ⚠️ and
-   **−0.0142 below** it on the shipped configuration (2026-09-09), so the "per-gene magnitude is
-   solved" reading is withdrawn with it. 🚩 **"inside the envelope"
+   **−0.0142 below** it on the shipped configuration (2026-09-09), which is **0.4x its own
+   envelope**, i.e. a tie: the "per-gene magnitude is solved" reading is withdrawn, and no claim
+   that it is *worse* replaces it. 🚩 **"inside the envelope"
    is withdrawn** — this metric is not in `METRIC_NAMES` and appears in **no** fixture or
    internal-LOSO envelope at all (the two-`SIX` defect), and the only spreads that exist for it are
    A7's and A9's on `bench3.evaluate_paper`, at **0.0033 to 0.1193** — a range that brackets the

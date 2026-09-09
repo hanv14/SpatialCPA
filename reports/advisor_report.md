@@ -291,6 +291,45 @@ are **model-free probes** that copy real cells rather than running the model, re
 `w = 0` (56 / 59 / 56 min) and 4.65 at `w = 0.5` (91 / 92 / 97 min), read out of `fit_seconds`. This
 is a re-read, not a campaign.
 
+### 5.1a ✅ And these are the first deficits in the project readable against an admissible envelope
+
+A9's `w = 0` arm **is** the shipped configuration (§6c), so its own across-seed spreads are the
+envelope for its own clearances — right instrument, right design, right arm, three seeds. Per §4.2b
+the referent is a fixed model-free probe, so its envelope is exactly zero and the arm's decides.
+**No deficit in this project has ever been divisible by an admissible figure before.**
+
+| metric | deficit below floor | env (`w=0` arm) | **vs its own envelope** | vs the retired 0.0335 |
+|---|---|---|---|---|
+| `paper_morans_pearson` | −0.4262 | 0.0202 | **21.1x** | 12.7x |
+| `paper_gearys_pearson` | −0.4297 | 0.0241 | **17.8x** | 12.8x |
+| `paper_marker_field_r` | −0.3201 | 0.0307 | **10.4x** | 9.6x |
+| `paper_marker_depth_r` | −0.2566 | 0.1225 | **2.1x** | 7.7x |
+| `paper_celltype_localization` | −0.0174 | 0.0009 | ⚠️ **not readable — see below** | 0.5x |
+| `paper_gene_mean_spearman` | −0.0142 | 0.0400 | **0.4x — inside** | 0.4x |
+| `paper_umap_mixing` | — | 0.0464 | no probe exists | — |
+
+**The four large deficits are established and the pooled figure was mis-scaling them in both
+directions**: the autocorrelation pair reads *higher* than 0.0335 suggested (12.7x → **21.1x**,
+12.8x → **17.8x**) while `marker_depth_r` reads far *lower* (7.7x → **2.1x**), because its own arm
+moves by 0.12 between seeds. §4.2a's claim, once more, in the project's own headline numbers.
+
+⚠️ **Two cells are not what the point estimates suggest, and §5.2 is corrected by them.**
+
+* 🚩 **`celltype_localization` is NOT READABLE, not a 19x deficit.** Its `w = 0` spread is **0.0009**
+  — and `n_pred` is **bitwise identical across all three seeds** (4073 / 4169 / 4110), because
+  `resample` copies the donor's layout and cell types. Two of three seeds return exactly 0.7591.
+  That is an arm **near-degenerate by construction on this metric**, and §4.2g's principle applies:
+  a degenerate member contributes its **level**, not its spread. Dividing by 0.0009 manufactures
+  significance from an arm that barely moves. ⚠️ §4.2g was written about a *referent* being
+  degenerate; here it is the **arm under test**, which the rule does not currently cover. The
+  honest statement is that the deficit is small (**−0.017**) and its noise scale is not measurable
+  from this arm.
+* ⚠️ **`gene_mean_spearman`'s deficit is INSIDE its envelope at 0.4x**, so §5.2's "flips sign
+  against its floor" overstates it. The point estimate does move from +0.0038 above the floor to
+  −0.0142 below. But −0.0142 against a 0.0400 spread is a **tie**. The withdrawal of *"the one
+  genuinely solved thing"* stands — it is not established as solved — but it is **not established
+  as worse either**, and this report should not claim it is.
+
 ### 5.2 🚨 The shipped configuration is WORSE than the arm labelled as it, on six of seven metrics
 
 | metric | A3 column (1 seed) | shipped, `w=0` (3 seeds) | change | A3 − floor | **shipped − floor** |
@@ -308,12 +347,14 @@ is a re-read, not a campaign.
 1. **Every deficit below the copy floor gets larger.** `marker_field_r` goes from 0.203 below to
    **0.320** below; the two autocorrelation metrics from ~0.33 to **~0.43**. The negative column is
    stronger on the shipped arm than on the arm that was standing in for it.
-2. 🚨 **`gene_mean_spearman` flips sign against its floor.** This report calls it *"the one
-   genuinely solved thing"* at **+0.0038** above the copy floor. On the shipped configuration it is
-   **−0.0142 below** it. **That claim is withdrawn** — per-gene average magnitude is not solved
-   either; it was solved on A3.
-3. **`celltype_localization` is the only cell that improves**, by 0.005, which is inside its own
-   0.0061 across-seed envelope and is therefore a tie.
+2. 🚨 **`gene_mean_spearman` no longer clears its floor.** This report calls it *"the one genuinely
+   solved thing"* at **+0.0038** above the copy floor; on the shipped configuration the point
+   estimate is **−0.0142 below** it. **That claim is withdrawn** — per-gene average magnitude is not
+   established as solved, and what solved it was A3. ⚠️ But the deficit is **0.4x its own envelope**
+   (§5.1a), so it is a **tie**, not an established loss; do not quote it as one.
+3. **`celltype_localization` is the only cell that improves**, by 0.005 — inside the `w=0.5` arm's
+   0.0061 spread, and on an arm whose `w=0` spread is 0.0009 with bitwise-identical cell counts
+   across seeds. A tie, and see §5.1a: this metric's noise scale is not measurable under `resample`.
 
 ⚠️ **Two things the new table does not carry.** `paper_umap_mixing` still has no probe — the
 probes are not scored for it (the two-`SIX` defect below), so it has no floor or ceiling in any

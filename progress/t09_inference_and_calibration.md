@@ -7931,3 +7931,69 @@ arms, and **A9's `0` arm is the shipped configuration** — so `paper_morans_pea
 `paper_marker_depth_r` 0.1225, `paper_celltype_localization` 0.0009, `paper_gene_mean_spearman`
 0.0400 are **the only envelope this project has ever measured on the configuration it actually
 ships**, on the pinned instrument, at the right design, at three seeds.
+
+### The comparator re-score, and the envelope replacement propagated (2026-09-09)
+
+**1. The predictions were kept, so the last tier-1 gap is a scoring pass.** Every
+`results/<method>/<dataset>/<holdout>/` carries `prediction.h5` beside `metrics.json`, so §13.1's
+"re-run the comparators" becomes `evaluate_all --force` — **no method re-runs**. Command, checks and
+cost are `specs/10` §13.1a. Three things in it are not obvious:
+
+* ✅ **The pin holds today.** `benchmark-pbya-v3/src/bench3/evaluate_paper.py` is 764 lines and
+  hashes to `7362669200bbd2be905adf1715c4c6d44842ef1652edb2f4aba697c039538992` — §0's value,
+  verified in this checkout.
+* 🚨 **Copy the tree first.** `evaluate_prediction` writes `metrics.json` **in place**, so `--force`
+  destroys the prior campaign's scores. Those are the only record of what the older evaluator
+  revisions returned, and §13.1 states the drift between revisions on the *shared* metrics is
+  **unknown and cannot be determined from the CSV**. Re-scoring into a copy makes it determinable —
+  old and new, per section, per metric. **That delta is itself a result**, and overwriting in place
+  leaves §13.1's caveat permanently unresolvable.
+* ⚠️ **No per-prediction scoring time exists in this project's artifacts** — every recorded duration
+  is a fit or a calibration, and the r11 re-scores were never timed. So the cost is not modelled: run
+  `--methods spatialz` alone first, time it, multiply. §11's own discipline, applied to the one line
+  item that still has a model instead of a number. Keep UMAP **on**: `--no-umap` is what produced
+  the two-`SIX` hole on the r11 arms.
+* Require **`failed 0`** — `evaluate_all` counts failures and continues, and a partially re-scored
+  tree is a cross-instrument tree again, silently.
+
+What it buys beyond comparability: §13.1's specific defect is `paper_marker_field_ssim`,
+`paper_gene_detection_spearman` and `paper_rare_celltype_localization` at 132/132 rows for
+v18/v20/v21 and **0/3** for `spatialz` on tier-1. One pass populates every column for every method,
+which is what makes a tier-1 headline table possible — and `field_ssim` beside `field_r` is §13.4's
+own requirement.
+
+**2. The envelope replacement, propagated.** A9's `w=0` arm is the shipped configuration, so its
+spreads are the only admissible envelope for a shipped-arm clearance. Substituted where the
+instrument and arm match, flagged where they do not — full table in
+`reports/envelope_correction.md` §5b. **Only one family was substitutable**: the shipped table's
+deficits below the copy floor. §2.1 and §2.2 are instrument A and keep their own run's envelopes;
+§2.3/§2.4 are the fixture's orphan `w=0.5` arm; §3's six rows are r11's `lookup`/`pca16` arm and
+stay flagged. A7 keeps its own 1200-step per-arm spreads.
+
+✅ **The result is the first set of deficits in this project expressible as an admissible envelope
+multiple** (§4.2b: the referent is a fixed probe, so the arm's own envelope decides):
+
+| metric | deficit | vs the retired 0.0335 | vs the shipped arm's own envelope |
+|---|---|---|---|
+| `paper_morans_pearson` | −0.4262 | 12.7x | **21.1x** |
+| `paper_gearys_pearson` | −0.4297 | 12.8x | **17.8x** |
+| `paper_marker_field_r` | −0.3201 | 9.6x | **10.4x** |
+| `paper_marker_depth_r` | −0.2566 | 7.7x | **2.1x** |
+| `paper_gene_mean_spearman` | −0.0142 | 0.4x | **0.4x — inside, a tie** |
+| `paper_celltype_localization` | −0.0174 | 0.5x | 🚩 **not readable** |
+
+The pooled figure was mis-scaling in **both** directions — the autocorrelation pair reads far higher
+against its own arm, `marker_depth_r` far lower — which is §4.2a's claim in the headline numbers.
+
+🚩 **`celltype_localization` is where the replacement must not be applied, and the reason is new.**
+Its `w=0` spread is **0.0009**, with `n_pred` **bitwise identical across all three seeds** (4073 /
+4169 / 4110) because `resample` copies the donor's layout and cell types; two of three seeds return
+exactly 0.7591. Dividing by that manufactures an 18.9x deficit from an arm that barely moves. §4.2g
+says a member **degenerate by construction** contributes its level and not its spread — it was
+written about a *referent*, and **here the degenerate member is the arm under test**, a case the
+rule does not cover. Reported unreadable, with the raw −0.017 beside it.
+
+⚠️ **And a correction to this same day's earlier entry.** `gene_mean_spearman`'s deficit is **0.4x**
+its own envelope, so "flips sign against its floor" overstates it: the point estimate crosses, the
+deficit is a **tie**. *"The one genuinely solved thing"* stays withdrawn — it is not established as
+solved — but it is **not established as worse** either, and the record should not say it is.
