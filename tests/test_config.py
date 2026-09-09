@@ -21,6 +21,54 @@ from spatialcpav25_gen.config import (
 V20_CONFIG = {"layout_mode": "resample", "expr_mode": "cross-mix", "prior_mode": "iid"}
 
 
+def test_shipped_defaults_validate_field_by_field():
+    """Every field's declared default must be a value ``validate()`` accepts.
+
+    ``replace()`` validates the **whole** config, so one field whose default its own range check
+    rejects kills every run in the project before it does anything. That is what
+    ``decoder_theta_floor = 0.0`` did on the day it was added: a **sentinel** default — "0 means
+    no floor" — listed in ``_check_positive``, whose dict rejects zero. Three real-data runs died
+    in ``replace()`` before loading a file.
+
+    Nothing asserted that the *defaults* were valid. The suite would have caught it, but only as
+    a confusing ``pytest.raises(match="ell_xy")`` mismatch two tests away from the cause, so this
+    test exists to fail **by name** instead.
+
+    A sentinel default is the shape that invites this — the value is not a value — so a new field
+    whose default means "off" belongs in neither the positive nor the fraction registry, and its
+    range check is written out in ``_check_relations``.
+    """
+    base = Config()
+    # This line is where the sentinel bug surfaces, and it raises ConfigError directly rather
+    # than reaching the loop's message. That is fine: the raised message names the field, the
+    # value and the rule, inside a test whose name says what was being asserted.
+    base.validate()
+    assert base.replace() == base
+
+    for field in dataclasses.fields(Config):
+        value = getattr(base, field.name)
+        try:
+            base.replace(**{field.name: value})
+        except ConfigError as exc:
+            raise AssertionError(
+                f"Config.{field.name}'s own default {value!r} does not validate: {exc}"
+            ) from exc
+
+
+def test_decoder_theta_floor_sentinel_and_range():
+    """``0.0`` disables the floor; negatives and a floor at ``zinb_theta_max`` are refused."""
+    assert Config().decoder_theta_floor == 0.0
+    assert Config().replace(decoder_theta_floor=0.0).decoder_theta_floor == 0.0
+    assert Config().replace(decoder_theta_floor=0.25).decoder_theta_floor == 0.25
+
+    with pytest.raises(ConfigError, match="decoder_theta_floor"):
+        Config().replace(decoder_theta_floor=-1.0)
+    # at or above zinb_theta_max every theta is pinned to one value, which measures the floor
+    # rather than the model
+    with pytest.raises(ConfigError, match="decoder_theta_floor"):
+        Config().replace(decoder_theta_floor=Config().zinb_theta_max)
+
+
 def test_config_roundtrip(tmp_path):
     """yaml -> Config -> yaml is idempotent, and validate() rejects bad values."""
     path = tmp_path / "cfg.yaml"

@@ -8463,3 +8463,53 @@ trustworthy deep `theta`/`pi` and nothing else, at 3.3 h.
 checked *first*, and that `structured_share` reproduces both the 10.4 % and the 42.5 %). Nothing
 touching torch ran: the new `Config` field, the decoder clamp, `--theta-floor`, `--report-theta` and
 both N5 arms are unexecuted here.
+
+---
+
+## 2026-09-09 (e) — `decoder_theta_floor` made the default config unconstructible
+
+**The defect.** The new field's range check was written into `_check_positive`'s `positive` dict
+instead of being left out of it. That dict rejects zero, and the field's default **is** zero —
+a sentinel meaning *no floor*. So `Config().replace(...)` raised
+`ConfigError: Config.decoder_theta_floor=0.0 must be > 0`, and **all three real-data runs died in
+`replace()` before opening a file**. Not a wrong number; a project that would not start.
+
+**How the line got there.** `to_dict` is `dataclasses.asdict(self)` and needs no maintenance, but I
+believed it was a hand-maintained dict because a grep had shown me `"zinb_theta_min": self.zinb_theta_min,`
+in a listing I read as `to_dict`. It was `_check_positive`. My edit asserted the anchor occurred
+exactly once — it did — and put the new line beside it, in the wrong method. The assertion was
+satisfied and the placement was still wrong: **a unique anchor proves the edit is unambiguous, not
+that it is in the right place.**
+
+**Why nothing caught it.** `ruff`, `py_compile` and both `--self-check` suites pass, and **not one of
+them constructs a `Config`**. `tests/test_config.py` *would* have caught it — `test_config_roundtrip`
+and `test_config_gates_validate` both fail on the broken form — and it runs in this container in
+0.3 s with `python3 -m pytest tests/test_config.py --noconftest` (the package's `config` module
+imports without torch or pandas; `conftest.py` does not). **That channel existed all session and I
+never used it.** It is now part of the loop, and it is the only test module collectable here — every
+other one needs torch or pandas.
+
+**The rule this earns**, and it is about my own instrument rather than the project's: *a self-check
+that never constructs the object under test verifies the code path it exercises, not the change.*
+Both `--self-check` suites assert numerics over numpy arrays; the change was a dataclass field, and
+they could not have failed.
+
+**The fix.** The line is out of `positive`. The range check stays written out — `>= 0`, and refused
+at or above `zinb_theta_max`, where every `theta` would be pinned to one value and the run would
+measure the floor rather than the model. The field's docstring now says the default is a **sentinel,
+not a value**, that it therefore belongs in neither the positive nor the fraction registry, and that
+putting it in the positive dict is exactly what was done first.
+
+**The guard**, in `tests/test_config.py`:
+
+* `test_shipped_defaults_validate_field_by_field` — asserts `Config().validate()`, that
+  `Config().replace()` with no arguments returns an equal config, and then walks **every** field
+  asserting its own declared default survives `replace()`, so the failure names the field. Verified
+  to fail on a scratch copy with the defect reintroduced, and to pass on the fix.
+* `test_decoder_theta_floor_sentinel_and_range` — 0 disables, 0.25 is accepted, negatives and a floor
+  at `zinb_theta_max` are refused.
+
+Verification now: `ruff` clean; `pytest tests/test_config.py --noconftest` **7 passed**;
+`t10_chain_diagnostic --self-check` **40/40**; `t10_reallocation_table --self-check` **9/9**. Still
+no torch here, so the decoder's use of the floor, `--theta-floor` and `--report-theta` remain
+unexecuted — but the config now constructs, which is what the three runs needed.

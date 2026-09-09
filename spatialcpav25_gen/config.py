@@ -1094,7 +1094,11 @@ class Config:
 
     decoder_theta_floor: float = 0.0
     """A lower bound on the ZINB ``theta``, i.e. an **upper bound on over-dispersion**. ``0.0``
-    (the default, and everything measured up to here) means inactive.
+    (the default, and everything measured up to here) is a **sentinel meaning inactive**, not a
+    value — so it belongs in neither :meth:`_check_positive` nor :meth:`_check_fractions`, whose
+    dicts reject zero, and its range check is written out in :meth:`_check_relations` instead.
+    Putting it in the positive dict is exactly what was done first, and it made the **default**
+    config unconstructible: every run died in ``replace()`` before doing anything.
 
     Distinct from ``zinb_theta_min``, which is a numerical guard against a degenerate draw and is
     not a claim about the data. This is an **experimental constraint**: it enters
@@ -2011,7 +2015,6 @@ class Config:
             "ode_steps": self.ode_steps,
             "genes_per_step": self.genes_per_step,
             "zinb_eps": self.zinb_eps,
-            "decoder_theta_floor": self.decoder_theta_floor,
             "zinb_theta_min": self.zinb_theta_min,
             "zinb_theta_max": self.zinb_theta_max,
             "zinb_mu_min": self.zinb_mu_min,
