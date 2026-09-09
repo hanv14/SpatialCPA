@@ -236,7 +236,101 @@ filed where nobody will think to look.**
 
 ---
 
-## 5. The six-metric table — ⚠️ **NOT the shipped configuration**, with floor and ceiling
+## 5. The six-metric table
+
+### 5.0 🚨 THE STATED ABSENCE: this project has never measured its own shipped configuration on the headline table
+
+Not a caveat on a column. **There is no draft of this table, at any point in the project, that
+measured the configuration v25 ships.** Both drafts are the same ablation:
+
+| draft | arm | `text_emb_mode` | `expr_pca_dim` | layout | seeds | what it is |
+|---|---|---|---|---|---|---|
+| earlier (withdrawn) | `hybrid`, rejection sampler | `lookup` | 16 | `hybrid` | 1 | **ablation A3** |
+| corrected 2026-09-08 | `resample-grid` | `lookup` | 16 | `field` fitted, `resample` generated | 1 | **ablation A3** |
+| **the shipped configuration** | — | `medcpt` | 28 | `resample` | — | **never measured here** |
+
+The 2026-09-08 correction moved the layout gate from `hybrid` to `resample` and relabelled the
+result "shipped". It fixed the gate that was in dispute and inherited the label on the two that were
+not. **Both drafts are `text_emb_mode=lookup` at `expr_pca_dim=16`** — and `specs/10` §3 already
+names that arm: *"any local run is forced to `text_emb_mode="lookup"` — which is ablation A3, not
+the shipped method."* The pilot ran in the development container, where the MedCPT encoder is
+unreachable, so it could not have been anything else.
+
+**So every absolute number this report has ever published about v25's own performance is A3's.**
+Not the layout claim — that survives, see below — but every level: the deficits below the floor, the
+fractions of the achievable range, the "one genuinely solved thing". The paper cannot report v25's
+performance from this table, in any draft.
+
+### 5.1 ✅ And the measurement exists — it is A9, filed as an ablation
+
+The remedy named in `reports/envelope_correction.md` was *three seeds of the shipped arm on
+instrument B*. **That is what A9's fits are**, and this is the A9 retrieval failure (§4c) in its most
+consequential form: A9 was indexed by the question it answered, so nobody noticed it had also
+measured the headline table.
+
+`reports/t10_a9_{0,05}_s{1,2,3}.json`: tier-1 STARmap, `paper_2_4_6`, `bench3.evaluate_paper`,
+`text_emb_mode=medcpt`, `expr_pca_dim=28`, `layout_mode=resample`, `layout_sampler=grid`,
+`prior_mode=correlated`, `expr_mode=zinb-flow`, `decoder_mu_link=exp`, 2400 steps, SEFL at zero —
+**the shipped configuration on every gate except the one still in dispute** (§6a), which is present
+at both of its candidate values. Medians over the three held-out sections, three seeds, min–max
+beside them. Referents are `flanking_copy` and `oracle` from `r11_starmap_layout_modes.json`: they
+are **model-free probes** that copy real cells rather than running the model, re-measured on
+2026-09-08 and reproducing to four decimals, so they are arm-independent and transfer.
+
+| metric | **`w = 0` (what `Config` produces)** | min–max | `w = 0.5` (what the selection chose) | min–max | floor | oracle | `w=0` − floor |
+|---|---|---|---|---|---|---|---|
+| `paper_morans_pearson` | **0.5574** | 0.5438–0.5640 | 0.6422 | 0.3753–0.6647 | 0.9836 | 1.0000 | **−0.4262** |
+| `paper_gearys_pearson` | **0.5543** | 0.5419–0.5659 | 0.6343 | 0.3757–0.6618 | 0.9840 | 1.0000 | **−0.4297** |
+| `paper_umap_mixing` | **0.8318** | 0.8201–0.8665 | 0.6197 | 0.6067–0.7348 | — | — | ⚠️ no probe |
+| `paper_marker_field_r` | **0.5655** | 0.5426–0.5732 | 0.4139 | 0.4122–0.4718 | 0.8857 | 0.9997 | **−0.3201** |
+| `paper_marker_depth_r` | **0.7228** | 0.6508–0.7733 | 0.6391 | 0.5974–0.6977 | 0.9794 | 1.0000 | **−0.2566** |
+| `paper_celltype_localization` | **0.7591** | 0.7582–0.7591 | 0.7591 | 0.7540–0.7601 | 0.7765 | 0.9808 | −0.0174 |
+| `paper_gene_mean_spearman` | **0.9721** | 0.9475–0.9874 | 0.9611 | 0.9376–0.9677 | 0.9863 | 1.0000 | **−0.0142** |
+
+**Cost: zero fits.** A9's six fits are already paid for and already committed — 2.85 core-hours at
+`w = 0` (56 / 59 / 56 min) and 4.65 at `w = 0.5` (91 / 92 / 97 min), read out of `fit_seconds`. This
+is a re-read, not a campaign.
+
+### 5.2 🚨 The shipped configuration is WORSE than the arm labelled as it, on six of seven metrics
+
+| metric | A3 column (1 seed) | shipped, `w=0` (3 seeds) | change | A3 − floor | **shipped − floor** |
+|---|---|---|---|---|---|
+| `morans_pearson` | 0.6541 | 0.5574 | **−0.097** | −0.3294 | **−0.4262** |
+| `gearys_pearson` | 0.6535 | 0.5543 | **−0.099** | −0.3306 | **−0.4297** |
+| `umap_mixing` | 0.9262 | 0.8318 | **−0.094** | — | — |
+| `marker_field_r` | 0.6824 | 0.5655 | **−0.117** | −0.2032 | **−0.3201** |
+| `marker_depth_r` | 0.8331 | 0.7228 | **−0.110** | −0.1464 | **−0.2566** |
+| `celltype_localization` | 0.7546 | 0.7591 | +0.005 | −0.0219 | −0.0174 |
+| `gene_mean_spearman` | 0.9901 | 0.9721 | **−0.018** | **+0.0038** | **−0.0142** |
+
+**Three consequences, and they run in the same direction as everything else in this report.**
+
+1. **Every deficit below the copy floor gets larger.** `marker_field_r` goes from 0.203 below to
+   **0.320** below; the two autocorrelation metrics from ~0.33 to **~0.43**. The negative column is
+   stronger on the shipped arm than on the arm that was standing in for it.
+2. 🚨 **`gene_mean_spearman` flips sign against its floor.** This report calls it *"the one
+   genuinely solved thing"* at **+0.0038** above the copy floor. On the shipped configuration it is
+   **−0.0142 below** it. **That claim is withdrawn** — per-gene average magnitude is not solved
+   either; it was solved on A3.
+3. **`celltype_localization` is the only cell that improves**, by 0.005, which is inside its own
+   0.0061 across-seed envelope and is therefore a tie.
+
+⚠️ **Two things the new table does not carry.** `paper_umap_mixing` still has no probe — the
+probes are not scored for it (the two-`SIX` defect below), so it has no floor or ceiling in any
+draft. And A9 records `paper_gene_mean_spearman` pooled only, with no per-section breakdown, where
+`specs/10` §4.6 requires per-section values beside every tier-1 median.
+
+⚠️ **What is still genuinely missing, and what it costs.** The shipped arm's own numbers are now
+in hand at three seeds. What no draft of this table has ever had is the **comparator set** —
+SpatialZ, FEAST, isoST and v20 on the same instrument and holdout (`specs/10` §3: the prior
+campaign's numbers are not in this repository and its two sides were scored by different
+`evaluate_paper` revisions). Until those run there is a v25 row and nothing to read it against
+except the two model-free probes. That is the campaign §12 already budgets, and it is the remaining
+cost of a headline table — not more v25 fits.
+
+---
+
+### 5.3 The superseded A3 column, kept for the record
 
 🚨 **MISLABELLED, and corrected 2026-09-09 when the arm was finally read out of its own checkpoint.**
 This column has been headed "v25 shipped" through every draft. It is not. Every cell comes from
@@ -291,13 +385,14 @@ long way:
 | `morans_pearson` | 0.5749 | **0.6465** | +0.072 |
 | `celltype_localization` | 0.6572 | **0.7546** | +0.097 |
 
-**The shipped configuration is better than the earlier draft said**, on every cell that moved. The
-cause is R11: `hybrid` was replaced by `resample` as the default, and the grid sampler replaced the
-rejection sampler. Anywhere `marker_field_r = 0.6384` or its "0.247 below the floor" is quoted —
-including in earlier progress entries — it is describing a **layout mode that no longer ships**.
-The shipped deficit is **0.203**.
+**The `resample` A3 arm is better than the `hybrid` A3 arm**, on every cell that moved — ⚠️ this
+paragraph said "the shipped configuration is better than the earlier draft said", and neither arm is
+the shipped configuration (§5.0). The cause is R11: `hybrid` was replaced by `resample` as the
+default, and the grid sampler replaced the rejection sampler. Anywhere `marker_field_r = 0.6384` or
+its "0.247 below the floor" is quoted it describes a layout mode that no longer ships; the
+`resample` **A3** deficit is 0.203, and the **shipped** deficit is **0.320** (§5.2).
 
-| metric | v25 shipped | `flanking_copy` floor | `oracle` ceiling | v25 − floor |
+| metric | **A3 arm** (not v25 shipped — §5.0) | `flanking_copy` floor | `oracle` ceiling | A3 − floor |
 |---|---|---|---|---|
 | `morans_pearson` | 0.6541 | **0.9836** | 1.0000 | **−0.329** |
 | `gearys_pearson` | 0.6535 | **0.9840** | 1.0000 | **−0.331** |
@@ -336,8 +431,10 @@ change cannot move them. **It is now a measurement, and the inference it replace
   (`reports/t10_a7_{off,on}_s{1,2,3}.json`). A quantity that moves by 0.44 when only the weights
   change is reading generated expression. It is still the metric closest to its floor, but that is
   a result, not a construction.
-* **`gene_mean_spearman` being *above* the floor is the one genuinely solved thing**: per-gene
-  average magnitude is right. It is also the easiest of the six.
+* 🚨 **`gene_mean_spearman` being *above* the floor was called "the one genuinely solved thing".
+  WITHDRAWN 2026-09-09.** It is +0.0038 above the floor **on the A3 arm** and **−0.0142 below** it
+  on the shipped configuration (§5.2). Per-gene average magnitude is not solved; it was solved on an
+  arm that is not the method.
 * **The two autocorrelation metrics carry the largest deficit** — 0.34 below a floor that a
   literal copy reaches. This is R12, and §7 gives the mechanism.
 * 🚨 **Provenance: the r11 numbers this table carried were stale, and the check that found it is
@@ -514,11 +611,34 @@ three seeds and returned UNINFORMATIVE. What changes is the framing around it:
   `Config` already does. What the next campaign needs is not a decision to turn them off; it is for
   the record to stop saying they are on.
 
-⚠️ **One thing I cannot check from here.** `runs/` is not in this checkout, so I cannot rule out a
-persisted `selected.yaml` carrying 0.5 on the campaign machine. What is checkable is that **no run
-whose artifact is in this repository resolved one** — A9's provenance reads
-`source: "defaults"`, `selection_path: null` — so if such a file exists, nothing in the corpus used
-it. Worth confirming before the next campaign, since `--require-config` would read it.
+### 6b. ⏳ PENDING — and the record must not settle until this is run
+
+**What is established** is that no run whose artifact is in this repository resolved a persisted
+selection: A9's provenance reads `source: "defaults"`, `selection_path: null`, and every fit's gates
+read back as `Config` defaults plus explicit overrides. **What is not established** is whether a
+`selected.yaml` carrying 0.5 exists at all — `runs/` is not in this checkout, and `specs/10` §4.2*
+is explicit that a negative result is only as broad as the corpus it searched. The reflog episode
+(§8c) cost a round trip on exactly this mistake.
+
+```
+python scripts/t09_find_selection.py --root "$SPATIALCPAV25_SELECT_DIR" --root /data/han/projects/Spatial3D
+```
+
+It reads and never writes; it searches for `selected.yaml`, `selection_report.md` and `scores.csv`,
+reports the weights each carries, and **prints the roots it searched** so a negative can be quoted
+at its real breadth. `--self-check` exercises both readers and both verdict branches without a
+filesystem.
+
+**Both branches are written down now, so the answer cannot be fitted to the outcome afterwards:**
+
+| outcome | what it means | how the record should read |
+|---|---|---|
+| **(a) a `selected.yaml` carrying 0.5 exists** | 0.5 is a real persisted selection that no campaign run resolved. `specs/10` §10.1's `--require-config` path exists and nothing used it | **a wiring gap**: "the weights were selected at 0.5, persisted, and applied by no run in the corpus" |
+| **(b) no such file, under complete roots** | 0.5 entered the record from a **selection report** — a printed rank — and was written into `Config`'s docstrings, `specs/10`, this report, the close-out and `--w-metric-aware`'s own help text as *shipped*, without ever being persisted or applied | 🚨 **a seventh provenance failure mode: a value that was chosen, recorded as shipped, and never ran.** Distinct from all six in §8c — nothing is missing, nothing is mislabelled, nothing was regenerated. The number is simply not connected to anything that executes, and every artifact is internally consistent while the claim is false |
+
+⚠️ **Branch (b) is the one the current evidence points at**, because `Config` itself carries 0.0 —
+if a selection had been applied as the shipped default, that is where it would show. But pointing at
+is not the same as showing, and the search costs one command.
 
 ---
 

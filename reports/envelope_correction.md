@@ -364,8 +364,21 @@ the flag was about** — the metric-aware weights, which do match — and did no
 have to agree. That is §4.2a's own failure mode, committed while writing the correction for it.
 
 **So §3's remaining cost is a measurement, not a lookup**: three seeds of the shipped arm on
-instrument B, at `paper_2_4_6`, on the pinned evaluator. A9 shows the shape of that spend — six
-fits, ~93 and ~57 minutes each.
+instrument B, at `paper_2_4_6`, on the pinned evaluator.
+
+✅ **And on 2026-09-09 that measurement turned out to exist too — it is A9 again.** A9's arms are
+the shipped configuration on every gate except the disputed weights: `medcpt`, `expr_pca_dim=28`,
+`resample` + `grid`, `correlated`, `zinb-flow`, `exp`, 2400 steps, SEFL zero, three seeds, pinned
+evaluator. So the headline table's missing shipped-configuration row costs **zero fits** and is now
+in `reports/advisor_report.md` §5.1, with the model-free probes supplying floor and ceiling. It does
+**not** close §3, because §3's rows are about the *r11* arms and A9 still cannot lend them an
+envelope — but it removes the reason anyone wanted to borrow one: the shipped numbers can be quoted
+directly instead of inferred from A3's.
+
+**A9 has now supplied three things it was not filed under** — the instrument-B envelope (§1a), the
+shipped-configuration six-metric table (§advisor 5.1), and the metric-aware weight evidence (§advisor
+6a). Every one was in the same six files, and every one went a month unlooked-at, because the run was
+indexed by its verdict. That is §4.2a-iii, and it has now cost three separate retrievals.
 
 🚨 **And the recovery's real yield was elsewhere.** Reading the gates out of the checkpoint showed
 that the column this project calls **"v25 shipped" is not the shipped configuration** (`lookup` is

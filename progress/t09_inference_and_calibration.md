@@ -7793,3 +7793,75 @@ is in this repository resolved one** — A9's provenance reads `source: "default
 `test_bare_invocation_reproduces_shipped_config`: *a table may be labelled with a configuration only
 when every fit-time gate has been read out of the artifact and compared — not just the gate under
 test.*
+
+### The shipped configuration has now been measured — and it was A9 again (2026-09-09)
+
+**1. The stated absence.** No draft of the six-metric table ever measured the shipped configuration.
+The earlier draft was `hybrid` + `lookup` + `expr_pca_dim=16`; the 2026-09-08 correction moved the
+layout gate to `resample` and inherited the label on the two gates that were not in dispute. **Both
+are ablation A3** — the pilot ran in the container, where MedCPT is unreachable, and `specs/10` §3
+names that arm outright. Stated as an absence in `reports/advisor_report.md` §5.0, not as a caveat.
+
+**2. The remedy already existed.** A9's six fits are the shipped configuration on every gate except
+the disputed weights: `medcpt`, `expr_pca_dim=28`, `resample`+`grid`, `correlated`, `zinb-flow`,
+`exp`, 2400 steps, SEFL zero, three seeds, `paper_2_4_6`, pinned evaluator. Referents come from the
+r11 probes, which are **model-free** (they copy real cells) and were re-measured on 2026-09-08 to
+four decimals, so they transfer across arms. **Cost: zero fits** — 2.85 core-hours at `w=0`
+(56/59/56 min) and 4.65 at `w=0.5` (91/92/97 min), already spent and already committed.
+
+⚠️ Corrected mid-derivation: A9's `referents` key exists but is **empty**; I first read `'referents'
+in d` as carrying them. The probes come from `r11_starmap_layout_modes.json`. Also
+`paper_gene_mean_spearman` is recorded pooled only in A9, with no per-section breakdown, where
+`specs/10` §4.6 wants per-section values beside every tier-1 median.
+
+**3. 🚨 The shipped configuration is WORSE than the arm labelled as it, on six of seven metrics.**
+
+| metric | A3 column (1 seed) | shipped `w=0` (3 seeds) | change | A3 − floor | shipped − floor |
+|---|---|---|---|---|---|
+| `morans_pearson` | 0.6541 | 0.5574 | −0.097 | −0.3294 | **−0.4262** |
+| `gearys_pearson` | 0.6535 | 0.5543 | −0.099 | −0.3306 | **−0.4297** |
+| `umap_mixing` | 0.9262 | 0.8318 | −0.094 | — | — |
+| `marker_field_r` | 0.6824 | 0.5655 | −0.117 | −0.2032 | **−0.3201** |
+| `marker_depth_r` | 0.8331 | 0.7228 | −0.110 | −0.1464 | **−0.2566** |
+| `celltype_localization` | 0.7546 | 0.7591 | +0.005 | −0.0219 | −0.0174 |
+| `gene_mean_spearman` | 0.9901 | 0.9721 | −0.018 | **+0.0038** | **−0.0142** |
+
+Every deficit below the copy floor grows, so **the negative column is stronger on the real shipped
+arm than on the stand-in.** And 🚨 **`gene_mean_spearman` flips sign against its floor** — the
+close-out's *"one genuinely solved thing"* is **withdrawn**: per-gene magnitude was solved on A3, not
+on the method. `celltype_localization`'s +0.005 is inside its own 0.0061 envelope, i.e. a tie.
+
+**What is still missing from a headline table** is the **comparator set** — SpatialZ, FEAST, isoST,
+v20 on the same instrument and holdout — which `specs/10` §3 already establishes is not in this
+repository and §12 already budgets. That, not more v25 fits, is the remaining cost.
+
+**4. A9 has now yielded three things it was not filed under**: the instrument-B envelope, the
+shipped-configuration table, and the metric-aware weight evidence. Same six files, all three
+unlooked-at for a month, because the run was indexed by its verdict. §4.2a-iii has now cost three
+separate retrievals.
+
+### The selected.yaml question — PENDING, with both branches pre-registered
+
+`scripts/t09_find_selection.py` (new; reads, never writes) searches for `selected.yaml`,
+`selection_report.md` and `scores.csv`, reports the weights each carries, and **prints the roots it
+searched** so a negative can be quoted at its real breadth. Run here it finds none, but this
+checkout has no `runs/`, so that is not the answer:
+
+```
+python scripts/t09_find_selection.py --root "$SPATIALCPAV25_SELECT_DIR" --root /data/han/projects/Spatial3D
+```
+
+Both branches are written before the answer arrives, so it cannot be fitted afterwards:
+
+* **(a) a `selected.yaml` carrying 0.5 exists** → 0.5 is a real persisted selection that no campaign
+  run resolved; `--require-config` exists and nothing used it. A **wiring gap**, and the record
+  should read "selected at 0.5, persisted, applied by no run in the corpus".
+* **(b) no such file, under complete roots** → 0.5 entered from a printed selection report and was
+  written into `Config`'s docstrings, `specs/10`, both reports and `--w-metric-aware`'s own help
+  text as *shipped* without ever being persisted or applied. 🚨 **A seventh provenance failure mode:
+  a value that was chosen, recorded as shipped, and never ran** — distinct from all six in §8c,
+  because nothing is missing, nothing is mislabelled and nothing was regenerated. Every artifact is
+  internally consistent and the claim is false anyway.
+
+⚠️ Branch (b) is where the current evidence points — `Config` carries 0.0, which is where an applied
+selection would show — but pointing at is not showing, and the search costs one command.

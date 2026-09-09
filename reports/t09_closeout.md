@@ -88,6 +88,17 @@ contrast that would say *how* the text channel reaches an unseen gene. See §3.
 | the mechanism half of the zero-shot claim | **PARTIAL** | A2 − A3 — the pure-text projection against the distillation head — is **+0.0450, 0.22x** the shared envelope, where `deep_starmap` had +0.2514 at 2.7x. `specs/10` §7's mechanism sentence is **withdrawn**. |
 | the seen/unseen sign flip | **DOES NOT REPLICATE** | signs reversed on **12 of 12** seed x fold cells across both gene pools, and **both** magnitudes sit inside their pool's envelope (0.22x, 0.51x). The direction replicated; the effect size did not. |
 
+🚨 **And a second sentence, found 2026-09-09: none of the absolute numbers above were measured on
+the shipped configuration, and now some of them are.** Every draft of the six-metric table is
+`text_emb_mode=lookup` at `expr_pca_dim=16` — **ablation A3**, because the pilot ran in the
+container where the MedCPT encoder is unreachable (`specs/10` §3 names that arm by name). The
+shipped-configuration measurement existed all along in **A9's fits** (medcpt, `expr_pca_dim=28`,
+`resample`, 2400 steps, three seeds, pinned evaluator), filed under A9's verdict. Re-read at zero
+fits, it moves the negatives **further from the floor, not closer**: `marker_field_r` 0.203 below →
+**0.320**, the two autocorrelation metrics ~0.33 below → **~0.43**, and `gene_mean_spearman` — this
+project's "one genuinely solved thing" — flips from **+0.0038 above** its copy floor to **−0.0142
+below** it. Table and derivation: `reports/advisor_report.md` §5.0–5.2.
+
 **The sentence that follows, and which had not been written down.** v25 ships `resample` +
 `zinb-flow`: real positions with generated expression. v20's fallback is `resample` + `cross-mix`:
 the same real positions with the donor's counts copied. The difference between them is exactly
@@ -211,9 +222,18 @@ them on, and it is the experiment that tested them.** So the absolute numbers ar
 this section claimed, not dirtier — and the real defect is the other one: **they were not produced
 with the configuration the record calls shipped.** The standing recommendation above is now nearly
 a no-op, because `Config` already does what it asks; what the next campaign needs is for the record
-to stop saying the weights are on. ⚠️ Not checkable from this checkout: whether a persisted
-`selected.yaml` carrying 0.5 exists on the campaign machine. What is checkable is that no run whose
-artifact is in this repository resolved one (A9: `source: "defaults"`, `selection_path: null`).
+to stop saying the weights are on. ⏳ **PENDING, and the record must not settle until it is run**: whether a persisted
+`selected.yaml` carrying 0.5 exists at all. `runs/` is not in this checkout, and a negative is only
+as broad as the corpus it searched (§4.2*). `python scripts/t09_find_selection.py --root "$SPATIALCPAV25_SELECT_DIR"`
+answers it, reads nothing else and prints the roots it covered. Both branches are written down in
+advance (`reports/advisor_report.md` §6b): **(a)** such a file exists → 0.5 was selected, persisted
+and **applied by no run in the corpus**, a wiring gap; **(b)** it does not → 0.5 entered the record
+from a printed selection report and was written everywhere as *shipped* **without ever being
+persisted or applied — a value that was chosen, recorded as shipped, and never ran**, which is a
+seventh provenance failure mode distinct from all six in §8: nothing missing, nothing mislabelled,
+every artifact internally consistent, and the claim false anyway. What *is* established either way:
+no run whose artifact is in this repository resolved a selection (A9: `source: "defaults"`,
+`selection_path: null`).
 ⚠️ And the fixture envelope ran the other way round — `scripts/t09_envelope.py` sets all three to
 **0.5** for its nine fits, so R10's 0.0335 was measured on the weights-**on** arm while every
 number it judged was weights-**off**.
@@ -434,7 +454,9 @@ negative column and were measured at the selected budget. Writing the caveat bro
    pattern, and still the metric where this line has been weakest for three generations.
 
    **What makes it worth opening rather than noting.** The tier-1 deficit is not expression
-   magnitude: `gene_mean_spearman` sits **0.0033** off its copy floor. 🚩 **"inside the envelope"
+   magnitude: `gene_mean_spearman` sits **0.0033** off its copy floor **on the A3 arm** — ⚠️ and
+   **−0.0142 below** it on the shipped configuration (2026-09-09), so the "per-gene magnitude is
+   solved" reading is withdrawn with it. 🚩 **"inside the envelope"
    is withdrawn** — this metric is not in `METRIC_NAMES` and appears in **no** fixture or
    internal-LOSO envelope at all (the two-`SIX` defect), and the only spreads that exist for it are
    A7's and A9's on `bench3.evaluate_paper`, at **0.0033 to 0.1193** — a range that brackets the
