@@ -105,6 +105,17 @@ against the decoder's own internal figure.
 the tissue's lower bound exceeds the decoder's `sd(log mu)` (0.7131 on deep, 0.7269 on tier-1) by
 `>= 1.5x`; **refuted** if the tissue's upper bound is below it; **untested still** in between.
 
+⚠️ **How loose the lower bound is depends on the field's own autocorrelation, and this is stated
+before any N2 number exists.** The instrument's self-check smooths a lognormal field at `sigma = 0.8`
+laid on *random* positions — no spatial structure at all — and the estimate falls to **0.279**, a
+shrinkage factor of 0.35. That is the worst case: a kNN mean destroys the variance of a field whose
+neighbours are unrelated, and preserves it where they are not. On these panels `I(mu_oracle)` is
+**+0.906** (deep) and **+0.928** (tier-1), so the shrinkage there will be far milder — but the
+**reported `I(mu_oracle)` is the indicator of how tight the bound is, and must be quoted beside it.**
+If the lower bound lands below the decoder's figure, that is **not** evidence against §6: it is
+consistent with either a narrow tissue `mu` or a loose bound, and the verdict is "untested still",
+never "refuted". Only the **upper** bound can refute.
+
 ---
 
 ## 4. What would have to be true for each of these to fail

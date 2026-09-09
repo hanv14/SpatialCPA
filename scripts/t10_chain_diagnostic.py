@@ -361,15 +361,96 @@ def knn_mean_field(xy: np.ndarray, values: np.ndarray, k: int) -> np.ndarray:
     return np.asarray(w @ np.asarray(values, dtype=np.float64))
 
 
+def log_mu_sd_from_field(field: np.ndarray) -> np.ndarray:
+    """``sd(log mu)`` implied by a mean field's own dispersion. ``(N, G)`` -> ``(G,)``.
+
+    Uses the lognormal identity ``sd(log mu) = sqrt(log(1 + CV^2))`` — an approximation, labelled
+    as one wherever it is reported — so no pseudocount is needed and genes that are zero in most
+    cells contribute without a choice of ``eps`` deciding the answer.
+
+    Applied to ``mu_oracle`` this is a **lower** bound on the tissue's spread, because the kNN mean
+    that produced the field shrinks variance.
+    """
+    x = np.asarray(field, dtype=np.float64)
+    mean = x.mean(axis=0)
+    cv2 = np.where(mean > 0, x.var(axis=0) / np.maximum(mean, 1e-30) ** 2, np.nan)
+    return np.sqrt(np.log1p(np.maximum(cv2, 0.0)))
+
+
+def log_mu_sd_from_counts(counts: np.ndarray) -> np.ndarray:
+    """``sd(log mu)`` implied by Poisson-deconvolved counts. ``(N, G)`` -> ``(G,)``.
+
+    For any conditional draw with ``Var(y | mu) >= mu``, the law of total variance gives
+    ``Var(mu) = Var(y) - E[Var(y | mu)] <= Var(y) - mean(y)``, so
+
+        CV^2(mu) = (Var(y) - mean(y)) / mean(y)^2
+
+    clipped at zero, is an **upper** bound on the structured part — any over-dispersion in the
+    tissue inflates it. With :func:`log_mu_sd_from_field` on ``mu_oracle`` it brackets the tissue's
+    own ``sd(log mu)``, and neither route passes through the model's decoder, which is what
+    ``reports/emission_repair_options.md`` §8.3's gate could not manage.
+    """
+    y = np.asarray(counts, dtype=np.float64)
+    mean = y.mean(axis=0)
+    cv2 = np.where(
+        mean > 0, np.maximum(y.var(axis=0) - mean, 0.0) / np.maximum(mean, 1e-30) ** 2, np.nan
+    )
+    return np.sqrt(np.log1p(cv2))
+
+
+def describe_text_state(model, cfg: Config) -> str:
+    """What the text channel **holds**, read off the buffer rather than inferred from a flag.
+
+    The line this replaces reported how the module was *constructed*, so a run that loaded a
+    ``medcpt`` checkpoint printed "zero vectors": ``text_vecs`` is a registered buffer and
+    ``load_state_dict`` restores it, which the constructor's argument knows nothing about. Two
+    reports were published saying the opposite of what they measured (``specs/10`` §4.2k, and
+    §4.2j's rule that a report may only state what it can establish from the run's own record).
+
+    So this counts all-zero rows in the tensor the model will actually use.
+    """
+    with torch.no_grad():
+        vecs = model.embeddings.gene.text_vecs
+        n_rows = int(vecs.shape[0])
+        n_zero = int((vecs.abs().sum(dim=1) == 0).sum())
+    if n_zero == n_rows:
+        return f"**zero vectors** — all {n_rows} gene rows are zero, so this is neither A3 arm"
+    live = (
+        f"live, `text_emb_mode={cfg.text_emb_mode}`, {n_rows - n_zero}/{n_rows} gene rows non-zero"
+    )
+    return live if n_zero == 0 else f"{live} (**{n_zero} bare**)"
+
+
+def _over_seeds(rows: list[dict]) -> dict:
+    """Collapse one arm's per-seed rows into a single row. ``median_I`` is the median over seeds.
+
+    ``reports/a1_escalation_preregistration.md`` §1 reads the band from the median and applies a
+    **stability override** when the seeds do not all agree, so ``min_I`` / ``max_I`` and the full
+    per-seed list are carried rather than summarised away.
+    """
+    values = [r["median_I"] for r in rows]
+    head = dict(rows[0])
+    head.pop("seed", None)
+    head["median_I"] = float(np.median(values))
+    head["min_I"] = float(np.min(values))
+    head["max_I"] = float(np.max(values))
+    head["n_seeds"] = len(rows)
+    head["per_seed"] = [{"seed": r["seed"], "median_I": r["median_I"]} for r in rows]
+    return head
+
+
 def emission_ablation(
     model,
     cfg: Config,
     real: RealSection,
     h1,
     k: int,
-    seed: int,
+    seeds: list[int],
     panel: np.ndarray | None = None,
-) -> tuple[list[dict], dict]:
+    *,
+    mu_gen: np.ndarray | None = None,
+    counts_gen: np.ndarray | None = None,
+) -> tuple[list[dict], dict, list[dict]]:
     """A1 — which stage of the emission loses the structure. Measured at the REAL cells.
 
     Every arm is drawn at ``real.xy``, so the kNN graph, the cell count and the density are the
@@ -394,9 +475,15 @@ def emission_ablation(
     ``A1n`` is the permutation null: the real counts shuffled across cells, which is what "no
     spatial structure" measures as on this panel and this graph.
 
-    Returns the summary rows and a dict of per-arm level ratios (median over the panel of the
-    arm's per-gene mean over the real section's), because an arm at a different count level is
-    not comparable in ``I`` however it was drawn.
+    ``seeds`` redraws every sampled arm once per seed — N4, the escalation
+    ``reports/a1_escalation_preregistration.md`` §1 fixes the combination rule for. The two
+    **mean-field** rows do not depend on the draw and are computed once; each drawn row carries its
+    per-seed values, and its ``median_I`` is the median over seeds, which is the statistic the band
+    is read from. ``min_I`` / ``max_I`` are carried so the margin is visible rather than inferred.
+
+    Returns the summary rows, a dict of per-arm level ratios (median over seeds of the median over
+    the panel of the arm's per-gene mean over the real section's — an arm at a different count level
+    is not comparable in ``I`` however it was drawn), and the ``sd(log mu)`` table of N2.
     """
     from spatialcpav25_gen.infer.generate import _decode
     from spatialcpav25_gen.model.expression import sample_counts
@@ -410,46 +497,84 @@ def emission_ablation(
     mu1_np, theta1_np, pi1_np = mu1.numpy(), theta1.numpy(), pi1.numpy()
     mu_oracle = knn_mean_field(real.xy, real.counts, k)
 
-    counts_a = sample_counts(mu1_np, theta1_np, pi1_np, np.random.default_rng(seed)).numpy()
-    counts_b = sample_counts(mu_oracle, theta1_np, pi1_np, np.random.default_rng(seed)).numpy()
-    # Not through sample_counts: A1c is a Poisson draw, not a ZINB one with theta pushed to an
-    # extreme the sampler's own docstring flags. Saying "Poisson" and drawing Poisson is the
-    # whole point of the arm.
-    counts_c = np.random.default_rng(seed).poisson(np.maximum(mu_oracle, 0.0)).astype(np.float64)
-    perm = np.random.default_rng(seed + 1).permutation(real_counts.shape[0])
-    counts_n = real_counts[perm]
+    def draw(seed: int) -> dict[str, np.ndarray]:
+        # Not through sample_counts for A1c: that arm is a Poisson draw, not a ZINB one with theta
+        # pushed to an extreme the sampler's own docstring flags. Saying "Poisson" and drawing
+        # Poisson is the whole point of the arm.
+        return {
+            "A1a": sample_counts(mu1_np, theta1_np, pi1_np, np.random.default_rng(seed)).numpy(),
+            "A1b": sample_counts(mu_oracle, theta1_np, pi1_np, np.random.default_rng(seed)).numpy(),
+            "A1c": np.random.default_rng(seed)
+            .poisson(np.maximum(mu_oracle, 0.0))
+            .astype(np.float64),
+            "A1n": real_counts[np.random.default_rng(seed + 1).permutation(real_counts.shape[0])],
+        }
 
-    rows = [
-        summarise("A1a'. mu decoded from h1", real.xy, sel(mu1_np), k),
-        summarise("A1a. counts ~ emission(mu | h1)", real.xy, rank_normalize(sel(counts_a)), k),
-        summarise("A1b'. mu_oracle = kNN mean of real counts", real.xy, sel(mu_oracle), k),
-        summarise(
-            "A1b. counts ~ ZINB(mu_oracle, model theta/pi)",
-            real.xy,
-            rank_normalize(sel(counts_b)),
-            k,
-        ),
-        summarise(
-            "A1c. counts ~ Poisson(mu_oracle)   [model-free]",
-            real.xy,
-            rank_normalize(sel(counts_c)),
-            k,
-        ),
-        summarise(
-            "A1n. permutation null (real counts shuffled)",
-            real.xy,
-            rank_normalize(sel(counts_n)),
-            k,
-        ),
-    ]
-
+    labels = {
+        "A1a": "A1a. counts ~ emission(mu | h1)",
+        "A1b": "A1b. counts ~ ZINB(mu_oracle, model theta/pi)",
+        "A1c": "A1c. counts ~ Poisson(mu_oracle)   [model-free]",
+        "A1n": "A1n. permutation null (real counts shuffled)",
+    }
     ref_mean = sel(real_counts).mean(axis=0)
     ok = ref_mean > 0
-    levels = {}
-    for name, arm in (("A1a", counts_a), ("A1b", counts_b), ("A1c", counts_c)):
-        ratio = sel(np.asarray(arm, dtype=np.float64)).mean(axis=0)[ok] / ref_mean[ok]
-        levels[name] = float(np.median(ratio)) if ratio.size else float("nan")
-    return rows, levels
+
+    per_seed: dict[str, list[dict]] = {key: [] for key in labels}
+    per_seed_level: dict[str, list[float]] = {key: [] for key in labels}
+    drawn: dict[str, np.ndarray] = {}
+    for seed in seeds:
+        arms = draw(int(seed))
+        for key, counts in arms.items():
+            row = summarise(labels[key], real.xy, rank_normalize(sel(counts)), k)
+            row["seed"] = int(seed)
+            per_seed[key].append(row)
+            ratio = sel(np.asarray(counts, dtype=np.float64)).mean(axis=0)[ok] / ref_mean[ok]
+            per_seed_level[key].append(float(np.median(ratio)) if ratio.size else float("nan"))
+            drawn.setdefault(key, counts)
+
+    rows = [summarise("A1a'. mu decoded from h1", real.xy, sel(mu1_np), k)]
+    rows.append(_over_seeds(per_seed["A1a"]))
+    rows.append(summarise("A1b'. mu_oracle = kNN mean of real counts", real.xy, sel(mu_oracle), k))
+    rows.append(_over_seeds(per_seed["A1b"]))
+    rows.append(_over_seeds(per_seed["A1c"]))
+    rows.append(_over_seeds(per_seed["A1n"]))
+    levels = {key: float(np.median(vals)) for key, vals in per_seed_level.items() if key != "A1n"}
+
+    # N2: two model-free routes to the tissue's own sd(log mu), bracketing it from below and above,
+    # neither passing through the decoder. Reported beside the decoder's own figure so the
+    # comparison §6 of chain_shipped_review.md asked for can be made on a matched estimator.
+    spread = [
+        (
+            "real counts (Poisson-deconvolved) — UPPER bound",
+            log_mu_sd_from_counts(sel(real_counts)),
+        ),
+        ("mu_oracle (kNN mean field) — LOWER bound", log_mu_sd_from_field(sel(mu_oracle))),
+        ("mu decoded from h1", log_mu_sd_from_field(sel(mu1_np))),
+    ]
+    if mu_gen is not None:
+        spread.append(("mu decoded from the generated h", log_mu_sd_from_field(np.asarray(mu_gen))))
+    if counts_gen is not None:
+        spread.append(
+            (
+                "model counts (Poisson-deconvolved)",
+                log_mu_sd_from_counts(np.asarray(counts_gen)),
+            )
+        )
+    spread.append(
+        (
+            "A1c counts (Poisson-deconvolved) — estimator check",
+            log_mu_sd_from_counts(sel(drawn["A1c"])),
+        )
+    )
+    mu_spread = [
+        {
+            "quantity": name,
+            "sd_log_mu": float(np.nanmedian(values)) if values.size else float("nan"),
+            "n_genes": int(np.isfinite(values).sum()),
+        }
+        for name, values in spread
+    ]
+    return rows, levels, mu_spread
 
 
 def real_section_reference(
@@ -748,6 +873,52 @@ def _self_check() -> int:
         ),
     ]
 
+    # N2's two estimators, against a lognormal mu whose sd(log mu) is known exactly.
+    sigma = 0.8
+    mu_true = np.exp(rng.normal(0.0, sigma, size=(20000, 4))) * np.array([1.0, 5.0, 20.0, 100.0])
+    y_pois = rng.poisson(mu_true).astype(np.float64)
+    y_over = rng.negative_binomial(6.0, 6.0 / (6.0 + mu_true)).astype(np.float64)
+    sd_field = float(np.median(log_mu_sd_from_field(mu_true)))
+    sd_counts = float(np.median(log_mu_sd_from_counts(y_pois)))
+    sd_over = float(np.median(log_mu_sd_from_counts(y_over)))
+    smooth_field = knn_mean_field(cxy, np.exp(rng.normal(0.0, sigma, size=(600, 5))), 10)
+    checks += [
+        (
+            f"log_mu_sd_from_field recovers a known sd(log mu) ({sd_field:.3f} vs {sigma})",
+            abs(sd_field - sigma) < 0.05,
+        ),
+        (
+            f"log_mu_sd_from_counts deconvolves the Poisson term ({sd_counts:.3f} vs {sigma})",
+            abs(sd_counts - sigma) < 0.10,
+        ),
+        (
+            f"it counts over-dispersion as signal, so it over-states ({sd_over:.3f} > {sigma})",
+            sd_over > sigma,
+        ),
+        (
+            "smoothing shrinks the field estimate, so mu_oracle is a LOWER bound "
+            f"({float(np.median(log_mu_sd_from_field(smooth_field))):.3f} < {sigma})",
+            float(np.median(log_mu_sd_from_field(smooth_field))) < sigma,
+        ),
+        (
+            "both estimators are NaN, not zero, for a gene with no counts",
+            bool(np.isnan(log_mu_sd_from_counts(np.zeros((10, 1)))[0])),
+        ),
+    ]
+
+    seed_rows = [
+        {"stage": "A1b. x", "median_I": 0.10, "p25": 0.0, "p75": 0.0, "n_channels": 3, "seed": 1},
+        {"stage": "A1b. x", "median_I": 0.30, "p25": 0.0, "p75": 0.0, "n_channels": 3, "seed": 2},
+        {"stage": "A1b. x", "median_I": 0.20, "p25": 0.0, "p75": 0.0, "n_channels": 3, "seed": 3},
+    ]
+    collapsed = _over_seeds(seed_rows)
+    checks += [
+        ("_over_seeds reports the MEDIAN over seeds", collapsed["median_I"] == 0.20),
+        ("it carries the range", (collapsed["min_I"], collapsed["max_I"]) == (0.10, 0.30)),
+        ("it keeps every seed, so a straddle is visible", len(collapsed["per_seed"]) == 3),
+        ("and drops the single-seed key", "seed" not in collapsed),
+    ]
+
     terms = {"var_shape": np.array([1.0, 4.0, 9.0]), "var_logsize": np.ones(3), "cov": np.zeros(3)}
     terms["total"] = terms["var_shape"] + terms["var_logsize"] + 2.0 * terms["cov"]
     d = summarise_mu_terms(terms)
@@ -793,7 +964,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--steps", type=int, default=1200)
     ap.add_argument("--section", default="section_2")
-    ap.add_argument("--target-z", type=float, default=30.0)
+    ap.add_argument(
+        "--target-z",
+        type=float,
+        default=None,
+        help="depth of the generated plane, in um. Default: **the named section's own z**, read "
+        "from the ground truth. The old default was tier-1's 30.0 for every dataset, which put "
+        "the deep_starmap run's plane 4.9 um from the section it was compared against.",
+    )
     ap.add_argument("--out", default="reports/chain_diagnostic.md")
     ap.add_argument(
         "--calibrate",
@@ -840,8 +1018,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--ablation-seed",
         type=int,
-        default=SEED,
-        help="generator seed for --emission-ablation's draws (Convention 3).",
+        nargs="+",
+        default=[SEED],
+        help="generator seed(s) for --emission-ablation's draws (Convention 3). Several redraw "
+        "every sampled arm once per seed; the band is read from the median and an arm whose "
+        "seeds straddle a boundary reads UNRESOLVED (a1_escalation_preregistration.md §1).",
     )
     ap.add_argument(
         "--fit-only",
@@ -974,7 +1155,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  expr_pca_dim    = {cfg.expr_pca_dim}")
     k = int(cfg.metric_knn_k)
 
-    print(f"chain diagnostic: {args.steps} steps, {args.section} at z={args.target_z}")
+    print(f"chain diagnostic: {int(cfg.train_steps)} steps, section {args.section}")
     vol = load_training_volume(cfg, paths.input)
 
     # Before the fit, not after: an unknown --section or a gene order that disagrees with the
@@ -992,14 +1173,25 @@ def main(argv: list[str] | None = None) -> int:
         f"  real {real.section_id}: {real.counts.shape[0]} cells x {real.counts.shape[1]} genes, "
         f"z = {real.z:.1f} (section gap {real.z_gap:.1f})"
     )
+    if args.target_z is None:
+        if not np.isfinite(real.z):
+            raise SystemExit(
+                f"--target-z was not given and {real.section_id!r} has no z: the build's "
+                f"obsm[{cfg.coord_key!r}] has fewer than three columns, so the section's own "
+                "plane cannot be read. Pass --target-z explicitly."
+            )
+        target_z = float(real.z)
+        print(f"  --target-z defaulted to {real.section_id}'s own plane, z = {target_z:.1f}")
+    else:
+        target_z = float(args.target_z)
     z_note = ""
     if (
         np.isfinite(real.z)
         and np.isfinite(real.z_gap)
-        and abs(real.z - args.target_z) > (0.5 * real.z_gap)
+        and abs(real.z - target_z) > (0.5 * real.z_gap)
     ):
         z_note = (
-            f"--target-z {args.target_z} is {abs(real.z - args.target_z):.1f} um from "
+            f"--target-z {target_z} is {abs(real.z - target_z):.1f} um from "
             f"{real.section_id}'s own plane at z = {real.z:.1f}, more than half the "
             f"{real.z_gap:.1f} um section gap: the generated plane and the reference section "
             "are not the same plane"
@@ -1051,20 +1243,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     from spatialcpav25_gen.model.expression import sample_counts
 
-    plane = plane_at_z(vol, float(args.target_z), cfg)
+    plane = plane_at_z(vol, target_z, cfg)
     # plane_at_z takes the depth verbatim; it is the *field* that clamps queries to the bbox,
     # under a BBoxClampWarning this run suppresses. So the two ways --target-z can be wrong are
     # checked here rather than left to a warning nobody sees.
     z_lo, z_hi = float(np.asarray(vol.bbox)[0, 2]), float(np.asarray(vol.bbox)[1, 2])
-    if not (z_lo <= float(args.target_z) <= z_hi):
+    if not (z_lo <= target_z <= z_hi):
         plane_note = (
-            f"--target-z {args.target_z} is outside the training volume's z range "
+            f"--target-z {target_z} is outside the training volume's z range "
             f"[{z_lo:.1f}, {z_hi:.1f}]; every GRF query on this plane is clamped to the "
             "bounding box, so the prior is being read off a face rather than a slice"
         )
     elif is_boundary_plane(vol, plane, cfg):
         plane_note = (
-            f"--target-z {args.target_z} is a boundary plane (within "
+            f"--target-z {target_z} is a boundary plane (within "
             f"{cfg.boundary_margin_spacings} median spacings of the stack's end): evidence "
             "there is one-sided, which T04 measured as a 20-35% reconstruction deficit (R3)"
         )
@@ -1168,6 +1360,7 @@ def main(argv: list[str] | None = None) -> int:
     mu_var_ratio = float("nan")
     ablation_rows: list[dict] = []
     ablation_levels: dict[str, float] = {}
+    mu_spread: list[dict] = []
     try:
         ref_rows, h1 = real_section_reference(
             cfg, model, args.section, k, paths.ground_truth, real=real, panel=panel
@@ -1183,8 +1376,16 @@ def main(argv: list[str] | None = None) -> int:
             mu_var_ratio = float(np.median(gen_terms["total"][ok] / denom[ok]))
         if args.emission_ablation:
             t2 = time.time()
-            ablation_rows, ablation_levels = emission_ablation(
-                model, cfg, real, h1, k, int(args.ablation_seed), panel
+            ablation_rows, ablation_levels, mu_spread = emission_ablation(
+                model,
+                cfg,
+                real,
+                h1,
+                k,
+                [int(x) for x in args.ablation_seed],
+                panel,
+                mu_gen=_sel(mu.numpy()),
+                counts_gen=_sel(counts_np),
             )
             print(f"  emission ablation in {time.time() - t2:.1f}s", flush=True)
             for r in ablation_rows:
@@ -1196,27 +1397,42 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
 
-    text_channel = (
-        f"live, `text_emb_mode={cfg.text_emb_mode}`"
-        if live_text
-        else "**zero vectors** (neither A3 arm)"
-    )
-    panel_rule = (
-        "all genes"
-        if panel is None
-        else f"top {len(panel_genes)} by Moran's I on the **{args.top_k_by}** side"
-    )
-    density_rule = (
-        f"matched to the real section: {density['n_generated']} generated -> "
-        f"{density['n_used']} kept (seed {density['seed']})"
-        if args.match_density
-        else f"unmatched: {density['n_used']} generated against {density['n_target']} real"
-    )
+    text_channel = describe_text_state(model, cfg)
+    if checkpoint is not None:
+        text_channel += f" — from `{args.load_model}`"
+    if panel is None:
+        panel_rule = f"all {len(panel_genes)} genes (`--top-k-by all`)"
+    elif len(panel_genes) >= len(genes):
+        panel_rule = (
+            f"🚩 **vacuous**: `--top-k {args.top_k}` >= the panel's {len(genes)} genes, so all "
+            f"{len(genes)} were kept and **no selection took place**"
+        )
+    else:
+        panel_rule = (
+            f"top {len(panel_genes)} of {len(genes)} "
+            f"({len(panel_genes) / len(genes):.1%}) by Moran's I on the **{args.top_k_by}** side"
+        )
+    if not args.match_density:
+        density_rule = (
+            f"NOT matched (flag not given): {density['n_used']} generated against "
+            f"{density['n_target']} real"
+        )
+    elif density["n_generated"] <= density["n_target"]:
+        density_rule = (
+            f"🚩 **vacuous**: requested {density['n_target']}, the layout produced only "
+            f"{density['n_generated']}, so nothing was subsampled and the arms are **NOT** "
+            "density-matched"
+        )
+    else:
+        density_rule = (
+            f"matched: {density['n_generated']} generated -> {density['n_used']} kept "
+            f"(seed {density['seed']})"
+        )
     width = max(len(r["stage"]) for r in rows)
     lines = [
-        f"# Chain diagnostic — where the spatial structure is lost ({args.steps} steps)",
+        f"# Chain diagnostic — where the spatial structure is lost ({int(cfg.train_steps)} steps)",
         "",
-        f"`{paths.dataset}` / `{paths.holdout}`, `{args.section}` at z={args.target_z}, "
+        f"`{paths.dataset}` / `{paths.holdout}`, `{args.section}` at z={target_z:.1f}, "
         f"{xy.shape[0]} generated cells.",
         "Median per-channel Moran's I on a row-standardised kNN graph "
         f"(k={k}), the same estimator at every stage.",
@@ -1237,9 +1453,14 @@ def main(argv: list[str] | None = None) -> int:
         if note:
             lines += ["", f"🚩 {note}."]
     if panel is not None:
+        vacuous = len(panel_genes) >= len(genes)
         lines += [
             "",
-            f"**Panel** ({args.top_k_by}-selected, {len(panel_genes)} genes): "
+            (
+                f"**Panel** (**no selection** — all {len(genes)} genes): "
+                if vacuous
+                else f"**Panel** ({args.top_k_by}-selected, {len(panel_genes)} of {len(genes)}): "
+            )
             + ", ".join(f"`{g}`" for g in panel_genes),
             "",
             "The panel restricts the **gene-space stages only** — 3, 4, their calibrated twins, "
@@ -1337,28 +1558,98 @@ def main(argv: list[str] | None = None) -> int:
             "table, the thresholds, the level guard and the two stated asymmetries were committed",
             "before the run.",
             "",
-            f"| {'arm':<{width_a}} | median I | p25 | p75 | channels | level | recovery R |",
+            f"| {'arm':<{width_a}} | median I | across seeds | ch | level | R | band |",
             f"|{'-' * (width_a + 2)}|---|---|---|---|---|---|",
         ]
+        readable = bool(np.isfinite(deficit) and deficit > 0)
+
+        def band(recovery: float) -> str:
+            if not np.isfinite(recovery):
+                return "—"
+            if recovery >= 0.70:
+                return "RECOVERS"
+            return "DOES NOT RECOVER" if recovery <= 0.30 else "UNINFORMATIVE"
+
         for r in ablation_rows:
             key = r["stage"].split(".")[0]
             level = ablation_levels.get(key)
             level_s = "—" if level is None else f"{level:.2f}x"
-            recovery = (
-                (r["median_I"] - i_model) / deficit
-                if np.isfinite(deficit) and deficit > 0 and not r["stage"].endswith("'. mu")
-                else float("nan")
-            )
+            drawn = "per_seed" in r
+            recovery = (r["median_I"] - i_model) / deficit if readable and drawn else float("nan")
             rec_s = "—" if not np.isfinite(recovery) else f"**{recovery:+.2f}**"
+            if drawn and r.get("n_seeds", 1) > 1:
+                seeds_s = f"{r['min_I']:+.4f} .. {r['max_I']:+.4f} ({r['n_seeds']})"
+            else:
+                seeds_s = "—"
             lines.append(
-                f"| {r['stage']:<{width_a}} | **{r['median_I']:+.4f}** | {r['p25']:+.4f} "
-                f"| {r['p75']:+.4f} | {r['n_channels']} | {level_s} | {rec_s} |"
+                f"| {r['stage']:<{width_a}} | **{r['median_I']:+.4f}** | {seeds_s} "
+                f"| {r['n_channels']} | {level_s} | {rec_s} | {band(recovery)} |"
             )
         lines += [
             "",
             f"Anchors from this run: `I(model counts)` = **{i_model:+.4f}**, "
             f"`I(real counts)` = **{i_real:+.4f}**, deficit = **{deficit:+.4f}**.",
         ]
+
+        # a1_escalation_preregistration.md §1: an arm whose seeds do not all land in one band reads
+        # UNRESOLVED whatever its median says. Applied here rather than left to the reader,
+        # because a median quoted without its spread is the verdict a re-draw could reverse.
+        if readable and any(r.get("n_seeds", 1) > 1 for r in ablation_rows):
+            lines += [
+                "",
+                "**Three-seed stability** (`a1_escalation_preregistration.md` §1): an arm whose "
+                "per-seed bands disagree reads **UNRESOLVED** regardless of its median.",
+                "",
+                "| arm | per-seed R | bands | verdict |",
+                "|---|---|---|---|",
+            ]
+            for r in ablation_rows:
+                if r.get("n_seeds", 1) <= 1 or "per_seed" not in r:
+                    continue
+                recoveries = [(e["median_I"] - i_model) / deficit for e in r["per_seed"]]
+                bands = [band(x) for x in recoveries]
+                stable = len(set(bands)) == 1
+                median_band = band(float(np.median(recoveries)))
+                verdict = median_band if stable else "**UNRESOLVED** (seeds straddle)"
+                lines.append(
+                    f"| {r['stage'].split('.')[0]} | "
+                    + ", ".join(f"{x:+.2f}" for x in recoveries)
+                    + f" | {', '.join(dict.fromkeys(bands))} | {verdict} |"
+                )
+        if mu_spread:
+            lines += [
+                "",
+                "### N2 — the tissue's own `sd(log mu)`, two model-free routes",
+                "",
+                "Both use `sd(log mu) = sqrt(log(1 + CV^2))` — an approximation — so neither",
+                "needs a pseudocount, and **neither passes through the decoder**, which is what",
+                "the gate in `emission_repair_options.md` §8.3 could not manage. The kNN mean",
+                "field shrinks variance, so its figure is a **lower** bound; the",
+                "Poisson-deconvolved one counts any tissue over-dispersion as signal, so it is an",
+                "**upper** bound. Together they bracket the tissue. Estimator fixed in",
+                "`a1_escalation_preregistration.md` §3.",
+                "",
+                "| quantity | `sd(log mu)` | genes |",
+                "|---|---|---|",
+            ]
+            for entry in mu_spread:
+                lines.append(
+                    f"| {entry['quantity']} | **{entry['sd_log_mu']:.4f}** | {entry['n_genes']} |"
+                )
+            lines += [
+                "",
+                "Read against the decoder's own figure in the Candidate 2 block above. "
+                "`chain_shipped_review.md` §6's narrow-`mu` mechanism is **supported** if the "
+                "tissue's lower bound exceeds it by >= 1.5x, **refuted** if the tissue's upper "
+                "bound falls below it, and **untested still** in between.",
+                "",
+                "⚠️ How loose the lower bound is depends on how autocorrelated the field already "
+                "is — a kNN mean destroys the variance of a field whose neighbours are unrelated "
+                "and preserves it where they are not (the self-check measures 0.800 -> 0.279 on "
+                "an unstructured field). Read it beside `I(mu_oracle)` in the table above. **A "
+                'lower bound below the decoder\'s figure is "untested still", never '
+                '"refuted"** — only the upper bound can refute.',
+            ]
         if not (np.isfinite(deficit) and deficit > 0):
             lines += [
                 "",
@@ -1385,7 +1676,7 @@ def main(argv: list[str] | None = None) -> int:
             "dataset": paths.dataset,
             "holdout": paths.holdout,
             "section": args.section,
-            "target_z": float(args.target_z),
+            "target_z": target_z,
             "section_z": real.z,
             "steps": int(args.steps),
             "seed": SEED,
@@ -1410,9 +1701,10 @@ def main(argv: list[str] | None = None) -> int:
         "stages": rows,
         "emission_ablation": {
             "ran": bool(ablation_rows),
-            "seed": int(args.ablation_seed),
+            "seeds": [int(x) for x in args.ablation_seed],
             "arms": ablation_rows,
             "level_vs_real": ablation_levels,
+            "mu_spread": mu_spread,
         },
         "mu_variance": {
             "generated": decomposition,
