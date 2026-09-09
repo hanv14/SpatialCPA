@@ -4,20 +4,24 @@
 "ship". `Config` declares them **0.0**, `scripts/_starmap_run.py::base_config` never overrides them,
 and `t09_ship_starmap.py --w-metric-aware` defaults to unset — so every real-data fit whose artifact
 is in the repository ran at **0.0** except A9's deliberately-overridden `05` arm
-(`reports/advisor_report.md` §6a). Two readings remain, and they are different failures:
+(`reports/advisor_report.md` §6a). Does *any* persisted selection carry 0.5?
 
-**(a) A `selected.yaml` carrying 0.5 exists on the campaign machine.** Then 0.5 is a real persisted
-selection that the campaign runs simply never resolved — `specs/10` §10.1's `--require-config` path
-would have read it, and nothing used it. A wiring gap.
+**Answered 2026-09-09: no, and the one that exists is not a shipped selection.**
+`runs/select/starmap_visual_cortex/selected.yaml` was added at `3d57725` and deleted at `5cd1fd6`.
+It records the three weights at **0.0**, and `train_steps: 20`, `decoder_mu_link: softplus`,
+`expr_pca_dim: 32` — a smoke artifact from the halted pilot, predating the link fix, the clamp rule
+and R11. So the 0.5 has **no machine-readable source anywhere in the project**: not `Config`, not any
+fit's recorded config, not the one persisted selection that exists. See
+`reports/advisor_report.md` §6b.
 
-**(b) No such file exists anywhere.** Then 0.5 entered the record from a **selection report** —
-`write_selection_report`'s table, or the printed rank — and was written into `Config`'s docstrings,
-`specs/10`, the close-out and this project's own `--w-metric-aware` help text as "shipped" **without
-ever being persisted or applied**. That is a value that was chosen, recorded as shipped, and never
-ran: a provenance failure mode distinct from every one in §8, because nothing is missing and nothing
-is mislabelled — the number is simply not connected to anything that executes.
+🚨 **And the first version of this script reported NONE FOUND.** It walked filesystem roots, and the
+file is tracked in the very repository it was run from — present in history, absent from the tree.
+Its scope caveat warned about *roots*, i.e. space, while the file was missing in *time*. That is
+`specs/10` §4.2j — an instrument reporting a check it did not perform — committed by an instrument
+that quoted §8c's reflog lesson in its own output. `scan_history` is the fix, and it searches
+``--all --reflog`` so a reset-away commit is covered too.
 
-This script cannot decide which; it can only look. It reads, and never writes.
+This script reads, and never writes.
 
 `specs/10` §10.1 gives the layout it searches::
 
@@ -44,6 +48,7 @@ import argparse
 import csv
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -101,13 +106,21 @@ def weights_in(text: str) -> dict[str, float]:
 
 
 def describe_file(path: Path) -> dict[str, Any]:
-    """Return what one selection artifact says about the three weights and the arm."""
-    out: dict[str, Any] = {"path": str(path), "kind": path.name, "weights": {}, "gates": {}}
+    """Return what one on-disk selection artifact says about the three weights and the arm."""
     try:
         text = path.read_text(errors="replace")
     except OSError as exc:  # unreadable is not absent, and the difference matters
-        out["error"] = f"unreadable: {exc}"
-        return out
+        return {"path": str(path), "kind": path.name, "weights": {}, "gates": {},
+                "error": f"unreadable: {exc}"}
+    out = describe_text(text, path.name)
+    out["path"] = str(path)
+    return out
+
+
+def describe_text(text: str, kind: str) -> dict[str, Any]:
+    """Return what one artifact's *contents* say — shared by the tree and history readers."""
+    out: dict[str, Any] = {"path": "<text>", "kind": kind, "weights": {}, "gates": {}}
+    path = Path(kind)
 
     if path.name == "selected.yaml":
         flat = read_yaml(text)
@@ -139,8 +152,75 @@ def describe_file(path: Path) -> dict[str, Any]:
     return out
 
 
-def scan(roots: list[Path]) -> tuple[list[dict[str, Any]], list[str]]:
-    """Return (findings, roots actually searched). A root that does not exist is reported, not skipped silently."""
+def _git(args: list[str], repo: Path) -> str | None:
+    """Run a read-only git command in ``repo``; ``None`` if git or the repo is unavailable."""
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True, text=True, timeout=120, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout if done.returncode == 0 else None
+
+
+def scan_history(repo: Path) -> tuple[list[dict[str, Any]], str]:
+    """Find selection artifacts that ever existed in ``repo``'s history, including deleted ones.
+
+    🚨 **This function exists because its absence produced a false negative on the one question
+    this script was built for.** The first version walked filesystem roots only, and reported
+    NONE FOUND for `runs/select/starmap_visual_cortex/selected.yaml` — a file **tracked in the very
+    repository the script was run from**, added at `3d57725` and deleted at `5cd1fd6`. Its scope
+    caveat warned about *roots*, i.e. space, and the file was missing in *time*. An instrument that
+    reports a check it did not perform is `specs/10` §4.2j, and this one quoted §8c's reflog lesson
+    in its own output while committing it.
+
+    Commits come from ``git rev-list --all --reflog``, so branches, tags **and reflog-only commits**
+    are covered — §8c rule 3: a commit that was reset away is still reachable there, and that is
+    exactly how the thirteen artifacts were recovered.
+    """
+    if _git(["rev-parse", "--git-dir"], repo) is None:
+        return [], f"{repo}  (not a git repository, or git unavailable — HISTORY NOT SEARCHED)"
+
+    out = _git(["log", "--all", "--reflog", "--pretty=format:%H", "--name-only",
+                "--diff-filter=AMR"], repo)
+    if out is None:
+        return [], f"{repo}  (git history unreadable — HISTORY NOT SEARCHED)"
+
+    # newest-first, so the first commit naming a path is the latest version of it
+    latest: dict[str, str] = {}
+    commit = ""
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if len(line) == 40 and all(c in "0123456789abcdef" for c in line):
+            commit = line
+        elif Path(line).name in NAMES:
+            latest.setdefault(line, commit)
+
+    findings: list[dict[str, Any]] = []
+    for path, sha in sorted(latest.items()):
+        blob = _git(["show", f"{sha}:{path}"], repo)
+        if blob is None:
+            continue
+        item = describe_text(blob, Path(path).name)
+        in_tree = (repo / path).exists()
+        item["path"] = f"{path}  @{sha[:7]}" + ("" if in_tree else "  [DELETED from the tree]")
+        item["from_history"] = True
+        item["commit"] = sha
+        item["deleted"] = not in_tree
+        findings.append(item)
+    return findings, f"{repo}  (git history: --all --reflog, {len(latest)} artifact path(s) ever seen)"
+
+
+def scan(roots: list[Path], repo: Path | None = None) -> tuple[list[dict[str, Any]], list[str]]:
+    """Return (findings, corpora actually searched) over the working tree **and** git history.
+
+    A root that does not exist is reported rather than skipped silently, and the git corpus is
+    reported separately — because "not in the tree" and "never existed" are different claims and
+    conflating them is what this script got wrong the first time.
+    """
     findings: list[dict[str, Any]] = []
     searched: list[str] = []
     seen: set[Path] = set()
@@ -156,6 +236,10 @@ def scan(roots: list[Path]) -> tuple[list[dict[str, Any]], list[str]]:
                     continue
                 seen.add(resolved)
                 findings.append(describe_file(hit))
+
+    hist, note = scan_history(repo if repo is not None else Path.cwd())
+    searched.append(note)
+    findings += hist
     return findings, searched
 
 
@@ -208,24 +292,36 @@ def render(findings: list[dict[str, Any]], searched: list[str]) -> str:
     lines.append("## Verdict")
     if carriers:
         lines += [
-            "🚨 **Branch (a): a persisted selection carrying 0.5 EXISTS.**",
+            "🚨 **A persisted selection carrying 0.5 EXISTS.**",
             "",
             *[f"  - `{c}`" for c in carriers],
             "",
-            "So 0.5 is a real persisted selection that the campaign runs never resolved — A9's",
-            "provenance reads `source: \"defaults\"`, `selection_path: null`. That is a **wiring**",
-            "gap: `specs/10` §10.1's `--require-config` path exists and nothing used it. The record",
-            "should say the weights were selected at 0.5, persisted, and **not applied by any run in",
-            "the corpus** — which is a different sentence from either the one it carries now or the",
-            "one branch (b) would license.",
+            "So 0.5 is a real persisted selection. Check whether any run resolved it — A9's",
+            "provenance reads `source: \"defaults\"`, `selection_path: null` — and report a **wiring**",
+            "gap if none did.",
         ]
     else:
         lines += [
-            "**Branch (b): artifacts exist, and none of them carries 0.5.**",
+            "**Selection artifacts exist, and NONE of them carries 0.5.**",
             "",
-            "Then the 0.5 in the record did not come from a persisted selection either. Report it as",
-            "a value chosen in a report, recorded as shipped, and never persisted or applied.",
+            "Every one found above records the three weights at some other value. So the 0.5 in the",
+            "record came from neither `Config`, nor any fit's recorded config, nor any persisted",
+            "selection: **it has no machine-readable source in this project at all.**",
+            "",
+            "⚠️ **Before quoting that, read the gates printed above and judge whether each artifact is",
+            "a selection anyone would ship.** A file that records `train_steps` far below the",
+            "selected budget, or a superseded `decoder_mu_link`, is a smoke or halted-pilot artifact:",
+            "it is evidence about what was persisted, not about what was chosen. Say which it is.",
         ]
+        smoke = [f for f in findings if isinstance(f.get("gates", {}).get("train_steps"), int)
+                 and f["gates"]["train_steps"] < 100]
+        if smoke:
+            lines += [
+                "",
+                "⚠️ **Flagged as likely smoke artifacts by `train_steps` alone** (an observation, not a",
+                "threshold — the gates are printed above so the call is visible):",
+                *[f"  - `{f['path']}` — train_steps={f['gates']['train_steps']}" for f in smoke],
+            ]
     return "\n".join(lines)
 
 
@@ -266,13 +362,33 @@ def self_check() -> int:
     if "NONE FOUND" not in empty or "as broad as the corpus it searched" not in empty:
         failures.append("empty render lost its scope caveat")
     found = render([describe_or_stub()], ["/somewhere"])
-    if "Branch (a)" not in found:
-        failures.append("a 0.5 carrier did not trigger branch (a)")
+    if "carrying 0.5 EXISTS" not in found:
+        failures.append("a 0.5 carrier did not trigger the exists-verdict")
+    zeroed = describe_or_stub()
+    zeroed["weights"] = {"w_autocorr": 0.0}
+    zeroed["gates"] = {"train_steps": 20}
+    other = render([zeroed], ["/somewhere"])
+    if "no machine-readable source" not in other:
+        failures.append("a non-0.5 artifact did not trigger the no-source verdict")
+    if "likely smoke artifacts" not in other:
+        failures.append("train_steps=20 was not flagged as a smoke artifact")
+
+    # the history reader must find the file this script originally missed
+    hist, note = scan_history(Path(__file__).resolve().parent.parent)
+    hit = [f for f in hist if f["kind"] == "selected.yaml"]
+    if not hit:
+        failures.append(f"history scan found no selected.yaml ({note}) — the original false negative")
+    else:
+        w = hit[0].get("weights", {})
+        if w.get("w_autocorr") != 0.0:
+            failures.append(f"history scan misread the weights: {w}")
+        if not hit[0].get("deleted"):
+            failures.append("history scan did not mark the deleted file as deleted")
 
     for f in failures:
         print(f"SELF-CHECK FAIL: {f}")
     if not failures:
-        print("self-check OK — yaml reader, regex fallback, report scan, and both verdict branches")
+        print("self-check OK — readers, all three verdict states, the smoke-artifact flag, and a\n  regression on the false negative: the history scan finds the deleted selected.yaml")
     return 1 if failures else 0
 
 
@@ -286,6 +402,7 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--root", action="append", default=[], help="extra directory to search (repeatable)")
+    ap.add_argument("--repo", default=".", help="git repository whose history to search (default: CWD)")
     ap.add_argument("--out", default=None, help="also write the report here")
     ap.add_argument("--self-check", action="store_true", help="exercise the readers, no filesystem")
     args = ap.parse_args(argv)
@@ -299,7 +416,7 @@ def main(argv: list[str] | None = None) -> int:
         roots.append(Path(env).expanduser())
     roots += [Path(r) for r in DEFAULT_ROOTS]
 
-    findings, searched = scan(roots)
+    findings, searched = scan(roots, repo=Path(args.repo).expanduser())
     text = render(findings, searched)
     print(text)
     if args.out:

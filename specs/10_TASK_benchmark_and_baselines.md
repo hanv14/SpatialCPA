@@ -732,7 +732,7 @@ level down — not a criterion that decided a verdict, but an **instrument** rep
 could not have performed.
 
 Every claim-bearing comparison in this literature is of the form *"the margin exceeds the noise"*.
-That sentence hides **nine** independent choices, and **in this project each one silently decided a
+That sentence hides **ten** independent choices, and **in this project each one silently decided a
 verdict before anyone noticed it was a choice** — including two (§4.2a-i, §4.2a-ii) found only when
 every figure in the corpus was re-derived, three weeks after the rule that should have caught them
 was written:
@@ -747,6 +747,7 @@ was written:
 | **which side of the threshold refutes** | 4.2h | a "within 1.5x" band on a one-sided hypothesis returned *false* on the result that refuted it most strongly; a nearby case would have read INCONCLUSIVE on a clean refutation, and the same shape sits in the zero-shot void condition |
 | **whether the check ran at all** | 4.2j | both collapse alarms were armed only while SEFL was on, so on the **shipped** configuration neither ever ran — and two reports, one of them written to enforce §4.2f, described that as a check that had been performed |
 | **which instrument the envelope came from** | 4.2a-i | two scorers over the same six metric names, and **every three-seed envelope ever quoted came from the one the headline numbers were not scored on** — a 2.6x–6.7x difference on tier-1, forbidden in prose by §5 while every "Nx the envelope" in the project performed it |
+| **whether the record's value exists in any artifact** | 4.2a-iv | `w_autocorr/w_profile/w_distribution = 0.5` is written everywhere as shipped and appears in **no** artifact the project produced — not `Config`, not any recorded fit config, not the one persisted selection. Two standing arguments were reasoned from it. Nothing is missing, every artifact agrees at `0.0`, and every document is wrong |
 | **whether the artifact says which arm it is** | 4.2a-ii | the committed, bitwise-reproducible files behind the six-metric table record no `config_hash`, no `text_emb_mode` and no metric-aware weights, so a correctly measured envelope cannot be matched to them — six clearance figures are flagged rather than numbered for this reason alone |
 
 **A fifth, and it is a different failure.** The four above are all *thresholds placed too close to
@@ -930,6 +931,42 @@ it emitted**, beside its verdict — because a null result's measurements stay v
 stops being interesting, and a run indexed only by the question it was built to answer is
 unfindable to anyone asking a different one. This is §4.2f one level up: not a diagnostic that fires
 where nobody looks, but a **measurement filed where nobody will think to look.**
+
+### 4.2a-iv 🚨 A value the record calls *shipped* must be traceable to an artifact a run produced or consumed
+
+**The seventh provenance failure mode, found 2026-09-09, and it is the only one with no file at its
+centre.**
+
+`w_autocorr = w_profile = w_distribution = 0.5` is written throughout this project as the shipped
+value. It appears in **no machine-readable artifact the project produced**: `Config` declares all
+three at `0.0`; the six-metric table's checkpoint, A7's two arms and A9's control arm all read back
+`0.0`; and the one persisted selection that exists —
+`runs/select/starmap_visual_cortex/selected.yaml`, added at `3d57725`, deleted at `5cd1fd6`, still
+in history — carries `0.0` at `train_steps: 20` with `decoder_mu_link: softplus` and
+`expr_pca_dim: 32`, i.e. a smoke artifact from the halted pilot. The 0.5 exists only in prose:
+docstrings, this spec, both reports, `PROGRESS.md`, and `t09_ship_starmap.py --w-metric-aware`'s own
+help text, each citing the others.
+
+**Why it is a distinct mode.** §8's six are all about a *file* — missing, unrecoverable, reset away,
+believed-present, regenerated, or searched in the wrong corpus. Here nothing is missing, because
+nothing was ever written. **Every artifact is internally consistent and every document is wrong**,
+and no provenance check that compares artifacts to each other can detect it: they all agree, at
+`0.0`. It is caught only by comparing the *documents* to the *code*.
+
+**The rule.** A value the record calls shipped is traceable to a persisted config, a recorded fit
+config, or a declared default in code — named, with the artifact. A number attested only by
+documents is a **claim about the code** and is checked against the code before it is repeated, not
+after it has been reasoned from. `scripts/t09_find_selection.py` performs the check for the
+selection artifacts specifically; the general form belongs beside §10.1's
+`test_bare_invocation_reproduces_shipped_config`, which asserts the same property for a *run* and
+not for the *record*.
+
+⚠️ **And the instrument that answered this returned a false negative first.** The first version of
+`t09_find_selection.py` walked filesystem roots and reported NONE FOUND for a file **tracked in the
+repository it was run from** — present in history, absent from the tree. Its scope caveat warned
+about *roots*, i.e. space, while the file was missing in *time*. §4.2j, in a script that quoted §8c's
+reflog lesson in its own output. A search for an artifact covers the working tree **and** the
+history, `--all --reflog`, or it says which one it covered.
 
 ### 4.2b A clearance against a *referent* takes the worst envelope in the comparison, not the arm's own
 

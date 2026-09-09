@@ -530,7 +530,7 @@ primaries had signs disagreeing across seeds. Margins for the record, none reada
 **So the weights remain unestablished, and a three-seed real-data design could not resolve them.**
 "Run more seeds" is not a cheap path: this design was already too noisy at three.
 
-### 🚨 Standing recommendation: set the three weights to **zero** in the next campaign
+### 🚩 Standing recommendation — **WITHDRAWN 2026-09-09 as vacuous**, see §6c: set the three weights to **zero** in the next campaign
 
 Stated as a recommendation rather than a note, so whoever runs next decides with the evidence in
 front of them instead of inheriting a coin-flip rank. Four reasons:
@@ -607,39 +607,113 @@ three seeds and returned UNINFORMATIVE. What changes is the framing around it:
   §5's finding arriving from the other side. The gap between "the value T09's selection chose" and
   "the value any code path produces" is the real defect, and it is a labelling failure rather than a
   contamination one.
-* **The standing recommendation to set the weights to zero is now nearly a no-op**, because
-  `Config` already does. What the next campaign needs is not a decision to turn them off; it is for
-  the record to stop saying they are on.
+* **The standing recommendation is vacuous, not merely a no-op** (§6c): `Config` already does what
+  it asks, and after §6b there is no artifact anywhere that ever held 0.5. What the next campaign
+  needs is not a decision to turn them off; it is for the record to stop saying they are on.
 
-### 6b. ⏳ PENDING — and the record must not settle until this is run
+### 6b. 🚨 RESOLVED 2026-09-09 — the 0.5 has no machine-readable source anywhere in the project
 
-**What is established** is that no run whose artifact is in this repository resolved a persisted
-selection: A9's provenance reads `source: "defaults"`, `selection_path: null`, and every fit's gates
-read back as `Config` defaults plus explicit overrides. **What is not established** is whether a
-`selected.yaml` carrying 0.5 exists at all — `runs/` is not in this checkout, and `specs/10` §4.2*
-is explicit that a negative result is only as broad as the corpus it searched. The reflog episode
-(§8c) cost a round trip on exactly this mistake.
+**A persisted selection does exist**, and it is neither branch this report pre-registered.
+`runs/select/starmap_visual_cortex/selected.yaml` was added at `3d57725` ("T10 pilot: halted at
+step 6") and deleted at `5cd1fd6`. It is still in history, and it records:
 
-```
-python scripts/t09_find_selection.py --root "$SPATIALCPAV25_SELECT_DIR" --root /data/han/projects/Spatial3D
-```
-
-It reads and never writes; it searches for `selected.yaml`, `selection_report.md` and `scores.csv`,
-reports the weights each carries, and **prints the roots it searched** so a negative can be quoted
-at its real breadth. `--self-check` exercises both readers and both verdict branches without a
-filesystem.
-
-**Both branches are written down now, so the answer cannot be fitted to the outcome afterwards:**
-
-| outcome | what it means | how the record should read |
+| field | value | what it says |
 |---|---|---|
-| **(a) a `selected.yaml` carrying 0.5 exists** | 0.5 is a real persisted selection that no campaign run resolved. `specs/10` §10.1's `--require-config` path exists and nothing used it | **a wiring gap**: "the weights were selected at 0.5, persisted, and applied by no run in the corpus" |
-| **(b) no such file, under complete roots** | 0.5 entered the record from a **selection report** — a printed rank — and was written into `Config`'s docstrings, `specs/10`, this report, the close-out and `--w-metric-aware`'s own help text as *shipped*, without ever being persisted or applied | 🚨 **a seventh provenance failure mode: a value that was chosen, recorded as shipped, and never ran.** Distinct from all six in §8c — nothing is missing, nothing is mislabelled, nothing was regenerated. The number is simply not connected to anything that executes, and every artifact is internally consistent while the claim is false |
+| `w_autocorr` / `w_profile` / `w_distribution` | **0.0 / 0.0 / 0.0** | **not 0.5** |
+| `train_steps` | **20** | a smoke run; the selected budget is 2400 |
+| `decoder_mu_link` | `softplus` | predates the `exp` default (2026-08-21) |
+| `expr_pca_dim` | 32 | predates `clamp_config_to_volume`'s 28 |
+| `layout_mode` / `text_emb_mode` | `field` / `lookup` | predates R11 |
 
-⚠️ **Branch (b) is the one the current evidence points at**, because `Config` itself carries 0.0 —
-if a selection had been applied as the shipped default, that is where it would show. But pointing at
-is not the same as showing, and the search costs one command.
+So it is a **20-step smoke artifact from the halted pilot**, not a selection anyone would ship —
+and it still carries the weights at zero.
 
+**The record therefore reads, exactly:**
+
+> **`w_autocorr = w_profile = w_distribution = 0.5` appears in no machine-readable artifact this
+> project produced.** Not in `Config`. Not in any fit's recorded config — the six-metric table's
+> checkpoint, A7's two arms and A9's control all read back 0.0. Not in the one persisted selection
+> that exists. It appears **only in prose**: `Config`'s docstrings, `specs/10`, this report, the
+> close-out, `PROGRESS.md`, and `t09_ship_starmap.py --w-metric-aware`'s own help text — each
+> citing the others.
+
+🚨 **That is the seventh provenance failure mode, and it is stronger than "never persisted".** The
+six in §8c are all about a *file*: missing, unrecoverable, reset away, believed-present, regenerated,
+or searched in the wrong corpus. This one has no file at its centre. **A value was carried through
+the entire written record, cited as shipped, reasoned from in two standing arguments — and there is
+no artifact anywhere that ever held it.** Nothing is missing, because nothing was ever written.
+Every artifact is internally consistent and every document is wrong, and no provenance check that
+compares artifacts to each other can detect it: they all agree, at 0.0.
+
+**The rule it earns.** A value the record calls *shipped* must be traceable to an artifact that a
+run produced or consumed — a persisted config, a recorded fit config, or a declared default in
+code. A number attested only by documents is a **claim about the code**, and it must be checked
+against the code before it is repeated, not after it has been reasoned from twice.
+
+⚠️ **The instrument that answered this question got it wrong first, and that is §4.2j again.**
+`scripts/t09_find_selection.py` reported **NONE FOUND**: it walked filesystem roots, and the file is
+tracked in the very repository it was run from — present in history, absent from the tree. Its scope
+caveat warned about *roots*, i.e. space, while the file was missing in *time*, and it quoted §8c's
+reflog lesson in its own output while committing it. Fixed with `scan_history` (`--all --reflog`, so
+a reset-away commit is covered), and the self-check now carries a **regression on the false negative
+itself** — it asserts the history scan finds that exact deleted file. Second time in this thread an
+instrument I wrote committed the failure it was built to detect.
+
+### 6c. What this does to the two arguments that were reasoned from the 0.5
+
+Both §6's standing recommendation and R10's envelope took the 0.5 as real. Neither survives intact.
+
+**1. The standing recommendation is withdrawn — it is vacuous, not merely a no-op.**
+*"Set the three metric-aware weights to zero in the next campaign"* recommends changing a state that
+does not exist. They are zero in `Config`, zero in every recorded fit config, and zero in the only
+persisted selection. There is nothing to turn off.
+
+⚠️ **And its first reason no longer has a source either.** Reason 1 was *"they were selected on the
+synthetic fixture by an aggregate rank"* — but the selection table that chose 0.5 is §8b
+(**measured but unrecoverable**), and the one selection file that *is* recoverable carries 0.0. So
+**the claim that a selection ever chose 0.5 is itself prose-only.** Reasons 3 (1.63x compute) and 4
+(the collapse regime) are measured from A9 and stand as measurements — but they describe an arm the
+project never ran anywhere else, not the shipped one.
+
+**What replaces it**: a documentary correction, not a configuration change. The record must stop
+asserting 0.5 — in `Config`'s docstrings, `specs/10`, both reports and the `--w-metric-aware` help
+text — and say that the weights are zero and always were.
+
+🚨 **And A9 was framed backwards.** Its pre-registration reads *"Unlike A7 this is a REMOVAL
+experiment: the three ship at 0.5, so the arms are `--w-metric-aware 0.5` (shipped) and 0."* With
+the 0.5 unsourced, **A9 is an ADDITION experiment** — the same inversion A2, A4 and A7 each went
+through — and **its `0` arm is the shipped configuration while its `05` arm is the addition.** The
+UNINFORMATIVE verdict is untouched, since a two-arm contrast does not care which arm is called the
+baseline; what inverts is which arm §5.1's table should be read as v25, and it is the `w = 0`
+column.
+
+**2. R10's envelope was measured on an arm with no other instance in the project.**
+`scripts/t09_envelope.py` sets `w_autocorr = w_profile = w_distribution = **0.5**` explicitly for
+all nine of its fits — presumably because 0.5 was believed shipped. So the 0.0335, and the
+per-metric decomposition this report now quotes from it, were measured on a configuration that
+appears **nowhere else**: not in `Config`, not in any real-data fit, not in the persisted selection.
+
+Last revision called this "the wrong arm on the very gate §6 is about". It is stronger than that:
+**there is nothing it is the envelope *of*.** Every other mismatch in §4b is a comparison between
+two arms that both exist. This one has a single instance, created by a script, on the strength of a
+value with no source.
+
+✅ **What is unaffected, and it is what the corrected numbers now rest on.** A9's per-metric spreads
+are measured on A9's own arms, and **A9's `0` arm is the shipped configuration** — so
+`paper_morans_pearson` 0.0202, `paper_gearys_pearson` 0.0241, `paper_umap_mixing` 0.0464,
+`paper_marker_field_r` 0.0307, `paper_marker_depth_r` 0.1225, `paper_celltype_localization` 0.0009,
+`paper_gene_mean_spearman` 0.0400 are **the only envelope this project has ever measured on the
+configuration it actually ships**, on the pinned instrument, at the right design, at three seeds.
+That is the figure the next campaign should quote, and it did not exist as a usable number until
+this week.
+
+⚠️ **The fixture-only corrections in `reports/envelope_correction.md` §2.3 and §2.4 inherit the
+orphan arm.** Both divide fixture margins by fixture per-metric envelopes, and the envelope run is
+`w = 0.5` throughout. §2.4's layout tie-break is internally consistent — both arms are the same
+`w = 0.5` base — so its finding (two metrics separating and disagreeing) stands **as a statement
+about that arm**. §2.3's margins come from the unrecoverable selection table, so which arm they were
+measured on is not established at all. Neither conclusion moves; both need the arm named beside
+them.
 ---
 
 ## 7. The mechanism under the generative failure

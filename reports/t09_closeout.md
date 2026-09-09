@@ -178,7 +178,7 @@ not a cheap path either. Two things the run found instead:
   drains: R4's shape in a fifth place. **Candidate, not established** — it decides no A9 branch.
 * Wall clock: the ON arm costs **1.63x** (93 min against 57).
 
-### 🚨 Standing recommendation: set the three metric-aware weights to **zero**
+### 🚩 Standing recommendation — **WITHDRAWN 2026-09-09 as vacuous** (see the resolution at the end of this section): set the three metric-aware weights to **zero**
 
 Not a note. Whoever runs the next campaign should decide this with the evidence in front of them
 rather than inheriting a coin-flip rank, so the recommendation is stated and the reasons are
@@ -222,18 +222,42 @@ them on, and it is the experiment that tested them.** So the absolute numbers ar
 this section claimed, not dirtier — and the real defect is the other one: **they were not produced
 with the configuration the record calls shipped.** The standing recommendation above is now nearly
 a no-op, because `Config` already does what it asks; what the next campaign needs is for the record
-to stop saying the weights are on. ⏳ **PENDING, and the record must not settle until it is run**: whether a persisted
-`selected.yaml` carrying 0.5 exists at all. `runs/` is not in this checkout, and a negative is only
-as broad as the corpus it searched (§4.2*). `python scripts/t09_find_selection.py --root "$SPATIALCPAV25_SELECT_DIR"`
-answers it, reads nothing else and prints the roots it covered. Both branches are written down in
-advance (`reports/advisor_report.md` §6b): **(a)** such a file exists → 0.5 was selected, persisted
-and **applied by no run in the corpus**, a wiring gap; **(b)** it does not → 0.5 entered the record
-from a printed selection report and was written everywhere as *shipped* **without ever being
-persisted or applied — a value that was chosen, recorded as shipped, and never ran**, which is a
-seventh provenance failure mode distinct from all six in §8: nothing missing, nothing mislabelled,
-every artifact internally consistent, and the claim false anyway. What *is* established either way:
-no run whose artifact is in this repository resolved a selection (A9: `source: "defaults"`,
-`selection_path: null`).
+to stop saying the weights are on. 🚨 **RESOLVED 2026-09-09, and it is neither branch that was pre-registered.** A persisted selection
+**does** exist — `runs/select/starmap_visual_cortex/selected.yaml`, added at `3d57725` and deleted
+at `5cd1fd6`, still in history — and it carries the three weights at **0.0**, with `train_steps: 20`,
+`decoder_mu_link: softplus` and `expr_pca_dim: 32`: a 20-step smoke artifact from the halted pilot,
+predating the link fix, the clamp rule and R11. Not a selection anyone would ship, and not 0.5.
+
+**So the record reads: `0.5` appears in NO machine-readable artifact this project produced** — not
+`Config`, not any fit's recorded config, not the one persisted selection that exists. It lives only
+in prose, in documents citing each other. 🚨 **That is the seventh provenance failure mode and it is
+stronger than "never persisted": a value carried through the entire written record, cited as
+shipped, reasoned from in two standing arguments, with no artifact anywhere that ever held it.**
+Nothing is missing, because nothing was ever written — and no provenance check that compares
+artifacts to each other can catch it, because they all agree, at 0.0.
+
+**Two consequences, both on arguments that assumed the 0.5 was real** (`reports/advisor_report.md`
+§6c):
+
+* **This standing recommendation is withdrawn as vacuous** — it recommends changing a state that
+  does not exist. Its first reason goes too: *"they were selected on the fixture"* rests on the
+  §8b-unrecoverable selection table, and the one recoverable selection carries 0.0, so **even the
+  claim that a selection chose 0.5 is prose-only**. What replaces it is documentary: the record must
+  stop asserting 0.5. And **A9 was framed backwards** — with 0.5 unsourced it is an **addition**
+  experiment, its `0` arm the shipped configuration and its `05` arm the addition, the same
+  inversion A2, A4 and A7 each went through. The UNINFORMATIVE verdict is untouched.
+* **R10's envelope was measured on an arm with no other instance in the project.**
+  `scripts/t09_envelope.py` sets all three weights to **0.5** for its nine fits — so the 0.0335 and
+  its per-metric decomposition describe a configuration that appears nowhere else. Not "the wrong
+  arm" but **an arm with a single instance, created by a script on the strength of a value with no
+  source**. ✅ Unaffected, and now the useful figure: **A9's `0` arm is the shipped configuration**,
+  so its per-metric spreads are **the only envelope this project has ever measured on what it
+  actually ships**, on the pinned instrument at the right design at three seeds.
+
+⚠️ The instrument that answered this reported **NONE FOUND** first: it walked filesystem roots while
+the file was missing in *time*, not space, inside the very repository it ran in. §4.2j again, in a
+script that quoted §8c's reflog lesson in its own output. Fixed with a git-history scan over
+`--all --reflog`, with a regression test on the false negative itself.
 ⚠️ And the fixture envelope ran the other way round — `scripts/t09_envelope.py` sets all three to
 **0.5** for its nine fits, so R10's 0.0335 was measured on the weights-**on** arm while every
 number it judged was weights-**off**.

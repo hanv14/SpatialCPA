@@ -7865,3 +7865,69 @@ Both branches are written before the answer arrives, so it cannot be fitted afte
 
 ⚠️ Branch (b) is where the current evidence points — `Config` carries 0.0, which is where an applied
 selection would show — but pointing at is not showing, and the search costs one command.
+
+### The 0.5 has no source anywhere — the seventh failure mode (2026-09-09)
+
+**The finder's negative was wrong, and the answer is neither pre-registered branch.**
+`runs/select/starmap_visual_cortex/selected.yaml` **exists** — added at `3d57725` ("T10 pilot:
+halted at step 6"), deleted at `5cd1fd6`, still in history. It carries the three weights at **0.0**,
+with `train_steps: 20`, `decoder_mu_link: softplus`, `expr_pca_dim: 32`, `text_emb_mode: lookup`,
+`layout_mode: field` — a 20-step smoke artifact from the halted pilot, predating the link fix, the
+clamp rule and R11. Not a selection anyone would ship, and not 0.5.
+
+🚨 **So: `0.5` appears in NO machine-readable artifact this project produced.** Not `Config`; not any
+fit's recorded config (the six-metric checkpoint, A7's two arms, A9's control all read `0.0`); not
+the one persisted selection that exists. It lives only in prose — docstrings, `specs/10`, both
+reports, `PROGRESS.md`, and `--w-metric-aware`'s own help text, each citing the others.
+
+**Written as the seventh provenance failure mode** (`specs/10` §4.2a-iv, advisor §6b, close-out §4).
+It is stronger than "never persisted": the six in §8c are all about a *file*, and this one has no
+file at its centre. Nothing is missing because nothing was ever written; **every artifact is
+internally consistent and every document is wrong**, and no artifact-to-artifact provenance check can
+catch it — they all agree at `0.0`. It is caught only by comparing the documents to the code.
+
+**Instrument defect, and it is §4.2j a second time in this thread.** The first
+`t09_find_selection.py` walked filesystem roots and reported NONE FOUND for a file **tracked in the
+repository it was run from** — present in history, absent from the tree. Its scope caveat warned
+about *roots*, i.e. space, while the file was missing in *time*, and it quoted §8c's reflog lesson in
+its own output while committing it. Fixed with `scan_history` over `git rev-list --all --reflog`, so
+reset-away commits are covered too; **the self-check now carries a regression on the false negative
+itself**, asserting the history scan finds that exact deleted file with `w_autocorr = 0.0`. The
+verdict logic is three-way (a 0.5 carrier / artifacts none of which carry 0.5 / nothing found) and
+flags a low `train_steps` as a likely smoke artifact — an observation with the gates printed beside
+it, not a threshold.
+
+#### What it does to the two arguments reasoned from the 0.5
+
+**1. The standing recommendation is WITHDRAWN as vacuous.** "Set the three weights to zero in the
+next campaign" recommends changing a state that does not exist — they are zero in `Config`, in every
+recorded fit config, and in the only persisted selection. ⚠️ Its first reason goes too: *"they were
+selected on the fixture by an aggregate rank"* rests on the §8b-**unrecoverable** selection table,
+and the one recoverable selection carries 0.0 — so **even the claim that a selection ever chose 0.5
+is prose-only**. Reasons 3 (1.63x compute) and 4 (collapse regime) are measured from A9 and stand as
+measurements, but they describe an arm the project ran nowhere else. What replaces the
+recommendation is documentary: the record stops asserting 0.5.
+
+🚨 **And A9 was framed backwards.** Its pre-registration reads *"Unlike A7 this is a REMOVAL
+experiment: the three ship at 0.5, so the arms are `--w-metric-aware 0.5` (shipped) and 0."* With
+0.5 unsourced, **A9 is an ADDITION experiment** — the same inversion A2, A4 and A7 each went through
+— and **its `0` arm is the shipped configuration, its `05` arm the addition.** The UNINFORMATIVE
+verdict is untouched (a two-arm contrast does not care which arm is called the baseline); what
+inverts is which column of the §5.1 table is v25, and it is `w = 0`.
+
+**2. R10's envelope was measured on an arm with no other instance in the project.**
+`t09_envelope.py` sets all three weights to 0.5 for its nine fits — presumably because 0.5 was
+believed shipped. So the 0.0335 **and its per-metric decomposition** describe a configuration that
+appears nowhere else. Last revision called it "the wrong arm on the very gate §6 is about"; it is
+stronger than that — **there is nothing it is the envelope *of*.** Every other mismatch in §4b is
+between two arms that both exist; this one has a single instance, created by a script on the
+strength of a value with no source. `reports/envelope_correction.md` §2.3 and §2.4 inherit it: §2.4's
+tie-break is internally consistent and stands **as a statement about that arm**; §2.3's margins come
+from the unrecoverable table, so their arm is unestablished. Neither conclusion moves.
+
+✅ **What is unaffected, and it is now the figure to quote.** A9's spreads are measured on A9's own
+arms, and **A9's `0` arm is the shipped configuration** — so `paper_morans_pearson` 0.0202,
+`paper_gearys_pearson` 0.0241, `paper_umap_mixing` 0.0464, `paper_marker_field_r` 0.0307,
+`paper_marker_depth_r` 0.1225, `paper_celltype_localization` 0.0009, `paper_gene_mean_spearman`
+0.0400 are **the only envelope this project has ever measured on the configuration it actually
+ships**, on the pinned instrument, at the right design, at three seeds.

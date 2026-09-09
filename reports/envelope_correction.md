@@ -221,6 +221,16 @@ asks whether the room exceeds the noise a fitted method would carry. The referen
 zero (§4.2b, fixed layout), so the fitted arm's envelope is the right one — but the quantity is not
 a margin between arms and should not be read as one.
 
+⚠️ **BOTH FIXTURE CORRECTIONS BELOW INHERIT AN ORPHAN ARM (2026-09-09).**
+`scripts/t09_envelope.py` sets `w_autocorr = w_profile = w_distribution = **0.5**` for all nine of
+its fits, and 0.5 turns out to appear in **no artifact this project produced**
+(`reports/advisor_report.md` §6b). So the fixture envelope — pooled *and* per-metric — was measured
+on a configuration with **no other instance anywhere**: not `Config`, not any real-data fit, not the
+one persisted selection. Neither verdict below moves, and both need the arm named beside them:
+§2.4's tie-break is internally consistent (both arms share that `w = 0.5` base), so it stands as a
+statement **about that arm**; §2.3's margins come from the §8b-unrecoverable selection table, so
+which arm they were measured on is not established at all.
+
 ### 2.3 The metric-aware weights' selection margins. **Verdict holds; the safety factor shrinks.**
 
 `0.0052 / 0.0101 / 0.0018` against 0.0335 is a **fixture** margin against a **fixture** envelope, so
