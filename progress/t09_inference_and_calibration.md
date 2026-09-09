@@ -7997,3 +7997,51 @@ rule does not cover. Reported unreadable, with the raw −0.017 beside it.
 its own envelope, so "flips sign against its floor" overstates it: the point estimate crosses, the
 deficit is a **tie**. *"The one genuinely solved thing"* stays withdrawn — it is not established as
 solved — but it is **not established as worse** either, and the record should not say it is.
+
+### v20/v21 evidence audit, and the honesty question (2026-09-09)
+
+Full report: **`reports/v20_v21_evidence_audit.md`**. Direction taken is v20/v21 as the method, v25's
+field representation and negative result as the methodological contribution. The audit holds the
+v20/v21 numbers to `specs/10` §4.2a–j, §4.6 and §5 — the rules v25's own claims were withdrawn
+under.
+
+**The base is thinner than the spec makes it look.** The prior-campaign `per_section_metrics.csv`
+that §13.2–13.4 are derived from **has never been in this repository** — searched tree and
+`--all --reflog`. So the entire v20/v21 case is attested by the spec document alone (§8b, and
+§4.2a-iv's shape). The methods themselves are fine: v20 in `reference/`, v21 at the repo root, both
+with `METHODS` entries, **neither carrying a `wrapper_args` key** (verified — the phrase "No
+``wrapper_args``" appears only in the explanatory comment; my first check matched that comment and
+had to be redone against the actual key).
+
+**Survives**: the instrument (re-score closed it for tier-1), the runnable bare-invoked methods,
+§13.3's already-caught pooling caveat, and the direction of every signal.
+**Unestablished**: every margin (zero seed replication anywhere in the prior campaign; v20/v21's
+determinism never measured), every level (no floor, no ceiling in §13), every number (prose-only).
+**Three defects**: §13.2's "cell-count-weighted" header contradicts §13's median preamble — the
+numbers are medians (0.9704 is §4.6's median against its 0.8970 mean), so the label is wrong on the
+one metric §4.6 uses to show the estimators invert; §13's panel is 7 metrics, unnamed; and the
+numpy-fallback screening is a run-time log check `evaluate_all` cannot re-perform, so the re-score
+inherits it.
+**Not fixable by measurement**: fourteen registered versions, with bench3's own notes reading
+"benchmark-driven fixes" and "recalibrated on the real benchmark" — v20/v21 were selected on the
+protocol they would be reported on.
+
+**Cost**: four of six items are reading only. Two cost runs — 9 at tier-1 (three seeds of v20, v21,
+SpatialZ) and 9 at `wide_3_4_5`, the second discharging the version-selection exposure *and*
+answering C2, which has never been run. No comparator timing exists here; time one first.
+
+**Honesty (§7 of the report).** The framing is sound; it is not yet honestly evidenced. The correction
+that matters most is that the usual phrasing is slightly wrong: copying is near-optimal on
+`deep_starmap` (98 % of ceiling) and *not* on tier-1 (81 %, headroom 3.3x its own envelope). The
+sharper point is that **v20 is itself a structured copier** — R13 showed `cross-mix` under `resample`
+*is* a copy — so the honest claim is *"the winning design is a copier, on a task where copying
+reaches 81–98 % of what is achievable, and v25's negative explains why that is the winning design
+rather than an embarrassment."* Publishable and interesting; dishonest only if reported without the
+copy floor beside it, which the re-score now makes computable for the first time.
+
+Reviewer objections in order: single-seed headline in a paper about repeated-seed benchmarks (nine
+runs fix it); version selection on the reporting protocol (disclose, and report the wide regime that
+did not drive development); v25 characterised on ablation A3 rather than its shipped configuration
+(A9 already fixes this at zero cost, and the negative is *stronger* there); and asymmetric rigour,
+which generalises the first two. **The one thing that would make it dishonest is spending v25's audit
+as credibility while exempting v20/v21 from the audit** — §4.2j one level up, on the paper itself.
