@@ -421,44 +421,92 @@ quoting it without them is quoting a different number.**
 
 ---
 
-## 8. Step 0 and step 1 — what to run, and what must be added first
+## 8. Step 0 and step 1 — built, and the two commands to run
 
-🚨 **`scripts/t10_chain_diagnostic.py` cannot express step 0 as specified**, and issuing a command
-that silently runs the wrong arm would be §4.2j a third time. `main()` **hardcodes**
-`text_emb_mode="lookup"` and `expr_pca_dim=16` (lines 341–345) with no CLI override. Every chain
-artifact in `reports/` is therefore a `lookup` / `pca16` arm — the same ablation-A3 mislabelling
-found in the six-metric table, in a second instrument.
+**Status: built.** `scripts/t10_chain_diagnostic.py` carries the four flags and step 1's block.
+Nothing else from §10 is built; gates 1 and 2 come first and either can stop the work.
 
-### 8.1 The four flags step 0 needs (a half-day, and it is the whole of the build)
+The reason it needed building: `main()` **hardcoded** `text_emb_mode="lookup"` and
+`expr_pca_dim=16` with no CLI override, so every chain artifact in `reports/` is a `lookup` /
+`pca16` arm — the same ablation-A3 mislabelling found in the six-metric table, in a second
+instrument. Issuing a step-0 command against that script would have been §4.2j a third time.
 
-| flag | why | default to keep |
+### 8.1 What was built
+
+| flag | what it does | default |
 |---|---|---|
-| `--text-emb-mode {medcpt,lookup}` | the shipped arm is `medcpt`; the script cannot currently produce it | `lookup`, so existing artifacts reproduce |
-| `--expr-pca-dim N` | the clamp rule gives 28 on tier-1, 32 on `deep_starmap`; the script is pinned at the pilot's 16 | 16 |
-| `--match-density` | Moran's I on a kNN graph rises with density, and the artifacts emitted 11k / 48k / 268k cells against a ground truth of 4 187. Subsample to the GT count per section, one fixed seed | off |
-| `--top-k-by real` | **the decisive one.** Select the panel by the *real* section's Moran's I, identically on both datasets, and report the model and the real reference on that same selection | all channels |
+| `--text-emb-mode {medcpt,lookup}` | fits with a **live** text channel at that mode, through `build_entity_embeddings` and the panel's gene-metadata table. Raises if the table or the encoder is unreachable — no fall back to zeros | omitted = zero vectors, as before |
+| `--expr-pca-dim N` | overrides `Config.expr_pca_dim` | 16, the pilot's |
+| `--match-density` (`--density-seed`) | subsamples the generated cells to the real section's count **before** the neighbour query, the conditioning and the metric, so the kNN graph — the thing density changes — is equalised | off; seed = the run seed |
+| `--top-k-by {all,real,model}` (`--top-k`) | restricts the gene-space stages to the top-k genes by Moran's I on the **real** section, or on the model's own counts | `all` |
 
-The fourth is what makes tier-1 and `deep_starmap` comparable at all, and it is what §0a's error was
-made of. It must select on the **real** side, never the model's, or the panel is chosen by the answer.
+Five things came with them, none optional in hindsight:
 
-### 8.2 Step 0 — the commands, once those flags exist
+1. **The text channel has three states, not two.** The old default is *neither* A3 arm: A3's
+   `lookup` arm carries the MedCPT vectors and zeroes the *projection*, while this carries no
+   vectors at all — and `distillation_loss` reads `text_vecs` directly, so the two differ. The
+   docstring and the report now say "zero vectors (neither A3 arm)" rather than "the lookup arm".
+2. **`specs/10` §0's clamp is applied** (`clamp_config_to_input`), so `expr_pca_dim` is narrowed to
+   the panel width by the rule rather than by hand. A no-op at the default 16.
+3. **An unknown `--section` now raises before the fit**, listing the ids the file has. It used to
+   produce an all-False mask and a NaN reference — several hours downstream of the fit that paid
+   for it. `--section section_2` is tier-1's and does not transfer to `deep_starmap` unchecked.
+4. **The ground truth's gene order is checked against the training volume's.** Every stage indexes
+   `model.embeddings.gene` by column number, so a disagreement is a silently wrong gene.
+5. **`--target-z` is checked against the volume** — outside the z bbox (every GRF query clamped to
+   a face) or a boundary plane (R3's one-sided evidence) is flagged in the report, not left to a
+   `BBoxClampWarning` this script suppresses.
+
+The panel restricts **gene-space stages only** — decoded `mu`, sampled counts, their calibrated
+twins, `REF real counts`, and both variance decompositions. Stages 1 and 2 and `REF real latent h1`
+are `Config.latent_dim` channels that are not genes; the report says so where it reports them.
+
+`--top-k-by model` is the flattering selection and exists only to bound how far it flatters. It
+prints a 🚩 in its own report saying it is not a number to quote.
+
+### 8.2 The two commands
 
 ```bash
 # tier-1 STARmap, shipped arm, GT-matched density, top-32 by the real section's own I
 python scripts/t10_chain_diagnostic.py --steps 2400 \
     --dataset starmap_visual_cortex --decoder-mu-link exp --layout-sampler grid \
-    --text-emb-mode medcpt --expr-pca-dim 28 --match-density --top-k-by real --top-k 32 \
-    --out reports/chain_shipped_tier1.md
+    --text-emb-mode medcpt --expr-pca-dim 32 --match-density \
+    --top-k-by real --top-k 32 \
+    --out reports/chain_shipped_tier1.md --save-model runs/chain/shipped_tier1.pt \
+    --fit-checkpoint runs/chain/shipped_tier1.ckpt
 
 # deep_starmap, the same arm and the same panel rule
 python scripts/t10_chain_diagnostic.py --steps 2400 \
-    --dataset deep_starmap --decoder-mu-link exp --layout-sampler grid \
-    --text-emb-mode medcpt --expr-pca-dim 32 --match-density --top-k-by real --top-k 32 \
-    --out reports/chain_shipped_deep.md
+    --dataset deep_starmap --section <a held-out section id> --target-z <its z> \
+    --decoder-mu-link exp --layout-sampler grid \
+    --text-emb-mode medcpt --expr-pca-dim 32 --match-density \
+    --top-k-by real --top-k 32 \
+    --out reports/chain_shipped_deep.md --save-model runs/chain/shipped_deep.pt \
+    --fit-checkpoint runs/chain/shipped_deep.ckpt
 ```
 
-**Cost**: one fit per dataset if no checkpoint is reusable — **~1 h tier-1, ~3.5–4 h `deep_starmap`**.
-Pass `--fit-checkpoint` to resume, and `--save-model` so step 1 needs no refit.
+Run `python scripts/t10_chain_diagnostic.py --self-check` first: it asserts the panel and density
+logic on synthetic fields in seconds, with no fit and no data. Those two flags decide *what is
+compared* rather than what is measured, so a defect in either would move every number in the
+report without failing.
+
+Three notes on the commands:
+
+* **`--expr-pca-dim 32` on both, not 28 on tier-1.** The clamp narrows it to the panel width by
+  `specs/10` §0's rule and records the narrowing; writing 28 by hand is the hand-picked value that
+  rule exists to replace. It lands on the same number if tier-1's panel is 28 genes wide, and on
+  the right one if it is not.
+* **`deep_starmap` needs its own `--section` and `--target-z`.** The defaults are tier-1's
+  `section_2` at z = 30.0 µm. An unknown section id now raises before the fit and lists the
+  available ones, so the cheapest way to learn them is to run the command and read the error.
+* **`--fit-checkpoint` is safe on a first run** — it is written every
+  `Config.checkpoint_every_n_steps` and read only if it exists and matches this config, seed and
+  budget. On a 3.5–4 h fit it is the difference between an interruption costing minutes and
+  costing the run.
+
+**Cost**: one fit per dataset — **~1 h tier-1, ~3.5–4 h `deep_starmap`** — plus the live MedCPT
+encode on a cold text cache (seconds to a couple of minutes; `t09_select_starmap --preflight` warms
+it).
 
 **The number step 0 exists to produce** is not the model's retention. It is **`I(model counts)` and
 `I(real counts)` on the same top-32 panel, on both datasets** — because that pair, and only that
@@ -466,27 +514,42 @@ pair, decides §9.
 
 ### 8.3 Step 1 — `Var(mu)` against the real latent's, per gene
 
-The chain diagnostic already reports `Var(shape)`, `Var(log s)` and `sd(log mu)` for the generated
-cells (the "Candidate 2" block in `chain_2400_explink.md`). **What is missing is the matched
-real-tissue quantity** — `sd(log mu)` from the encoder's latent on the real section, per gene, same
-panel — which is where the unsourced "tissue's 1.213" ought to come from.
+Folded into the same run rather than given a `--load-model` reader, as decided: step 1 costs
+nothing beyond step 0.
 
-That is one additional block in the same script and the same run, so **step 1 costs nothing beyond
-step 0** if it is added before step 0 is launched. Do that rather than running twice.
+`real_section_reference` now returns `h1 = encoder(real counts)` alongside its two summary rows,
+and the same decoder, the same size head and the same panel are applied to it. The "Candidate 2"
+block gained a **real latent** column beside the generated one, so the two sides differ in the
+latent and in nothing else — that column is the matched tissue-side quantity the record has been
+quoting as *"tissue's 1.213"* without a source.
 
-```bash
-# reads step 0's saved model; no refit
-python scripts/t10_chain_diagnostic.py --steps 2400 --dataset starmap_visual_cortex \
-    --load-model runs/chain/shipped_tier1.pt --report-mu-variance \
-    --out reports/mu_variance_tier1.md
-```
+The block also reports `share_shape_bounded` — `Var(shape) / (Var(shape) + Var(log s))` — beside
+the unbounded share R12's 15.3 % / 61.4 % / 62.2 % are on. The unbounded one is **not bounded by
+1** (a negative covariance makes the total smaller than `Var(shape)`; `t09_structured_share.py`
+measured 1.21), and only the bounded one can carry a threshold.
 
-⚠️ `--load-model` does not exist either — the script has `--save-model` and no reader. Either add it,
-or fold step 1's block into step 0's run and accept that a re-measurement means a refit.
+**Pre-registered reading for step 1**, unchanged and now computed and printed by the script:
+`Var(log mu_generated) / Var(log mu_encoder_real)`, per gene, median over the top-32 panel.
+**≥ 0.8** means the structured component is intact and §2's binding constraint does not exist;
+**≤ 0.4** confirms it; between is uninformative and needs the three-seed version.
 
-**Pre-registered reading for step 1**: `Var(mu_generated) / Var(mu_encoder_real)`, per gene, median
-over the top-32 panel. **≥ 0.8** means the structured component is intact and §2's binding constraint
-does not exist; **≤ 0.4** confirms it; between is uninformative and needs the three-seed version.
+### 8.4 What could not be verified here
+
+This container has **no torch**, so the script could not be executed end to end. What was verified:
+
+* `ruff check` and `ruff format --check` clean;
+* the module imports and all three command lines parse (they stop at path resolution, since the
+  built datasets are not in this checkout);
+* `--self-check`'s **20 assertions pass** on the pure numpy/scipy logic — panel selection
+  (size, ordering, determinism, tie-breaking by column index, constant columns sorting last),
+  `rank_normalize` commuting with column selection (so the panel does not itself move a stage's
+  `I`), density subsampling (size, uniqueness, seed-determinism, no upsampling), and the variance
+  summary (medians over genes, the median ratio rather than the ratio of medians, the unbounded
+  share exceeding 1 under negative covariance while the bounded one does not).
+
+Not verified: anything touching torch — the live MedCPT channel, the clamp against a real header,
+the encoder path, and the decoder decompositions. Run `--self-check` on the campaign machine before
+the fits; it will also exercise the import of the torch-dependent module.
 
 ---
 

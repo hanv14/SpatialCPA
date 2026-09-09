@@ -8160,3 +8160,76 @@ hour, and the most informative hour in the plan; (2) step 1's `Var(mu)` ratio mu
 term is manufacturing unconditioned variance — A9's failure in a new place. **Stop rule: if gate 1
 or gate 2 fails, half 2 is not built.** Beyond the fits, adoption re-opens every absolute number,
 re-derives T06's acceptance criteria, and needs a calibration branch (`calibrate.py` is ZINB-only).
+
+---
+
+## 2026-09-09 — step 0 / step 1 instrumentation: four flags on the chain diagnostic
+
+Built, on instruction, and **only** this: the four flags step 0 needs plus step 1's block in the
+same run. The 2×2 and both halves of §10's redesign are **not** built — gates 1 and 2 come first
+and either can stop the work.
+
+**Why it was needed.** `scripts/t10_chain_diagnostic.py::main` hardcoded `text_emb_mode="lookup"`
+and `expr_pca_dim=16`, so every artifact under `reports/chain_*` is an ablation-A3 `lookup` arm at
+the pilot's PCA dim whatever it is labelled — the six-metric table's mislabelling, in a second
+instrument. It could not express the shipped configuration at all.
+
+**What went in** (`scripts/t10_chain_diagnostic.py`, +713 / −72):
+
+| flag | default | note |
+|---|---|---|
+| `--text-emb-mode {medcpt,lookup}` | omitted | fits with a **live** channel through `build_entity_embeddings`; raises rather than falling back to zeros |
+| `--expr-pca-dim N` | 16 | plus `specs/10` §0's `clamp_config_to_input`, so the width is the rule's, not a hand-picked value |
+| `--match-density` / `--density-seed` | off / run seed | thins **before** the neighbour query, conditioning and metric |
+| `--top-k-by {all,real,model}` / `--top-k` | `all` / 32 | `real` is the one to quote; `model` prints its own 🚩 |
+| `--self-check` | — | 20 assertions on the panel and density logic, seconds, no fit, no data |
+
+**The text channel has three states, not two**, and this is the correction that matters most for
+the record. The old default supplies **zero vectors**; A3's `lookup` arm supplies the MedCPT
+vectors and zeroes the *projection* inside `TextGroundedEmbedding._text_channel`. They are not the
+same run — `distillation_loss` reads `text_vecs` directly and sees something in one and nothing in
+the other. Calling the old default "the lookup arm", as this script's docstring did, was a fourth
+instance of a run being filed by what it was assumed to be. The docstring, the console line and the
+report now all say "zero vectors (neither A3 arm)".
+
+**Four defects fixed while in there**, each of which could have produced a wrong number silently:
+
+1. An unknown `--section` produced an all-False mask and a NaN reference **after** the fit. It now
+   raises before the fit and lists the ids the file carries. `--section section_2` is tier-1's
+   default and would not have transferred to `deep_starmap`.
+2. The ground truth's gene order was assumed equal to the training volume's — every stage indexes
+   `model.embeddings.gene` by column number. It is now checked, and names the first difference.
+3. `--target-z` was unchecked against the volume. Outside the z bbox every GRF query is clamped to
+   a bounding-box face under a `BBoxClampWarning` this script suppresses; a boundary plane carries
+   R3's one-sided-evidence deficit. Both are now flagged in the report.
+4. The ground truth was read three times (reference, verdict, and once per caller). It is read once,
+   before the fit.
+
+**Step 1** is folded into the same run rather than given a `--load-model` reader, as decided:
+`real_section_reference` now returns `h1 = encoder(real counts)` beside its rows, and the same
+decoder, size head and panel are applied to it. The "Candidate 2" block gained a **real latent**
+column, which is the matched tissue-side `sd(log mu)` the record has been quoting as *"tissue's
+1.213"* with no source. It also reports `share_shape_bounded` beside the unbounded share, since the
+unbounded one exceeds 1 under a negative covariance (`t09_structured_share.py` measured 1.21) and
+only the bounded one can carry a threshold. The pre-registered ratio
+`Var(log mu_gen) / Var(log mu_real)` is computed per gene and printed: ≥ 0.8 means §2's binding
+constraint does not exist, ≤ 0.4 confirms it, between is uninformative.
+
+**Scope honesty.** The JSON sidecar changed shape — an object carrying the arm, the density, the
+panel and its gene names, with the stage list under `stages`, rather than a bare list of stages.
+Nothing reads it programmatically (checked). A stage table that does not say what it measured is
+what §4.2a-iii is about. The `.md` gained a "What this run is" block for the same reason, so a
+default-flag run reproduces the same **numbers** but not a byte-identical file.
+
+**Verification, and its limit.** This container has no torch. `ruff check` and `ruff format` are
+clean; the module imports and all three command lines parse; `--self-check`'s **20/20** assertions
+pass on the numpy/scipy logic — panel size, ordering, determinism, tie-breaking by column index,
+constant columns sorting last, `rank_normalize` commuting with column selection (so the panel does
+not itself move a stage's `I`), density subsampling's size/uniqueness/seed-determinism/no-upsampling,
+and the variance summary's median-of-ratios and bounded share. It also confirms the mechanism the
+density flag exists for: the same field measured at 4 000 and at 400 cells gives `I` 0.1037 vs
+0.0739. **Not verified: anything touching torch** — the live MedCPT channel, the clamp against a
+real header, the encoder path, both decompositions. `--self-check` should be run on the campaign
+machine before the fits; it exercises the import as well.
+
+The two commands are in `reports/emission_repair_options.md` §8.2.
