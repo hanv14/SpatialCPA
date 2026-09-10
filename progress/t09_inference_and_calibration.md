@@ -8782,3 +8782,69 @@ Q1.5 exists to expose), that NaN genes drop pairwise as the evaluator does, and 
 refuses an unknown `primary`. The agreement numbers themselves are unrun here.
 
 **Q2 and Q3 do not start until Q1.5 is read.**
+
+---
+
+## 2026-09-10 (b) — Q1.5: the reconstruction tracks the score, and the emission programme is aimed the wrong way
+
+**First, the reconstruction is validated.** Tier-1's `r(stage 4)` is **+0.5076** against the published
+`paper_morans_pearson` of **0.5574** — **0.0498** apart, on the *same* gene set (tier-1's panel is all
+28 genes, which is bench3's), leaving one section against the median over 2/4/6 as the only real
+difference. `q15_preregistration.md` §2 warned this might not be measuring what the benchmark
+measures, and §6 outcome 2 named that as the failure that would waste the exercise. It does measure
+it.
+
+**Q1's transform fix worked and the anomaly was exactly its diagnosis.** On one transform 4p ≤ 3 on
+both datasets and both columns — tier-1 rank +0.8358 ≤ +0.8365, raw +0.7911 ≤ +0.7920. No banner
+fired. The impossible +0.8358 > +0.7920 of last round was a raw denominator under a ranked numerator
+and nothing else.
+
+**The pre-registered verdicts.**
+
+| | `r(3)` | `r(4)` | `r(4p)` | (a) `d r` | (b) `r(4p)` |
+|---|---|---|---|---|---|
+| **tier-1** (28 genes) | +0.3847 | **+0.5076** | +0.3878 | **−0.1198 DOES NOT** | **0.3878 CEILING LOW** |
+| deep panel (32) | +0.1254 | +0.4055 | +0.6130 | +0.2075 MOVES IT | 0.6130 CEILING LOW |
+| **deep all 1017** *(governs)* | +0.4332 | **+0.7306** | +0.8400 | **+0.1094 PARTIAL** | **0.8400 PARTIAL** |
+
+**No dataset returns MOVES IT + CEILING HIGH.** On tier-1 `d r` is **negative**: removing the emission
+does not merely fail to help, it hurts — and `mae` goes **0.1018 → 0.3529**, tripling the per-gene
+level error. That is the statistic the evaluator documents as catching over-smoothing, detecting
+exactly the failure an emission repair would introduce, at 3.5x where the scored `pearson` moves
+0.12. **The case for scoring `paper_morans_mae` is now a measurement rather than a docstring
+quotation.** The deep panel row is attenuated as §5 predicted (compressed range on the top 3.1 %) and
+the all-genes row governs, as fixed in advance.
+
+🚨 **The gap is 0.426 against a model-free copy, not 0.375 against SpatialZ.**
+`advisor_report.md` §5.1: `flanking_copy` scores **0.9836**, `oracle` 1.0000, SpatialZ 0.932, v25
+**0.5574**. A **complete** emission repair on tier-1 lands at **0.3878** — it **widens** the gap to
+the floor by **0.17**. My pre-registration scaled its bands to 0.375; that made them more lenient
+than they should have been, so no verdict changes. Corrected in place there.
+
+**What actually carries the scored correlation, and it is not the latent.** The mean field alone
+scores **worst** on both datasets (`r(3)` +0.3847 and +0.4332) and the **draw** raises it: on tier-1 a
+Poisson draw adds +0.0031 and `theta`/`pi` add **+0.1229**; on deep the Poisson draw alone adds
+**+0.4068**. So the genes `mu` makes spatially structured are largely **not** the genes the tissue
+makes spatially structured, and most of v25's 0.5574 is earned by the count-generating process
+reproducing a per-gene ordering the latent does not. **Every chain measurement so far has been about
+how much structure survives; this one is about which genes have it, and the model's mean field gets
+the *which* substantially wrong.** The obvious mechanism — the tissue's `I` ordering being largely a
+sparsity ordering — is a hypothesis and sits awkwardly with v25 scoring 0.9721 on
+`paper_gene_mean_spearman`, so it is not asserted.
+
+**Q2 and Q3 do not run.** Q2 is answered before it runs: M3's **HARMED** outcome is predicted to fire
+on tier-1, and its mechanism question is worth much less now that the quantity it would improve is
+not the one being scored. Q3's justification is weakened but not void — B1 is still pointed at the
+latent, where §4 says the gene-wise failure lives, but smoothness is a *level* property and `r(3)` is
+a *which-genes* property, and nothing shows `ell` moves the second.
+
+**Proposed next, free, one `--load-model` read per dataset**: R1 `corr(I_real, detection_real)`;
+R2 the same for the model's counts; **R3 the partial correlation `corr(I_4, I_real | detection_real)`**
+— the decisive one, separating *"the model structures the right genes"* from *"the model makes the
+right genes sparse"*. R3's bands to be pre-registered before computing, as Q1.5's were. Full reasoning
+in `reports/q15_review.md`.
+
+**Where I was wrong.** The bands were scaled to the wrong gap, with the right number sitting in the
+advisor report the whole time. And I over-stated §2's caveat — I wrote the reconstruction "is not
+comparable to 0.557 as a number", and on tier-1 it lands within 0.05 of it on the same gene set. The
+caveat was right to state and wrong to lean on.

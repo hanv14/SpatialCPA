@@ -111,6 +111,13 @@ values on both sides, which Q1's transform fix makes uniform.
 `0.15` is roughly 40 % of the v25→SpatialZ gap (0.932 − 0.557 = 0.375). That scaling is **rough** —
 §2 says this run's `r` is not the score — and the bands are on `d r` itself, not on a fraction.
 
+> ⚠️ **CORRECTED after the run, and it does not change a verdict.** The gap that matters is against
+> the **model-free copy floor**, `flanking_copy` = **0.9836** (`advisor_report.md` §5.1, tier-1,
+> three seeds), not SpatialZ's 0.932. v25 is **−0.4262** below a baseline that copies a neighbouring
+> real section. Scaling the bands to 0.375 made them **more lenient** than they should have been, so
+> every verdict in `reports/q15_review.md` §2 stands and would only be firmer. The number was in the
+> advisor report the whole time and I did not look it up.
+
 **(b) Where does a perfect emission repair land?** `r(4p)` in absolute terms. This is the ceiling
 argument applied to the scored statistic, and it is the more decisive of the two.
 
