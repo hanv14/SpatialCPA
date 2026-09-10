@@ -1260,6 +1260,14 @@ def abundance_floor(
         key: [w["median_r"] for w in rows if not w.get("refused") and np.isfinite(w["median_r"])]
         for key, rows in per.items()
     }
+    # The floor's own 2.5th percentiles, which §4(4) used to ignore (`specs/10` §4.2o). The
+    # criterion was on the point estimate, and tier-1 section_2 passed it at +0.1231 with an
+    # interval of -0.1414 .. +0.2976 printed two blocks above the decision.
+    floor_lo = [
+        w["p2.5"]
+        for w in per[copy_key]
+        if not w.get("refused") and np.isfinite(w.get("p2.5", float("nan")))
+    ]
     out: dict = {
         "copy_key": copy_key,
         "widths": [int(w) for w in widths],
@@ -1285,7 +1293,13 @@ def abundance_floor(
     floor = float(np.median(floor_vals))
     span = float(max(floor_vals) - min(floor_vals)) if len(floor_vals) > 1 else 0.0
     r_copy = out["raw"].get(copy_key, float("nan"))
-    out.update(floor=floor, floor_span=span, r_copy=r_copy, denominator=r_copy - floor)
+    out.update(
+        floor=floor,
+        floor_span=span,
+        floor_p2_5=float(min(floor_lo)) if floor_lo else float("nan"),
+        r_copy=r_copy,
+        denominator=r_copy - floor,
+    )
     if span > 0.10:
         out["refused"] = f"the copy's F3 spans {span:.3f} across widths, above the 0.10 tolerance"
     elif not np.isfinite(r_copy) or (r_copy - floor) < 0.20:
@@ -1293,10 +1307,13 @@ def abundance_floor(
             f"the denominator r_copy - F3_copy = {r_copy - floor:+.3f} is below 0.20, so every "
             "rescaled figure is unstable"
         )
-    elif floor < 0.10:
+    elif not floor_lo or min(floor_lo) <= 0.0:
+        # On its INTERVAL, not its point estimate (§4(4) as amended, `specs/10` §4.2o).
+        lo = min(floor_lo) if floor_lo else float("nan")
         out["refused"] = (
-            f"the abundance floor is {floor:+.3f}, indistinguishable from the permutation null: "
-            "there is nothing to rescale by and the raw comparison already is the answer"
+            f"the abundance floor is {floor:+.3f} but its 2.5th percentile reaches {lo:+.3f}, so "
+            "it is not distinguishable from the permutation null: there is nothing to rescale by "
+            "and the raw comparison already is the answer"
         )
     else:
         out["rescaled"] = {
@@ -1331,8 +1348,8 @@ def abundance_floor_block(a: dict, scope: str) -> list[str]:
     out += [
         "",
         f"`F3_copy` = **{a['floor']:+.4f}** (median over widths {a['widths_usable']}, span "
-        f"{a['floor_span']:.3f}); `r_copy` = **{a['r_copy']:+.4f}**; denominator "
-        f"**{a['denominator']:+.4f}**.",
+        f"{a['floor_span']:.3f}, lowest 2.5th percentile {a.get('floor_p2_5', float('nan')):+.4f});"
+        f" `r_copy` = **{a['r_copy']:+.4f}**; denominator **{a['denominator']:+.4f}**.",
         "",
         "| rung | raw `r` | its own F3 (abundance alone) | **rescaled** |",
         "|---|---|---|---|",
@@ -1349,8 +1366,27 @@ def abundance_floor_block(a: dict, scope: str) -> list[str]:
         "The `own F3` column is **not** a denominator (§3). It is reported because it answers a",
         "different question — how much of that rung's score is abundance — and because leaving it",
         "out would print only the flattering statistic.",
+        "",
+        "`A1n` is **not** a row here. The null is a distribution over permutations; one draw of it",
+        "is not the construction, and averaging the per-gene vectors converges to a constant whose",
+        "correlation is undefined. It is reported at 20 seeds in the null block above, and there",
+        "only (`specs/10` §4.2o).",
     ]
     return out
+
+
+def recovery_is_readable(deficit: float, arm_spread: float) -> bool:
+    """May ``R = (I_arm - I_model) / deficit`` be read at all? ``specs/10`` §4.2o.
+
+    ``R`` divides by the deficit, so a deficit smaller than the draw-to-draw spread of the arms it
+    scales gives a ratio made of denominator noise. Tier-1 ``section_6`` printed **-54.10**,
+    **+148.07** and **-138.76**, with bands beside them, on a deficit of **+0.0029** against arm
+    spreads of ~0.009 — while the guard, which tested only the deficit's *sign*, stayed silent.
+
+    No fixed threshold: the scale is the run's own measured spread, so the criterion tightens on a
+    noisy run and loosens on a clean one without a constant to justify.
+    """
+    return bool(np.isfinite(deficit) and np.isfinite(arm_spread) and deficit > arm_spread)
 
 
 def _control_table(d: dict, pred_label: str) -> list[str]:
@@ -3115,6 +3151,55 @@ def _self_check() -> int:
         ),
     ]
 
+    # --- §4.2o: three criteria that used to ignore a spread the report already computed --------
+    # Tier-1 section_2's shape: a floor whose POINT estimate clears 0.10 and whose interval
+    # straddles zero, printed two blocks above the decision that ignored it.
+    # tier-1 section_2 exactly: 30 genes, a WEAK abundance coupling, so the floor's median clears
+    # 0.10 while its interval crosses zero. A fixture whose floor is near zero would be refused by
+    # the old point-estimate criterion too and would prove nothing.
+    n_t = 30
+    ctrl_t = rng_c.normal(size=n_t)
+    ctrl_t = (ctrl_t - ctrl_t.mean()) / ctrl_t.std()
+    truth_t = 0.33 * ctrl_t + 0.944 * rng_c.normal(size=n_t)
+    wide = abundance_floor(
+        {"flanking_copy": truth_t, "4": truth_t + rng_c.normal(0, 0.9, size=n_t)},
+        truth_t,
+        ctrl_t,
+        copy_key="flanking_copy",
+        seeds=range(101, 121),
+        widths=(10,),
+    )
+    checks += [
+        (
+            f"the abundance floor refuses on its INTERVAL, not its point estimate "
+            f"(floor {wide.get('floor', float('nan')):+.3f}, 2.5th pct "
+            f"{wide.get('floor_p2_5', float('nan')):+.3f})",
+            wide.get("refused") is not None and "2.5th percentile" in wide["refused"],
+        ),
+        (
+            f"and the point estimate alone would NOT have refused it "
+            f"({wide.get('floor', float('nan')):+.3f} clears the old 0.10 criterion) — so the "
+            "check is not vacuous",
+            np.isfinite(wide.get("floor", float("nan"))) and wide["floor"] > 0.10,
+        ),
+        (
+            "a floor whose whole interval clears zero is still rescaled",
+            "rescaled" in floor_s and floor_s["floor_p2_5"] > 0.0,
+        ),
+        (
+            "R is unreadable when the deficit is smaller than the arms' own spread — tier-1 "
+            "section_6 printed +148.07 on a deficit of +0.0029 against spreads of ~0.009",
+            not recovery_is_readable(0.0029, 0.0092),
+        ),
+        ("and readable when the deficit clears it", recovery_is_readable(0.1969, 0.0060)),
+        ("a negative deficit is still unreadable", not recovery_is_readable(-0.05, 0.001)),
+        (
+            "the null is absent from the abundance floor — one draw of it is not the "
+            "construction, and the mean of its VECTORS is a constant with no correlation",
+            "A1n" not in floor_s["raw"],
+        ),
+    ]
+
     def _build() -> dict:
         return build_sidecar(
             run={"dataset": "d", "seed": 1},
@@ -3965,8 +4050,13 @@ def main(argv: list[str] | None = None) -> int:
         ("A1c", "A1b-p"),  # pi alone
         ("A1b", "A1a"),
         ("4", "A1a"),  # the one the verdict leans on
-        ("A1a", "A1n"),
     ]
+    # `A1n` is deliberately absent. The null is a DISTRIBUTION over permutations, and any single
+    # realisation of it is not the construction: tier-1's abundance-floor table read the null at
+    # -0.3928 where the ladder and the null block, at 20 seeds, both read -0.0080. Averaging the
+    # per-gene VECTORS does not fix it either -- E[I] under permutation is -1/(n-1) for every gene,
+    # so the mean vector converges to a constant and its correlation is undefined. The null belongs
+    # to `null_centre_test`, which averages the CORRELATIONS, and only there.
     for _scope, _vkey, _rkey, _s4 in (
         ("panel", "vecs_panel", "ref_panel", "panel::4. sampled counts"),
         ("all genes", "vecs_all", "ref_all", "all genes::4. sampled counts"),
@@ -4049,6 +4139,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if _v4 is not None:
             _vecs["4"] = _v4
+        _vecs.pop("A1n", None)  # see the note on the bootstrap pairs above
         _vecs["flanking_copy"] = flanking["i_flank"]
         if _ref is not None:
             floor = abundance_floor(
@@ -4141,7 +4232,21 @@ def main(argv: list[str] | None = None) -> int:
             f"| {'arm':<{width_a}} | median I | across seeds | ch | level | R | band |",
             f"|{'-' * (width_a + 2)}|---|---|---|---|---|---|",
         ]
-        readable = bool(np.isfinite(deficit) and deficit > 0)
+        # `R` divides by the deficit, so a deficit smaller than the arms' own draw-to-draw spread
+        # produces a ratio made of denominator noise: tier-1 section_6 printed R = -54.10, +148.07
+        # and -138.76 on a deficit of +0.0029 against arm spreads of ~0.009, with BANDS beside them.
+        # The guard tested the deficit's SIGN; what matters is its size against the noise the
+        # report has already measured (`specs/10` §4.2o). No fixed threshold: the scale is the
+        # arms' own spread.
+        arm_spread = max(
+            (
+                float(r["max_I"] - r["min_I"])
+                for r in ablation_rows
+                if np.isfinite(r.get("max_I", float("nan")))
+            ),
+            default=0.0,
+        )
+        readable = recovery_is_readable(deficit, arm_spread)
 
         def band(recovery: float) -> str:
             if not np.isfinite(recovery):
@@ -4291,11 +4396,19 @@ def main(argv: list[str] | None = None) -> int:
                 'lower bound below the decoder\'s figure is "untested still", never '
                 '"refuted"** — only the upper bound can refute.',
             ]
-        if not (np.isfinite(deficit) and deficit > 0):
+        if not readable:
+            why = (
+                "`I(model counts)` is at or above `I(real counts)` on this dataset, so there is "
+                "no deficit to recover"
+                if not (np.isfinite(deficit) and deficit > 0)
+                else (
+                    f"the deficit is **{deficit:+.4f}**, smaller than the arms' own draw-to-draw "
+                    f"spread of **{arm_spread:.4f}**, so every `R` would be denominator noise"
+                )
+            )
             lines += [
                 "",
-                "🚩 `I(model counts)` is at or above `I(real counts)` on this dataset, so there is",
-                "no deficit to recover and **`R` is undefined**. This run is the",
+                f"🚩 {why} and **`R` is undefined**. This run is the",
                 "pre-registration's",
                 "**instrument control**: every drawn arm must reach 0.6x `I(real counts)` = "
                 f"**{0.6 * i_real:+.4f}**, or the ablation is measuring something other than what",

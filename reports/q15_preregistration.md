@@ -1,3 +1,10 @@
+> ⚠️ **§2's caveat is RETIRED for `starmap_visual_cortex`** (2026-09-10). The chain reproduces
+> bench3's published tier-1 `paper_morans_pearson` — `flanking_copy` at **0.9836** against a
+> published 0.9836 (exact), v25 at **0.5600** against a published 0.5574 — as the median over
+> sections 2/4/6, which is bench3's own construction and, on tier-1's 28 genes, the same gene set.
+> Tier-1 numbers in this campaign ARE comparable to a published `paper_*` figure.
+> `deep_starmap` is **not** anchored and §2 stands there. See `reports/scale_anchoring.md`.
+
 # Q1.5 — does the emission programme move the metric the paper is scored on?
 
 **Written before the statistic is computed.** The definition below was read out of the pinned

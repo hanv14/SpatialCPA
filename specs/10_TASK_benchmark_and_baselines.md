@@ -696,6 +696,37 @@ they are the same expression — or the refutation is of something else. A stati
 its definition**, and a name shared with the implementation that happens to be nearest to hand is
 the likeliest way to get this wrong.
 
+### 4.2o A criterion that ignores a spread the report has already computed
+
+**Three instances, one run, one shape.** In each, the number the decision needed was printed on the
+same page as the decision, and the decision did not look at it.
+
+**A point estimate where an interval was in hand.** The abundance floor is refused when it is
+"not clearly above the permutation null", and the test was `F3_copy < 0.10`. Tier-1 `section_2`
+passed at **+0.1231** — and `stratified_relabel_r` had already computed and printed that floor's
+interval as **−0.1414 .. +0.2976**, two blocks above. A whole rescaled table was published on a
+denominator that is noise, while the other two tier-1 sections refused.
+
+**A sign where a magnitude was in hand.** `R = (I_arm − I_model) / deficit` was guarded by
+`deficit > 0`. Tier-1 `section_6`'s deficit is **+0.0029**, and the arms' own across-seed spreads,
+printed in the adjacent column, are ~**0.009**. `R` came out as **−54.10**, **+148.07**,
+**−138.76**, each with a band, and two arms read UNRESOLVED on per-seed values that are pure
+denominator noise.
+
+**A single draw where a distribution was in hand.** The `A1n` rung is a *distribution* over
+permutations. The 20-seed fix of §4.2n was applied in the renderer, so every other consumer kept
+the seed-1 vector: tier-1's abundance-floor table read the null at **−0.3928** where the ladder and
+the null block, on the same page, both read **−0.0080**.
+
+**The rule.** *A criterion must consume the spread its own report computes.* Where an interval
+exists, decide on the interval; where a ratio has a denominator, compare the denominator to the
+noise the run has measured rather than to zero; where a quantity is a distribution, no single
+realisation of it may stand in for it — and averaging is not automatically the fix (the mean of the
+null's per-gene vectors converges to a constant whose correlation is undefined; the null lives
+where the *correlations* are averaged). Prefer a threshold expressed in the run's own measured
+spread over a constant: it tightens on a noisy run and loosens on a clean one, and needs no
+justification for its value.
+
 ### 4.2n A statistic whose seed count, column count or estimator is inherited rather than chosen
 
 **Three instances, one run, one shape.** Each is a parameter of a statistic that was set by
@@ -891,6 +922,7 @@ was written:
 | **whether the statistic is the claim's own quantity** | 4.2l | R12's *"9-19 % of the emitted count variance survives as between-cell structure"* was reported refuted at 97.4 % using a statistic that decomposes `Var(log mu)` into latent and size-factor parts and never touches the sampling noise. In R12's own terms the model reads **10.4 %** against the tissue's **>= 42.5 %** — inside R12's range. The refutation is withdrawn; the two quantities share a name because one script implements the other one |
 | **whether the rendered table is square** | 4.2m | `A1a. counts ~ emission(mu \| h1)` carries a markdown delimiter in its label. Unescaped, every cell after it on that row rendered one column to the left, under the wrong heading, in both A1 reports for four rounds. Correctly computed, wrongly displayed — which re-deriving the number cannot catch |
 | **whether the statistic chose its own parameters** | 4.2n | One permutation construction reported as −0.2472 / −0.0080 / +0.2634 because three blocks inherited three seed counts; a 2-column table quoting a 3-control span; an F3 that left 1/width of the genes on themselves and inflated the abundance floor to +0.141 where it must be zero. A seed count, a column list, a stratum width and a permutation scheme are part of the measurement |
+| **whether the criterion consumed its own spread** | 4.2o | A floor refused on `< 0.10` while its printed interval read −0.1414 .. +0.2976; an `R` guarded on the deficit's sign printing ±148 on a deficit of 0.0029 against arm spreads of 0.009; a distribution represented by one draw, −0.3928 against the same page's −0.0080. In each the number the decision needed was already on the page |
 | **whether the run's own alarm reached the run's own report** | 4.2f-i | the `deep_starmap` chain run's spatial-collapse alarm fired at **122 checked steps, 79 of them inversions, and was still firing at the last step (2399, −0.0129)** against a healthy floor of +0.5467 — into stderr, while the report that run wrote carries a provenance block, a stage table and a verdict and says nothing about it. Its `+0.0729` entered a review as a result before the log was opened |
 | **whether the report describes work that was done** | 4.2k | one report said *"top 28 by Moran's I on the real side"* for a selection that kept all 28 genes of a 28-gene panel, and *"matched to the real section: 4073 -> 4073 kept"* for a density match that subsampled nothing — while the other dataset in the same comparison got a genuine top-3.1 % selection, described in the same words |
 | **whether the artifact says which arm it is** | 4.2a-ii | the committed, bitwise-reproducible files behind the six-metric table record no `config_hash`, no `text_emb_mode` and no metric-aware weights, so a correctly measured envelope cannot be matched to them — six clearance figures are flagged rather than numbered for this reason alone |

@@ -9039,3 +9039,81 @@ Two properties found while building it, both recorded before the statistic was c
   a fixture). §3's choice stands; the sentence the paper may write is narrowed instead.
 
 `--self-check` **140/140**; `tests/test_config.py` 7/7.
+
+---
+
+## Round 15 — the record is corrected and anchored; measuring stops
+
+**§5d is met: `1. FLOOR IS GENUINE` on 6/6 sections, both datasets.** The copy retains 95.1–100.8 %
+under all three controls; every null is centred at 20 seeds; `spatial_scramble` is at the null
+everywhere.
+
+### The anchoring — what this campaign had lacked throughout
+
+The chain reproduces bench3's **published** tier-1 `paper_morans_pearson`, as the median over
+sections 2/4/6 that bench3 itself forms:
+
+| | s2 | s4 | s6 | median | published |
+|---|---|---|---|---|---|
+| `flanking_copy` | 0.9517 | 0.9913 | 0.9836 | **0.9836** | **0.9836** |
+| v25 | 0.5076 | 0.5600 | 0.5826 | **0.5600** | **0.5574** |
+
+The copy's exact match is the *expected* result for a deterministic probe and is therefore the
+strongest available check that `morans_agreement` is `evaluate_paper.py::_agreement`. **`q15_
+preregistration.md` §2's caveat is retired for tier-1** — the ladder and the ceiling are now in the
+units the paper reports. Deep is **not** anchored and the caveat stands there
+(`reports/scale_anchoring.md`).
+
+### The reversal — the third general claim written from one dataset
+
+*"A better latent is worth nothing"* holds on deep and is **false on tier-1**: `4 − A1a` =
+−0.1851 / −0.2055 / −0.1017, resolved 3/3, worth **~0.14 in published units**. §2a's permissiveness
+escape was available and is **declined**, because these runs bound the advantage it rests on —
+`flanking_copy` scores 0.95–0.99 from an entirely different section's cells, so the wrong cell set
+costs 0.02–0.05 and cannot explain 0.10–0.21. Mechanism: `A1a`'s median `I` is 0.041 on deep against
+a tissue at 0.30, and 0.32 on tier-1 against 0.42 — deep's decoder destroys the latent either way,
+so the claim was about deep's decoder. Closeability unchanged and checked, not assumed:
+tier-1's `A1b` = 0.8369 against 0.9836. `reports/latent_claim_reversal.md`.
+
+### The ceiling, now where a reader meets it
+
+`architecture_ceiling.md` §0 leads with the published-scale table and the **tier-1 thirds**: latent
+**0.139**, mean field **0.138**, irreducible **0.147**. And with the fact that the two datasets put
+the irreducible remainder in *different places* — on deep `A1c` ≈ copy and the emission costs 0.146;
+on tier-1 `A1c` ≈ `A1b` and both sit 0.14 below the copy, so removing the emission gains nothing and
+the remainder is the mean field's smoothing and the draw itself.
+
+### §4.2o — one failure mode, three instances
+
+A criterion that ignores a spread the report has already computed:
+
+- the abundance floor refused on `F3_copy < 0.10` while its own interval (−0.1414 .. +0.2976) was
+  printed two blocks above — tier-1 s2 published a whole rescaled table on a noise denominator;
+- `R` was guarded on the deficit's **sign**, so tier-1 s6 printed −54.10 / +148.07 / −138.76 with
+  bands, on a deficit of +0.0029 against arm spreads of ~0.009;
+- the 20-seed null fix of §4.2n was applied in the **renderer**, so every other consumer kept the
+  seed-1 vector: −0.3928 against the same page's −0.0080.
+
+All four fixes land, with the threshold expressed in the run's **own measured spread** rather than a
+constant. Note on the third: averaging the null's per-gene *vectors* is not the fix — `E[I]` under
+permutation is `−1/(n−1)` for every gene, so the mean vector is constant and its correlation
+undefined. The null lives where the *correlations* are averaged, and is removed from the bootstrap
+and the abundance floor entirely.
+
+### Also recorded
+
+- **`reports/panel_regime.md`** — `F3_copy` is ~0.50 on deep and ~0 on tier-1 (corroborated by `R1`
+  = 0.68 vs 0.27). About half of deep's metric is per-gene abundance and almost none of tier-1's is:
+  **the two datasets' scores are not the same quantity and may not be pooled.**
+- **`reports/own_f3_preregistration.md`** — the ratio that says v25's score is ~90 % abundance-
+  reproducible against a copy's ~50 %. Pre-registered with **T1**, a matched-`r` control that
+  withdraws the statistic if the ratio turns out to be a headroom artefact, as a *precondition*.
+  Deep-only by §5.
+- The π/θ reversal now holds **6/6**: on tier-1 θ moves the median by **0.44** and the scored
+  statistic by nothing (`A1c − A1b-t` contains zero on all three sections).
+
+`--self-check` **147/147**, both new criteria verified non-vacuous against reverted copies;
+`tests/test_config.py` 7/7.
+
+**Measuring stops here.** Nothing meets `diagnostic_programme_closed.md` §3, checked twice, and the
+answer has not moved in three rounds. What remains is the paper.
