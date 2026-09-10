@@ -94,7 +94,31 @@ SpatialZ **0.932**, v25 shipped **0.5574**.
 | panel | 4.  counts ~ emission(mu \| model latent)   [where we are] | **+0.5076** | — | +0.5435 | 0.1018 | 28 |
 | panel | A1n. permutation null (real counts shuffled) | **-0.2472** | -0.3928 .. -0.1294 (3) | -0.3361 | 0.4723 | 28 |
 
-🚨 **NULL RUNG IS NOT NULL** — the permutation arm correlates at -0.2472. `ladder_preregistration.md` §5(1): the construction is wrong and **nothing on this ladder may be read.**
+### Is the null null? — per scope, on the null's CENTRE
+
+The permutation arm shares one shuffle across every gene, so a single draw has a wide
+spread and says nothing about the centre. A sound construction has `mean_r` at zero; the
+spread is a resolution limit and lives in the bootstrap below, not here
+(`null_band_preregistration.md` §2a). Fires on `|mean_r| > 2 * sd_r / sqrt(seeds)`.
+
+| scope | seeds | mean r | sd | 2 x se | 2.5% .. 97.5% | verdict |
+|---|---|---|---|---|---|---|
+| panel | 20 | -0.0080 | 0.2970 | 0.1328 | -0.5866 .. +0.4307 | centred |
+
+### Which rung differences are real? — paired gene bootstrap
+
+2000 replicates resampling **genes**, the same index applied to every rung so the
+difference is paired. This carries the across-gene sampling error only; draw-to-draw
+error is the `across seeds` column above and the two are never combined (§2b).
+
+| scope | difference | point | 95% interval | genes | |
+|---|---|---|---|---|---|
+| panel | A1c - A1b | -0.0009 | -0.1416 .. +0.1780 | 28 | **contains zero** |
+| panel | A1c - A1b-t | -0.0009 | -0.1416 .. +0.1780 | 28 | **contains zero** |
+| panel | A1c - A1b-p | -0.0002 | -0.0039 .. +0.0027 | 28 | **contains zero** |
+| panel | A1b - A1a | +0.1414 | -0.0311 .. +0.3229 | 28 | **contains zero** |
+| panel | 4 - A1a | -0.1851 | -0.3546 .. -0.0733 | 28 | distinguishable |
+| panel | A1a - A1n | +1.0855 | +0.6550 .. +1.5059 | 28 | distinguishable |
 
 ### R1-R3 - is the correlation spatial fidelity, or sparsity matching?
 
@@ -113,7 +137,89 @@ rate and asks whether the model still orders genes correctly.
 | **R3** partial `corr(I_4, I_real given control)` | +0.4847 | +0.3593 |
 | retained fraction of `r(4)` = +0.5076 | 95.5% | 70.8% |
 
-**UNINFORMATIVE — the two control specifications disagree** — the two specifications differ by 0.247 against a 0.150 tolerance (`ladder_preregistration.md` §4).
+**UNINFORMATIVE — the control specifications disagree** — the two specifications differ by 0.247 against a 0.150 tolerance (`ladder_preregistration.md` §4).
+
+### Stage 4 across whole generations
+
+Each row is a **complete** regeneration — layout, prior, flow, decode, draw — not a
+redraw at fixed cells. The A1 arms' `across seeds` column is emission noise alone; this
+is the whole pipeline's, and it is the one the verdict leans on
+(`null_band_preregistration.md` §2c).
+
+| seed | cells | median I (rank) | r, panel | r, all genes |
+|---|---|---|---|---|
+| 1 | 4073 | +0.5134 | +0.5076 | — |
+| 2 | 4073 | +0.5173 | +0.4842 | — |
+| 3 | 4073 | +0.5145 | +0.4831 | — |
+
+**panel: r spans +0.4831 .. +0.5076 across 3 generations** (sd 0.0138). Any rung difference smaller than this is not resolved by a single generation.
+
+## `flanking_copy` — is the floor that beats us spatial fidelity?
+
+⚠️ **This is the one test whose favourable outcome this project has an interest in.**
+`flanking_copy_preregistration.md` §1 fixes two rules before any number here existed:
+the default absent a clear result is **the outcome that does not suit us**, and **the
+negative result is reported either way** — v25 loses to a model-free copy, and that
+sentence goes in the paper whatever this block says.
+
+Source: **section_1** at z=19.0 (4073 cells) — the nearest *training* section to section_2 at z=30.0 (4187 cells), emitted
+verbatim, exactly as `bench3/selftest.py::make_probe` does. It is **not** at the
+target's cells, so it is comparable to stage 4 and to no other rung (§2a).
+
+| quantity | value |
+|---|---|
+| `r_flank` on 28 genes | **+0.9517** |
+| stage 4, same scope | — |
+| spearman / mae | +0.9611 / 0.0680 |
+
+🚩 **0.9836 is tier-1's 28-gene figure and does not transfer here** (§2b). The test is
+against whatever the copy scores on *this* scope.
+
+### §5c — the positive control
+
+`spatial_scramble` keeps every per-gene marginal and destroys only position: **+0.2634** (sd 0.1933, 5 seeds).
+
+§6 predicted this scores ~0 **before it ran**. If it does, the metric plainly does
+respond to position and the maximal defensible critique is already the narrow one:
+*among predictions carrying realistic within-gene autocorrelation, the across-gene
+correlation is dominated by per-gene abundance*. A broader sentence than that cannot
+be written later. If it scores high instead, that is the headline result.
+
+### §5a — F3, the abundance-matched relabelling (the DECISIVE instrument)
+
+Genes are ranked by the target's detection rate, cut into strata, and the *pairing*
+between predicted and real genes is permuted **within** each stratum. The abundance-`I`
+relationship survives exactly; gene-specific spatial identity does not. R3 below is the
+corroborating instrument, not the other way round — it has a control specification we
+chose and this does not.
+
+| stratum width | median r | 2.5% .. 97.5% | as a fraction of `r_flank` | seeds |
+|---|---|---|---|---|
+| 10 genes | **+0.1226** | -0.1728 .. +0.4306 | 12.9% | 20 |
+| 25 genes | **+0.0469** | -0.3819 .. +0.3190 | 4.9% | 20 |
+| 50 genes | **-0.0314** | -0.3656 .. +0.2083 | -3.3% | 20 |
+
+The reading must be **stable across all three widths** (§5a); a result that appears at
+one width and not the others is a stratum-width artefact.
+
+### §3 — R3 for the copy, under all three controls
+
+| quantity | detection | log mean | log variance |
+|---|---|---|---|
+| **R1** `corr(I_real, control)` | +0.2862 | +0.4171 | +0.2559 |
+| **R2** `corr(I_copy, control)` | +0.1980 | +0.2842 | +0.1026 |
+| **R3** partial `corr(I_copy, I_real given control)` | +0.9530 | +0.9535 | +0.9597 |
+| retained fraction of `r_flank` = +0.9517 | 100.1% | 100.2% | 100.8% |
+
+The three specifications span **0.007** against a 0.150
+tolerance, and the bands must be met by **every** control, not by their mean (§3-§4).
+
+## **1. FLOOR IS GENUINE — the copy's score survives every control. The deficit is ours and the paper reports a negative result with NO benchmark claim**
+
+§5's preconditions — independence from v25's own numbers, the positive control,
+stability across F3's widths, replication across sections 2/4/6 and both datasets — are
+**preconditions, not follow-ups**. One section of one dataset does not make a benchmark
+claim, and this run is one section of one dataset.
 
 ## Why the model sits ABOVE the tissue here, and why that is not fidelity
 
