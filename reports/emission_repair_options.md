@@ -629,12 +629,30 @@ would be — because it tells them when the method works, which is what a method
 ## 10. The combination, costed as one T06 redesign
 
 
-> 🚨 **SUSPENDED as of the step-0 runs.** Gate 1 has not been run and gate 2 **did not evaluate**
-> (§8.3a) — its two sides shared a decoder, so it could not fail informatively. A gate that could
-> not be read is not a gate that passed: nothing below is built, costed further, or resumed until
-> `reports/a1_preregistration.md`'s decision table returns a readable answer, and **three of its
-> four rows end this section rather than resuming it**. Everything below stands as the costing it
-> was, not as a plan in progress.
+> # 🛑 CLOSED 2026-09-10 — on a measurement, not on a gate
+>
+> **The emission programme is aimed at a quantity the benchmark does not score, and taken to its
+> limit it makes the scored one worse.** `reports/q15_review.md`:
+>
+> * `paper_morans_pearson` is a **correlation across genes**; everything below is about a
+>   **median**. The chain's reconstruction of that correlation tracks the published score — tier-1
+>   `r(stage 4)` = **+0.5076** against **0.5574**, on the same 28-gene set.
+> * Removing the emission's noise **entirely** takes tier-1 from **+0.5076 to +0.3878**
+>   (`d r = −0.1198`) and triples the per-gene level error, `mae` **0.1018 → 0.3529**.
+> * **No dataset returns MOVES IT + CEILING HIGH** under `q15_preregistration.md` §5. Tier-1
+>   returns both negatives; `deep_starmap`'s governing all-genes row is PARTIAL on both.
+> * The target is the **model-free copy floor at 0.9836**, not SpatialZ's 0.932. A complete
+>   emission repair lands at 0.3878 and **widens** the gap by 0.17.
+>
+> Neither half is built. Gate 1 was never run; gate 2 never evaluated (§8.3a). This section closes
+> without either, because a free measurement bounded the whole programme from above and the bound
+> is below its own baseline on the dataset the paper leads with. **Everything below stands as the
+> costing it was — a record of work that was correctly not done.**
+>
+> What replaces it: the scored statistic is carried by the **count-generating process**, not by the
+> latent (`q15_review.md` §4 — the mean field alone scores *worst* on both datasets), so the open
+> question is **which genes** the model structures, not **how much**. `reports/ladder_preregistration.md`
+> is the free measurement that decides whether that is closeable at all.
 
 Asked for, because §6's answer is that no single candidate closes it. **The two halves are not equal
 partners, and that is the main finding of costing them together.**
