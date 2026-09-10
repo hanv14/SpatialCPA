@@ -8897,3 +8897,75 @@ reading was committed in `3909ce5` **before any of this ran**:
 
 **Still owed:** once the ladder is in, the plain answer §3c's verdict table calls for — whether
 v25's reconstruction deficit is closeable within this architecture.
+
+---
+
+## Round 13 — the repair programme is closed; three free items and the flanking_copy test built
+
+**Closed on the ladder.** No route inside this architecture reaches the copy floor. The ceiling is
+**0.8242** (a perfect mean field with the model's own emission) against a model-free copy near 0.98,
+and `A1a` (+0.6732) sits *below* stage 4 (+0.7306) with the positional advantage on the wrong side,
+which closes the latent branch in `ladder_preregistration.md` §3c's own terms. Everything aimed at
+the prior, the flow, `ell`, θ or SEFL is held. `reports/architecture_ceiling.md` records the sizes
+as measured defects, with §4 saying explicitly what may not be read as a plan.
+
+### The three free items
+
+**1. The null check, per scope and pre-registered fresh** (`reports/null_band_preregistration.md`).
+Two defects in the check I built one round ago:
+
+- *It read only the last `A1n` rung it rendered.* `null_r` was assigned inside the render loop, so
+  deep's panel null of **+0.2578** was overwritten by all-genes' +0.0594 and **no alarm fired**.
+  `specs/10` §4.2f-i's family, in a check built for that failure mode.
+- *The 0.15 threshold was blind to gene count.* The null's own scale is 0.373 at n=28 and 0.0615 at
+  n=1017. The three observed nulls sit at 1.24, 1.34 and 1.89 of their own scale — none is a
+  construction failure and the check had no power to say so.
+
+The replacement splits the two questions the threshold conflated: `null_centre_test` runs the
+permutation arm at **20 seeds per scope** and fires on `|mean_r| > 2·se`, testing the *centre*
+rather than one draw; `paired_gene_bootstrap` (2000 replicates, genes resampled, index shared
+across rungs) gives the resolution for rung differences, including `r(4) − r(A1a)` by name.
+**Neither repairs a scope retroactively**: tier-1 fired the check as written and stays unreadable,
+deep's panel would have fired under the per-scope repair and stays unreadable, deep's all-genes
+passes under both.
+
+**2. The π/θ reversal** (`reports/pi_theta_reversal.md`), superseding N5 **on the scored metric
+only**. On deep/all-genes, θ alone costs **0.018** and π alone **0.102** of a 0.146 total, nearly
+additive — against N5's median-based 69.7 % θ / 63.8 % π that did not decompose at all. Median `I`
+is a level statistic and uniform noise moves a level without reordering it; `pi` is per gene and
+hits sparse genes hardest, so it reorders. §4.2l applied to my own work rather than to the record's.
+The θ programme was aimed at the half worth 0.018. Not withdrawn on its own quantity, not resumed.
+
+**3. Stage 4 at three generation seeds.** `--stage4-seeds` repeats the **whole** generation —
+layout, prior, flow, decode, draw — not a redraw at fixed cells, because stage 4's variance includes
+the layout and the flow sample and it is the rung the verdict leans on. Reported in its own block so
+its spread is never read as the A1 arms' emission-only spread.
+
+### The flanking_copy test
+
+`reports/flanking_copy_preregistration.md`, written with the conflict of interest in §1: **the
+default absent a clear result is the outcome that does not suit us**, and **the negative result is
+reported either way**. Built:
+
+- the copy rung, reproducing `bench3/selftest.py::make_probe` — nearest *training* section by z,
+  verbatim. It is **not** at the target's cells, so it is comparable to stage 4 and to no other rung;
+- **F3**, the abundance-matched relabelling, at three stratum widths — the *decisive* instrument,
+  because it has no control specification we chose. R3 corroborates it, not the reverse;
+- a **third** control specification (log count variance), since the existing two disagreed on both
+  datasets and both are location statistics of the same distribution. Bands must be met by **every**
+  control, not by their mean;
+- the `spatial_scramble` positive control, with the prediction that it scores ~0 recorded in §6
+  *before* running, which already narrows the maximal defensible critique;
+- an outcome table where PARTIAL and UNINFORMATIVE both resolve to "the copy floor stands".
+
+Also corrected: **0.9836 is tier-1's 28-gene figure** and the test runs on deep's 1017-gene scope,
+where the copy's score is unmeasured. If it does not exceed stage 4 the run returns PREMISE ABSENT.
+
+### One latent defect found while wiring
+
+`json.dumps` had no `default=`, so a single uncast numpy scalar anywhere in the sidecar would raise
+on the run's **last line**, after the fit and every measurement were paid for. Fixed with a handler
+that converts numpy scalars and **refuses everything else** — `default=str` would have avoided the
+crash by writing `"array([...])"` into a results file, which is worse.
+
+`--self-check` **117/117**. `tests/test_config.py` 7/7.

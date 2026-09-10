@@ -72,6 +72,7 @@ import sys
 import tempfile
 import time
 import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -179,6 +180,164 @@ def morans_i_ranked_blocked(
     for start in range(0, x.shape[1], int(block)):
         stop = min(start + int(block), x.shape[1])
         out[start:stop] = morans_i(xy, rank_normalize(x[:, start:stop]), k)
+    return out
+
+
+def _json_scalar(obj: object) -> object:
+    """Serialise a numpy scalar for the sidecar, and REFUSE anything else.
+
+    ``json.dumps`` has no handler for ``np.float64`` or ``np.bool_``, so one uncast statistic
+    anywhere in the sidecar raises ``TypeError`` on the run's very last line -- after the fit, the
+    ablation and every measurement have been paid for. A blanket ``default=str`` would avoid that
+    by silently writing ``"array([...])"`` into a results file, which is worse. This converts the
+    numpy scalars and lets everything else raise, so a genuine bug still surfaces (Convention 6).
+    """
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, np.ndarray) and obj.ndim == 0:
+        return obj.item()
+    raise TypeError(
+        f"the report sidecar cannot serialise {type(obj).__name__}: {obj!r:.80}. Cast it at the "
+        "point it is computed rather than widening this handler -- an array in a results file is "
+        "a bug that a string conversion would hide."
+    )
+
+
+def knn_index(xy: np.ndarray, k: int) -> np.ndarray:
+    """The row-standardised graph's neighbour index. ``(N, 2)`` -> ``(N, k)`` int.
+
+    Split out of :func:`morans_i` so a loop over many draws at the **same** cells builds the tree
+    once. The 20-seed permutation null would otherwise rebuild it 320 times on deep's 29 544 cells.
+    """
+    n = xy.shape[0]
+    k = min(int(k), n - 1)
+    return np.asarray(cKDTree(xy).query(xy, k=k + 1)[1][:, 1:])
+
+
+def morans_i_from_index(idx: np.ndarray, values: np.ndarray) -> np.ndarray:
+    """Per-column Moran's I given a precomputed neighbour index. ``(N, C)`` -> ``(C,)``.
+
+    The body of :func:`morans_i` after the tree query; ``--self-check`` asserts the two agree
+    exactly, so this is an optimisation and never a second estimator.
+    """
+    x = np.asarray(values, dtype=np.float64)
+    xc = x - x.mean(axis=0, keepdims=True)
+    denom = (xc**2).sum(axis=0)
+    numer = (xc * xc[idx].mean(axis=1)).sum(axis=0)
+    out = np.full(x.shape[1], np.nan)
+    ok = denom > 0
+    out[ok] = numer[ok] / denom[ok]
+    return out
+
+
+def permutation_null_I(
+    xy: np.ndarray, counts: np.ndarray, k: int, seeds: Sequence[int], block: int = 64
+) -> np.ndarray:
+    """Per-gene ranked Moran's I under ``n_seeds`` independent cell permutations. -> ``(S, G)``.
+
+    ``reports/null_band_preregistration.md`` §2a. Two identities make this cheap enough to run at
+    20 seeds on 29 544 x 1017:
+
+    * the tree is built once (:func:`knn_index`);
+    * ranks are **permutation-equivariant per column**, so ``rank_normalize(counts[perm])`` equals
+      ``rank_normalize(counts)[perm]`` and the expensive ranking is done once rather than per seed.
+
+    Both are asserted in ``--self-check`` against the direct route.
+    """
+    idx = knn_index(xy, k)
+    x = np.asarray(counts)
+    out = np.empty((len(seeds), x.shape[1]), dtype=np.float64)
+    for start in range(0, x.shape[1], int(block)):
+        stop = min(start + int(block), x.shape[1])
+        ranks = rank_normalize(x[:, start:stop])
+        for si, seed in enumerate(seeds):
+            perm = np.random.default_rng(int(seed)).permutation(x.shape[0])
+            out[si, start:stop] = morans_i_from_index(idx, ranks[perm])
+    return out
+
+
+def null_centre_test(rs: Sequence[float]) -> dict:
+    """Is the permutation arm CENTRED on zero? ``reports/null_band_preregistration.md`` §2a.
+
+    The old check asked whether one draw was small, which conflates a broken construction with a
+    wide null. A sound construction has ``mean_r`` at zero; the spread is a resolution limit and
+    belongs in :func:`paired_gene_bootstrap`, not here. Fires on
+    ``|mean_r| > 2 * sd_r / sqrt(n_seeds)``.
+    """
+    a = np.asarray([r for r in rs if np.isfinite(r)], dtype=np.float64)
+    if a.size < 2:
+        return {"n_seeds": int(a.size), "fired": False, "underpowered": True}
+    mean, sd = float(a.mean()), float(a.std(ddof=1))
+    se = sd / np.sqrt(a.size)
+    return {
+        "n_seeds": int(a.size),
+        "mean_r": mean,
+        "sd_r": sd,
+        "se_r": float(se),
+        "p2.5": float(np.percentile(a, 2.5)),
+        "p97.5": float(np.percentile(a, 97.5)),
+        "fired": bool(abs(mean) > 2.0 * se),
+        "underpowered": False,
+    }
+
+
+def paired_gene_bootstrap(
+    vectors: dict[str, np.ndarray],
+    ref: np.ndarray,
+    pairs: Sequence[tuple[str, str]],
+    *,
+    n_boot: int = 2000,
+    seed: int = 20260910,
+) -> list[dict]:
+    """Bootstrap interval for each rung DIFFERENCE, resampling genes. §2b of the null band.
+
+    Rungs share the reference vector and the gene set, so ``r(a) - r(b)`` is far better determined
+    than either absolute ``r``. The same resampled gene index is applied to every rung, which is
+    what makes the difference paired; genes not finite in ``ref`` **and every rung** are dropped
+    first, so one resampled index means the same thing everywhere.
+
+    Carries the across-gene sampling error only. Draw-to-draw error is the arms' own across-seed
+    spread and the two are reported side by side, never combined (§2b).
+    """
+    keys = list(vectors)
+    stack = np.vstack([np.asarray(vectors[key], dtype=np.float64) for key in keys])
+    r = np.asarray(ref, dtype=np.float64)
+    ok = np.isfinite(r) & np.isfinite(stack).all(axis=0)
+    if ok.sum() < 8:
+        return [{"pair": f"{a} - {b}", "n_genes": int(ok.sum()), "unusable": True} for a, b in pairs]
+    stack, r = stack[:, ok], r[ok]
+    rng = np.random.default_rng(int(seed))
+    draws = rng.integers(0, r.size, size=(int(n_boot), r.size))
+
+    def _r(vec: np.ndarray, gt: np.ndarray) -> np.ndarray:
+        vc = vec - vec.mean(axis=1, keepdims=True)
+        gc = gt - gt.mean(axis=1, keepdims=True)
+        num = (vc * gc).sum(axis=1)
+        den = np.sqrt((vc**2).sum(axis=1) * (gc**2).sum(axis=1))
+        return np.where(den > 0, num / np.where(den > 0, den, 1.0), np.nan)
+
+    per = {key: _r(stack[i][draws], r[draws]) for i, key in enumerate(keys)}
+    point = {key: float(np.corrcoef(stack[i], r)[0, 1]) for i, key in enumerate(keys)}
+    out = []
+    for a, b in pairs:
+        if a not in per or b not in per:
+            continue
+        d = per[a] - per[b]
+        d = d[np.isfinite(d)]
+        lo, hi = (float(np.percentile(d, 2.5)), float(np.percentile(d, 97.5))) if d.size else (
+            float("nan"),
+            float("nan"),
+        )
+        out.append(
+            {
+                "pair": f"{a} - {b}",
+                "diff": point[a] - point[b],
+                "lo": lo,
+                "hi": hi,
+                "n_genes": int(r.size),
+                "distinguishable": bool(np.isfinite(lo) and np.isfinite(hi) and lo * hi > 0),
+            }
+        )
     return out
 
 
@@ -594,46 +753,212 @@ def decomposition_of_r(
     fidelity. R3 asks the question that separates them: *given two genes the tissue detects
     equally often, does the model still order them correctly by ``I``?*
 
-    Both control specifications of ``reports/ladder_preregistration.md`` §4 are computed — the
-    detection rate and the log mean count — because "which control" is a degree of freedom the
-    pre-registration fixes rather than leaves to be chosen after the answer. The reading is
-    **dropped** when they disagree by more than 0.15 in the retained fraction.
+    **Three** control specifications are computed — detection rate, log mean count and log count
+    variance — because "which control" is a degree of freedom the pre-registration fixes rather
+    than leaves to be chosen after the answer. Two were not enough: they disagreed on both datasets
+    (0.247 and 0.256 against a 0.150 tolerance), and both are location statistics of the same
+    distribution, so ``flanking_copy_preregistration.md`` §3 adds the variance before any of them
+    is read. The verdict is **dropped** when the three span more than 0.15 in the retained fraction,
+    and the bands must be met by **every** specification, not by their mean -- averaging would let
+    one favourable control carry an unfavourable one.
     """
-    d = gene_detection(real_counts)
-    logmean = np.log(np.asarray(real_counts, dtype=np.float64).mean(axis=0) + 1e-9)
-    out: dict = {
-        "r4": float(r4),
-        "R1_corr_Ireal_detection": float(np.corrcoef(i_gt, d)[0, 1]),
-        "R1_corr_Ireal_logmean": float(np.corrcoef(i_gt, logmean)[0, 1]),
-        "R2_corr_Ipred_detection": float(np.corrcoef(i_pred, d)[0, 1]),
-        "R2_corr_Ipred_logmean": float(np.corrcoef(i_pred, logmean)[0, 1]),
-        "R3_partial_detection": partial_correlation(i_pred, i_gt, d),
-        "R3_partial_logmean": partial_correlation(i_pred, i_gt, logmean),
+    x = np.asarray(real_counts, dtype=np.float64)
+    ok = np.isfinite(i_gt) & np.isfinite(i_pred)
+    controls = {
+        "detection": gene_detection(real_counts),
+        "logmean": np.log(x.mean(axis=0) + 1e-9),
+        # C3 is a different MOMENT. C1 and C2 are both location statistics of the same count
+        # distribution, so their disagreement may say only that the abundance-I relation is not
+        # quadratic in either -- which is not the same as saying the control does not matter.
+        # `flanking_copy_preregistration.md` §3 adds it before any of the three is computed.
+        "logvar": np.log(x.var(axis=0) + 1e-9),
     }
-    for name, key in (("detection", "R3_partial_detection"), ("logmean", "R3_partial_logmean")):
+    out: dict = {"r4": float(r4), "n_genes": int(ok.sum()), "controls": list(controls)}
+    for name, c in controls.items():
+        out[f"R1_corr_Ireal_{name}"] = float(np.corrcoef(i_gt[ok], c[ok])[0, 1])
+        out[f"R2_corr_Ipred_{name}"] = float(np.corrcoef(i_pred[ok], c[ok])[0, 1])
+        out[f"R3_partial_{name}"] = partial_correlation(i_pred, i_gt, c)
         out[f"retained_{name}"] = (
-            float(out[key] / r4)
-            if r4 and np.isfinite(out[key]) and abs(r4) > 1e-12
+            float(out[f"R3_partial_{name}"] / r4)
+            if r4 and np.isfinite(out[f"R3_partial_{name}"]) and abs(r4) > 1e-12
             else float("nan")
         )
-    spread = abs(out["retained_detection"] - out["retained_logmean"])
-    out["spec_disagreement"] = float(spread)
-    if not np.isfinite(spread) or spread > 0.15:
-        out["verdict"] = "UNINFORMATIVE — the two control specifications disagree"
+    fracs = [out[f"retained_{name}"] for name in controls]
+    spread = float(np.nanmax(fracs) - np.nanmin(fracs)) if np.isfinite(fracs).any() else float("nan")
+    out["spec_disagreement"] = spread
+    if not np.isfinite(spread) or not np.isfinite(fracs).all() or spread > 0.15:
+        out["verdict"] = "UNINFORMATIVE — the control specifications disagree"
     elif abs(r4) < 0.20:
-        out["verdict"] = "UNINFORMATIVE — r(4) below 0.20, the retained fraction is unstable"
+        out["verdict"] = "UNINFORMATIVE — r below 0.20, the retained fraction is unstable"
+    elif min(fracs) >= 0.60:
+        out["verdict"] = "SPATIAL — the correlation survives controlling for sparsity"
+    elif max(fracs) <= 0.30:
+        out["verdict"] = "SPARSITY — most of r is matching which genes are sparse"
     else:
-        f = float(np.mean([out["retained_detection"], out["retained_logmean"]]))
-        out["verdict"] = (
-            "SPATIAL — the correlation survives controlling for sparsity"
-            if f >= 0.60
-            else (
-                "SPARSITY — most of r(4) is matching which genes are sparse"
-                if f <= 0.30
-                else "PARTIAL"
-            )
-        )
+        out["verdict"] = "PARTIAL"
     return out
+
+
+def stratified_relabel_r(
+    i_pred: np.ndarray,
+    i_gt: np.ndarray,
+    control: np.ndarray,
+    width: int,
+    seeds: Sequence[int],
+) -> dict:
+    """F3 — the abundance-matched relabelling. ``flanking_copy_preregistration.md`` §5a.
+
+    Rank genes by the target section's ``control`` (its detection rate), cut into strata of
+    ``width`` genes, and permute **which predicted gene is compared to which real gene** inside
+    each stratum. The abundance-``I`` relationship survives exactly; gene-specific spatial identity
+    does not. So:
+
+    * ``r`` staying near the unpermuted value  => the score is carried by abundance;
+    * ``r`` collapsing toward zero             => the score is gene-specific spatial fidelity.
+
+    This is the **decisive** instrument and the partial correlation is the corroborating one, not
+    the other way round: it has no control-specification degree of freedom, only a stratum width,
+    and the pre-registration requires all three widths reported and the reading stable across them.
+    """
+    ok = np.isfinite(i_pred) & np.isfinite(i_gt) & np.isfinite(control)
+    pred, gt, c = i_pred[ok], i_gt[ok], control[ok]
+    order = np.argsort(c, kind="stable")
+    rs = []
+    for seed in seeds:
+        rng = np.random.default_rng(int(seed))
+        mapping = np.empty(order.size, dtype=np.int64)
+        for start in range(0, order.size, int(width)):
+            block_idx = order[start : start + int(width)]
+            mapping[block_idx] = block_idx[rng.permutation(block_idx.size)]
+        den = pred[mapping].std() * gt.std()
+        rs.append(float(np.corrcoef(pred[mapping], gt)[0, 1]) if den > 0 else float("nan"))
+    a = np.asarray([r for r in rs if np.isfinite(r)])
+    return {
+        "width": int(width),
+        "n_genes": int(ok.sum()),
+        "n_seeds": int(a.size),
+        "median_r": float(np.median(a)) if a.size else float("nan"),
+        "p2.5": float(np.percentile(a, 2.5)) if a.size else float("nan"),
+        "p97.5": float(np.percentile(a, 97.5)) if a.size else float("nan"),
+    }
+
+
+def flanking_copy_arm(
+    vol: TrainingVolume,
+    real: RealSection,
+    k: int,
+    *,
+    null_seeds: Sequence[int],
+    f3_widths: Sequence[int] = (10, 25, 50),
+    stage4_r: float | None = None,
+) -> dict:
+    """`flanking_copy` on the ladder, plus F3, R3 and the `spatial_scramble` positive control.
+
+    ``reports/flanking_copy_preregistration.md``. The probe is reproduced from
+    ``bench3/selftest.py::make_probe``: the **nearest training section by z, verbatim** -- its
+    counts at its own cells, in its own cell count. ``vol`` is the ``TrainingVolume``, so the
+    held-out sections are already removed by type and the source cannot be one of them.
+
+    Two asymmetries the pre-registration fixes and this function preserves:
+
+    * §2a -- the copy is **not** at the target's cells, so it is comparable to stage 4 and to no
+      other rung. It is returned in its own block and never merged into the A1 ladder.
+    * §2b -- 0.9836 is tier-1's 28-gene figure. What this measures on deep's 1017 genes is a
+      different number, and if it does not exceed stage 4 the premise of the test is absent.
+    """
+    import scipy.sparse as sp
+
+    if not vol.sections:
+        raise SystemExit("flanking_copy: the training volume carries no sections")
+    src = min(vol.sections, key=lambda sec: (abs(float(sec.z) - real.z), str(sec.section_id)))
+    counts = src.counts
+    counts = counts.toarray() if sp.issparse(counts) else np.asarray(counts)
+    counts = np.asarray(counts, dtype=np.float64)
+    xy = np.asarray(src.coords, dtype=np.float64)[:, :2]
+    if counts.shape[1] != real.counts.shape[1]:
+        raise SystemExit(
+            f"flanking_copy: section {src.section_id!r} has {counts.shape[1]} genes and the target "
+            f"has {real.counts.shape[1]}; the two must index the same gene order"
+        )
+
+    i_real = morans_i_ranked_blocked(real.xy, np.asarray(real.counts, dtype=np.float64), k)
+    i_flank = morans_i_ranked_blocked(xy, counts, k)
+    agree = morans_agreement(i_flank, i_real)
+    r_flank = float(agree["pearson"])
+
+    # §5c -- the positive control. spatial_scramble keeps every per-gene marginal and destroys
+    # only position. The prediction that it scores ~0 is RECORDED IN §6 BEFORE this ran; if it
+    # holds, the maximal defensible critique is already the narrow one §5c writes out.
+    scramble = permutation_null_I(
+        real.xy, np.asarray(real.counts, dtype=np.float64), k, list(null_seeds)[:5]
+    )
+    scramble_rs = [morans_agreement(row, i_real)["pearson"] for row in scramble]
+    detection = gene_detection(real.counts)
+    out: dict = {
+        "source_section": str(src.section_id),
+        "source_z": float(src.z),
+        "target_section": str(real.section_id),
+        "target_z": float(real.z),
+        "n_cells_source": int(xy.shape[0]),
+        "n_cells_target": int(real.xy.shape[0]),
+        "n_genes": int(agree["n_genes"]),
+        "r_flank": r_flank,
+        "spearman": float(agree["spearman"]),
+        "mae": float(agree["mae"]),
+        "stage4_r": None if stage4_r is None else float(stage4_r),
+        "scramble": null_centre_test(scramble_rs),
+        "f3": [
+            stratified_relabel_r(i_flank, i_real, detection, w, list(null_seeds))
+            for w in f3_widths
+        ],
+        "R3": decomposition_of_r(i_flank, i_real, np.asarray(real.counts), r4=r_flank),
+    }
+    out["verdict"] = _flanking_verdict(out)
+    return out
+
+
+def _flanking_verdict(f: dict) -> str:
+    """The outcome table of ``flanking_copy_preregistration.md`` §4, in its stated order.
+
+    §1's rule is what makes the order matter: **the default absent a clear result is the outcome
+    that does not suit us.** PARTIAL and UNINFORMATIVE both resolve to outcome 1's reading, so a
+    test this project has an interest in cannot return "unclear" and have that count as support.
+    """
+    r, s4 = f["r_flank"], f.get("stage4_r")
+    if not np.isfinite(r):
+        return "5. PREMISE ABSENT — the copy's r is not finite on this scope"
+    if s4 is not None and r <= s4:
+        return (
+            f"5. PREMISE ABSENT — the copy scores {r:+.4f} against stage 4's {s4:+.4f}, so there "
+            "is no high model-free floor on this scope to explain (§2b)"
+        )
+    fracs = [f["R3"][f"retained_{name}"] for name in f["R3"]["controls"]]
+    f3 = [w["median_r"] for w in f["f3"]]
+    if not np.isfinite(fracs).all() or "UNINFORMATIVE" in f["R3"]["verdict"]:
+        return (
+            "4. UNINFORMATIVE — the control specifications disagree; §4 resolves this to "
+            "outcome 1's reading: THE COPY FLOOR STANDS AND THE DEFICIT IS OURS"
+        )
+    if min(fracs) >= 0.60:
+        return (
+            "1. FLOOR IS GENUINE — the copy's score survives every control. The deficit is ours "
+            "and the paper reports a negative result with NO benchmark claim"
+        )
+    if max(fracs) <= 0.30:
+        if np.isfinite(f3).all() and max(f3) >= 0.60 * r:
+            return (
+                "2. FLOOR IS ABUNDANCE — R3 and F3 agree. THIS IS THE OUTCOME THAT SUITS US and "
+                "it is NOT reportable on this evidence: §5's preconditions govern, and F3 is the "
+                "instrument that carries it, not R3"
+            )
+        return (
+            "3. PARTIAL — R3 says abundance but F3 does not corroborate it (§5a makes F3 "
+            "decisive). §4 resolves this to outcome 1's reading: THE COPY FLOOR STANDS"
+        )
+    return (
+        "3. PARTIAL — a control lands between 0.30 and 0.60. §4 resolves this to outcome 1's "
+        "reading: THE COPY FLOOR STANDS AND THE DEFICIT IS OURS"
+    )
 
 
 def md_cell(text: object) -> str:
@@ -700,13 +1025,20 @@ def agreement_block(agreement: dict[str, dict], invariant_note: str = "") -> lis
     return out
 
 
-def ladder_block(ladder: dict, sparsity: dict, agreement: dict | None = None) -> list[str]:
+def ladder_block(
+    ladder: dict,
+    sparsity: dict,
+    agreement: dict | None = None,
+    null: dict | None = None,
+    boot: dict | None = None,
+) -> list[str]:
     """The ladder and R1-R3 — is the gap to the copy floor closeable inside this architecture?
 
     Criteria in ``reports/ladder_preregistration.md``. The bands are **not** applied here: §3c
     reads them across two datasets and this function knows only one run. What it does enforce is
-    the null check — the permutation arm's ``r`` must be ~0, and if it is not, nothing on the
-    ladder may be read.
+    the null check, now **per scope** and on the null's centre rather than on one draw against an
+    absolute 0.15 — see ``reports/null_band_preregistration.md`` for what that threshold got wrong
+    and why neither defect is repaired retroactively.
     """
     out: list[str] = []
     if not ladder:
@@ -744,7 +1076,6 @@ def ladder_block(ladder: dict, sparsity: dict, agreement: dict | None = None) ->
                 "n_genes": m4["n_genes"],
             }
     order = {"A1c": 0, "A1b": 1, "A1b-t": 2, "A1b-p": 3, "A1a": 4, "4": 5, "A1n": 6}
-    null_r = None
     for key in sorted(merged, key=lambda x: (x.partition("::")[0] != "panel", order.get(x.partition("::")[2], 9))):
         m = merged[key]
         scope, _, arm = key.partition("::")
@@ -758,15 +1089,8 @@ def ladder_block(ladder: dict, sparsity: dict, agreement: dict | None = None) ->
             f"| **{m['median_r']:+.4f}** | {spread} "
             f"| {m['spearman']:+.4f} | {m['mae']:.4f} | {m['n_genes']} |"
         )
-        if arm.startswith("A1n"):
-            null_r = m["median_r"]
-    if null_r is not None and np.isfinite(null_r) and abs(null_r) > 0.15:
-        out += [
-            "",
-            f"🚨 **NULL RUNG IS NOT NULL** — the permutation arm correlates at {null_r:+.4f}. "
-            "`ladder_preregistration.md` §5(1): the construction is wrong and **nothing on this "
-            "ladder may be read.**",
-        ]
+    out += _null_block(null or {})
+    out += _bootstrap_block(boot or {})
     if sparsity:
         out += [
             "",
@@ -796,6 +1120,233 @@ def ladder_block(ladder: dict, sparsity: dict, agreement: dict | None = None) ->
             f"{sparsity['spec_disagreement']:.3f} against a 0.150 tolerance "
             "(`ladder_preregistration.md` §4).",
         ]
+    return out
+
+
+def _null_block(null: dict) -> list[str]:
+    """Per-scope: is the permutation arm CENTRED on zero? ``null_band_preregistration.md`` §2a.
+
+    Per scope is the point. The check this replaces assigned one variable inside the render loop,
+    so with two scopes the second overwrote the first and deep's panel null of +0.2578 was hidden
+    behind all-genes' +0.0594 -- ``specs/10`` §4.2f-i's family, in a check built for it.
+    """
+    if not null:
+        return []
+    out = [
+        "",
+        "### Is the null null? — per scope, on the null's CENTRE",
+        "",
+        "The permutation arm shares one shuffle across every gene, so a single draw has a wide",
+        "spread and says nothing about the centre. A sound construction has `mean_r` at zero; the",
+        "spread is a resolution limit and lives in the bootstrap below, not here",
+        "(`null_band_preregistration.md` §2a). Fires on `|mean_r| > 2 * sd_r / sqrt(seeds)`.",
+        "",
+        "| scope | seeds | mean r | sd | 2 x se | 2.5% .. 97.5% | verdict |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    fired = []
+    for scope, m in null.items():
+        if m.get("underpowered"):
+            out.append(f"| {md_cell(scope)} | {m['n_seeds']} | — | — | — | — | too few seeds |")
+            continue
+        verdict = "🚨 **NOT CENTRED**" if m["fired"] else "centred"
+        out.append(
+            f"| {md_cell(scope)} | {m['n_seeds']} | {m['mean_r']:+.4f} | {m['sd_r']:.4f} "
+            f"| {2 * m['se_r']:.4f} | {m['p2.5']:+.4f} .. {m['p97.5']:+.4f} | {verdict} |"
+        )
+        if m["fired"]:
+            fired.append(scope)
+    if fired:
+        out += [
+            "",
+            f"🚨 **NULL IS NOT CENTRED on {', '.join(fired)}** — the construction is wrong on "
+            "that scope and **none of its rungs may be read.** Other scopes are unaffected: the "
+            "check is per scope (`null_band_preregistration.md` §2a).",
+        ]
+    return out
+
+
+def _bootstrap_block(boot: dict) -> list[str]:
+    """Rung differences with a paired gene bootstrap. ``null_band_preregistration.md`` §2b.
+
+    An ordering printed without this is an ordering of point estimates. The verdict leans on
+    ``r(4) - r(A1a)``, so that difference in particular gets an interval rather than a sign.
+    """
+    if not boot:
+        return []
+    out = [
+        "",
+        "### Which rung differences are real? — paired gene bootstrap",
+        "",
+        "2000 replicates resampling **genes**, the same index applied to every rung so the",
+        "difference is paired. This carries the across-gene sampling error only; draw-to-draw",
+        "error is the `across seeds` column above and the two are never combined (§2b).",
+        "",
+        "| scope | difference | point | 95% interval | genes | |",
+        "|---|---|---|---|---|---|",
+    ]
+    for scope, rows in boot.items():
+        for row in rows:
+            if row.get("unusable"):
+                out.append(
+                    f"| {md_cell(scope)} | {md_cell(row['pair'])} | — | — | {row['n_genes']} "
+                    "| too few genes |"
+                )
+                continue
+            mark = "distinguishable" if row["distinguishable"] else "**contains zero**"
+            out.append(
+                f"| {md_cell(scope)} | {md_cell(row['pair'])} | {row['diff']:+.4f} "
+                f"| {row['lo']:+.4f} .. {row['hi']:+.4f} | {row['n_genes']} | {mark} |"
+            )
+    return out
+
+
+def stage4_seed_block(rows: list[dict]) -> list[str]:
+    """Stage 4 across whole generations. ``null_band_preregistration.md`` §2c.
+
+    Every A1 arm redraws counts at fixed cells, so its across-seed spread is emission noise alone.
+    Stage 4's is not: the layout and the flow sample vary too, and stage 4 is the rung the ladder's
+    verdict leans on. Reported as its own block so the two spreads are never read as the same
+    quantity.
+    """
+    if not rows:
+        return []
+    out = [
+        "",
+        "### Stage 4 across whole generations",
+        "",
+        "Each row is a **complete** regeneration — layout, prior, flow, decode, draw — not a",
+        "redraw at fixed cells. The A1 arms' `across seeds` column is emission noise alone; this",
+        "is the whole pipeline's, and it is the one the verdict leans on",
+        "(`null_band_preregistration.md` §2c).",
+        "",
+        "| seed | cells | median I (rank) | r, panel | r, all genes |",
+        "|---|---|---|---|---|",
+    ]
+    for r in rows:
+        panel_r = r.get("r_panel")
+        all_r = r.get("r_all")
+        out.append(
+            f"| {r['seed']} | {r['n_used']} | {r['median_I']:+.4f} "
+            f"| {'—' if panel_r is None else f'{panel_r:+.4f}'} "
+            f"| {'—' if all_r is None else f'{all_r:+.4f}'} |"
+        )
+    for key, label in (("r_panel", "panel"), ("r_all", "all genes")):
+        vals = [r[key] for r in rows if r.get(key) is not None and np.isfinite(r[key])]
+        if len(vals) > 1:
+            out += [
+                "",
+                f"**{label}: r spans {min(vals):+.4f} .. {max(vals):+.4f} across "
+                f"{len(vals)} generations** (sd {float(np.std(vals, ddof=1)):.4f}). Any rung "
+                "difference smaller than this is not resolved by a single generation.",
+            ]
+    return out
+
+
+def flanking_block(f: dict) -> list[str]:
+    """`flanking_copy` on the ladder, F3, R3 and the positive control.
+
+    ``reports/flanking_copy_preregistration.md``, whose §1 is reproduced at the top of the block
+    rather than left in the file: this is the one test with an outcome that suits this project,
+    and a reader meeting the number should meet the conflict of interest in the same place.
+    """
+    if not f:
+        return []
+    s4 = f.get("stage4_r")
+    out = [
+        "",
+        "## `flanking_copy` — is the floor that beats us spatial fidelity?",
+        "",
+        "⚠️ **This is the one test whose favourable outcome this project has an interest in.**",
+        "`flanking_copy_preregistration.md` §1 fixes two rules before any number here existed:",
+        "the default absent a clear result is **the outcome that does not suit us**, and **the",
+        "negative result is reported either way** — v25 loses to a model-free copy, and that",
+        "sentence goes in the paper whatever this block says.",
+        "",
+        f"Source: **{f['source_section']}** at z={f['source_z']:.1f} "
+        f"({f['n_cells_source']} cells) — the nearest *training* section to "
+        f"{f['target_section']} at z={f['target_z']:.1f} ({f['n_cells_target']} cells), emitted",
+        "verbatim, exactly as `bench3/selftest.py::make_probe` does. It is **not** at the",
+        "target's cells, so it is comparable to stage 4 and to no other rung (§2a).",
+        "",
+        "| quantity | value |",
+        "|---|---|",
+        f"| `r_flank` on {f['n_genes']} genes | **{f['r_flank']:+.4f}** |",
+        f"| stage 4, same scope | {'—' if s4 is None else f'{s4:+.4f}'} |",
+        f"| spearman / mae | {f['spearman']:+.4f} / {f['mae']:.4f} |",
+        "",
+        "🚩 **0.9836 is tier-1's 28-gene figure and does not transfer here** (§2b). The test is",
+        "against whatever the copy scores on *this* scope.",
+    ]
+    sc = f["scramble"]
+    if not sc.get("underpowered"):
+        out += [
+            "",
+            "### §5c — the positive control",
+            "",
+            f"`spatial_scramble` keeps every per-gene marginal and destroys only position: "
+            f"**{sc['mean_r']:+.4f}** (sd {sc['sd_r']:.4f}, {sc['n_seeds']} seeds).",
+            "",
+            "§6 predicted this scores ~0 **before it ran**. If it does, the metric plainly does",
+            "respond to position and the maximal defensible critique is already the narrow one:",
+            "*among predictions carrying realistic within-gene autocorrelation, the across-gene",
+            "correlation is dominated by per-gene abundance*. A broader sentence than that cannot",
+            "be written later. If it scores high instead, that is the headline result.",
+        ]
+    out += [
+        "",
+        "### §5a — F3, the abundance-matched relabelling (the DECISIVE instrument)",
+        "",
+        "Genes are ranked by the target's detection rate, cut into strata, and the *pairing*",
+        "between predicted and real genes is permuted **within** each stratum. The abundance-`I`",
+        "relationship survives exactly; gene-specific spatial identity does not. R3 below is the",
+        "corroborating instrument, not the other way round — it has a control specification we",
+        "chose and this does not.",
+        "",
+        "| stratum width | median r | 2.5% .. 97.5% | as a fraction of `r_flank` | seeds |",
+        "|---|---|---|---|---|",
+    ]
+    for w in f["f3"]:
+        frac = w["median_r"] / f["r_flank"] if f["r_flank"] else float("nan")
+        out.append(
+            f"| {w['width']} genes | **{w['median_r']:+.4f}** | {w['p2.5']:+.4f} .. "
+            f"{w['p97.5']:+.4f} | {frac:.1%} | {w['n_seeds']} |"
+        )
+    out += [
+        "",
+        "The reading must be **stable across all three widths** (§5a); a result that appears at",
+        "one width and not the others is a stratum-width artefact.",
+    ]
+    r3 = f["R3"]
+    out += [
+        "",
+        "### §3 — R3 for the copy, under all three controls",
+        "",
+        "| quantity | detection | log mean | log variance |",
+        "|---|---|---|---|",
+        "| **R1** `corr(I_real, control)` | "
+        + " | ".join(f"{r3[f'R1_corr_Ireal_{n}']:+.4f}" for n in r3["controls"])
+        + " |",
+        "| **R2** `corr(I_copy, control)` | "
+        + " | ".join(f"{r3[f'R2_corr_Ipred_{n}']:+.4f}" for n in r3["controls"])
+        + " |",
+        "| **R3** partial `corr(I_copy, I_real given control)` | "
+        + " | ".join(f"{r3[f'R3_partial_{n}']:+.4f}" for n in r3["controls"])
+        + " |",
+        f"| retained fraction of `r_flank` = {r3['r4']:+.4f} | "
+        + " | ".join(f"{r3[f'retained_{n}']:.1%}" for n in r3["controls"])
+        + " |",
+        "",
+        f"The three specifications span **{r3['spec_disagreement']:.3f}** against a 0.150",
+        "tolerance, and the bands must be met by **every** control, not by their mean (§3-§4).",
+        "",
+        f"## **{f['verdict']}**",
+        "",
+        "§5's preconditions — independence from v25's own numbers, the positive control,",
+        "stability across F3's widths, replication across sections 2/4/6 and both datasets — are",
+        "**preconditions, not follow-ups**. One section of one dataset does not make a benchmark",
+        "claim, and this run is one section of one dataset.",
+    ]
     return out
 
 
@@ -971,7 +1522,8 @@ def emission_ablation(
     *,
     mu_gen: np.ndarray | None = None,
     counts_gen: np.ndarray | None = None,
-) -> tuple[list[dict], dict, list[dict]]:
+    null_seeds: Sequence[int] = tuple(range(101, 121)),
+) -> tuple[list[dict], dict, list[dict], dict, dict, dict, dict]:
     """A1 — which stage of the emission loses the structure. Measured at the REAL cells.
 
     Every arm is drawn at ``real.xy``, so the kNN graph, the cell count and the density are the
@@ -1133,6 +1685,9 @@ def emission_ablation(
     # do not have, which is why §2a(1) reads a LOW rung as conclusive and a high one as permissive.
     ref_panel = morans_i(real.xy, rank_normalize(sel(real_counts)), k)
     ladder: dict = {}
+    ladder_extra: dict = {}
+    null: dict = {}
+    vecs_panel: dict[str, np.ndarray] = {}
     for key, label in labels.items():
         per = [morans_agreement(row["per_gene_I_rank"], ref_panel) for row in per_seed[key]]
         rs = [m["pearson"] for m in per]
@@ -1146,14 +1701,32 @@ def emission_ablation(
             "mae": float(np.median([m["mae"] for m in per])),
             "n_genes": per[0]["n_genes"],
         }
+        vecs_panel[label.split(".")[0]] = per_seed[key][0]["per_gene_I_rank"]
+
+    # --- the corrected null check (reports/null_band_preregistration.md §2a) -------------------
+    # 20 permutations, per scope, on the null's CENTRE. The arm is a shuffle and a Moran's I: no
+    # model, no decoder. `permutation_null_I` builds the tree once and ranks once, which is what
+    # makes 20 seeds affordable at all-genes.
+    t = time.time()
+    nulls_panel = permutation_null_I(real.xy, sel(real_counts), k, list(null_seeds))
+    null["panel"] = null_centre_test(
+        [morans_agreement(row, ref_panel)["pearson"] for row in nulls_panel]
+    )
+    print(f"  null x{len(null_seeds)}, panel, in {time.time() - t:.1f}s", flush=True)
+    ladder_extra["ref_panel"] = ref_panel
+    ladder_extra["vecs_panel"] = vecs_panel
+
     if panel is not None and len(panel) < real_counts.shape[1]:
         # The panel is the top few per cent by the real section's own I, so its I vector has a
         # compressed range and every correlation on it is attenuated. bench3 scores all shared
         # genes, so the all-genes pass governs -- as it did in Q1.5.
         t = time.time()
         ref_all = morans_i_ranked_blocked(real.xy, real_counts, k)
+        vecs_all: dict[str, np.ndarray] = {}
         for key, label in labels.items():
-            m = morans_agreement(morans_i_ranked_blocked(real.xy, drawn[key], k), ref_all)
+            vec = morans_i_ranked_blocked(real.xy, drawn[key], k)
+            vecs_all[label.split(".")[0]] = vec
+            m = morans_agreement(vec, ref_all)
             ladder[f"all genes::{label.split('.')[0]}"] = {
                 "arm": label,
                 "median_r": m["pearson"],
@@ -1165,7 +1738,15 @@ def emission_ablation(
                 "n_genes": m["n_genes"],
             }
         print(f"  ladder, all {real_counts.shape[1]} genes in {time.time() - t:.1f}s", flush=True)
-    return rows, levels, mu_spread, ladder
+        t = time.time()
+        nulls_all = permutation_null_I(real.xy, real_counts, k, list(null_seeds))
+        null["all genes"] = null_centre_test(
+            [morans_agreement(row, ref_all)["pearson"] for row in nulls_all]
+        )
+        print(f"  null x{len(null_seeds)}, all genes, in {time.time() - t:.1f}s", flush=True)
+        ladder_extra["ref_all"] = ref_all
+        ladder_extra["vecs_all"] = vecs_all
+    return rows, levels, mu_spread, ladder, null, ladder_extra
 
 
 def real_section_reference(
@@ -1735,12 +2316,7 @@ def _self_check() -> int:
             "0.9836" in clean_txt and "0.5574" in clean_txt,
         ),
         ("it says a LOW rung is conclusive and a high one permissive", "permissive" in clean_txt),
-        ("a null rung near zero raises no alarm", "NULL RUNG" not in clean_txt),
-        ("a null rung that is NOT null stops the reading", "NULL RUNG IS NOT NULL" in dirty_txt),
-        (
-            "and the alarm quotes the offending number, so it cannot be read past",
-            "+0.4200" in dirty_txt,
-        ),
+        ("the ladder table itself no longer carries the alarm", "NULL RUNG" not in dirty_txt),
         ("R1-R3 are omitted when the decomposition was not computed", "R1" not in clean_txt),
         (
             "and rendered under BOTH control specifications when it was",
@@ -1793,6 +2369,200 @@ def _self_check() -> int:
         (
             "the squareness check would FAIL on an unescaped pipe, so it is not vacuous",
             not _table_is_square("| a | b |\n|---|---|\n| x | y | z |"),
+        ),
+    ]
+
+    # --- the corrected null check and the bootstrap (null_band_preregistration.md) -----------
+    rng_c = np.random.default_rng(7)
+    centred = list(rng_c.normal(0.0, 0.20, size=20))
+    offset = [r + 0.30 for r in centred]
+    nt_c, nt_o = null_centre_test(centred), null_centre_test(offset)
+    null_txt = "\n".join(_null_block({"panel": nt_o, "all genes": nt_c}))
+    checks += [
+        ("null_centre_test does NOT fire on a wide but centred null", not nt_c["fired"]),
+        ("it DOES fire on a null shifted off zero by less than its own sd", nt_o["fired"]),
+        (
+            "so the test is on the CENTRE, not on whether one draw is small",
+            nt_c["sd_r"] > 0.15 and abs(nt_c["mean_r"]) < 0.15,
+        ),
+        ("it reports the empirical interval, not a formula", nt_c["p2.5"] < nt_c["p97.5"]),
+        ("two seeds are too few to test a centre", null_centre_test([0.9, 0.9])["n_seeds"] == 2),
+        ("one seed is refused outright", null_centre_test([0.9])["underpowered"]),
+        (
+            "the alarm names the scope that fired and only that scope",
+            "NOT CENTRED on panel" in null_txt and "all genes" not in null_txt.split("🚨")[-1],
+        ),
+        (
+            "both scopes are rendered, so a passing one is not hidden by a firing one",
+            null_txt.count("| panel |") == 1 and null_txt.count("| all genes |") == 1,
+        ),
+    ]
+
+    g = 200
+    base_v = rng_c.normal(size=g)
+    ref_v = base_v + rng_c.normal(0, 0.5, size=g)
+    vecs = {
+        "hi": base_v + rng_c.normal(0, 0.2, size=g),
+        "lo": base_v + rng_c.normal(0, 2.0, size=g),
+        "same": base_v + rng_c.normal(0, 0.5, size=g),
+    }
+    bt = paired_gene_bootstrap(vecs, ref_v, [("hi", "lo"), ("same", "same")], n_boot=400)
+    by = {row["pair"]: row for row in bt}
+    nan_vecs = {"a": np.r_[vecs["hi"][:5], np.full(g - 5, np.nan)], "b": vecs["lo"]}
+    checks += [
+        (
+            "the bootstrap separates a clearly better rung from a worse one",
+            by["hi - lo"]["distinguishable"] and by["hi - lo"]["diff"] > 0,
+        ),
+        (
+            "and a rung against ITSELF is never distinguishable — the check is not vacuous",
+            not by["same - same"]["distinguishable"] and by["same - same"]["diff"] == 0.0,
+        ),
+        (
+            "it drops genes not finite in every rung, so one index means the same everywhere",
+            paired_gene_bootstrap(nan_vecs, ref_v, [("a", "b")], n_boot=50)[0].get("unusable")
+            is True,
+        ),
+        (
+            "it is deterministic — two runs at the same seed agree exactly",
+            paired_gene_bootstrap(vecs, ref_v, [("hi", "lo")], n_boot=200)[0]["lo"]
+            == paired_gene_bootstrap(vecs, ref_v, [("hi", "lo")], n_boot=200)[0]["lo"],
+        ),
+    ]
+
+    # --- the permutation null's two identities, against the direct route ----------------------
+    xy_p = rng_c.random((60, 2)) * 100.0
+    cts_p = rng_c.poisson(3.0, size=(60, 5)).astype(np.float64)
+    idx_p = knn_index(xy_p, 6)
+    direct = morans_i(xy_p, rank_normalize(cts_p), 6)
+    perm = np.random.default_rng(3).permutation(60)
+    checks += [
+        (
+            "morans_i_from_index equals morans_i exactly — an optimisation, not a 2nd estimator",
+            np.allclose(morans_i_from_index(idx_p, rank_normalize(cts_p)), direct, atol=0, rtol=0),
+        ),
+        (
+            "ranking is permutation-equivariant, which is what makes 20 seeds affordable",
+            np.array_equal(rank_normalize(cts_p[perm]), rank_normalize(cts_p)[perm]),
+        ),
+        (
+            "permutation_null_I matches the direct permute-then-rank-then-measure route",
+            np.allclose(
+                permutation_null_I(xy_p, cts_p, 6, [3])[0],
+                morans_i(xy_p, rank_normalize(cts_p[perm]), 6),
+            ),
+        ),
+        (
+            "and it is centred on zero, which is the property the check tests",
+            abs(float(np.mean(permutation_null_I(xy_p, cts_p, 6, range(101, 121))))) < 0.10,
+        ),
+    ]
+
+    # --- F3 and the flanking verdict ordering -------------------------------------------------
+    ctrl_f = np.arange(g, dtype=np.float64)
+    abundance_only = ctrl_f + rng_c.normal(0, 0.5, size=g)
+    gene_specific = rng_c.normal(size=g)
+    f3_ab = stratified_relabel_r(abundance_only, ctrl_f, ctrl_f, 10, range(101, 111))
+    f3_gs = stratified_relabel_r(gene_specific, gene_specific, ctrl_f, 10, range(101, 111))
+    checks += [
+        (
+            f"F3 SURVIVES relabelling when the agreement is abundance-driven "
+            f"({f3_ab['median_r']:+.3f})",
+            f3_ab["median_r"] > 0.9,
+        ),
+        (
+            f"F3 COLLAPSES when the agreement is gene-specific ({f3_gs['median_r']:+.3f}) — "
+            "which is the whole point of the instrument",
+            abs(f3_gs["median_r"]) < 0.3,
+        ),
+        (
+            "a wider stratum destroys more, so the width is a real degree of freedom",
+            stratified_relabel_r(gene_specific, gene_specific, ctrl_f, 50, range(101, 111))[
+                "median_r"
+            ]
+            <= f3_gs["median_r"] + 0.2,
+        ),
+    ]
+
+    def _fk(r, retained, f3r, s4=0.40):
+        return {
+            "r_flank": r,
+            "stage4_r": s4,
+            "f3": [{"width": 10, "median_r": f3r}],
+            "R3": {
+                "controls": ["detection", "logmean", "logvar"],
+                "verdict": "PARTIAL",
+                **{f"retained_{n}": retained for n in ("detection", "logmean", "logvar")},
+            },
+        }
+
+    unin = _fk(0.9, 0.1, 0.8)
+    unin["R3"]["verdict"] = "UNINFORMATIVE — the control specifications disagree"
+    checks += [
+        (
+            "flanking verdict: a copy that does not beat stage 4 returns PREMISE ABSENT",
+            "PREMISE ABSENT" in _flanking_verdict(_fk(0.30, 0.9, 0.1)),
+        ),
+        (
+            "a floor that survives every control is outcome 1 and blocks any benchmark claim",
+            "1. FLOOR IS GENUINE" in _flanking_verdict(_fk(0.9, 0.8, 0.1)),
+        ),
+        (
+            "R3 saying abundance WITHOUT F3 corroborating is outcome 3, not outcome 2",
+            "3. PARTIAL" in _flanking_verdict(_fk(0.9, 0.1, 0.05)),
+        ),
+        (
+            "outcome 2 needs BOTH, and says in the verdict that it is the favourable one",
+            "2. FLOOR IS ABUNDANCE" in _flanking_verdict(_fk(0.9, 0.1, 0.8))
+            and "SUITS US" in _flanking_verdict(_fk(0.9, 0.1, 0.8)),
+        ),
+        (
+            "UNINFORMATIVE resolves to outcome 1's reading, never to 'unclear'",
+            "COPY FLOOR STANDS" in _flanking_verdict(unin),
+        ),
+        (
+            "a middling retained fraction also resolves to outcome 1's reading",
+            "COPY FLOOR STANDS" in _flanking_verdict(_fk(0.9, 0.45, 0.8)),
+        ),
+    ]
+
+    checks += [
+        ("the sidecar handler converts a numpy scalar", _json_scalar(np.float64(1.5)) == 1.5),
+        ("and a numpy bool, which json also refuses", _json_scalar(np.bool_(True)) is True),
+        (
+            "but REFUSES an array rather than writing a string into a results file",
+            _raises(lambda: _json_scalar(np.arange(3))),
+        ),
+        (
+            "and the whole sidecar shape round-trips through it",
+            json.loads(
+                json.dumps(
+                    {"n": nt_c, "b": bt, "f": f3_ab, "s": [{"seed": np.int64(1)}]},
+                    default=_json_scalar,
+                )
+            )["s"][0]["seed"]
+            == 1,
+        ),
+    ]
+
+    s4_txt = "\n".join(
+        stage4_seed_block(
+            [
+                {"seed": 1, "n_used": 10, "median_I": 0.1, "r_panel": 0.50, "r_all": 0.70},
+                {"seed": 2, "n_used": 10, "median_I": 0.1, "r_panel": 0.55, "r_all": 0.74},
+            ]
+        )
+    )
+    checks += [
+        ("stage4_seed_block returns nothing with no seeds", stage4_seed_block([]) == []),
+        ("it reports the span across whole generations", "+0.5000 .. +0.5500" in s4_txt),
+        (
+            "and says a smaller rung difference is not resolved by one generation",
+            "not resolved by a single generation" in s4_txt,
+        ),
+        (
+            "it distinguishes pipeline spread from the arms' emission-only spread",
+            "emission noise alone" in s4_txt,
         ),
     ]
 
@@ -1941,6 +2711,40 @@ def main(argv: list[str] | None = None) -> int:
         help="generator seed(s) for --emission-ablation's draws (Convention 3). Several redraw "
         "every sampled arm once per seed; the band is read from the median and an arm whose "
         "seeds straddle a boundary reads UNRESOLVED (a1_escalation_preregistration.md §1).",
+    )
+    ap.add_argument(
+        "--null-seed",
+        type=int,
+        nargs="+",
+        default=list(range(101, 121)),
+        help="permutation seeds for the ladder's null arm. Twenty by default: the check is on "
+        "whether the null is CENTRED, and one draw cannot test a centre "
+        "(reports/null_band_preregistration.md §2a).",
+    )
+    ap.add_argument(
+        "--boot-reps",
+        type=int,
+        default=2000,
+        help="replicates for the paired gene bootstrap on rung differences (§2b). The verdict "
+        "leans on r(4) - r(A1a), so that difference gets an interval rather than a sign.",
+    )
+    ap.add_argument(
+        "--stage4-seeds",
+        type=int,
+        nargs="+",
+        default=None,
+        help="regenerate the whole section under each seed and report stage 4's scored r per "
+        "seed. Stage 4 is otherwise a SINGLE generation, and its variance includes the layout "
+        "and the flow sample, not only the emission draw -- it is the rung the ladder's verdict "
+        "leans on. Costs one full generation per seed.",
+    )
+    ap.add_argument(
+        "--flanking-copy",
+        action="store_true",
+        help="score the bench3 `flanking_copy` probe -- the nearest TRAINING section by z, "
+        "emitted verbatim -- on the same statistic, plus F3, R3 under three controls and the "
+        "spatial_scramble positive control. Read reports/flanking_copy_preregistration.md "
+        "first: §1 states the interest this project has in one of the two outcomes.",
     )
     ap.add_argument(
         "--fit-only",
@@ -2195,32 +2999,55 @@ def main(argv: list[str] | None = None) -> int:
         "n_target": int(real.counts.shape[0]),
         "seed": int(args.density_seed),
     }
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        layout = _layout_on(model, plane, vol, cfg, SEED)
-        xyz = layout.coords_xyz.astype(np.float64)
-        cell_type_idx = layout.cell_type.astype(np.int64)
-        density["n_generated"] = int(xyz.shape[0])
-        if args.match_density:
-            # Thin *before* the neighbour query, the conditioning and the metric: the kNN graph
-            # is what density changes, so subsampling afterwards would leave the estimator that
-            # this flag exists to equalise untouched.
-            keep = density_subsample(xyz.shape[0], real.counts.shape[0], args.density_seed)
-            xyz, cell_type_idx = xyz[keep], cell_type_idx[keep]
-        density["n_used"] = int(xyz.shape[0])
-        xy = xyz[:, :2]
-        cell_type = torch.from_numpy(cell_type_idx)
-        neighbours, _w = model.data.index.query(
-            xyz, _default_exclusions(vol, float(plane.origin[2])), seed=SEED
+    def _generate(gen_seed: int) -> dict:
+        """One whole generation at ``gen_seed``: layout, prior, flow, decode, draw.
+
+        Factored out so ``--stage4-seeds`` can repeat *all* of it. Stage 4's variance includes the
+        layout and the flow sample, not only the emission draw, so re-drawing counts under a new
+        seed while holding the layout would understate it -- and stage 4 is the rung the ladder's
+        verdict leans on.
+        """
+        out: dict = {"seed": int(gen_seed)}
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            layout = _layout_on(model, plane, vol, cfg, int(gen_seed))
+            xyz = layout.coords_xyz.astype(np.float64)
+            cell_type_idx = layout.cell_type.astype(np.int64)
+            out["n_generated"] = int(xyz.shape[0])
+            if args.match_density:
+                # Thin *before* the neighbour query, the conditioning and the metric: the kNN
+                # graph is what density changes, so subsampling afterwards would leave the
+                # estimator that this flag exists to equalise untouched.
+                keep = density_subsample(
+                    xyz.shape[0], real.counts.shape[0], args.density_seed
+                )
+                xyz, cell_type_idx = xyz[keep], cell_type_idx[keep]
+            out["n_used"] = int(xyz.shape[0])
+            cell_type = torch.from_numpy(cell_type_idx)
+            neighbours, _w = model.data.index.query(
+                xyz, _default_exclusions(vol, float(plane.origin[2])), seed=int(gen_seed)
+            )
+            points = torch.from_numpy(xyz.astype(np.float32))
+            with torch.no_grad():
+                tokens, mask = model.data.index.neighbour_tokens(xyz, neighbours)
+                cond, _ = model.conditioning(points, points, cell_type, None, tokens, mask)
+                h0 = model.prior_latent(xyz, seed=int(gen_seed))
+                h = model.flow.sample(h0, cond, int(cfg.ode_steps))
+                mu_g, theta_g, pi_g = _decode(model, h, cfg, None)
+                counts_g = sample_counts(
+                    mu_g, theta_g, pi_g, np.random.default_rng(int(gen_seed))
+                )
+        out.update(
+            xyz=xyz, xy=xyz[:, :2], h0=h0, h=h, mu=mu_g, theta=theta_g, pi=pi_g, counts=counts_g
         )
-        points = torch.from_numpy(xyz.astype(np.float32))
-        with torch.no_grad():
-            tokens, mask = model.data.index.neighbour_tokens(xyz, neighbours)
-            cond, _ = model.conditioning(points, points, cell_type, None, tokens, mask)
-            h0 = model.prior_latent(xyz, seed=SEED)
-            h = model.flow.sample(h0, cond, int(cfg.ode_steps))
-            mu, theta, pi = _decode(model, h, cfg, None)
-            counts = sample_counts(mu, theta, pi, np.random.default_rng(SEED))
+        return out
+
+    gen = _generate(SEED)
+    xyz, xy = gen["xyz"], gen["xy"]
+    h0, h, mu, theta, pi, counts = (
+        gen["h0"], gen["h"], gen["mu"], gen["theta"], gen["pi"], gen["counts"]
+    )
+    density["n_generated"], density["n_used"] = gen["n_generated"], gen["n_used"]
     if args.match_density and density["n_generated"] < density["n_target"]:
         print(
             f"  !! --match-density asked for {density['n_target']} cells and the layout produced "
@@ -2304,6 +3131,11 @@ def main(argv: list[str] | None = None) -> int:
     for r in rows:  # print the generated chain before anything else can fail
         print(f"  {r['stage']:<48s} median I = {r['median_I']:+.4f}  (n={r['n_channels']})")
     ladder: dict = {}
+    ladder_extra: dict = {}
+    null_check: dict = {}
+    boot: dict = {}
+    flanking: dict = {}
+    stage4_seeds: list[dict] = []
     theta_stats: dict | None = None
     if args.report_theta:
         theta_stats = theta_report(
@@ -2336,7 +3168,14 @@ def main(argv: list[str] | None = None) -> int:
             mu_var_ratio = float(np.median(gen_terms["total"][ok] / denom[ok]))
         if args.emission_ablation:
             t2 = time.time()
-            ablation_rows, ablation_levels, mu_spread, ladder = emission_ablation(
+            (
+                ablation_rows,
+                ablation_levels,
+                mu_spread,
+                ladder,
+                null_check,
+                ladder_extra,
+            ) = emission_ablation(
                 model,
                 cfg,
                 real,
@@ -2346,6 +3185,7 @@ def main(argv: list[str] | None = None) -> int:
                 panel,
                 mu_gen=_sel(mu.numpy()),
                 counts_gen=_sel(counts_np),
+                null_seeds=[int(x) for x in args.null_seed],
             )
             print(f"  emission ablation in {time.time() - t2:.1f}s", flush=True)
 
@@ -2481,6 +3321,8 @@ def main(argv: list[str] | None = None) -> int:
     # Q1.5: the scored statistic, from vectors this run already has.
     agreement: dict[str, dict] = {}
     sparsity: dict = {}
+    ref_gene_I_all: np.ndarray | None = ladder_extra.get("ref_all")
+    model_all: np.ndarray | None = None
     ref_gene_I = next(
         (r.get("per_gene_I_rank") for r in rows if r["stage"].startswith("REF real counts")), None
     )
@@ -2500,8 +3342,14 @@ def main(argv: list[str] | None = None) -> int:
             # compressed range and its correlation is attenuated. bench3 scores ALL shared genes,
             # so the all-genes pass is the one closer to the benchmark and it governs.
             t3 = time.time()
-            model_all = None
-            ref_all = morans_i_ranked_blocked(real.xy, real.counts, k)
+            # The ablation already paid for this vector when it ran the all-genes ladder pass;
+            # recomputing it would be a second 1017-gene blocked pass for an identical result.
+            ref_all = (
+                ref_gene_I_all
+                if ref_gene_I_all is not None
+                else morans_i_ranked_blocked(real.xy, real.counts, k)
+            )
+            ref_gene_I_all = ref_all
             for label, arr in (
                 ("3. decoded mu", mu.numpy()),
                 ("4. sampled counts", counts_np),
@@ -2536,9 +3384,85 @@ def main(argv: list[str] | None = None) -> int:
             )
             sparsity["gene_set"] = "the scored panel"
 
+    # --- the paired gene bootstrap (null_band_preregistration.md §2b) ------------------------
+    # Run here rather than inside the ablation because the difference the verdict leans on is
+    # `r(4) - r(A1a)`, and stage 4's per-gene vector is generated in this scope. Stage 4 sits at
+    # the GENERATED cells while the A1 arms sit at the real ones; the bootstrap resamples genes,
+    # which both sides share, so the pairing is over genes and not over cells.
+    _pairs = [
+        ("A1c", "A1b"),
+        ("A1c", "A1b-t"),  # theta alone
+        ("A1c", "A1b-p"),  # pi alone
+        ("A1b", "A1a"),
+        ("4", "A1a"),  # the one the verdict leans on
+        ("A1a", "A1n"),
+    ]
+    for _scope, _vkey, _rkey, _s4 in (
+        ("panel", "vecs_panel", "ref_panel", "panel::4. sampled counts"),
+        ("all genes", "vecs_all", "ref_all", "all genes::4. sampled counts"),
+    ):
+        _vecs = dict(ladder_extra.get(_vkey) or {})
+        _ref = ladder_extra.get(_rkey)
+        if not _vecs or _ref is None:
+            continue
+        _v4 = (
+            model_all
+            if _scope == "all genes"
+            else next(
+                (r.get("per_gene_I_rank") for r in rows if r["stage"].startswith("4. ")), None
+            )
+        )
+        if _v4 is not None and _s4 in agreement:
+            _vecs["4"] = _v4
+        boot[_scope] = paired_gene_bootstrap(
+            _vecs, _ref, _pairs, n_boot=int(args.boot_reps)
+        )
+
+    # --- stage 4 across whole generations (null_band_preregistration.md §2c) -----------------
+    if args.stage4_seeds:
+        ref_panel_g = morans_i(real.xy, rank_normalize(_sel(real.counts)), k)
+        ref_all_g = ref_gene_I_all if ref_gene_I_all is not None else None
+        for gs in args.stage4_seeds:
+            t4 = time.time()
+            g = _generate(int(gs)) if int(gs) != SEED else gen
+            cg = g["counts"].numpy()
+            row = {
+                "seed": int(gs),
+                "n_used": int(g["n_used"]),
+                "median_I": summarise("4", g["xy"], _sel(cg), k, primary="rank")["median_I"],
+                "r_panel": morans_agreement(
+                    morans_i(g["xy"], rank_normalize(_sel(cg)), k), ref_panel_g
+                )["pearson"],
+            }
+            if ref_all_g is not None:
+                row["r_all"] = morans_agreement(
+                    morans_i_ranked_blocked(g["xy"], np.asarray(cg, dtype=np.float64), k),
+                    ref_all_g,
+                )["pearson"]
+            stage4_seeds.append(row)
+            print(f"  generation seed {gs} in {time.time() - t4:.1f}s", flush=True)
+
+    # --- flanking_copy (reports/flanking_copy_preregistration.md) ----------------------------
+    if args.flanking_copy:
+        t5 = time.time()
+        flanking = flanking_copy_arm(
+            vol,
+            real,
+            k,
+            null_seeds=[int(x) for x in args.null_seed],
+            stage4_r=(agreement.get("all genes::4. sampled counts") or {}).get("pearson"),
+        )
+        print(
+            f"  flanking_copy from {flanking['source_section']} in {time.time() - t5:.1f}s",
+            flush=True,
+        )
+        print(f"  {flanking['verdict']}")
+
     lines.extend(_verdict(rows, emitted, cfg, args, real, panel))
     lines.extend(agreement_block(agreement, invariant_note))
-    lines.extend(ladder_block(ladder, sparsity, agreement))
+    lines.extend(ladder_block(ladder, sparsity, agreement, null_check, boot))
+    lines.extend(stage4_seed_block(stage4_seeds))
+    lines.extend(flanking_block(flanking))
     lines.extend(cancelling_defects_block(rows, decomposition, mu_spread))
 
     def _column(d: dict[str, float] | None, key: str, fmt: str) -> str:
@@ -2817,6 +3741,11 @@ def main(argv: list[str] | None = None) -> int:
         "agreement": agreement,
         "ladder": ladder,
         "sparsity": sparsity,
+        "null_check": null_check,
+        "bootstrap": boot,
+        "stage4_seeds": stage4_seeds,
+        "flanking_copy": {k: v for k, v in flanking.items() if k != "R3"} or None,
+        "flanking_R3": flanking.get("R3"),
         "invariant_violated": invariant_note or None,
         "emission_ablation": {
             "ran": bool(ablation_rows),
@@ -2831,7 +3760,7 @@ def main(argv: list[str] | None = None) -> int:
             "var_log_mu_ratio_gen_over_real": mu_var_ratio,
         },
     }
-    Path(args.out).with_suffix(".json").write_text(json.dumps(sidecar, indent=2))
+    Path(args.out).with_suffix(".json").write_text(json.dumps(sidecar, indent=2, default=_json_scalar))
     print(f"\nwrote {args.out}")
     return 0
 
