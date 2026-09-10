@@ -84,3 +84,54 @@ self-check's exact-match cases and not by anything here. And a centred null does
 readable if its rungs are indistinguishable from each other: at n=28 the bootstrap interval on any
 rung difference is wide enough that tier-1 may simply be **underpowered**, which is a real outcome
 and is to be reported in those words rather than as a number.
+
+---
+
+## §2a-bis — AMENDMENT: the seed count is a property of the construction, not of the caller
+
+**Added after the first run, before the second. What it fixes was a gap in this document, and the
+number it supersedes is named.**
+
+Three blocks in `scripts/t10_chain_diagnostic.py` measure the **same construction** — permute the
+real section's cells, recompute per-gene `I`, correlate against the tissue's own:
+
+1. the ladder's `A1n` rung;
+2. this document's §2a null check;
+3. `flanking_copy_preregistration.md` §5c's `spatial_scramble` positive control.
+
+§2a fixed a seed count for (2) and said nothing about (1) or (3). They inherited whatever the
+caller passed: (1) took `--ablation-seed`, three seeds; (3) took a `[:5]` slice that appears
+nowhere in any pre-registration and was mine. The first run therefore reported one quantity three
+times at three seed counts:
+
+| | tier-1, 28 genes | deep panel, 32 genes |
+|---|---|---|
+| `A1n` rung, **3** seeds | −0.2472 | +0.2578 |
+| null check, **20** seeds | **−0.0080** | **+0.0382** |
+| `spatial_scramble`, **5** seeds | +0.2634 | +0.0214 |
+
+Read as three findings this says the construction is broken, the null is not null, and §6's
+prediction 1 failed. Read as one quantity it says the across-permutation spread at n≈30 is ~0.2 and
+**twenty seeds is the only one of the three that can see the centre**.
+
+**The rule.** *A statistic's seed count belongs to the statistic, not to whichever flag reaches it.*
+All three now run at `--null-seed`'s count, default 20. Where a block reports the quantity, it
+carries the 20-seed figure and says which other blocks are the same construction.
+
+**What is superseded.** Tier-1's `spatial_scramble` = **+0.2634** is withdrawn as an estimate of its
+own quantity — not because the number is favourable or unfavourable, but because the identical
+construction at 20 seeds reads −0.0080 in the same report. §6's prediction 1 is **confirmed** where
+it was measured at a seed count able to test it, and tier-1's 5-seed figure is not evidence against
+it. Deep's +0.0214 at 5 seeds stands but is re-run at 20 for the same reason.
+
+## §2a-ter — F3's stratum width must leave at least two strata
+
+Same class, found in the same run. `stratified_relabel_r` accepted any width. At tier-1's 28 genes
+the pre-registered widths 25 and 50 put the whole panel in **one** stratum, so the "abundance-matched
+relabelling" was a full permutation — the null arm wearing F3's label — and printed **+0.0469** and
+**−0.0314** as measurements. Both are withdrawn.
+
+**The rule.** A width `w` is refused unless `n_genes >= 2 * w`, and the refusal is rendered in the
+table with its reason rather than as a number or a blank. `flanking_copy_preregistration.md` §5a's
+requirement that the reading be stable across three widths therefore reads, at small `n`, as *"F3
+has no usable width here"* — which is an outcome, and is not evidence in either direction.

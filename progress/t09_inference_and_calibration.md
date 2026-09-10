@@ -8969,3 +8969,73 @@ that converts numpy scalars and **refuses everything else** — `default=str` wo
 crash by writing `"array([...])"` into a results file, which is worse.
 
 `--self-check` **117/117**. `tests/test_config.py` 7/7.
+
+---
+
+## Round 14 — the diagnostic programme is CLOSED
+
+**The verdict.** `1. FLOOR IS GENUINE` on both datasets: `r_flank` +0.9886 (deep, 1017 genes) and
++0.9517 (tier-1, 28), retaining 97.9–99.0 % and 100.1–100.8 % under all three controls, spans 0.011
+and 0.007 against a 0.150 tolerance, with `spatial_scramble` at the null. The copy floor is genuine
+spatial fidelity, **the deficit is ours, and the paper reports a negative result with no benchmark
+claim.** Together with the ladder's ceiling (`A1b` = 0.8242, `A1a` below stage 4 with the advantage
+on the wrong side) this closes the question the programme existed to answer. Recorded in
+`reports/diagnostic_programme_closed.md`, whose §3 states what would reopen it so that it can be
+checked rather than argued.
+
+**§6 prediction 3 was wrong in this project's favour.** I predicted PARTIAL — the outcome that
+would have kept the benchmark critique alive. It returned outcome 1 by a wide margin. That is the
+pre-registration working, and it belongs beside the result rather than in a footnote.
+
+### The free fixes
+
+**2a — the report contradicted itself.** `decomposition_of_r` computes three controls;
+`ladder_block` rendered two hardcoded columns. Deep showed 38.3 % / 12.7 % (span 0.256) beside a
+stated span of **0.395**, and the hidden third value was either +0.522 or −0.012 — two opposite
+readings. `_control_table` is now driven by `d["controls"]`, is shared by the ladder and the
+flanking block so the two cannot diverge, and the self-check asserts the column count follows the
+control count in both directions.
+
+**2b/2c/2d — three parameters inherited rather than chosen.** New rule `specs/10` §4.2n, and
+`null_band_preregistration.md` §2a-bis / §2a-ter:
+
+- the `A1n` rung, the null check and `spatial_scramble` are **one construction**; all three now run
+  at `--null-seed`'s count, the ladder's rung carries the 20-seed figure, and each block says which
+  others are the same thing. Tier-1's `spatial_scramble` = +0.2634 is **withdrawn** — the identical
+  20-seed construction reads −0.0080 in the same report, so §6's prediction 1 is confirmed, not
+  refuted;
+- F3 **refuses** a stratum width that cannot make two strata and renders the refusal with its
+  reason. Tier-1's widths 25 and 50 were full permutations printed as measurements; both withdrawn.
+
+**3 — the sidecar.** Both runs died at `json.dumps` on their final line, after the fit, the
+ablation, the 20-seed null and the flanking arm had all been paid for. Cause: `_over_seeds` attached
+`per_seed_I_rank`, a **list of arrays**, beside `per_gene_I_rank` — which the sidecar excluded *by
+name*. The key was also **dead**: the ladder reads `per_seed[key]` directly and never the collapsed
+head, so it existed only to satisfy a self-check assertion I had written. Fixed at the source
+(no row carries a vector), with `_scalar_row` raising and naming any future one rather than
+stripping it silently.
+
+`--self-check` was **117/117 through both of those runs**: it exercised every constructor and never
+the assembly. The sidecar assembly is now `build_sidecar`, and the self-check **builds and
+serialises it** with rows made by the real constructors. Verified against the exact defect
+reintroduced on a scratch copy: 122/125 with the offending key named.
+
+### Pre-registered before computing
+
+`reports/abundance_floor_preregistration.md` — the rescaling that would move v25's headline from
+"27 % short" to "~45 % of the way there". §1 fixes that **the raw comparison is reported first and
+always** and that every failure mode returns to it; §3 fixes the denominator as the **copy's** floor,
+before computing, because three defensible floors exist and they do not agree.
+
+Two properties found while building it, both recorded before the statistic was computed:
+
+- **F3 must derange, not permute.** A plain permutation leaves `1/width` of genes on themselves;
+  measured at **+0.141** on a fixture whose floor must be zero. Because `rescaled` decreases in the
+  floor, the bias was *understating* v25 — **removing it moves the headline in our favour**, and it
+  is removed because the estimator was wrong, with the direction stated in the same sentence. The
+  first run's F3 figures (0.5461 / 0.5145 / 0.5197) are **superseded**.
+- **`rescaled = 0` does not mean "abundance alone".** The floor is the *square* of the shared
+  loading, so a prediction that *is* the loading scores above it (+0.49 against a floor of +0.290 on
+  a fixture). §3's choice stands; the sentence the paper may write is narrowed instead.
+
+`--self-check` **140/140**; `tests/test_config.py` 7/7.

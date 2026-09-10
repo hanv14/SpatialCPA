@@ -183,6 +183,31 @@ def morans_i_ranked_blocked(
     return out
 
 
+def _scalar_row(row: dict) -> dict:
+    """A summary row with its per-gene vector dropped, refusing any *other* array.
+
+    The sidecar used to strip ``per_gene_I_rank`` by name, so a second array added beside it went
+    straight into ``json.dumps`` and took the run's last line down with it. Dropping every array
+    silently would hide the next one instead; this drops the one key that is *documented* to hold a
+    vector and raises on anything else, naming it -- so a new vector on a row is a build-time error
+    with an address, not a crash after an hour of compute (Convention 6).
+    """
+    out = {}
+    for key, value in row.items():
+        if key == "per_gene_I_rank":
+            continue
+        if isinstance(value, np.ndarray) or (
+            isinstance(value, list) and any(isinstance(v, np.ndarray) for v in value)
+        ):
+            raise TypeError(
+                f"summary row {row.get('stage', '?')!r} carries an array under {key!r}. Summary "
+                "rows reach the JSON sidecar: keep the vector in a side channel (the ablation's "
+                "`ladder_extra`) rather than on the row, or cast it where it is computed."
+            )
+        out[key] = value
+    return out
+
+
 def _json_scalar(obj: object) -> object:
     """Serialise a numpy scalar for the sidecar, and REFUSE anything else.
 
@@ -799,6 +824,33 @@ def decomposition_of_r(
     return out
 
 
+def _derangement(n: int, rng: np.random.Generator, max_tries: int = 40) -> np.ndarray:
+    """A permutation of ``n`` items with **no fixed points**. ``(n,)`` int.
+
+    F3 permutes the pairing between predicted and real genes inside an abundance stratum. A plain
+    permutation leaves each gene where it was with probability ``1/n``, so a fraction ``1/width`` of
+    the true agreement survives the relabelling and the abundance floor comes out too high --
+    measured at **+0.141** on a fixture whose control is independent of the truth and whose floor
+    should therefore be zero.
+
+    That bias is not neutral. ``rescaled(x) = (r_x - f) / (r_copy - f)`` decreases in ``f`` whenever
+    ``r_x < r_copy``, so an inflated floor **understated** v25's rescaled score. Removing it moves
+    the headline in this project's favour, and it is removed because the estimator was wrong rather
+    than because of which way it moves -- recorded here, before the statistic was computed, so that
+    ordering is checkable (``abundance_floor_preregistration.md`` §1).
+
+    Rejection sampling, with a random rotation as the guaranteed fallback; ``n < 2`` has no
+    derangement and raises rather than silently returning the identity.
+    """
+    if n < 2:
+        raise ValueError(f"a stratum of {n} gene(s) has no derangement; F3 needs at least 2")
+    for _ in range(max_tries):
+        perm = rng.permutation(n)
+        if not (perm == np.arange(n)).any():
+            return perm
+    return np.roll(np.arange(n), 1 + int(rng.integers(0, n - 1)))
+
+
 def stratified_relabel_r(
     i_pred: np.ndarray,
     i_gt: np.ndarray,
@@ -809,8 +861,10 @@ def stratified_relabel_r(
     """F3 — the abundance-matched relabelling. ``flanking_copy_preregistration.md`` §5a.
 
     Rank genes by the target section's ``control`` (its detection rate), cut into strata of
-    ``width`` genes, and permute **which predicted gene is compared to which real gene** inside
-    each stratum. The abundance-``I`` relationship survives exactly; gene-specific spatial identity
+    ``width`` genes, and **derange** — permute with no fixed points — which predicted gene is
+    compared to which real gene inside each stratum. The derangement matters: a plain permutation
+    leaves ``1/width`` of the genes on themselves, and :func:`_derangement` records what that bias
+    was worth and which way it pointed. The abundance-``I`` relationship survives exactly; gene-specific spatial identity
     does not. So:
 
     * ``r`` staying near the unpermuted value  => the score is carried by abundance;
@@ -822,14 +876,36 @@ def stratified_relabel_r(
     """
     ok = np.isfinite(i_pred) & np.isfinite(i_gt) & np.isfinite(control)
     pred, gt, c = i_pred[ok], i_gt[ok], control[ok]
+    # 2d -- a width that cannot make at least TWO strata is a full permutation, which is the null
+    # arm wearing F3's label. On tier-1's 28 genes the pre-registered widths 25 and 50 did exactly
+    # that and printed +0.0469 and -0.0314 as if they were abundance-matched relabellings.
+    if int(width) < 2 or ok.sum() < 2 * int(width):
+        return {
+            "width": int(width),
+            "n_genes": int(ok.sum()),
+            "n_seeds": 0,
+            "median_r": float("nan"),
+            "p2.5": float("nan"),
+            "p97.5": float("nan"),
+            "refused": (
+                f"a width of {int(width)} leaves fewer than 2 strata in {int(ok.sum())} genes, "
+                "so the relabelling is a full permutation and not an abundance-matched one"
+            ),
+        }
     order = np.argsort(c, kind="stable")
+    # Strata, with a trailing remainder of fewer than 2 genes merged into the previous one: a
+    # stratum of size 1 has no derangement, and a gene that can only map to itself is not relabelled.
+    bounds = list(range(0, order.size, int(width)))
+    if len(bounds) > 1 and order.size - bounds[-1] < 2:
+        bounds.pop()
     rs = []
     for seed in seeds:
         rng = np.random.default_rng(int(seed))
         mapping = np.empty(order.size, dtype=np.int64)
-        for start in range(0, order.size, int(width)):
-            block_idx = order[start : start + int(width)]
-            mapping[block_idx] = block_idx[rng.permutation(block_idx.size)]
+        for bi, start in enumerate(bounds):
+            stop = bounds[bi + 1] if bi + 1 < len(bounds) else order.size
+            block_idx = order[start:stop]
+            mapping[block_idx] = block_idx[_derangement(block_idx.size, rng)]
         den = pred[mapping].std() * gt.std()
         rs.append(float(np.corrcoef(pred[mapping], gt)[0, 1]) if den > 0 else float("nan"))
     a = np.asarray([r for r in rs if np.isfinite(r)])
@@ -889,8 +965,12 @@ def flanking_copy_arm(
     # §5c -- the positive control. spatial_scramble keeps every per-gene marginal and destroys
     # only position. The prediction that it scores ~0 is RECORDED IN §6 BEFORE this ran; if it
     # holds, the maximal defensible critique is already the narrow one §5c writes out.
+    # 2c -- ALL the null seeds, not an inherited slice. The `[:5]` here was mine and was never
+    # pre-registered; it made tier-1's control read +0.2634 (sd 0.1933, 4 df) where the identical
+    # 20-seed construction in the null block read -0.0080, i.e. a failed prediction manufactured by
+    # a seed count I chose. `null_band_preregistration.md` §2a-bis fixes it at the null's own count.
     scramble = permutation_null_I(
-        real.xy, np.asarray(real.counts, dtype=np.float64), k, list(null_seeds)[:5]
+        real.xy, np.asarray(real.counts, dtype=np.float64), k, list(null_seeds)
     )
     scramble_rs = [morans_agreement(row, i_real)["pearson"] for row in scramble]
     detection = gene_detection(real.counts)
@@ -914,6 +994,7 @@ def flanking_copy_arm(
         "R3": decomposition_of_r(i_flank, i_real, np.asarray(real.counts), r4=r_flank),
     }
     out["verdict"] = _flanking_verdict(out)
+    out["i_flank"] = i_flank  # a VECTOR: side channel only, never a summary row (see _scalar_row)
     return out
 
 
@@ -933,7 +1014,7 @@ def _flanking_verdict(f: dict) -> str:
             "is no high model-free floor on this scope to explain (§2b)"
         )
     fracs = [f["R3"][f"retained_{name}"] for name in f["R3"]["controls"]]
-    f3 = [w["median_r"] for w in f["f3"]]
+    f3 = [w["median_r"] for w in f["f3"] if not w.get("refused")]
     if not np.isfinite(fracs).all() or "UNINFORMATIVE" in f["R3"]["verdict"]:
         return (
             "4. UNINFORMATIVE — the control specifications disagree; §4 resolves this to "
@@ -945,15 +1026,17 @@ def _flanking_verdict(f: dict) -> str:
             "and the paper reports a negative result with NO benchmark claim"
         )
     if max(fracs) <= 0.30:
-        if np.isfinite(f3).all() and max(f3) >= 0.60 * r:
+        if f3 and np.isfinite(f3).all() and max(f3) >= 0.60 * r:
             return (
                 "2. FLOOR IS ABUNDANCE — R3 and F3 agree. THIS IS THE OUTCOME THAT SUITS US and "
                 "it is NOT reportable on this evidence: §5's preconditions govern, and F3 is the "
                 "instrument that carries it, not R3"
             )
         return (
-            "3. PARTIAL — R3 says abundance but F3 does not corroborate it (§5a makes F3 "
-            "decisive). §4 resolves this to outcome 1's reading: THE COPY FLOOR STANDS"
+            "3. PARTIAL — R3 says abundance but F3 "
+            + ("has no usable width here" if not f3 else "does not corroborate it")
+            + " (§5a makes F3 decisive). §4 resolves this to outcome 1's reading: "
+            "THE COPY FLOOR STANDS"
         )
     return (
         "3. PARTIAL — a control lands between 0.30 and 0.60. §4 resolves this to outcome 1's "
@@ -1055,6 +1138,10 @@ def ladder_block(
         "Reference points on tier-1: the model-free copy floor `flanking_copy` = **0.9836**,",
         "SpatialZ **0.932**, v25 shipped **0.5574**.",
         "",
+        "The `A1n` rung carries the **20-seed** figure from the null block below, not its own",
+        "3-seed draw: they are the same construction, and at panel size a 3-seed draw of it has",
+        "spanned -0.25 to +0.26 between runs (`null_band_preregistration.md` §2a).",
+        "",
         "| gene set | rung | **pearson** | across seeds | spearman | mae | genes |",
         "|---|---|---|---|---|---|---|",
     ]
@@ -1074,6 +1161,21 @@ def ladder_block(
                 "spearman": m4["spearman"],
                 "mae": m4["mae"],
                 "n_genes": m4["n_genes"],
+            }
+    # 2b -- the A1n rung, the null block and `spatial_scramble` are ONE construction (permute the
+    # real section's cells, correlate against its own per-gene I) measured at three seed counts.
+    # Shown separately they read as three findings: on tier-1 they came out -0.2472 (3 seeds),
+    # -0.0080 (20) and +0.2634 (5). The 20-seed figure GOVERNS, so the ladder's rung carries it
+    # rather than its own 3-seed draw.
+    for scope, m in (null or {}).items():
+        key = next((x for x in merged if x.startswith(f"{scope}::A1n")), None)
+        if key is not None and not m.get("underpowered"):
+            merged[key] = {
+                **merged[key],
+                "median_r": m["mean_r"],
+                "min_r": m["p2.5"],
+                "max_r": m["p97.5"],
+                "n_seeds": m["n_seeds"],
             }
     order = {"A1c": 0, "A1b": 1, "A1b-t": 2, "A1b-p": 3, "A1a": 4, "4": 5, "A1n": 6}
     for key in sorted(merged, key=lambda x: (x.partition("::")[0] != "panel", order.get(x.partition("::")[2], 9))):
@@ -1104,23 +1206,181 @@ def ladder_block(
             "without reproducing any spatial fidelity. R3 controls for the tissue's own detection",
             "rate and asks whether the model still orders genes correctly.",
             "",
-            "| quantity | detection rate | log mean count |",
-            "|---|---|---|",
-            "| **R1** `corr(I_real, control)` - is the tissue's ordering a sparsity ordering? | "
-            + f"{sparsity['R1_corr_Ireal_detection']:+.4f} | "
-            + f"{sparsity['R1_corr_Ireal_logmean']:+.4f} |",
-            f"| **R2** `corr(I_model, control)` | {sparsity['R2_corr_Ipred_detection']:+.4f} "
-            f"| {sparsity['R2_corr_Ipred_logmean']:+.4f} |",
-            "| **R3** partial `corr(I_4, I_real given control)` | "
-            + f"{sparsity['R3_partial_detection']:+.4f} | {sparsity['R3_partial_logmean']:+.4f} |",
-            f"| retained fraction of `r(4)` = {sparsity['r4']:+.4f} | "
-            f"{sparsity['retained_detection']:.1%} | {sparsity['retained_logmean']:.1%} |",
+            *_control_table(sparsity, "I_4"),
             "",
-            f"**{sparsity['verdict']}** — the two specifications differ by "
+            f"**{sparsity['verdict']}** — the {len(sparsity['controls'])} specifications span "
             f"{sparsity['spec_disagreement']:.3f} against a 0.150 tolerance "
-            "(`ladder_preregistration.md` §4).",
+            "(`ladder_preregistration.md` §4, `flanking_copy_preregistration.md` §3).",
         ]
     return out
+
+
+_CONTROL_LABEL = {
+    "detection": "detection rate",
+    "logmean": "log mean count",
+    "logvar": "log count variance",
+}
+
+
+def abundance_floor(
+    vectors: dict[str, np.ndarray],
+    i_gt: np.ndarray,
+    control: np.ndarray,
+    *,
+    copy_key: str,
+    seeds: Sequence[int],
+    widths: Sequence[int] = (10, 25, 50),
+) -> dict:
+    """The abundance-floor rescaling. ``reports/abundance_floor_preregistration.md``.
+
+    F3 applied to every rung's own per-gene ``I`` gives *the score that rung would achieve from
+    abundance alone*. The interval between the **copy's** floor and the copy's score is the part of
+    ``paper_morans_pearson`` that gene-specific spatial fidelity can move, and every rung is
+    rescaled onto it::
+
+        rescaled(x) = (r(x) - F3_copy) / (r_copy - F3_copy)
+
+    §3 fixes the denominator as **the copy's** floor, not each rung's own: one denominator for
+    every rung, taken from the reference prediction rather than the one being scored, so no rung
+    can improve its own scale. Each rung's own F3 is still reported, in its own column, because it
+    answers a different question and because suppressing it would leave only the flattering
+    statistic — but it is never a denominator.
+
+    §4's five refusal conditions are enforced here and the reason is carried in ``refused``. This
+    is the second statistic in a row with a favourable flavour; the raw comparison is the default
+    and every failure mode returns to it.
+    """
+    if copy_key not in vectors:
+        return {"refused": f"no {copy_key!r} rung on this scope, so there is no floor to rescale by"}
+    per = {
+        key: [stratified_relabel_r(vec, i_gt, control, w, seeds) for w in widths]
+        for key, vec in vectors.items()
+    }
+    usable = {
+        key: [w["median_r"] for w in rows if not w.get("refused") and np.isfinite(w["median_r"])]
+        for key, rows in per.items()
+    }
+    out: dict = {
+        "copy_key": copy_key,
+        "widths": [int(w) for w in widths],
+        "widths_usable": [
+            int(w["width"]) for w in per[copy_key] if not w.get("refused")
+        ],
+        "own_f3": {
+            key: float(np.median(vals)) if vals else float("nan") for key, vals in usable.items()
+        },
+        "raw": {
+            key: float(np.corrcoef(vec[m], i_gt[m])[0, 1])
+            for key, vec in vectors.items()
+            if (m := np.isfinite(vec) & np.isfinite(i_gt)).sum() > 2
+        },
+    }
+    floor_vals = usable[copy_key]
+    if not floor_vals:
+        out["refused"] = (
+            "F3 has no usable stratum width on this scope, so the abundance floor is not "
+            "measurable here (null_band_preregistration.md §2a-ter)"
+        )
+        return out
+    floor = float(np.median(floor_vals))
+    span = float(max(floor_vals) - min(floor_vals)) if len(floor_vals) > 1 else 0.0
+    r_copy = out["raw"].get(copy_key, float("nan"))
+    out.update(floor=floor, floor_span=span, r_copy=r_copy, denominator=r_copy - floor)
+    if span > 0.10:
+        out["refused"] = f"the copy's F3 spans {span:.3f} across widths, above the 0.10 tolerance"
+    elif not np.isfinite(r_copy) or (r_copy - floor) < 0.20:
+        out["refused"] = (
+            f"the denominator r_copy - F3_copy = {r_copy - floor:+.3f} is below 0.20, so every "
+            "rescaled figure is unstable"
+        )
+    elif floor < 0.10:
+        out["refused"] = (
+            f"the abundance floor is {floor:+.3f}, indistinguishable from the permutation null: "
+            "there is nothing to rescale by and the raw comparison already is the answer"
+        )
+    else:
+        out["rescaled"] = {
+            key: (r - floor) / (r_copy - floor) for key, r in out["raw"].items()
+        }
+    return out
+
+
+def abundance_floor_block(a: dict, scope: str) -> list[str]:
+    """The rescaling, with the raw comparison first and every refusal stated in words."""
+    if not a:
+        return []
+    out = [
+        "",
+        f"## The abundance floor — {md_cell(scope)}",
+        "",
+        "⚠️ **The raw comparison is the result and is first.** This rescaling moves v25's headline",
+        "in a direction that flatters it, so `abundance_floor_preregistration.md` §1 fixes that the",
+        "raw figures are reported first and always, and that every failure mode below returns to",
+        "them. **It does not reopen the closeability question** — the ladder answered that and this",
+        "changes only how the negative result is expressed.",
+        "",
+        "F3 applied to a rung's own per-gene `I` gives what that rung would score **from abundance",
+        "alone**. The denominator is the **copy's** floor for every rung (§3), never the rung's own,",
+        "so no rung can improve its own scale.",
+    ]
+    if a.get("refused"):
+        return out + [
+            "",
+            f"🚩 **NOT RESCALED** — {a['refused']}. Only the raw comparison stands (§4).",
+        ]
+    out += [
+        "",
+        f"`F3_copy` = **{a['floor']:+.4f}** (median over widths {a['widths_usable']}, span "
+        f"{a['floor_span']:.3f}); `r_copy` = **{a['r_copy']:+.4f}**; denominator "
+        f"**{a['denominator']:+.4f}**.",
+        "",
+        "| rung | raw `r` | its own F3 (abundance alone) | **rescaled** |",
+        "|---|---|---|---|",
+    ]
+    for key in sorted(a["raw"], key=lambda x: -a["raw"][x]):
+        own = a["own_f3"].get(key, float("nan"))
+        out.append(
+            f"| {md_cell(key)} | {a['raw'][key]:+.4f} | "
+            f"{'—' if not np.isfinite(own) else f'{own:+.4f}'} "
+            f"| **{a['rescaled'][key]:.2f}** |"
+        )
+    out += [
+        "",
+        "The `own F3` column is **not** a denominator (§3). It is reported because it answers a",
+        "different question — how much of that rung's score is abundance — and because leaving it",
+        "out would print only the flattering statistic.",
+    ]
+    return out
+
+
+def _control_table(d: dict, pred_label: str) -> list[str]:
+    """The R1-R3 rows, one column per control the statistic ACTUALLY computed.
+
+    Built from ``d["controls"]`` rather than from a hardcoded column list. The two-column version
+    of this table survived the addition of a third control and rendered 2 of 3 while quoting a
+    3-control span: on ``deep_starmap`` it showed 38.3 % and 12.7 % -- a span of 0.256 -- beside a
+    stated span of **0.395**, so the report disagreed with itself on its own page and the hidden
+    value was either +0.522 or -0.012, two opposite readings. ``specs/10`` §4.2m again, and the
+    reason a renderer must be driven by the data it is given.
+    """
+    names = list(d["controls"])
+    head = " | ".join(_CONTROL_LABEL.get(n, n) for n in names)
+    return [
+        f"| quantity | {head} |",
+        "|---" * (len(names) + 1) + "|",
+        "| **R1** `corr(I_real, control)` — is the tissue's ordering a sparsity ordering? | "
+        + " | ".join(f"{d[f'R1_corr_Ireal_{n}']:+.4f}" for n in names)
+        + " |",
+        f"| **R2** `corr({pred_label}, control)` | "
+        + " | ".join(f"{d[f'R2_corr_Ipred_{n}']:+.4f}" for n in names)
+        + " |",
+        f"| **R3** partial `corr({pred_label}, I_real given control)` | "
+        + " | ".join(f"{d[f'R3_partial_{n}']:+.4f}" for n in names)
+        + " |",
+        f"| retained fraction of `r` = {d['r4']:+.4f} | "
+        + " | ".join(f"{d[f'retained_{n}']:.1%}" for n in names)
+        + " |",
+    ]
 
 
 def _null_block(null: dict) -> list[str]:
@@ -1140,6 +1400,11 @@ def _null_block(null: dict) -> list[str]:
         "spread and says nothing about the centre. A sound construction has `mean_r` at zero; the",
         "spread is a resolution limit and lives in the bootstrap below, not here",
         "(`null_band_preregistration.md` §2a). Fires on `|mean_r| > 2 * sd_r / sqrt(seeds)`.",
+        "",
+        "**This is the same construction as the `A1n` rung above and as `spatial_scramble` in the",
+        "`flanking_copy` block** — permute the real section's cells, correlate against its own",
+        "per-gene `I`. All three now run at the same seed count so they cannot read as three",
+        "separate findings (§2a-bis).",
         "",
         "| scope | seeds | mean r | sd | 2 x se | 2.5% .. 97.5% | verdict |",
         "|---|---|---|---|---|---|---|",
@@ -1307,6 +1572,9 @@ def flanking_block(f: dict) -> list[str]:
         "|---|---|---|---|---|",
     ]
     for w in f["f3"]:
+        if w.get("refused"):
+            out.append(f"| {w['width']} genes | 🚩 **REFUSED** | {md_cell(w['refused'])} | — | — |")
+            continue
         frac = w["median_r"] / f["r_flank"] if f["r_flank"] else float("nan")
         out.append(
             f"| {w['width']} genes | **{w['median_r']:+.4f}** | {w['p2.5']:+.4f} .. "
@@ -1322,20 +1590,7 @@ def flanking_block(f: dict) -> list[str]:
         "",
         "### §3 — R3 for the copy, under all three controls",
         "",
-        "| quantity | detection | log mean | log variance |",
-        "|---|---|---|---|",
-        "| **R1** `corr(I_real, control)` | "
-        + " | ".join(f"{r3[f'R1_corr_Ireal_{n}']:+.4f}" for n in r3["controls"])
-        + " |",
-        "| **R2** `corr(I_copy, control)` | "
-        + " | ".join(f"{r3[f'R2_corr_Ipred_{n}']:+.4f}" for n in r3["controls"])
-        + " |",
-        "| **R3** partial `corr(I_copy, I_real given control)` | "
-        + " | ".join(f"{r3[f'R3_partial_{n}']:+.4f}" for n in r3["controls"])
-        + " |",
-        f"| retained fraction of `r_flank` = {r3['r4']:+.4f} | "
-        + " | ".join(f"{r3[f'retained_{n}']:.1%}" for n in r3["controls"])
-        + " |",
+        *_control_table(r3, "I_copy"),
         "",
         f"The three specifications span **{r3['spec_disagreement']:.3f}** against a 0.150",
         "tolerance, and the bands must be met by **every** control, not by their mean (§3-§4).",
@@ -1497,17 +1752,19 @@ def _over_seeds(rows: list[dict]) -> dict:
     per-seed list are carried rather than summarised away.
     """
     values = [r["median_I"] for r in rows]
-    head = dict(rows[0])
+    head = {k: v for k, v in rows[0].items() if k != "per_gene_I_rank"}
     head.pop("seed", None)
     head["median_I"] = float(np.median(values))
     head["min_I"] = float(np.min(values))
     head["max_I"] = float(np.max(values))
     head["n_seeds"] = len(rows)
     head["per_seed"] = [{"seed": r["seed"], "median_I": r["median_I"]} for r in rows]
-    # The ladder correlates each arm's per-gene I vector against the tissue's, at every seed the arm
-    # was drawn at, as the median rows already are. Keeping only the first seed's would make the
-    # ladder the one single-seed statistic in the ablation.
-    head["per_seed_I_rank"] = [r["per_gene_I_rank"] for r in rows]
+    # NO vector is attached here. The ladder correlates each arm's per-gene I at every seed, but it
+    # reads `per_seed[key]` directly and never this collapsed head -- so the list of arrays that
+    # used to live on `head["per_seed_I_rank"]` was dead weight, and it is what crashed both runs at
+    # `json.dumps` on the final line, after the fit and every measurement had been paid for. The
+    # sidecar excluded `per_gene_I_rank` BY NAME and a second array key was added beside it.
+    # Vectors now reach the sidecar through no row at all; `_scalar_row` enforces it.
     return head
 
 
@@ -1955,6 +2212,83 @@ def _raises(fn) -> bool:
     return False
 
 
+def _message(fn) -> str:
+    """The message ``fn()`` raised with, or "". A guard that fires without saying what fired is
+    half a guard: the run that dies at the end needs the key's name, not just a type."""
+    try:
+        fn()
+    except Exception as exc:
+        return str(exc)
+    return ""
+
+
+def build_sidecar(
+    *,
+    run: dict,
+    density: dict,
+    theta_stats: dict | None,
+    panel_info: dict,
+    rows: list[dict],
+    agreement: dict,
+    ladder: dict,
+    sparsity: dict,
+    null_check: dict,
+    boot: dict,
+    stage4_seeds: list[dict],
+    flanking: dict,
+    floor: dict,
+    invariant_note: str,
+    ablation_rows: list[dict],
+    ablation_seeds: list[int],
+    ablation_levels: dict,
+    mu_spread: list[dict],
+    mu_variance: dict,
+) -> dict:
+    """Assemble the JSON sidecar. Factored out so ``--self-check`` runs THIS code, not a copy.
+
+    Both `a1_*` runs died here on their last line -- after the fit, the ablation, the 20-seed null
+    and the flanking arm had all been paid for -- because a list of arrays reached ``json.dumps``.
+    ``--self-check`` was 117/117 through two of those runs: it exercised every constructor and
+    never the assembly. A check that does not build the object under test verifies the path it
+    exercises, not the change.
+    """
+    return {
+        "run": run,
+        "density": density,
+        "theta": theta_stats,
+        "panel": panel_info,
+        "stages": [_scalar_row(r) for r in rows],
+        "agreement": agreement,
+        "ladder": ladder,
+        "sparsity": sparsity,
+        "null_check": null_check,
+        "bootstrap": boot,
+        "stage4_seeds": stage4_seeds,
+        # `i_flank` is a VECTOR. It is stripped here, inside the builder the self-check
+        # round-trips, rather than at the call site the self-check never sees.
+        "flanking_copy": {
+            k: v for k, v in flanking.items() if k not in ("R3", "i_flank")
+        }
+        or None,
+        "flanking_R3": flanking.get("R3"),
+        "abundance_floor": floor or None,
+        "invariant_violated": invariant_note or None,
+        "emission_ablation": {
+            "ran": bool(ablation_rows),
+            "seeds": [int(x) for x in ablation_seeds],
+            "arms": [_scalar_row(r) for r in ablation_rows],
+            "level_vs_real": ablation_levels,
+            "mu_spread": mu_spread,
+        },
+        "mu_variance": mu_variance,
+    }
+
+
+def write_sidecar(path: Path, sidecar: dict) -> None:
+    """Serialise the sidecar, or raise with the key that could not be written."""
+    path.write_text(json.dumps(sidecar, indent=2, default=_json_scalar))
+
+
 def _self_check() -> int:
     """Assert the panel and density logic on synthetic fields. Seconds, no fit, no data.
 
@@ -2273,18 +2607,16 @@ def _self_check() -> int:
     with4 = "\n".join(ladder_block(clean_ladder, {}, ag4))
     dirty_txt = "\n".join(ladder_block(dirty_ladder, {}))
     spars = {
-        "R1_corr_Ireal_detection": 0.5,
-        "R1_corr_Ireal_logmean": 0.5,
-        "R2_corr_Ipred_detection": 0.4,
-        "R2_corr_Ipred_logmean": 0.4,
-        "R3_partial_detection": 0.3,
-        "R3_partial_logmean": 0.3,
+        "controls": ["detection", "logmean", "logvar"],
         "r4": 0.5,
-        "retained_detection": 0.6,
-        "retained_logmean": 0.6,
         "spec_disagreement": 0.0,
         "verdict": "SPATIAL",
+        **{f"R1_corr_Ireal_{n}": 0.5 for n in ("detection", "logmean", "logvar")},
+        **{f"R2_corr_Ipred_{n}": 0.4 for n in ("detection", "logmean", "logvar")},
+        **{f"R3_partial_{n}": 0.3 for n in ("detection", "logmean", "logvar")},
+        **{f"retained_{n}": 0.6 for n in ("detection", "logmean", "logvar")},
     }
+    two_spec = {**spars, "controls": ["detection", "logmean"]}
     checks += [
         ("ladder_block returns nothing when the ladder is empty", ladder_block({}, {}) == []),
         ("it renders every rung it was given", clean_txt.count("| panel |") == 3),
@@ -2304,8 +2636,10 @@ def _self_check() -> int:
         ),
         (
             "the rungs are ordered ceiling -> emission -> perfect latent -> where we are -> null",
-            [seg for seg in ("A1c", "A1a", "where we are", "A1n") if seg in with4]
-            == sorted(("A1c", "A1a", "where we are", "A1n"), key=with4.index),
+            (lambda rows_: [s_ for s_ in ("A1c", "A1a", "where we are", "A1n") if s_ in rows_]
+             == sorted(("A1c", "A1a", "where we are", "A1n"), key=rows_.index))(
+                "\n".join(r for r in with4.splitlines() if r.startswith("| panel |"))
+            ),
         ),
         (
             "stage 4 is NOT invented for a scope the ladder has no rungs in",
@@ -2319,8 +2653,27 @@ def _self_check() -> int:
         ("the ladder table itself no longer carries the alarm", "NULL RUNG" not in dirty_txt),
         ("R1-R3 are omitted when the decomposition was not computed", "R1" not in clean_txt),
         (
-            "and rendered under BOTH control specifications when it was",
-            "\n".join(ladder_block(clean_ladder, spars)).count("| detection rate |") == 1,
+            "R1-R3 renders EVERY control the statistic computed, not a hardcoded two",
+            "log count variance" in "\n".join(ladder_block(clean_ladder, spars)),
+        ),
+        (
+            "and exactly as many columns as controls — the defect that made a report "
+            "contradict itself was a 2-column table quoting a 3-control span",
+            all(
+                row.count("|") == 5
+                for row in _control_table(spars, "I_4")
+                if row.startswith("| ")
+            )
+            and all(
+                row.count("|") == 4
+                for row in _control_table(two_spec, "I_4")
+                if row.startswith("| ")
+            ),
+        ),
+        (
+            "the header follows the controls too, so a column cannot be mislabelled",
+            "log count variance" in _control_table(spars, "I_4")[0]
+            and "log count variance" not in _control_table(two_spec, "I_4")[0],
         ),
         (
             "the R1-R3 block carries its own verdict and the disagreement it rests on",
@@ -2466,6 +2819,23 @@ def _self_check() -> int:
     f3_gs = stratified_relabel_r(gene_specific, gene_specific, ctrl_f, 10, range(101, 111))
     checks += [
         (
+            "a derangement leaves NO gene on itself — a plain permutation leaves 1/width of them, "
+            "which inflated the abundance floor to +0.141 where it should have been zero",
+            all(
+                not (_derangement(w_, np.random.default_rng(sd_)) == np.arange(w_)).any()
+                for w_ in (2, 3, 10, 25)
+                for sd_ in range(30)
+            ),
+        ),
+        (
+            "and it is still a permutation, not a subset",
+            sorted(_derangement(12, np.random.default_rng(1))) == list(range(12)),
+        ),
+        (
+            "a stratum of 1 raises rather than silently returning the identity",
+            _raises(lambda: _derangement(1, np.random.default_rng(0))),
+        ),
+        (
             f"F3 SURVIVES relabelling when the agreement is abundance-driven "
             f"({f3_ab['median_r']:+.3f})",
             f3_ab["median_r"] > 0.9,
@@ -2585,9 +2955,8 @@ def _self_check() -> int:
         ("it keeps every seed, so a straddle is visible", len(collapsed["per_seed"]) == 3),
         ("and drops the single-seed key", "seed" not in collapsed),
         (
-            "it carries EVERY seed's per-gene I vector, so the ladder is not single-seed",
-            len(collapsed["per_seed_I_rank"]) == 3
-            and [float(v[0]) for v in collapsed["per_seed_I_rank"]] == [0.10, 0.30, 0.20],
+            "it attaches NO vector — a summary row reaches the JSON sidecar",
+            not any(isinstance(v, np.ndarray) for v in collapsed.values()),
         ),
     ]
 
@@ -2614,6 +2983,206 @@ def _self_check() -> int:
         (
             f"the bounded share stays in [0, 1] ({dn['share_shape_bounded']:.3f})",
             0.0 <= dn["share_shape_bounded"] <= 1.0,
+        ),
+    ]
+
+    # --- the sidecar, ASSEMBLED AND SERIALISED, through the real builder ----------------------
+    # This is what 117/117 missed through two runs that died at `json.dumps` on their last line.
+    # Every part is built by the constructor the run uses, so a vector that reaches a summary row
+    # -- which is exactly what happened -- fails here in a second rather than after an hour.
+    xy_s = rng_c.random((40, 2)) * 50.0
+    cts_s = rng_c.poisson(2.0, size=(40, 6)).astype(np.float64)
+    ref_s = morans_i(xy_s, rank_normalize(cts_s), 5)
+    seeded = []
+    for sd_ in (1, 2, 3):
+        r_ = summarise("A1a. counts ~ emission(mu | h1)", xy_s, cts_s, 5, primary="rank")
+        r_["seed"] = sd_
+        seeded.append(r_)
+    rows_s = [summarise("4. sampled counts", xy_s, cts_s, 5, primary="rank"), _over_seeds(seeded)]
+    dec_s = decomposition_of_r(ref_s, ref_s, cts_s, r4=0.5)
+    flank_s = {
+        "source_section": "section_3",
+        "source_z": 1.0,
+        "target_section": "section_4",
+        "target_z": 2.0,
+        "n_cells_source": 40,
+        "n_cells_target": 40,
+        "n_genes": 6,
+        "r_flank": 0.9,
+        "spearman": 0.9,
+        "mae": 0.01,
+        "stage4_r": 0.5,
+        "scramble": null_centre_test(list(rng_c.normal(0, 0.05, 20))),
+        "f3": [stratified_relabel_r(ref_s, ref_s, ref_s, w, range(101, 106)) for w in (2, 50)],
+        "R3": dec_s,
+        "verdict": "1. FLOOR IS GENUINE",
+    }
+    # The abundance floor, through the real function, on a fixture where the answer is known.
+    # The truth must have a gene-specific component INDEPENDENT of the control, or F3 preserves
+    # everything and the denominator collapses -- which is what the first version of this fixture
+    # did, and is exactly the §4(3) refusal the function is supposed to make.
+    ctrl_a = rng_c.normal(size=160)
+    ctrl_z = (ctrl_a - ctrl_a.mean()) / ctrl_a.std()
+    specific_a = rng_c.normal(size=160)
+    truth_a = 0.5 * ctrl_z + 0.866 * specific_a  # half the ordering is abundance, half is not
+    vecs_a = {
+        "flanking_copy": truth_a + rng_c.normal(0, 0.15, size=160),
+        "abundance_only": ctrl_z + rng_c.normal(0, 0.15, size=160),
+        "4": truth_a + rng_c.normal(0, 0.90, size=160),
+    }
+    floor_s = abundance_floor(
+        vecs_a, truth_a, ctrl_z, copy_key="flanking_copy", seeds=range(101, 111), widths=(10, 20)
+    )
+    thin = abundance_floor(
+        {"flanking_copy": truth_a[:15], "4": truth_a[:15]},
+        truth_a[:15],
+        ctrl_z[:15],
+        copy_key="flanking_copy",
+        seeds=range(101, 106),
+        widths=(10, 25, 50),
+    )
+    no_floor = abundance_floor(
+        {"flanking_copy": truth_a, "4": truth_a},
+        truth_a,
+        rng_c.normal(size=160),
+        copy_key="flanking_copy",
+        seeds=range(101, 141),
+        widths=(10, 20),
+    )
+    floor_txt = "\n".join(abundance_floor_block(floor_s, "all genes"))
+    checks += [
+        (
+            f"the abundance floor separates the abundance half from the rest "
+            f"(F3_copy {floor_s.get('floor', float('nan')):+.3f}, denominator "
+            f"{floor_s.get('denominator', float('nan')):+.3f})",
+            "rescaled" in floor_s and 0.15 < floor_s["floor"] < 0.45,
+        ),
+        (
+            "the COPY rescales to 1.00 by construction",
+            abs(floor_s["rescaled"]["flanking_copy"] - 1.0) < 1e-9,
+        ),
+        (
+            # NOT "~0": §3-bis(b) -- the floor is the SQUARE of the shared loading, so a
+            # prediction that IS the loading scores above it. What must hold is the ordering.
+            f"a rung that is abundance ONLY rescales BELOW one carrying gene-specific signal "
+            f"({floor_s['rescaled']['abundance_only']:+.2f} vs {floor_s['rescaled']['4']:+.2f})",
+            floor_s["rescaled"]["abundance_only"] < floor_s["rescaled"]["4"] - 0.15,
+        ),
+        (
+            f"and a rung with genuine gene-specific signal lands between the two "
+            f"({floor_s['rescaled']['4']:+.2f})",
+            0.10 < floor_s["rescaled"]["4"] < 0.95,
+        ),
+        (
+            "an abundance-only rung loses nothing to F3 — its own F3 IS its own r",
+            abs(floor_s["own_f3"]["abundance_only"] - floor_s["raw"]["abundance_only"]) < 0.12,
+        ),
+        (
+            "the denominator is the COPY's floor for EVERY rung, never the rung's own (§3)",
+            all(
+                abs(v - (floor_s["raw"][k] - floor_s["floor"]) / floor_s["denominator"]) < 1e-9
+                for k, v in floor_s["rescaled"].items()
+            ),
+        ),
+        (
+            "each rung's own F3 is still reported, so the flattering column is not the only one",
+            "its own F3" in floor_txt and "not** a denominator" in floor_txt,
+        ),
+        (
+            "the raw comparison is stated before the rescaled one",
+            floor_txt.index("raw comparison is the result") < floor_txt.index("| **"),
+        ),
+        (
+            "it says in the block that this does not reopen the closeability question",
+            "does not reopen" in floor_txt,
+        ),
+        (
+            "it REFUSES when F3 has no usable width, and only the raw comparison stands",
+            thin.get("refused") is not None
+            and "NOT RESCALED" in "\n".join(abundance_floor_block(thin, "panel")),
+        ),
+        (
+            f"it refuses a floor indistinguishable from the null "
+            f"(F3_copy {no_floor.get('floor', float('nan')):+.3f}) — nothing to rescale by",
+            "null" in (no_floor.get("refused") or ""),
+        ),
+        (
+            "and refuses outright when the scope has no copy rung",
+            "no 'flanking_copy' rung"
+            in abundance_floor(
+                {"4": truth_a}, truth_a, ctrl_z, copy_key="flanking_copy", seeds=[1]
+            )["refused"],
+        ),
+    ]
+
+    def _build() -> dict:
+        return build_sidecar(
+            run={"dataset": "d", "seed": 1},
+            density={"n_used": 40},
+            theta_stats=None,
+            panel_info={"rule": "real", "n_genes": 6, "indices": [int(i) for i in range(6)]},
+            rows=rows_s,
+            agreement={"panel::4. sampled counts": morans_agreement(ref_s, ref_s)},
+            ladder=clean_ladder,
+            sparsity=dec_s,
+            null_check={"panel": nt_c},
+            boot={"panel": bt},
+            stage4_seeds=[{"seed": 1, "n_used": 40, "median_I": 0.1, "r_panel": 0.5, "r_all": None}],
+            flanking=flank_s,
+            floor=floor_s,
+            invariant_note="",
+            ablation_rows=rows_s,
+            ablation_seeds=[1, 2, 3],
+            ablation_levels={"A1a": [1.0]},
+            mu_spread=spread_rows,
+                mu_variance={
+                    "generated": d,
+                    "real_latent": None,
+                    "var_log_mu_ratio_gen_over_real": 1.0,
+                },
+            )
+
+    # Caught rather than allowed to propagate, so this reports as a FAIL **with the offending key**
+    # and the remaining checks still run. A self-check that dies on the first defect tells you less
+    # than one that lists them.
+    try:
+        round_tripped = json.loads(json.dumps(_build(), indent=2, default=_json_scalar))
+        sidecar_error = ""
+    except Exception as exc:
+        round_tripped, sidecar_error = {"stages": [], "emission_ablation": {"arms": []}}, str(exc)
+    leaky = dict(rows_s[0])
+    leaky["extra_vector"] = np.arange(3.0)
+    checks += [
+        (
+            "the ASSEMBLED sidecar serialises through the real handler — the check that "
+            "117/117 was missing while two runs died at json.dumps"
+            + (f" — RAISED: {sidecar_error[:140]}" if sidecar_error else ""),
+            not sidecar_error and round_tripped["stages"][0]["stage"] == "4. sampled counts",
+        ),
+        (
+            "no summary row reaches it carrying a vector",
+            all(
+                not isinstance(v, np.ndarray)
+                for r_ in round_tripped["stages"] + round_tripped["emission_ablation"]["arms"]
+                for v in r_.values()
+            ),
+        ),
+        (
+            "a NEW array on a row is refused by name, not silently stripped — the defect was a "
+            "second array added beside the one the filter knew about",
+            _raises(lambda: _scalar_row(leaky)),
+        ),
+        (
+            "and the refusal names the offending key",
+            "extra_vector" in _message(lambda: _scalar_row(leaky)),
+        ),
+        (
+            "F3 REFUSES a width that cannot make two strata rather than printing a permutation",
+            flank_s["f3"][1].get("refused") and not flank_s["f3"][0].get("refused"),
+        ),
+        (
+            "and the refusal is rendered, so a reader cannot mistake it for a measurement",
+            "REFUSED" in "\n".join(flanking_block(flank_s)),
         ),
     ]
 
@@ -3135,6 +3704,7 @@ def main(argv: list[str] | None = None) -> int:
     null_check: dict = {}
     boot: dict = {}
     flanking: dict = {}
+    floor: dict = {}
     stage4_seeds: list[dict] = []
     theta_stats: dict | None = None
     if args.report_theta:
@@ -3450,7 +4020,13 @@ def main(argv: list[str] | None = None) -> int:
             real,
             k,
             null_seeds=[int(x) for x in args.null_seed],
-            stage4_r=(agreement.get("all genes::4. sampled counts") or {}).get("pearson"),
+            # Fall back to the panel when there is no all-genes pass, as on tier-1 where the
+            # panel IS every gene -- the premise check read "—" there and could not run.
+            stage4_r=(
+                agreement.get("all genes::4. sampled counts")
+                or agreement.get("panel::4. sampled counts")
+                or {}
+            ).get("pearson"),
         )
         print(
             f"  flanking_copy from {flanking['source_section']} in {time.time() - t5:.1f}s",
@@ -3458,11 +4034,39 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"  {flanking['verdict']}")
 
+        # --- the abundance floor (reports/abundance_floor_preregistration.md) ------------------
+        # Needs the copy's own per-gene vector, so it runs here rather than inside the ablation.
+        # The scope is whichever one the agreement table says governs; on tier-1 that is the panel.
+        _scope = "all genes" if ladder_extra.get("vecs_all") else "panel"
+        _vecs = dict(ladder_extra.get("vecs_all" if _scope == "all genes" else "vecs_panel") or {})
+        _ref = ladder_extra.get("ref_all" if _scope == "all genes" else "ref_panel")
+        _v4 = (
+            model_all
+            if _scope == "all genes"
+            else next(
+                (r.get("per_gene_I_rank") for r in rows if r["stage"].startswith("4. ")), None
+            )
+        )
+        if _v4 is not None:
+            _vecs["4"] = _v4
+        _vecs["flanking_copy"] = flanking["i_flank"]
+        if _ref is not None:
+            floor = abundance_floor(
+                _vecs,
+                _ref,
+                gene_detection(real.counts),
+                copy_key="flanking_copy",
+                seeds=[int(x) for x in args.null_seed],
+            )
+            floor["scope"] = _scope
+            print(f"  abundance floor: {floor.get('refused') or floor.get('floor')}")
+
     lines.extend(_verdict(rows, emitted, cfg, args, real, panel))
     lines.extend(agreement_block(agreement, invariant_note))
     lines.extend(ladder_block(ladder, sparsity, agreement, null_check, boot))
     lines.extend(stage4_seed_block(stage4_seeds))
     lines.extend(flanking_block(flanking))
+    lines.extend(abundance_floor_block(floor, floor.get("scope", "")))
     lines.extend(cancelling_defects_block(rows, decomposition, mu_spread))
 
     def _column(d: dict[str, float] | None, key: str, fmt: str) -> str:
@@ -3708,8 +4312,8 @@ def main(argv: list[str] | None = None) -> int:
     print(text)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(text + "\n")
-    sidecar = {
-        "run": {
+    sidecar = build_sidecar(
+        run={
             "dataset": paths.dataset,
             "holdout": paths.holdout,
             "section": args.section,
@@ -3728,39 +4332,36 @@ def main(argv: list[str] | None = None) -> int:
             "z_note": z_note or None,
             "plane_note": plane_note or None,
         },
-        "density": density,
-        "theta": theta_stats,
-        "panel": {
+        density=density,
+        theta_stats=theta_stats,
+        panel_info={
             "rule": args.top_k_by,
             "top_k": int(args.top_k) if panel is not None else None,
             "n_genes": len(panel_genes),
             "genes": panel_genes if panel is not None else None,
             "indices": [int(i) for i in panel] if panel is not None else None,
         },
-        "stages": [{k: v for k, v in r.items() if k != "per_gene_I_rank"} for r in rows],
-        "agreement": agreement,
-        "ladder": ladder,
-        "sparsity": sparsity,
-        "null_check": null_check,
-        "bootstrap": boot,
-        "stage4_seeds": stage4_seeds,
-        "flanking_copy": {k: v for k, v in flanking.items() if k != "R3"} or None,
-        "flanking_R3": flanking.get("R3"),
-        "invariant_violated": invariant_note or None,
-        "emission_ablation": {
-            "ran": bool(ablation_rows),
-            "seeds": [int(x) for x in args.ablation_seed],
-            "arms": [{k: v for k, v in r.items() if k != "per_gene_I_rank"} for r in ablation_rows],
-            "level_vs_real": ablation_levels,
-            "mu_spread": mu_spread,
-        },
-        "mu_variance": {
+        rows=rows,
+        agreement=agreement,
+        ladder=ladder,
+        sparsity=sparsity,
+        null_check=null_check,
+        boot=boot,
+        stage4_seeds=stage4_seeds,
+        flanking=flanking,
+        floor=floor,
+        invariant_note=invariant_note,
+        ablation_rows=ablation_rows,
+        ablation_seeds=[int(x) for x in args.ablation_seed],
+        ablation_levels=ablation_levels,
+        mu_spread=mu_spread,
+        mu_variance={
             "generated": decomposition,
             "real_latent": real_decomposition,
             "var_log_mu_ratio_gen_over_real": mu_var_ratio,
         },
-    }
-    Path(args.out).with_suffix(".json").write_text(json.dumps(sidecar, indent=2, default=_json_scalar))
+    )
+    write_sidecar(Path(args.out).with_suffix(".json"), sidecar)
     print(f"\nwrote {args.out}")
     return 0
 

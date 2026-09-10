@@ -696,6 +696,38 @@ they are the same expression — or the refutation is of something else. A stati
 its definition**, and a name shared with the implementation that happens to be nearest to hand is
 the likeliest way to get this wrong.
 
+### 4.2n A statistic whose seed count, column count or estimator is inherited rather than chosen
+
+**Three instances, one run, one shape.** Each is a parameter of a statistic that was set by
+whatever happened to reach it rather than by the statistic's own requirements.
+
+**The seed count.** The `A1n` rung, the null check and `spatial_scramble` are the *same*
+construction. Only the null check had a pre-registered seed count; the other two inherited
+`--ablation-seed` (3) and a `[:5]` slice that appears in no pre-registration. One quantity was
+reported three times as −0.2472, −0.0080 and +0.2634 — enough to read as a broken construction, a
+failed prediction, and a finding, when it is one number at three precisions.
+
+**The column count.** `decomposition_of_r` gained a third control; its renderer kept two hardcoded
+columns. `deep_starmap` showed 38.3 % and 12.7 % — a span of 0.256 — beside a stated span of
+**0.395**, so the report disagreed with itself and the hidden value was either +0.522 or −0.012,
+two opposite readings. §4.2m's family, reached through a different door: the renderer was not
+driven by the data it was given.
+
+**The estimator.** F3 permutes the pairing between predicted and real genes inside an abundance
+stratum. A plain permutation leaves each gene on itself with probability `1/width`, so `1/width` of
+the true agreement survived and the abundance floor came out too high — **+0.141** on a fixture
+whose floor must be zero. And a stratum wider than the gene count is the *null arm* wearing F3's
+label: tier-1's widths 25 and 50 printed +0.0469 and −0.0314 as measurements.
+
+**The rule.** *A statistic's parameters belong to the statistic.* A seed count, a control set, a
+column list, a stratum width and a permutation scheme are each part of what is being measured, and
+none may be taken from a caller, a flag, a hardcoded literal or a default that was never chosen for
+this use. Concretely: derive a renderer's columns from the data it is handed; give a statistic its
+own seed count and make every block reporting it use that one; refuse a parameter the construction
+cannot support rather than computing something else under its name; and state, when an estimator is
+corrected, which way the correction moves the project's own interest — in the same sentence as the
+correction.
+
 ### 4.2m A report whose table silently shifts a number into the wrong column
 
 **The instance.** The emission ablation labels its first arm
@@ -858,6 +890,7 @@ was written:
 | **whether the record's value exists in any artifact** | 4.2a-iv | `w_autocorr/w_profile/w_distribution = 0.5` is written everywhere as shipped and appears in **no** artifact the project produced — not `Config`, not any recorded fit config, not the one persisted selection. Two standing arguments were reasoned from it. Nothing is missing, every artifact agrees at `0.0`, and every document is wrong |
 | **whether the statistic is the claim's own quantity** | 4.2l | R12's *"9-19 % of the emitted count variance survives as between-cell structure"* was reported refuted at 97.4 % using a statistic that decomposes `Var(log mu)` into latent and size-factor parts and never touches the sampling noise. In R12's own terms the model reads **10.4 %** against the tissue's **>= 42.5 %** — inside R12's range. The refutation is withdrawn; the two quantities share a name because one script implements the other one |
 | **whether the rendered table is square** | 4.2m | `A1a. counts ~ emission(mu \| h1)` carries a markdown delimiter in its label. Unescaped, every cell after it on that row rendered one column to the left, under the wrong heading, in both A1 reports for four rounds. Correctly computed, wrongly displayed — which re-deriving the number cannot catch |
+| **whether the statistic chose its own parameters** | 4.2n | One permutation construction reported as −0.2472 / −0.0080 / +0.2634 because three blocks inherited three seed counts; a 2-column table quoting a 3-control span; an F3 that left 1/width of the genes on themselves and inflated the abundance floor to +0.141 where it must be zero. A seed count, a column list, a stratum width and a permutation scheme are part of the measurement |
 | **whether the run's own alarm reached the run's own report** | 4.2f-i | the `deep_starmap` chain run's spatial-collapse alarm fired at **122 checked steps, 79 of them inversions, and was still firing at the last step (2399, −0.0129)** against a healthy floor of +0.5467 — into stderr, while the report that run wrote carries a provenance block, a stage table and a verdict and says nothing about it. Its `+0.0729` entered a review as a result before the log was opened |
 | **whether the report describes work that was done** | 4.2k | one report said *"top 28 by Moran's I on the real side"* for a selection that kept all 28 genes of a 28-gene panel, and *"matched to the real section: 4073 -> 4073 kept"* for a density match that subsampled nothing — while the other dataset in the same comparison got a genuine top-3.1 % selection, described in the same words |
 | **whether the artifact says which arm it is** | 4.2a-ii | the committed, bitwise-reproducible files behind the six-metric table record no `config_hash`, no `text_emb_mode` and no metric-aware weights, so a correctly measured envelope cannot be matched to them — six clearance figures are flagged rather than numbered for this reason alone |
