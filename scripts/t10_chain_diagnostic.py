@@ -182,6 +182,50 @@ def morans_i_ranked_blocked(
     return out
 
 
+def gene_detection(counts: np.ndarray) -> np.ndarray:
+    """Per-gene detection rate: the fraction of cells with a non-zero count. ``(N, G)`` -> ``(G,)``.
+
+    R1-R3's control variable. A sparse gene's Moran's I is bounded low whatever its spatial
+    structure, so the tissue's own per-gene ``I`` ordering may be substantially a *sparsity*
+    ordering — and a model that matched only the sparsity would score on
+    ``paper_morans_pearson`` without reproducing any spatial fidelity.
+    """
+    return (np.asarray(counts) > 0).mean(axis=0)
+
+
+def partial_correlation(
+    x: np.ndarray, y: np.ndarray, control: np.ndarray, degree: int = 2
+) -> float:
+    """Pearson correlation of ``x`` and ``y``, both residualised on a polynomial in ``control``.
+
+    R3. The question: **given two genes the tissue detects equally often, does the model still
+    order them correctly by spatial autocorrelation?** Controlling for detection removes the part
+    of the agreement that a model could earn by matching sparsity alone.
+
+    The basis is fixed at ``[1, c, c^2]`` in ``reports/ladder_preregistration.md`` §4 rather than
+    chosen here, because "which control specification" is a degree of freedom that would otherwise
+    be settled after seeing the answer. The pre-registration also requires the whole thing repeated
+    with a second control and the reading dropped if they disagree.
+    """
+    ok = ~(np.isnan(x) | np.isnan(y) | np.isnan(control))
+    if ok.sum() < degree + 3:
+        return float("nan")
+    basis = np.vander(np.asarray(control, dtype=np.float64)[ok], degree + 1, increasing=True)
+    out = []
+    for vec in (np.asarray(x, dtype=np.float64)[ok], np.asarray(y, dtype=np.float64)[ok]):
+        coef, *_ = np.linalg.lstsq(basis, vec, rcond=None)
+        out.append(vec - basis @ coef)
+    # A residual counts as constant when it is negligible *relative to the vector it came from*,
+    # not when lstsq happens to return exact zeros. Where the control explains a side completely,
+    # the residual is float noise with a non-zero std, and correlating it would report a number
+    # made entirely of rounding error -- which reads as a finding. NaN is the honest answer.
+    for vec, res in zip((x, y), out, strict=True):
+        scale = float(np.asarray(vec, dtype=np.float64)[ok].std())
+        if float(res.std()) <= 1e-10 * max(scale, 1.0):
+            return float("nan")
+    return float(np.corrcoef(out[0], out[1])[0, 1])
+
+
 def morans_agreement(i_pred: np.ndarray, i_gt: np.ndarray) -> dict[str, float]:
     """bench3's ``_agreement`` on two per-gene Moran's I vectors — **the scored statistic**.
 
@@ -539,6 +583,70 @@ def theta_report(
     return out
 
 
+def decomposition_of_r(
+    i_pred: np.ndarray, i_gt: np.ndarray, real_counts: np.ndarray, *, r4: float
+) -> dict:
+    """R1-R3 — how much of the scored correlation is spatial fidelity and how much is sparsity.
+
+    A sparse gene's Moran's I is bounded low whatever its spatial structure, so the tissue's own
+    per-gene ``I`` ordering may be substantially a **sparsity** ordering — and a model matching
+    only the sparsity would score on ``paper_morans_pearson`` while reproducing no spatial
+    fidelity. R3 asks the question that separates them: *given two genes the tissue detects
+    equally often, does the model still order them correctly by ``I``?*
+
+    Both control specifications of ``reports/ladder_preregistration.md`` §4 are computed — the
+    detection rate and the log mean count — because "which control" is a degree of freedom the
+    pre-registration fixes rather than leaves to be chosen after the answer. The reading is
+    **dropped** when they disagree by more than 0.15 in the retained fraction.
+    """
+    d = gene_detection(real_counts)
+    logmean = np.log(np.asarray(real_counts, dtype=np.float64).mean(axis=0) + 1e-9)
+    out: dict = {
+        "r4": float(r4),
+        "R1_corr_Ireal_detection": float(np.corrcoef(i_gt, d)[0, 1]),
+        "R1_corr_Ireal_logmean": float(np.corrcoef(i_gt, logmean)[0, 1]),
+        "R2_corr_Ipred_detection": float(np.corrcoef(i_pred, d)[0, 1]),
+        "R2_corr_Ipred_logmean": float(np.corrcoef(i_pred, logmean)[0, 1]),
+        "R3_partial_detection": partial_correlation(i_pred, i_gt, d),
+        "R3_partial_logmean": partial_correlation(i_pred, i_gt, logmean),
+    }
+    for name, key in (("detection", "R3_partial_detection"), ("logmean", "R3_partial_logmean")):
+        out[f"retained_{name}"] = (
+            float(out[key] / r4)
+            if r4 and np.isfinite(out[key]) and abs(r4) > 1e-12
+            else float("nan")
+        )
+    spread = abs(out["retained_detection"] - out["retained_logmean"])
+    out["spec_disagreement"] = float(spread)
+    if not np.isfinite(spread) or spread > 0.15:
+        out["verdict"] = "UNINFORMATIVE — the two control specifications disagree"
+    elif abs(r4) < 0.20:
+        out["verdict"] = "UNINFORMATIVE — r(4) below 0.20, the retained fraction is unstable"
+    else:
+        f = float(np.mean([out["retained_detection"], out["retained_logmean"]]))
+        out["verdict"] = (
+            "SPATIAL — the correlation survives controlling for sparsity"
+            if f >= 0.60
+            else (
+                "SPARSITY — most of r(4) is matching which genes are sparse"
+                if f <= 0.30
+                else "PARTIAL"
+            )
+        )
+    return out
+
+
+def md_cell(text: object) -> str:
+    """Escape a value for a markdown table cell.
+
+    Several stage and arm labels contain a literal ``|`` -- ``A1a. counts ~ emission(mu | h1)``
+    is the one that bit. Unescaped, it opens a new column and every cell on that row after it
+    renders one place to the left, silently: the reader sees a number under the wrong heading
+    rather than a broken table. This was live in `reports/a1_*.md` for four rounds.
+    """
+    return str(text).replace("|", "\\|")
+
+
 def agreement_block(agreement: dict[str, dict], invariant_note: str = "") -> list[str]:
     """Q1.5 — the scored statistic beside the median the campaign has been measuring.
 
@@ -584,10 +692,110 @@ def agreement_block(agreement: dict[str, dict], invariant_note: str = "") -> lis
     for key, m in agreement.items():
         gene_set, _, stage = key.partition("::")
         out.append(
-            f"| {gene_set} | {stage} | **{m['pearson']:+.4f}** | {m['spearman']:+.4f} "
+            f"| {gene_set} | {md_cell(stage)} | **{m['pearson']:+.4f}** "
+            f"| {m['spearman']:+.4f} "
             f"| {m['mae']:.4f} | {m['median_pred']:+.4f} | {m['median_gt']:+.4f} "
             f"| {m['n_genes']} |"
         )
+    return out
+
+
+def ladder_block(ladder: dict, sparsity: dict, agreement: dict | None = None) -> list[str]:
+    """The ladder and R1-R3 — is the gap to the copy floor closeable inside this architecture?
+
+    Criteria in ``reports/ladder_preregistration.md``. The bands are **not** applied here: §3c
+    reads them across two datasets and this function knows only one run. What it does enforce is
+    the null check — the permutation arm's ``r`` must be ~0, and if it is not, nothing on the
+    ladder may be read.
+    """
+    out: list[str] = []
+    if not ladder:
+        return out
+    out += [
+        "",
+        "## The ladder — what each rung holds at the truth",
+        "",
+        "Every arm is drawn at the **real section's own cells**, so `pred_xy == gt_xy`. That is an",
+        "advantage stage 4 and bench3 do not have — they compare a generated cell set against the",
+        "real one, each on its own graph — so **a LOW rung here is conclusive and a high one is",
+        "permissive** (`ladder_preregistration.md` §2a).",
+        "",
+        "Reference points on tier-1: the model-free copy floor `flanking_copy` = **0.9836**,",
+        "SpatialZ **0.932**, v25 shipped **0.5574**.",
+        "",
+        "| gene set | rung | **pearson** | across seeds | spearman | mae | genes |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    # Stage 4 -- where we actually are -- is folded into the ladder rather than left in the
+    # agreement block above. The reading in ladder_preregistration.md is entirely about the
+    # DISTANCE between A1a and stage 4, and a rung the reader has to go and find is not beside it.
+    merged = dict(ladder)
+    for scope in ("panel", "all genes"):
+        m4 = (agreement or {}).get(f"{scope}::4. sampled counts")
+        if m4 is not None and any(key.startswith(f"{scope}::") for key in ladder):
+            merged[f"{scope}::4"] = {
+                "arm": "4.  counts ~ emission(mu | model latent)   [where we are]",
+                "median_r": m4["pearson"],
+                "min_r": m4["pearson"],
+                "max_r": m4["pearson"],
+                "n_seeds": 1,
+                "spearman": m4["spearman"],
+                "mae": m4["mae"],
+                "n_genes": m4["n_genes"],
+            }
+    order = {"A1c": 0, "A1b": 1, "A1b-t": 2, "A1b-p": 3, "A1a": 4, "4": 5, "A1n": 6}
+    null_r = None
+    for key in sorted(merged, key=lambda x: (x.partition("::")[0] != "panel", order.get(x.partition("::")[2], 9))):
+        m = merged[key]
+        scope, _, arm = key.partition("::")
+        spread = (
+            f"{m['min_r']:+.4f} .. {m['max_r']:+.4f} ({m['n_seeds']})" if m["n_seeds"] > 1 else "—"
+        )
+        # Several arm labels contain a literal "|" (``emission(mu | h1)``); unescaped it splits
+        # the markdown column and the table renders one cell short from that row on.
+        out.append(
+            f"| {scope} | {md_cell(m['arm'])} "
+            f"| **{m['median_r']:+.4f}** | {spread} "
+            f"| {m['spearman']:+.4f} | {m['mae']:.4f} | {m['n_genes']} |"
+        )
+        if arm.startswith("A1n"):
+            null_r = m["median_r"]
+    if null_r is not None and np.isfinite(null_r) and abs(null_r) > 0.15:
+        out += [
+            "",
+            f"🚨 **NULL RUNG IS NOT NULL** — the permutation arm correlates at {null_r:+.4f}. "
+            "`ladder_preregistration.md` §5(1): the construction is wrong and **nothing on this "
+            "ladder may be read.**",
+        ]
+    if sparsity:
+        out += [
+            "",
+            "### R1-R3 - is the correlation spatial fidelity, or sparsity matching?",
+            "",
+            f"Computed on **{sparsity.get('gene_set', 'the scored panel')}** — the gene set the",
+            "agreement table above says governs.",
+            "",
+            "A sparse gene's Moran's I is bounded low whatever its spatial structure, so a model",
+            "that matched only *which genes are sparse* would score on `paper_morans_pearson`",
+            "without reproducing any spatial fidelity. R3 controls for the tissue's own detection",
+            "rate and asks whether the model still orders genes correctly.",
+            "",
+            "| quantity | detection rate | log mean count |",
+            "|---|---|---|",
+            "| **R1** `corr(I_real, control)` - is the tissue's ordering a sparsity ordering? | "
+            + f"{sparsity['R1_corr_Ireal_detection']:+.4f} | "
+            + f"{sparsity['R1_corr_Ireal_logmean']:+.4f} |",
+            f"| **R2** `corr(I_model, control)` | {sparsity['R2_corr_Ipred_detection']:+.4f} "
+            f"| {sparsity['R2_corr_Ipred_logmean']:+.4f} |",
+            "| **R3** partial `corr(I_4, I_real given control)` | "
+            + f"{sparsity['R3_partial_detection']:+.4f} | {sparsity['R3_partial_logmean']:+.4f} |",
+            f"| retained fraction of `r(4)` = {sparsity['r4']:+.4f} | "
+            f"{sparsity['retained_detection']:.1%} | {sparsity['retained_logmean']:.1%} |",
+            "",
+            f"**{sparsity['verdict']}** — the two specifications differ by "
+            f"{sparsity['spec_disagreement']:.3f} against a 0.150 tolerance "
+            "(`ladder_preregistration.md` §4).",
+        ]
     return out
 
 
@@ -745,6 +953,10 @@ def _over_seeds(rows: list[dict]) -> dict:
     head["max_I"] = float(np.max(values))
     head["n_seeds"] = len(rows)
     head["per_seed"] = [{"seed": r["seed"], "median_I": r["median_I"]} for r in rows]
+    # The ladder correlates each arm's per-gene I vector against the tissue's, at every seed the arm
+    # was drawn at, as the median rows already are. Keeping only the first seed's would make the
+    # ladder the one single-seed statistic in the ablation.
+    head["per_seed_I_rank"] = [r["per_gene_I_rank"] for r in rows]
     return head
 
 
@@ -803,7 +1015,10 @@ def emission_ablation(
 
     Returns the summary rows, a dict of per-arm level ratios (median over seeds of the median over
     the panel of the arm's per-gene mean over the real section's — an arm at a different count level
-    is not comparable in ``I`` however it was drawn), and the ``sd(log mu)`` table of N2.
+    is not comparable in ``I`` however it was drawn), the ``sd(log mu)`` table of N2, and **the
+    ladder**: each arm's per-gene ``I`` correlated against the real section's, which is the
+    **scored** statistic rather than the median every other row reports
+    (``reports/ladder_preregistration.md``).
     """
     from spatialcpav25_gen.infer.generate import _decode
     from spatialcpav25_gen.model.expression import sample_counts
@@ -912,7 +1127,45 @@ def emission_ablation(
         }
         for name, values in spread
     ]
-    return rows, levels, mu_spread
+
+    # --- the ladder (reports/ladder_preregistration.md) -------------------------------------
+    # Every arm is drawn at the REAL cells, so pred_xy == gt_xy: an advantage stage 4 and bench3
+    # do not have, which is why §2a(1) reads a LOW rung as conclusive and a high one as permissive.
+    ref_panel = morans_i(real.xy, rank_normalize(sel(real_counts)), k)
+    ladder: dict = {}
+    for key, label in labels.items():
+        per = [morans_agreement(row["per_gene_I_rank"], ref_panel) for row in per_seed[key]]
+        rs = [m["pearson"] for m in per]
+        ladder[f"panel::{label.split('.')[0]}"] = {
+            "arm": label,
+            "median_r": float(np.median(rs)),
+            "min_r": float(np.min(rs)),
+            "max_r": float(np.max(rs)),
+            "n_seeds": len(rs),
+            "spearman": float(np.median([m["spearman"] for m in per])),
+            "mae": float(np.median([m["mae"] for m in per])),
+            "n_genes": per[0]["n_genes"],
+        }
+    if panel is not None and len(panel) < real_counts.shape[1]:
+        # The panel is the top few per cent by the real section's own I, so its I vector has a
+        # compressed range and every correlation on it is attenuated. bench3 scores all shared
+        # genes, so the all-genes pass governs -- as it did in Q1.5.
+        t = time.time()
+        ref_all = morans_i_ranked_blocked(real.xy, real_counts, k)
+        for key, label in labels.items():
+            m = morans_agreement(morans_i_ranked_blocked(real.xy, drawn[key], k), ref_all)
+            ladder[f"all genes::{label.split('.')[0]}"] = {
+                "arm": label,
+                "median_r": m["pearson"],
+                "min_r": m["pearson"],
+                "max_r": m["pearson"],
+                "n_seeds": 1,
+                "spearman": m["spearman"],
+                "mae": m["mae"],
+                "n_genes": m["n_genes"],
+            }
+        print(f"  ladder, all {real_counts.shape[1]} genes in {time.time() - t:.1f}s", flush=True)
+    return rows, levels, mu_spread, ladder
 
 
 def real_section_reference(
@@ -1342,6 +1595,54 @@ def _self_check() -> int:
         ("a zero-variance vector leaves pearson NaN", np.isnan(flat["pearson"])),
     ]
 
+    # The ladder's null rung and R1-R3's controls. A partial correlation whose control is chosen
+    # after the answer is not a control, so the specification is asserted here as well as fixed in
+    # the pre-registration.
+    rng2 = np.random.default_rng(7)
+    d_ctrl = rng2.uniform(0.02, 0.9, size=200)
+    common = 3.0 * d_ctrl  # both vectors driven ONLY by the control
+    x_sparse, y_sparse = common + rng2.normal(0, 0.05, 200), common + rng2.normal(0, 0.05, 200)
+    shared = rng2.normal(0, 1, 200)  # and a version with genuine shared signal
+    x_spat, y_spat = common + shared, common + shared + rng2.normal(0, 0.05, 200)
+    r_sparse = float(np.corrcoef(x_sparse, y_sparse)[0, 1])
+    r_spat = float(np.corrcoef(x_spat, y_spat)[0, 1])
+    p_sparse = partial_correlation(x_sparse, y_sparse, d_ctrl)
+    p_spat = partial_correlation(x_spat, y_spat, d_ctrl)
+    checks += [
+        (
+            f"two vectors driven only by the control correlate highly ({r_sparse:.3f}) and the "
+            f"partial correlation removes it ({p_sparse:.3f}) — R3's whole point",
+            r_sparse > 0.9 and abs(p_sparse) < 0.4,
+        ),
+        (
+            f"genuine shared signal survives the same control ({r_spat:.3f} -> {p_spat:.3f})",
+            p_spat > 0.9,
+        ),
+        (
+            "partial_correlation returns NaN rather than a number when a residual is constant",
+            bool(np.isnan(partial_correlation(d_ctrl, y_spat, d_ctrl))),
+        ),
+        (
+            "gene_detection is the fraction of NON-ZERO cells",
+            float(gene_detection(np.array([[0.0, 1.0], [2.0, 0.0], [0.0, 0.0], [1.0, 3.0]]))[0])
+            == 0.5,
+        ),
+    ]
+    agree = decomposition_of_r(x_spat, y_spat, np.ones((4, 200)), r4=r_spat)
+    checks.append(
+        (
+            "decomposition_of_r drops the reading when its two control specifications disagree",
+            "UNINFORMATIVE" in agree["verdict"] or agree["spec_disagreement"] <= 0.15,
+        )
+    )
+    low = decomposition_of_r(x_spat, y_spat, np.ones((4, 200)), r4=0.05)
+    checks.append(
+        (
+            "and when r(4) is below 0.20, where the retained fraction is unstable",
+            "UNINFORMATIVE" in low["verdict"],
+        )
+    )
+
     # The report block that explains a model sitting above the tissue. Report-generating code
     # that silently produces nothing is what §4.2k is about, so both branches are asserted.
     def stage(name, value):
@@ -1367,6 +1668,90 @@ def _self_check() -> int:
             spread_rows,
         )
     )
+    def _rung(arm: str, r: float) -> dict:
+        return {
+            "arm": arm,
+            "median_r": r,
+            "min_r": r - 0.01,
+            "max_r": r + 0.01,
+            "n_seeds": 3,
+            "spearman": r,
+            "mae": 0.10,
+            "n_genes": 28,
+        }
+
+    clean_ladder = {
+        "panel::A1c": _rung("A1c. Poisson(mu_oracle)", 0.94),
+        "panel::A1a": _rung("A1a. ZINB(decode(h1))", 0.61),
+        "panel::A1n": _rung("A1n. permutation null", 0.02),
+    }
+    dirty_ladder = dict(clean_ladder)
+    dirty_ladder["panel::A1n"] = _rung("A1n. permutation null", 0.42)
+    ag4 = {"panel::4. sampled counts": {"pearson": 0.51, "spearman": 0.5, "mae": 0.1, "n_genes": 28}}
+    clean_txt = "\n".join(ladder_block(clean_ladder, {}))
+    with4 = "\n".join(ladder_block(clean_ladder, {}, ag4))
+    dirty_txt = "\n".join(ladder_block(dirty_ladder, {}))
+    spars = {
+        "R1_corr_Ireal_detection": 0.5,
+        "R1_corr_Ireal_logmean": 0.5,
+        "R2_corr_Ipred_detection": 0.4,
+        "R2_corr_Ipred_logmean": 0.4,
+        "R3_partial_detection": 0.3,
+        "R3_partial_logmean": 0.3,
+        "r4": 0.5,
+        "retained_detection": 0.6,
+        "retained_logmean": 0.6,
+        "spec_disagreement": 0.0,
+        "verdict": "SPATIAL",
+    }
+    checks += [
+        ("ladder_block returns nothing when the ladder is empty", ladder_block({}, {}) == []),
+        ("it renders every rung it was given", clean_txt.count("| panel |") == 3),
+        (
+            "a rung label containing '|' is escaped, so the markdown table does not split",
+            all(
+                "\\|" in row and row.replace("\\|", "").count("|") == 8
+                for row in "\n".join(
+                    ladder_block({"panel::A1a": _rung("A1a. emission(mu | h1)", 0.6)}, {})
+                ).splitlines()
+                if row.startswith("| panel |")
+            ),
+        ),
+        (
+            "it folds stage 4 INTO the ladder, so the A1a-to-4 distance is on one table",
+            "where we are" in with4 and with4.count("| panel |") == 4,
+        ),
+        (
+            "the rungs are ordered ceiling -> emission -> perfect latent -> where we are -> null",
+            [seg for seg in ("A1c", "A1a", "where we are", "A1n") if seg in with4]
+            == sorted(("A1c", "A1a", "where we are", "A1n"), key=with4.index),
+        ),
+        (
+            "stage 4 is NOT invented for a scope the ladder has no rungs in",
+            "where we are" not in "\n".join(ladder_block({}, {}, ag4)),
+        ),
+        (
+            "it quotes the copy floor, not SpatialZ, as the target",
+            "0.9836" in clean_txt and "0.5574" in clean_txt,
+        ),
+        ("it says a LOW rung is conclusive and a high one permissive", "permissive" in clean_txt),
+        ("a null rung near zero raises no alarm", "NULL RUNG" not in clean_txt),
+        ("a null rung that is NOT null stops the reading", "NULL RUNG IS NOT NULL" in dirty_txt),
+        (
+            "and the alarm quotes the offending number, so it cannot be read past",
+            "+0.4200" in dirty_txt,
+        ),
+        ("R1-R3 are omitted when the decomposition was not computed", "R1" not in clean_txt),
+        (
+            "and rendered under BOTH control specifications when it was",
+            "\n".join(ladder_block(clean_ladder, spars)).count("| detection rate |") == 1,
+        ),
+        (
+            "the R1-R3 block carries its own verdict and the disagreement it rests on",
+            "SPATIAL" in "\n".join(ladder_block(clean_ladder, spars)),
+        ),
+    ]
+
     bare = cancelling_defects_block([r for r in tier1_like if "4p." not in r["stage"]][:2], {}, [])
     checks += [
         ("the cancelling-defects block fires when the model is above the tissue", "ABOVE" in above),
@@ -1378,10 +1763,50 @@ def _self_check() -> int:
         ("and returns nothing when the run has no real reference", bare == []),
     ]
 
+    # Every markdown row this script emits must have the same cell count as its header, whatever
+    # is in the labels. This walks the rendered blocks rather than the format strings, so a new
+    # renderer that forgets md_cell is caught by the output, not by a reviewer.
+    def _table_is_square(text: str) -> bool:
+        header_cells = None
+        for row in text.splitlines():
+            if not row.startswith("|"):
+                header_cells = None
+                continue
+            n = row.replace("\\|", "").count("|")
+            if header_cells is None:
+                header_cells = n
+            elif n != header_cells:
+                return False
+        return True
+
+    piped = {
+        "panel::A1a": _rung("A1a. counts ~ emission(mu | h1)", 0.6),
+        "panel::A1c": _rung("A1c. counts ~ Poisson(mu_oracle)", 0.9),
+    }
+    checks += [
+        ("md_cell escapes a pipe", md_cell("a | b") == "a \\| b"),
+        ("and leaves a clean label alone", md_cell("A1c. Poisson") == "A1c. Poisson"),
+        (
+            "every rendered ladder row has the header's cell count, pipes in labels or not",
+            _table_is_square("\n".join(ladder_block(piped, {}, ag4))),
+        ),
+        (
+            "the squareness check would FAIL on an unescaped pipe, so it is not vacuous",
+            not _table_is_square("| a | b |\n|---|---|\n| x | y | z |"),
+        ),
+    ]
+
     seed_rows = [
-        {"stage": "A1b. x", "median_I": 0.10, "p25": 0.0, "p75": 0.0, "n_channels": 3, "seed": 1},
-        {"stage": "A1b. x", "median_I": 0.30, "p25": 0.0, "p75": 0.0, "n_channels": 3, "seed": 2},
-        {"stage": "A1b. x", "median_I": 0.20, "p25": 0.0, "p75": 0.0, "n_channels": 3, "seed": 3},
+        {
+            "stage": "A1b. x",
+            "median_I": v_,
+            "p25": 0.0,
+            "p75": 0.0,
+            "n_channels": 3,
+            "seed": s_,
+            "per_gene_I_rank": np.full(3, v_),
+        }
+        for s_, v_ in ((1, 0.10), (2, 0.30), (3, 0.20))
     ]
     collapsed = _over_seeds(seed_rows)
     checks += [
@@ -1389,6 +1814,11 @@ def _self_check() -> int:
         ("it carries the range", (collapsed["min_I"], collapsed["max_I"]) == (0.10, 0.30)),
         ("it keeps every seed, so a straddle is visible", len(collapsed["per_seed"]) == 3),
         ("and drops the single-seed key", "seed" not in collapsed),
+        (
+            "it carries EVERY seed's per-gene I vector, so the ladder is not single-seed",
+            len(collapsed["per_seed_I_rank"]) == 3
+            and [float(v[0]) for v in collapsed["per_seed_I_rank"]] == [0.10, 0.30, 0.20],
+        ),
     ]
 
     terms = {"var_shape": np.array([1.0, 4.0, 9.0]), "var_logsize": np.ones(3), "cov": np.zeros(3)}
@@ -1873,6 +2303,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for r in rows:  # print the generated chain before anything else can fail
         print(f"  {r['stage']:<48s} median I = {r['median_I']:+.4f}  (n={r['n_channels']})")
+    ladder: dict = {}
     theta_stats: dict | None = None
     if args.report_theta:
         theta_stats = theta_report(
@@ -1905,7 +2336,7 @@ def main(argv: list[str] | None = None) -> int:
             mu_var_ratio = float(np.median(gen_terms["total"][ok] / denom[ok]))
         if args.emission_ablation:
             t2 = time.time()
-            ablation_rows, ablation_levels, mu_spread = emission_ablation(
+            ablation_rows, ablation_levels, mu_spread, ladder = emission_ablation(
                 model,
                 cfg,
                 real,
@@ -1917,6 +2348,7 @@ def main(argv: list[str] | None = None) -> int:
                 counts_gen=_sel(counts_np),
             )
             print(f"  emission ablation in {time.time() - t2:.1f}s", flush=True)
+
             for r in ablation_rows:
                 print(f"  {r['stage']:<48s} median I = {r['median_I']:+.4f}  (n={r['n_channels']})")
     except Exception as exc:  # a reference failure must not discard the chain above
@@ -2025,7 +2457,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             rank = f"**{rank}** *"
         lines.append(
-            f"| {r['stage']:<{width}} | {raw} | {rank} | {r['p25']:+.4f} "
+            f"| {md_cell(r['stage']):<{width}} | {raw} | {rank} | {r['p25']:+.4f} "
             f"| {r['p75']:+.4f} | {r['n_channels']} |"
         )
     # Q1: the invariant that would have caught the transform mismatch. 4p is an independent draw
@@ -2048,6 +2480,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Q1.5: the scored statistic, from vectors this run already has.
     agreement: dict[str, dict] = {}
+    sparsity: dict = {}
     ref_gene_I = next(
         (r.get("per_gene_I_rank") for r in rows if r["stage"].startswith("REF real counts")), None
     )
@@ -2067,6 +2500,7 @@ def main(argv: list[str] | None = None) -> int:
             # compressed range and its correlation is attenuated. bench3 scores ALL shared genes,
             # so the all-genes pass is the one closer to the benchmark and it governs.
             t3 = time.time()
+            model_all = None
             ref_all = morans_i_ranked_blocked(real.xy, real.counts, k)
             for label, arr in (
                 ("3. decoded mu", mu.numpy()),
@@ -2076,13 +2510,35 @@ def main(argv: list[str] | None = None) -> int:
                     np.random.default_rng(SEED).poisson(np.maximum(mu.numpy(), 0.0)),
                 ),
             ):
-                agreement[f"all genes::{label}"] = morans_agreement(
-                    morans_i_ranked_blocked(xy, np.asarray(arr, dtype=np.float64), k), ref_all
-                )
+                vec_all = morans_i_ranked_blocked(xy, np.asarray(arr, dtype=np.float64), k)
+                agreement[f"all genes::{label}"] = morans_agreement(vec_all, ref_all)
+                if label.startswith("4."):
+                    model_all = vec_all
             print(f"  all-gene agreement over {len(genes)} genes in {time.time() - t3:.1f}s")
+            # R1-R3 runs on whichever gene set GOVERNS, which is the all-genes pass wherever it
+            # ran. The panel is the top few per cent by the tissue's OWN I, so on it `I_real` has
+            # almost no spread and the partial correlation is attenuated for a reason that has
+            # nothing to do with sparsity; and a panel chosen by I is not independent of detection
+            # rate, so the control would be conditioned on. Neither is true of all genes.
+            sparsity = decomposition_of_r(
+                model_all,
+                ref_all,
+                real.counts,
+                r4=agreement["all genes::4. sampled counts"]["pearson"],
+            )
+            sparsity["gene_set"] = f"all {len(genes)} genes"
+        else:
+            sparsity = decomposition_of_r(
+                next(r["per_gene_I_rank"] for r in rows if r["stage"].startswith("4. ")),
+                ref_gene_I,
+                _sel(real.counts),
+                r4=agreement["panel::4. sampled counts"]["pearson"],
+            )
+            sparsity["gene_set"] = "the scored panel"
 
     lines.extend(_verdict(rows, emitted, cfg, args, real, panel))
     lines.extend(agreement_block(agreement, invariant_note))
+    lines.extend(ladder_block(ladder, sparsity, agreement))
     lines.extend(cancelling_defects_block(rows, decomposition, mu_spread))
 
     def _column(d: dict[str, float] | None, key: str, fmt: str) -> str:
@@ -2178,7 +2634,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 seeds_s = "—"
             lines.append(
-                f"| {r['stage']:<{width_a}} | **{r['median_I']:+.4f}** | {seeds_s} "
+                f"| {md_cell(r['stage']):<{width_a}} | **{r['median_I']:+.4f}** | {seeds_s} "
                 f"| {r['n_channels']} | {level_s} | {rec_s} | {band(recovery)} |"
             )
         lines += [
@@ -2208,7 +2664,7 @@ def main(argv: list[str] | None = None) -> int:
                 median_band = band(float(np.median(recoveries)))
                 verdict = median_band if stable else "**UNRESOLVED** (seeds straddle)"
                 lines.append(
-                    f"| {r['stage'].split('.')[0]} | "
+                    f"| {md_cell(r['stage'].split('.')[0])} | "
                     + ", ".join(f"{x:+.2f}" for x in recoveries)
                     + f" | {', '.join(dict.fromkeys(bands))} | {verdict} |"
                 )
@@ -2359,6 +2815,8 @@ def main(argv: list[str] | None = None) -> int:
         },
         "stages": [{k: v for k, v in r.items() if k != "per_gene_I_rank"} for r in rows],
         "agreement": agreement,
+        "ladder": ladder,
+        "sparsity": sparsity,
         "invariant_violated": invariant_note or None,
         "emission_ablation": {
             "ran": bool(ablation_rows),

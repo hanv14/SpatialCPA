@@ -8848,3 +8848,52 @@ in `reports/q15_review.md`.
 advisor report the whole time. And I over-stated §2's caveat — I wrote the reconstruction "is not
 comparable to 0.557 as a number", and on tier-1 it lands within 0.05 of it on the same gene set. The
 caveat was right to state and wrong to lean on.
+
+---
+
+## Round 12 — the ladder is built (instrument only; no numbers yet)
+
+**§10 is closed** on Q1.5's measurement, as instructed: no dataset returns MOVES IT + CEILING HIGH,
+and on tier-1 a complete emission repair takes the scored statistic from **+0.5076 to +0.3878**,
+*widening* the gap to the model-free copy floor. Q2 (M3) and Q3 (B1) do not run.
+
+**Built** (`scripts/t10_chain_diagnostic.py`), against `reports/ladder_preregistration.md`, whose
+reading was committed in `3909ce5` **before any of this ran**:
+
+- **The ladder.** Each A1 arm's per-gene ranked `I` correlated against the real section's, on the
+  same panel — the scored statistic, not the median every other row reports. All four arms were
+  already drawn; only the correlation is new. `A1c` (Poisson(mu_oracle), model-free) is the
+  instrument's own ceiling, `A1b` what the emission costs, `A1a` what a *perfect* latent buys,
+  and **stage 4 is folded into the same table** — the reading is entirely about the A1a-to-4
+  distance, and a rung the reader must find in another block is not beside it.
+- **The null check is enforced in the renderer, not left to the reader.** `A1n` is a permutation
+  arm and must correlate at ~0; above 0.15 the block prints `🚨 NULL RUNG IS NOT NULL` and states
+  that nothing on the ladder may be read. §4.2f-i's lesson applied at the point of rendering.
+- **All-genes pass.** The panel is the top few per cent by the tissue's own `I`, so its `I` vector
+  has a compressed range and every correlation on it is attenuated. bench3 scores all shared genes,
+  so the all-genes pass governs — as it did in Q1.5.
+- **R1–R3**, under **two** control specifications (detection rate, log mean count), with the reading
+  dropped as UNINFORMATIVE if they disagree by more than 0.15 or if `|r(4)| < 0.20`. **Corrected
+  while building:** R1–R3 now runs on whichever gene set governs — all genes wherever that pass ran.
+  A panel selected by the tissue's own `I` is not independent of detection rate, so the control
+  would have been partly conditioned on, and the block now names the gene set it used.
+
+**Three defects found and fixed in the build, none of them in the new statistic:**
+
+1. **`per_gene_I_rank` `KeyError`** — `_over_seeds` read a key the self-check's fixtures did not
+   carry. Fixed by giving the fixtures the key rather than making the read tolerant: a silent
+   fallback here would have dropped the ladder to a single seed without saying so.
+2. **`partial_correlation` returned float noise instead of NaN** when the control explained one
+   side completely: the guard tested `residual.std() == 0`, and `lstsq` does not return exact
+   zeros. A correlation made entirely of rounding error reads as a finding. Now scale-relative.
+3. **§4.2m — the pipe.** `A1a. counts ~ emission(mu | h1)` carries a markdown delimiter. Unescaped,
+   every cell after it on that row rendered **one column to the left, under the wrong heading**, in
+   both A1 reports for four rounds. Correctly computed, wrongly displayed — which re-deriving the
+   number cannot catch. Fixed at one point (`md_cell`), with a self-check that walks the *rendered*
+   rows for header-matching cell counts and is verified to fail on an unescaped pipe. New rule
+   §4.2m in `specs/10`.
+
+`--self-check` **86/86**. `tests/test_config.py` 7/7.
+
+**Still owed:** once the ladder is in, the plain answer §3c's verdict table calls for — whether
+v25's reconstruction deficit is closeable within this architecture.

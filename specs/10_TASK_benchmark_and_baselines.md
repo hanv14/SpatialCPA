@@ -696,6 +696,28 @@ they are the same expression — or the refutation is of something else. A stati
 its definition**, and a name shared with the implementation that happens to be nearest to hand is
 the likeliest way to get this wrong.
 
+### 4.2m A report whose table silently shifts a number into the wrong column
+
+**The instance.** The emission ablation labels its first arm
+`A1a. counts ~ emission(mu | h1)`. That label is a markdown table cell, and the `|` in it opens a
+new column. From that row on, every cell renders one place to the **left**: the reader sees a
+number under the heading of the column to its right, on the one row the whole A1 ablation is
+anchored on. The table does not look broken — one row simply has an extra column, which most
+renderers pad silently. It was live in `reports/a1_tier1.md` and `reports/a1_deep.md` for four
+rounds, and it was found by rendering a fixture rather than by reading the reports.
+
+**Why it is its own entry rather than a typo.** Every other rule in §4.2 is about a number being
+*computed* against the wrong referent. This one is about a number that is computed correctly and
+then *displayed* against the wrong heading, which is indistinguishable to the reader from the
+first kind and cannot be caught by re-deriving the number. The report is the instrument here: this
+project has read its results out of generated markdown for the whole campaign.
+
+**The rule.** *A rendered table is an output and gets a check like any other.* Every markdown row a
+script emits must have its header's cell count, verified on a fixture whose labels contain the
+delimiter — the check walks the **rendered text**, not the format string, so a renderer that
+forgets to escape is caught by its output. `scripts/t10_chain_diagnostic.py::md_cell` and the
+squareness check in its `--self-check` are the implementation.
+
 ### 4.2f-i ⚠️ An alarm that fires into the run whose report says nothing about it
 
 §4.2f is *an alarm that fires where nobody looks*. This is the same failure one turn tighter: the
@@ -835,6 +857,7 @@ was written:
 | **which instrument the envelope came from** | 4.2a-i | two scorers over the same six metric names, and **every three-seed envelope ever quoted came from the one the headline numbers were not scored on** — a 2.6x–6.7x difference on tier-1, forbidden in prose by §5 while every "Nx the envelope" in the project performed it |
 | **whether the record's value exists in any artifact** | 4.2a-iv | `w_autocorr/w_profile/w_distribution = 0.5` is written everywhere as shipped and appears in **no** artifact the project produced — not `Config`, not any recorded fit config, not the one persisted selection. Two standing arguments were reasoned from it. Nothing is missing, every artifact agrees at `0.0`, and every document is wrong |
 | **whether the statistic is the claim's own quantity** | 4.2l | R12's *"9-19 % of the emitted count variance survives as between-cell structure"* was reported refuted at 97.4 % using a statistic that decomposes `Var(log mu)` into latent and size-factor parts and never touches the sampling noise. In R12's own terms the model reads **10.4 %** against the tissue's **>= 42.5 %** — inside R12's range. The refutation is withdrawn; the two quantities share a name because one script implements the other one |
+| **whether the rendered table is square** | 4.2m | `A1a. counts ~ emission(mu \| h1)` carries a markdown delimiter in its label. Unescaped, every cell after it on that row rendered one column to the left, under the wrong heading, in both A1 reports for four rounds. Correctly computed, wrongly displayed — which re-deriving the number cannot catch |
 | **whether the run's own alarm reached the run's own report** | 4.2f-i | the `deep_starmap` chain run's spatial-collapse alarm fired at **122 checked steps, 79 of them inversions, and was still firing at the last step (2399, −0.0129)** against a healthy floor of +0.5467 — into stderr, while the report that run wrote carries a provenance block, a stage table and a verdict and says nothing about it. Its `+0.0729` entered a review as a result before the log was opened |
 | **whether the report describes work that was done** | 4.2k | one report said *"top 28 by Moran's I on the real side"* for a selection that kept all 28 genes of a 28-gene panel, and *"matched to the real section: 4073 -> 4073 kept"* for a density match that subsampled nothing — while the other dataset in the same comparison got a genuine top-3.1 % selection, described in the same words |
 | **whether the artifact says which arm it is** | 4.2a-ii | the committed, bitwise-reproducible files behind the six-metric table record no `config_hash`, no `text_emb_mode` and no metric-aware weights, so a correctly measured envelope cannot be matched to them — six clearance figures are flagged rather than numbered for this reason alone |
