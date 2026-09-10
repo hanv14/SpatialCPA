@@ -102,27 +102,39 @@
   "stages": [
     {
       "stage": "1. prior h0 = GRF at generated xyz",
+      "transform": "raw",
+      "median_I_raw": 0.9272423976522336,
       "median_I": 0.9272423976522336,
       "p25": 0.9239236362693555,
       "p75": 0.9299671282610494,
-      "n_channels": 64
+      "n_channels": 64,
+      "median_I_rank": 0.9211003237935086
     },
     {
       "stage": "2. latent h after the flow",
+      "transform": "raw",
+      "median_I_raw": 0.7782498196766376,
       "median_I": 0.7782498196766376,
       "p25": 0.7590098595449346,
       "p75": 0.8379328445915698,
-      "n_channels": 64
+      "n_channels": 64,
+      "median_I_rank": 0.7627653252045533
     },
     {
       "stage": "3. decoded mu (before sampling)",
+      "transform": "raw",
+      "median_I_raw": 0.7451457509422788,
       "median_I": 0.7451457509422788,
       "p25": 0.728598656880854,
       "p75": 0.7999805100497707,
-      "n_channels": 32
+      "n_channels": 32,
+      "median_I_rank": 0.7699346070331945
     },
     {
       "stage": "4. sampled counts (rank-normalised)",
+      "transform": "rank",
+      "median_I_raw": 0.09793983049437988,
+      "median_I_rank": 0.11539606879307318,
       "median_I": 0.11539606879307318,
       "p25": 0.06125598244955199,
       "p75": 0.20302637359683595,
@@ -130,6 +142,9 @@
     },
     {
       "stage": "4p. counts ~ Poisson(mu) \u2014 emission noise removed",
+      "transform": "rank",
+      "median_I_raw": 0.3030245509192858,
+      "median_I_rank": 0.25941543522824034,
       "median_I": 0.25941543522824034,
       "p25": 0.18247962993778588,
       "p75": 0.3965377662250416,
@@ -137,6 +152,9 @@
     },
     {
       "stage": "REF real counts (rank-normalised)",
+      "transform": "rank",
+      "median_I_raw": 0.2668582351605193,
+      "median_I_rank": 0.31233103484527275,
       "median_I": 0.31233103484527275,
       "p25": 0.2653906122573587,
       "p75": 0.34328534642123887,
@@ -144,12 +162,66 @@
     },
     {
       "stage": "REF real latent h1 = encoder(real counts)",
+      "transform": "raw",
+      "median_I_raw": 0.31710372628145517,
       "median_I": 0.31710372628145517,
       "p25": 0.28923349953742805,
       "p75": 0.4276410548881242,
-      "n_channels": 64
+      "n_channels": 64,
+      "median_I_rank": 0.26884932970551134
     }
   ],
+  "agreement": {
+    "panel::3. decoded mu": {
+      "n_genes": 32,
+      "median_pred": 0.7699346070331945,
+      "median_gt": 0.31233103484527275,
+      "mae": 0.45857150064599556,
+      "pearson": 0.1254054278346745,
+      "spearman": 0.37976539589442815
+    },
+    "panel::4. sampled counts": {
+      "n_genes": 32,
+      "median_pred": 0.11539606879307318,
+      "median_gt": 0.31233103484527275,
+      "mae": 0.196095924453866,
+      "pearson": 0.405468716984169,
+      "spearman": 0.4673753665689148
+    },
+    "panel::4p. Poisson(mu) \u2014 emission-free": {
+      "n_genes": 32,
+      "median_pred": 0.25941543522824034,
+      "median_gt": 0.31233103484527275,
+      "mae": 0.10733893000565434,
+      "pearson": 0.6130243609161125,
+      "spearman": 0.6341642228739002
+    },
+    "all genes::3. decoded mu": {
+      "n_genes": 1017,
+      "median_pred": 0.7349252978592895,
+      "median_gt": 0.017972952721845566,
+      "mae": 0.6953430495415637,
+      "pearson": 0.43319253811382674,
+      "spearman": 0.5903722998340283
+    },
+    "all genes::4. sampled counts": {
+      "n_genes": 1017,
+      "median_pred": 0.007189503608361281,
+      "median_gt": 0.017972952721845566,
+      "mae": 0.029637840187467915,
+      "pearson": 0.7305820955269053,
+      "spearman": 0.68606793737166
+    },
+    "all genes::4p. Poisson(mu) \u2014 emission-free": {
+      "n_genes": 1017,
+      "median_pred": 0.016041882198287432,
+      "median_gt": 0.017972952721845566,
+      "mae": 0.020559114549577092,
+      "pearson": 0.8400332615450302,
+      "spearman": 0.792929884429467
+    }
+  },
+  "invariant_violated": null,
   "emission_ablation": {
     "ran": true,
     "seeds": [
@@ -160,13 +232,19 @@
     "arms": [
       {
         "stage": "A1a'. mu decoded from h1",
+        "transform": "raw",
+        "median_I_raw": 0.3399345552513776,
         "median_I": 0.3399345552513776,
         "p25": 0.2615520150386327,
         "p75": 0.3678699696047217,
-        "n_channels": 32
+        "n_channels": 32,
+        "median_I_rank": 0.4065596139705003
       },
       {
         "stage": "A1a. counts ~ emission(mu | h1)",
+        "transform": "rank",
+        "median_I_raw": 0.03312802342527388,
+        "median_I_rank": 0.04330693197243038,
         "median_I": 0.04255310263981277,
         "p25": 0.01700292149799064,
         "p75": 0.09470855187576567,
@@ -191,13 +269,19 @@
       },
       {
         "stage": "A1b'. mu_oracle = kNN mean of real counts",
+        "transform": "raw",
+        "median_I_raw": 0.9062676966489378,
         "median_I": 0.9062676966489378,
         "p25": 0.8944945571064147,
         "p75": 0.9358248017356833,
-        "n_channels": 32
+        "n_channels": 32,
+        "median_I_rank": 0.8713260527039313
       },
       {
         "stage": "A1b. counts ~ ZINB(mu_oracle, model theta/pi)",
+        "transform": "rank",
+        "median_I_raw": 0.15861278970735285,
+        "median_I_rank": 0.1722267921523417,
         "median_I": 0.1722267921523417,
         "p25": 0.10914336870638766,
         "p75": 0.26903356682197993,
@@ -222,6 +306,9 @@
       },
       {
         "stage": "A1b-t. counts ~ NB(mu_oracle, model theta), pi=0",
+        "transform": "rank",
+        "median_I_raw": 0.23783681976123422,
+        "median_I_rank": 0.27178223405905466,
         "median_I": 0.27178223405905466,
         "p25": 0.23355946005550757,
         "p75": 0.33870437793662167,
@@ -246,6 +333,9 @@
       },
       {
         "stage": "A1b-p. counts ~ A1c's Poisson draw, then model pi",
+        "transform": "rank",
+        "median_I_raw": 0.38541256447843514,
+        "median_I_rank": 0.29501147674969497,
         "median_I": 0.29111181337944037,
         "p25": 0.1975596135088073,
         "p75": 0.42871765022202996,
@@ -270,6 +360,9 @@
       },
       {
         "stage": "A1c. counts ~ Poisson(mu_oracle)   [model-free]",
+        "transform": "rank",
+        "median_I_raw": 0.6081077823049732,
+        "median_I_rank": 0.49942871514091935,
         "median_I": 0.5006559625530255,
         "p25": 0.43695503545225656,
         "p75": 0.5795108819099928,
@@ -294,6 +387,9 @@
       },
       {
         "stage": "A1n. permutation null (real counts shuffled)",
+        "transform": "rank",
+        "median_I_raw": 0.0010320263667171331,
+        "median_I_rank": 0.0006569918453222664,
         "median_I": 0.00018689921294703265,
         "p25": -0.0007633832107553939,
         "p75": 0.0020548658473117545,

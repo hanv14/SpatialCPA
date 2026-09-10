@@ -21,25 +21,58 @@ The panel restricts the **gene-space stages only** — 3, 4, their calibrated tw
 
 ## The chain
 
-| stage                                             | median I | p25 | p75 | channels |
-|---------------------------------------------------|---|---|---|---|
-| 1. prior h0 = GRF at generated xyz                | **+0.9362** | +0.9274 | +0.9433 | 64 |
-| 2. latent h after the flow                        | **+0.8011** | +0.7224 | +0.8563 | 64 |
-| 3. decoded mu (before sampling)                   | **+0.7920** | +0.6965 | +0.8388 | 28 |
-| 4. sampled counts (rank-normalised)               | **+0.5134** | +0.3995 | +0.5998 | 28 |
-| 4p. counts ~ Poisson(mu) — emission noise removed | **+0.8358** | +0.8062 | +0.8775 | 28 |
-| REF real counts (rank-normalised)                 | **+0.4635** | +0.3587 | +0.5637 | 28 |
-| REF real latent h1 = encoder(real counts)         | **+0.6253** | +0.5092 | +0.7254 | 64 |
+Every stage now carries Moran's I under **both** transforms. A ratio between two stages
+must take both sides from the **same** column: the chain used to rank its count stages
+and leave its mean-field and latent stages raw, which made every `counts / mu` retention
+a cross-transform ratio (`reports/ceiling_review.md` §2). The **primary** column is the
+one that stage's earlier artifacts recorded, and is marked `*`.
+
+| stage                                             | median I (raw) | median I (rank) | p25 | p75 | channels |
+|---------------------------------------------------|---|---|---|---|---|
+| 1. prior h0 = GRF at generated xyz                | **+0.9362** * | +0.9328 | +0.9274 | +0.9433 | 64 |
+| 2. latent h after the flow                        | **+0.8011** * | +0.7608 | +0.7224 | +0.8563 | 64 |
+| 3. decoded mu (before sampling)                   | **+0.7920** * | +0.8365 | +0.6965 | +0.8388 | 28 |
+| 4. sampled counts (rank-normalised)               | +0.4158 | **+0.5134** * | +0.3995 | +0.5998 | 28 |
+| 4p. counts ~ Poisson(mu) — emission noise removed | +0.7911 | **+0.8358** * | +0.8062 | +0.8775 | 28 |
+| REF real counts (rank-normalised)                 | +0.4162 | **+0.4635** * | +0.3587 | +0.5637 | 28 |
+| REF real latent h1 = encoder(real counts)         | **+0.6253** * | +0.5056 | +0.5092 | +0.7254 | 64 |
 
 ## The three numbers
 
 **Retention across the latent -> counts step** — what the emission costs, against what
 the tissue's own sampling noise costs.
 
+⚠️ **The retention column is OVERSTATED and is not a like-for-like ratio.** Its numerator
+is a **rank-normalised** count stage and its denominator a **raw** latent stage; rank-
+normalising a heavy-tailed field raises its Moran's I, so the denominator is too small.
+Both arms carry the same bias, so the *comparison* between them stands and the
+*percentages* do not (`reports/ceiling_review.md` §2).
+
 | arm | counts I | latent I | retention | slope | tissue slope |
 |---|---|---|---|---|---|
 | **real tissue** | +0.4635 | +0.6253 | **74.1%** | 1.738 | — |
 | uncalibrated | +0.5134 | +0.8011 | **64.1%** | 1.846 | 1.738 |
+
+## Q1.5 — the scored statistic, beside the median
+
+`paper_morans_pearson` is the **correlation across genes** between the model's per-gene
+Moran's I vector and the tissue's. Every other number in this report is a **median**, and
+a model can match the median exactly while getting every gene wrong. Reconstructed here
+by bench3's own construction (`evaluate_paper.py::_agreement`, read from source): ranked
+counts both sides, `k=10`, each side on its own graph, NaN genes dropped pairwise.
+
+⚠️ **This is the statistic, not the score** — bench3 takes all shared genes and medians
+over sections 2/4/6, and this is one section. Comparable **between stages**, not to a
+published `paper_*` number (`reports/q15_preregistration.md` §2).
+
+🚩 `mae` is emitted by the evaluator, documented there as **the metric that catches
+over-smoothing**, and is **not** in the project's scored `METRICS` tuple.
+
+| gene set | stage | **pearson** | spearman | mae | median pred | median gt | genes |
+|---|---|---|---|---|---|---|---|
+| panel | 3. decoded mu | **+0.3847** | +0.3820 | 0.3535 | +0.8365 | +0.4635 | 28 |
+| panel | 4. sampled counts | **+0.5076** | +0.5435 | 0.1018 | +0.5134 | +0.4635 | 28 |
+| panel | 4p. Poisson(mu) — emission-free | **+0.3878** | +0.4007 | 0.3529 | +0.8358 | +0.4635 | 28 |
 
 ## Why the model sits ABOVE the tissue here, and why that is not fidelity
 
