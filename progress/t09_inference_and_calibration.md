@@ -8718,3 +8718,67 @@ across mean fields of different spread. Part of the error was the transform mism
 transferred factor divided a ranked count stage by a raw `mu` stage. **The failed prediction measured
 the mechanism more directly than a correct one would have**: had the transfer held, the 0.518 would
 never have been computed.
+
+---
+
+## 2026-09-10 — Q1 built, and Q1.5 pre-registered: the campaign has been measuring a median, the paper is scored on a correlation
+
+**The gap, raised by the user and correct.** Every number in this programme is a **median** per-gene
+Moran's I. `paper_morans_pearson` is a **correlation across genes**, and a model can match the
+tissue's median exactly while getting every individual gene wrong. v25 scores **0.557** against
+SpatialZ's **0.932** and nothing in the chain work has touched it. Before 4.3 h on Q2/Q3, the
+question is whether the quantity the chain moves is coupled to the quantity the paper is judged on.
+
+**The definition was read from the source, not recalled** — `specs/10` §4.2l was earned one round ago
+for exactly that failure. `evaluate_paper.py::_agreement` (line 102) and
+`spatial_autocorrelation_metrics` (line 120), with `pR, gR = _rank_normalize(...)` at line 670 and
+`SPATIAL_K = 10`. **What matches the chain exactly**: ranked counts on both sides, `k = 10` equal to
+`Config.metric_knn_k`, each side on its **own** spatial graph (the evaluator calls it
+"alignment-free", which is how the chain measures stage 4 at the generated cells and `REF real
+counts` at the real ones), NaN genes dropped pairwise. **What does not**: bench3 scores **all** shared
+genes and medians over sections **2/4/6**; a chain run is one section and possibly a panel. So the
+number is **the statistic, not the score** — comparable between stages of one run, never to a
+published `paper_*` value. Fixed in `reports/q15_preregistration.md` §2 before anything was computed.
+
+🚩 **A finding from reading the source.** `_agreement` emits five keys and the project's `METRICS`
+tuple scores one. **`paper_morans_mae` is emitted, is documented in the evaluator's own docstring as
+the metric that catches over-smoothing** — *"a blurred reconstruction inflates Moran's I ... while
+keeping the gene ranking intact"* — **and is not in the scored set.** That is round 11's
+over-smoothing finding, written into the benchmark before this campaign began, with its detector
+named and unscored. Three statistics, and the campaign has measured only the first: the median pair
+(emitted, unscored), `mae` (emitted, unscored), `pearson` (scored). All three are now reported
+together.
+
+**Pre-registered readings**, fixed before computing: **(a)** `d r = r(4p) - r(4)`, bands `>= +0.15`
+MOVES IT / `<= +0.05` DOES NOT; **(b)** `r(4p)` absolute, bands `>= 0.85` / `<= 0.70` — the ceiling
+argument applied to the scored statistic, and the more decisive of the two. `mae` and the median pair
+are reported, not criteria. §6 lists four ways it can fail, including the one that would waste it:
+if `r(4)` is already high while the score is 0.557, the single-section panel-restricted
+reconstruction is not measuring what the benchmark measures — checkable from the numbers themselves.
+
+**Q1 — the transform mismatch, fixed structurally rather than by a note.** `summarise` now takes the
+**untransformed** array and ranks it itself, returning `median_I_raw` **and** `median_I_rank` for
+every stage, with `primary` naming which one `median_I` carries so existing artifacts keep their
+figures. Every call site was changed to stop pre-ranking. `rank_normalize` now appears only inside
+`summarise`, in the self-check, and in panel selection. The report prints both columns and says a
+ratio must take both sides from the same one.
+
+**The invariant is in the code.** `I_rank(4p) <= I_rank(3) + 0.02` — 4p is an independent draw from
+stage 3's field and independent noise cannot raise Moran's I. A violation prints to stderr **and**
+opens the report with `🚨 INVARIANT VIOLATED`, above which no stage-to-stage ratio may be read. This
+is the check that would have caught the mismatch instead of a reader noticing +0.8358 above +0.7920.
+
+**Q1.5 built.** `morans_agreement` reproduces `_agreement`'s construction; `summarise` now carries
+each stage's per-gene ranked `I` vector, so the panel figures are free. On `deep_starmap` the panel
+is the top 3.1 % by the real section's own `I`, which compresses its `I` range and attenuates the
+correlation, so an **all-1017-gene** pass also runs and governs — via `morans_i_ranked_blocked`,
+which is exactly `morans_i(xy, rank_normalize(v), k)` in gene blocks, because the direct call forms
+an `(N, k, G)` array that is **24 GB** at 29 544 cells and 1017 genes.
+
+**Verification.** No torch. `ruff` clean; `pytest tests/test_config.py --noconftest` 7 passed;
+`--self-check` **61/61**, 14 of them new — including that the blocked estimator equals the direct one
+exactly, that a constant offset keeps `pearson` at 1.0 while `mae` rises (the ranking/level split
+Q1.5 exists to expose), that NaN genes drop pairwise as the evaluator does, and that `summarise`
+refuses an unknown `primary`. The agreement numbers themselves are unrun here.
+
+**Q2 and Q3 do not start until Q1.5 is read.**

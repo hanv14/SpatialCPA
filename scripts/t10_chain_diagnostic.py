@@ -125,17 +125,102 @@ def rank_normalize(x: np.ndarray) -> np.ndarray:
     return np.column_stack([rankdata(col, method="average") for col in np.asarray(x).T])
 
 
-def summarise(name: str, xy: np.ndarray, values: np.ndarray, k: int) -> dict[str, float]:
-    """Median / IQR of per-channel Moran's I, plus the channel count."""
-    i = morans_i(xy, values, k)
-    finite = i[np.isfinite(i)]
-    return {
-        "stage": name,
-        "median_I": float(np.median(finite)) if finite.size else float("nan"),
-        "p25": float(np.percentile(finite, 25)) if finite.size else float("nan"),
-        "p75": float(np.percentile(finite, 75)) if finite.size else float("nan"),
-        "n_channels": int(finite.size),
+def summarise(
+    name: str, xy: np.ndarray, values: np.ndarray, k: int, *, primary: str = "raw"
+) -> dict[str, float]:
+    """Median / IQR of per-channel Moran's I **under both transforms**, plus the channel count.
+
+    ``values`` is passed **untransformed**; this function ranks it itself. That is the whole point:
+    the chain used to rank its count stages at the call site and leave its mean-field and latent
+    stages raw, so ``I(4p) = +0.8358`` sat above ``I(3) = +0.7920`` on tier-1 — impossible for a
+    field and an independent draw from it, and the symptom of a ratio taken across two transforms
+    (``reports/ceiling_review.md`` §2).
+
+    ``primary`` names which of the two ``median_I`` carries, so each stage keeps the figure its
+    existing artifacts recorded. ``median_I_raw`` and ``median_I_rank`` are **always both present**,
+    and a ratio between two stages must take both sides from the same column.
+
+    Rank-normalising a heavy-tailed field raises its Moran's I by removing the leverage of a few
+    extreme cells, which is why the raw column is the smaller one for ``mu`` and why the mixed
+    ratios were overstated.
+    """
+    if primary not in ("raw", "rank"):
+        raise ValueError(f"summarise: primary must be 'raw' or 'rank', got {primary!r}")
+    out: dict[str, float] = {"stage": name, "transform": primary}
+    per: dict[str, np.ndarray] = {}
+    for label, array in (("raw", values), ("rank", rank_normalize(values))):
+        i = morans_i(xy, array, k)
+        finite = i[np.isfinite(i)]
+        per[label] = i
+        out[f"median_I_{label}"] = float(np.median(finite)) if finite.size else float("nan")
+        if label == primary:
+            out["median_I"] = out[f"median_I_{label}"]
+            out["p25"] = float(np.percentile(finite, 25)) if finite.size else float("nan")
+            out["p75"] = float(np.percentile(finite, 75)) if finite.size else float("nan")
+            out["n_channels"] = int(finite.size)
+    out["per_gene_I_rank"] = per["rank"]
+    return out
+
+
+def morans_i_ranked_blocked(
+    xy: np.ndarray, values: np.ndarray, k: int, block: int = 64
+) -> np.ndarray:
+    """Per-gene Moran's I of ``rank_normalize(values)``, in gene blocks. ``(N, G)`` -> ``(G,)``.
+
+    Identical to ``morans_i(xy, rank_normalize(values), k)`` and asserted so in ``--self-check``;
+    the blocking exists only to bound memory. ``morans_i`` forms ``xc[idx]``, which is
+    ``(N, k, G)`` — on ``deep_starmap``'s 29 544 cells and 1017 genes that is **24 GB**, so the
+    whole-panel call the agreement statistic needs cannot be made directly.
+
+    Ranking is done per block too, so no ``(N, G)`` float64 copy of the ranks exists either.
+    """
+    x = np.asarray(values)
+    out = np.empty(x.shape[1], dtype=np.float64)
+    for start in range(0, x.shape[1], int(block)):
+        stop = min(start + int(block), x.shape[1])
+        out[start:stop] = morans_i(xy, rank_normalize(x[:, start:stop]), k)
+    return out
+
+
+def morans_agreement(i_pred: np.ndarray, i_gt: np.ndarray) -> dict[str, float]:
+    """bench3's ``_agreement`` on two per-gene Moran's I vectors — **the scored statistic**.
+
+    Reconstructed from ``benchmark-pbya-v3/src/bench3/evaluate_paper.py`` line 102, read from the
+    source rather than recalled (``specs/10`` §4.2l): NaN genes dropped **pairwise**, at least
+    three survivors and non-zero variance on both sides, then Pearson and Spearman across genes,
+    plus the mean absolute deviation and both medians.
+
+    The caller must supply vectors computed the way the evaluator does — rank-normalised counts,
+    ``k = SPATIAL_K = 10``, **each side on its own spatial graph** (the evaluator calls this
+    "alignment-free"). ``Config.metric_knn_k`` is 10, and the chain measures the generated stages
+    at the generated cells and ``REF real counts`` at the real ones, so both hold.
+
+    ⚠️ **This is the statistic, not the score.** bench3 takes all shared genes and medians over
+    held-out sections 2/4/6; a chain run has one section and possibly a panel. The number is
+    comparable **between stages of one run** and is not comparable to a published `paper_*` value.
+    ``reports/q15_preregistration.md`` §2.
+
+    ``morans_mae`` is returned because the evaluator's own docstring names it as the statistic that
+    **catches over-smoothing** — *"a blurred reconstruction inflates Moran's I ... while keeping the
+    gene ranking intact"* — and the project's scored ``METRICS`` tuple does not include it.
+    """
+    from scipy.stats import pearsonr, spearmanr
+
+    p = np.asarray(i_pred, dtype=np.float64)
+    g = np.asarray(i_gt, dtype=np.float64)
+    ok = ~(np.isnan(p) | np.isnan(g))
+    out: dict[str, float] = {
+        "n_genes": int(ok.sum()),
+        "median_pred": float(np.median(p[ok])) if ok.any() else float("nan"),
+        "median_gt": float(np.median(g[ok])) if ok.any() else float("nan"),
+        "mae": float(np.mean(np.abs(p[ok] - g[ok]))) if ok.any() else float("nan"),
+        "pearson": float("nan"),
+        "spearman": float("nan"),
     }
+    if ok.sum() >= 3 and p[ok].std() > 0 and g[ok].std() > 0:
+        out["pearson"] = float(pearsonr(p[ok], g[ok])[0])
+        out["spearman"] = float(spearmanr(p[ok], g[ok])[0])
+    return out
 
 
 def load_training_volume(cfg: Config, input_path: str | Path | None = None) -> TrainingVolume:
@@ -454,6 +539,58 @@ def theta_report(
     return out
 
 
+def agreement_block(agreement: dict[str, dict], invariant_note: str = "") -> list[str]:
+    """Q1.5 — the scored statistic beside the median the campaign has been measuring.
+
+    ``paper_morans_pearson`` is a **correlation across genes**; every number in the chain work is a
+    **median**. A model can match the tissue's median exactly and get every gene wrong, so this
+    table is the first thing in the campaign that reports both quantities side by side.
+
+    Criteria and the three ways this differs from the published score are fixed in
+    ``reports/q15_preregistration.md``; the reading is not applied here, because §5 there puts the
+    bands on a comparison **between** stages and this function does not know which run it is in.
+    """
+    out: list[str] = []
+    if invariant_note:
+        out += [
+            "",
+            f"## 🚨 INVARIANT VIOLATED — {invariant_note}.",
+            "",
+            "No number in this report that divides one stage by another may be read until that is",
+            "explained. `reports/ceiling_review.md` §2 is the last time this fired.",
+        ]
+    if not agreement:
+        return out
+    out += [
+        "",
+        "## Q1.5 — the scored statistic, beside the median",
+        "",
+        "`paper_morans_pearson` is the **correlation across genes** between the model's per-gene",
+        "Moran's I vector and the tissue's. Every other number in this report is a **median**, and",
+        "a model can match the median exactly while getting every gene wrong. Reconstructed here",
+        "by bench3's own construction (`evaluate_paper.py::_agreement`, read from source): ranked",
+        "counts both sides, `k=10`, each side on its own graph, NaN genes dropped pairwise.",
+        "",
+        "⚠️ **This is the statistic, not the score** — bench3 takes all shared genes and medians",
+        "over sections 2/4/6, and this is one section. Comparable **between stages**, not to a",
+        "published `paper_*` number (`reports/q15_preregistration.md` §2).",
+        "",
+        "🚩 `mae` is emitted by the evaluator, documented there as **the metric that catches",
+        "over-smoothing**, and is **not** in the project's scored `METRICS` tuple.",
+        "",
+        "| gene set | stage | **pearson** | spearman | mae | median pred | median gt | genes |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for key, m in agreement.items():
+        gene_set, _, stage = key.partition("::")
+        out.append(
+            f"| {gene_set} | {stage} | **{m['pearson']:+.4f}** | {m['spearman']:+.4f} "
+            f"| {m['mae']:.4f} | {m['median_pred']:+.4f} | {m['median_gt']:+.4f} "
+            f"| {m['n_genes']} |"
+        )
+    return out
+
+
 def cancelling_defects_block(
     rows: list[dict], decomposition: dict[str, float], mu_spread: list[dict]
 ) -> list[str]:
@@ -716,16 +853,20 @@ def emission_ablation(
     for seed in seeds:
         arms = draw(int(seed))
         for key, counts in arms.items():
-            row = summarise(labels[key], real.xy, rank_normalize(sel(counts)), k)
+            row = summarise(labels[key], real.xy, sel(counts), k, primary="rank")
             row["seed"] = int(seed)
             per_seed[key].append(row)
             ratio = sel(np.asarray(counts, dtype=np.float64)).mean(axis=0)[ok] / ref_mean[ok]
             per_seed_level[key].append(float(np.median(ratio)) if ratio.size else float("nan"))
             drawn.setdefault(key, counts)
 
-    rows = [summarise("A1a'. mu decoded from h1", real.xy, sel(mu1_np), k)]
+    rows = [summarise("A1a'. mu decoded from h1", real.xy, sel(mu1_np), k, primary="raw")]
     rows.append(_over_seeds(per_seed["A1a"]))
-    rows.append(summarise("A1b'. mu_oracle = kNN mean of real counts", real.xy, sel(mu_oracle), k))
+    rows.append(
+        summarise(
+            "A1b'. mu_oracle = kNN mean of real counts", real.xy, sel(mu_oracle), k, primary="raw"
+        )
+    )
     rows.append(_over_seeds(per_seed["A1b"]))
     rows.append(_over_seeds(per_seed["A1bt"]))
     rows.append(_over_seeds(per_seed["A1bp"]))
@@ -805,7 +946,7 @@ def real_section_reference(
     counts, xy = real.counts, real.xy
     selected = counts if panel is None else counts[:, panel]
 
-    rows = [summarise("REF real counts (rank-normalised)", xy, rank_normalize(selected), k)]
+    rows = [summarise("REF real counts (rank-normalised)", xy, selected, k, primary="rank")]
 
     gene_idx = torch.arange(counts.shape[1], dtype=torch.long)
     with torch.no_grad():
@@ -813,7 +954,9 @@ def real_section_reference(
         totals = torch.from_numpy(counts.sum(axis=1))  # (N,), not (N, 1)
         size_factor = totals / max(float(model.stats.median_total), 1.0)
         h1 = model.encoder(torch.from_numpy(counts), gene_emb, size_factor)
-    rows.append(summarise("REF real latent h1 = encoder(real counts)", xy, h1.numpy(), k))
+    rows.append(
+        summarise("REF real latent h1 = encoder(real counts)", xy, h1.numpy(), k, primary="raw")
+    )
     return rows, h1
 
 
@@ -967,6 +1110,15 @@ def _verdict(
             f"{mean_variance_slope(counts):.3f} | {real_slope:.3f} |"
         )
     return out
+
+
+def _raises(fn) -> bool:
+    """True when ``fn()`` raises. For asserting that a guard actually guards."""
+    try:
+        fn()
+    except Exception:
+        return True
+    return False
 
 
 def _self_check() -> int:
@@ -1130,6 +1282,64 @@ def _self_check() -> int:
             "and the additivity gap is reported even when the verdict does not use it",
             abs(lopsided["additivity_gap"] - abs(0.30 + 0.02 - 0.33)) < 1e-12,
         ),
+    ]
+
+    # Q1: summarise must produce BOTH transforms and must rank its own input, or the ratios go
+    # back to crossing transforms. Q1.5: the blocked estimator must equal the direct one exactly,
+    # and morans_agreement must reproduce bench3's _agreement construction.
+    sm_raw = summarise("x", cxy, counts, 10, primary="raw")
+    sm_rank = summarise("x", cxy, counts, 10, primary="rank")
+    direct_rank = float(np.median(morans_i(cxy, rank_normalize(counts), 10)))
+    checks += [
+        ("summarise reports both transforms", {"median_I_raw", "median_I_rank"} <= set(sm_raw)),
+        (
+            "primary='raw' puts the raw figure in median_I",
+            sm_raw["median_I"] == sm_raw["median_I_raw"],
+        ),
+        (
+            "primary='rank' puts the ranked one there",
+            sm_rank["median_I"] == sm_rank["median_I_rank"],
+        ),
+        (
+            "the two differ, which is why the mixed ratios were wrong",
+            abs(sm_raw["median_I_raw"] - sm_raw["median_I_rank"]) > 1e-9,
+        ),
+        (
+            "summarise ranks its own input rather than trusting the caller",
+            abs(sm_raw["median_I_rank"] - direct_rank) < 1e-12,
+        ),
+        (
+            "it carries the per-gene ranked vector the agreement statistic needs",
+            sm_raw["per_gene_I_rank"].shape == (counts.shape[1],),
+        ),
+        (
+            "it refuses an unknown primary",
+            _raises(lambda: summarise("x", cxy, counts, 10, primary="?")),
+        ),
+    ]
+    blocked = morans_i_ranked_blocked(cxy, counts, 10, block=2)
+    checks.append(
+        (
+            "morans_i_ranked_blocked equals the direct call exactly, it only bounds memory",
+            bool(np.allclose(blocked, morans_i(cxy, rank_normalize(counts), 10), equal_nan=True)),
+        )
+    )
+
+    perfect = morans_agreement(np.array([0.1, 0.4, 0.7, 0.9]), np.array([0.1, 0.4, 0.7, 0.9]))
+    shifted = morans_agreement(np.array([0.5, 0.8, 1.1, 1.3]), np.array([0.1, 0.4, 0.7, 0.9]))
+    withnan = morans_agreement(np.array([0.1, np.nan, 0.7, 0.9]), np.array([0.1, 0.4, 0.7, np.nan]))
+    flat = morans_agreement(np.array([0.5, 0.5, 0.5, 0.5]), np.array([0.1, 0.4, 0.7, 0.9]))
+    checks += [
+        ("morans_agreement is 1.0 on an identical vector", abs(perfect["pearson"] - 1.0) < 1e-12),
+        ("and 0.0 mae there", perfect["mae"] == 0.0),
+        (
+            "a constant offset keeps pearson at 1.0 while mae rises — the ranking/level split "
+            "that is the whole point of Q1.5",
+            abs(shifted["pearson"] - 1.0) < 1e-12 and abs(shifted["mae"] - 0.4) < 1e-12,
+        ),
+        ("NaN genes are dropped PAIRWISE, as the evaluator does", withnan["n_genes"] == 2),
+        ("fewer than 3 survivors leaves pearson NaN", np.isnan(withnan["pearson"])),
+        ("a zero-variance vector leaves pearson NaN", np.isnan(flat["pearson"])),
     ]
 
     # The report block that explains a model sitting above the tissue. Report-generating code
@@ -1604,11 +1814,13 @@ def main(argv: list[str] | None = None) -> int:
         """Restrict a ``(N, G)`` gene-space array to the panel. Latents are never passed here."""
         return a if panel is None else a[:, panel]
 
-    rows.append(summarise("1. prior h0 = GRF at generated xyz", xy, h0.numpy(), k))
-    rows.append(summarise("2. latent h after the flow", xy, h.numpy(), k))
-    rows.append(summarise("3. decoded mu (before sampling)", xy, _sel(mu.numpy()), k))
+    rows.append(summarise("1. prior h0 = GRF at generated xyz", xy, h0.numpy(), k, primary="raw"))
+    rows.append(summarise("2. latent h after the flow", xy, h.numpy(), k, primary="raw"))
     rows.append(
-        summarise("4. sampled counts (rank-normalised)", xy, rank_normalize(_sel(counts_np)), k)
+        summarise("3. decoded mu (before sampling)", xy, _sel(mu.numpy()), k, primary="raw")
+    )
+    rows.append(
+        summarise("4. sampled counts (rank-normalised)", xy, _sel(counts_np), k, primary="rank")
     )
     # P1: the same mean field with the emission's noise removed — the ceiling any repair to
     # theta/pi could reach on the model as it actually is. It belongs here and not in the
@@ -1620,12 +1832,11 @@ def main(argv: list[str] | None = None) -> int:
         summarise(
             "4p. counts ~ Poisson(mu) — emission noise removed",
             xy,
-            rank_normalize(
-                np.random.default_rng(SEED)
-                .poisson(np.maximum(_sel(mu.numpy()), 0.0))
-                .astype(np.float64)
-            ),
+            np.random.default_rng(SEED)
+            .poisson(np.maximum(_sel(mu.numpy()), 0.0))
+            .astype(np.float64),
             k,
+            primary="rank",
         )
     )
     emitted = {"uncalibrated": counts_np}
@@ -1646,13 +1857,16 @@ def main(argv: list[str] | None = None) -> int:
                 mu_c, theta_c, pi_c = _decode(model, h, cfg, calibration)
                 counts_c = sample_counts(mu_c, theta_c, pi_c, np.random.default_rng(SEED))
         print(f"  calibration fitted in {time.time() - t1:.1f}s on {list(calibration.section_ids)}")
-        rows.append(summarise("3c. decoded mu, CALIBRATED", xy, _sel(mu_c.numpy()), k))
+        rows.append(
+            summarise("3c. decoded mu, CALIBRATED", xy, _sel(mu_c.numpy()), k, primary="raw")
+        )
         rows.append(
             summarise(
                 "4c. sampled counts, CALIBRATED (rank-norm)",
                 xy,
-                rank_normalize(_sel(counts_c.numpy())),
+                _sel(counts_c.numpy()),
                 k,
+                primary="rank",
             )
         )
         emitted["calibrated"] = counts_c.numpy()
@@ -1794,15 +2008,81 @@ def main(argv: list[str] | None = None) -> int:
         "",
         "## The chain",
         "",
-        f"| {'stage':<{width}} | median I | p25 | p75 | channels |",
-        f"|{'-' * (width + 2)}|---|---|---|---|",
+        "Every stage now carries Moran's I under **both** transforms. A ratio between two stages",
+        "must take both sides from the **same** column: the chain used to rank its count stages",
+        "and leave its mean-field and latent stages raw, which made every `counts / mu` retention",
+        "a cross-transform ratio (`reports/ceiling_review.md` §2). The **primary** column is the",
+        "one that stage's earlier artifacts recorded, and is marked `*`.",
+        "",
+        f"| {'stage':<{width}} | median I (raw) | median I (rank) | p25 | p75 | channels |",
+        f"|{'-' * (width + 2)}|---|---|---|---|---|",
     ]
     for r in rows:
+        raw = f"{r.get('median_I_raw', float('nan')):+.4f}"
+        rank = f"{r.get('median_I_rank', float('nan')):+.4f}"
+        if r.get("transform") == "raw":
+            raw = f"**{raw}** *"
+        else:
+            rank = f"**{rank}** *"
         lines.append(
-            f"| {r['stage']:<{width}} | **{r['median_I']:+.4f}** | {r['p25']:+.4f} "
+            f"| {r['stage']:<{width}} | {raw} | {rank} | {r['p25']:+.4f} "
             f"| {r['p75']:+.4f} | {r['n_channels']} |"
         )
+    # Q1: the invariant that would have caught the transform mismatch. 4p is an independent draw
+    # from stage 3's field, and independent noise dilutes autocorrelation — it cannot create it —
+    # so on ONE transform I(4p) <= I(3) must hold. It did not, and that is what sent the mismatch
+    # to the code (reports/ceiling_review.md §2). Checked on the ranked column, which both stages
+    # now carry; the tolerance is for one draw's sampling noise, not for a transform.
+    by_rank = {r["stage"].split(".")[0]: r.get("median_I_rank") for r in rows}
+    i3, i4p = by_rank.get("3"), by_rank.get("4p")
+    invariant_note = ""
+    readable = i3 is not None and i4p is not None and np.isfinite(i3) and np.isfinite(i4p)
+    if readable and i4p > i3 + 0.02:
+        invariant_note = (
+            f"stage 4p ({i4p:+.4f}) exceeds stage 3 ({i3:+.4f}) on the SAME transform by "
+            f"{i4p - i3:+.4f}. 4p is an independent draw from stage 3's field and independent "
+            "noise cannot raise Moran's I, so one of the two stages is not measuring what it "
+            "says it is"
+        )
+        print(f"  !! INVARIANT VIOLATED: {invariant_note}", file=sys.stderr)
+
+    # Q1.5: the scored statistic, from vectors this run already has.
+    agreement: dict[str, dict] = {}
+    ref_gene_I = next(
+        (r.get("per_gene_I_rank") for r in rows if r["stage"].startswith("REF real counts")), None
+    )
+    if ref_gene_I is not None:
+        for prefix, label in (
+            ("3.", "3. decoded mu"),
+            ("4.", "4. sampled counts"),
+            ("4p.", "4p. Poisson(mu) — emission-free"),
+        ):
+            vec = next(
+                (r.get("per_gene_I_rank") for r in rows if r["stage"].startswith(prefix)), None
+            )
+            if vec is not None:
+                agreement[f"panel::{label}"] = morans_agreement(vec, ref_gene_I)
+        if panel is not None and len(panel) < len(genes):
+            # The panel is the top few per cent by the real section's own I, so its I vector has a
+            # compressed range and its correlation is attenuated. bench3 scores ALL shared genes,
+            # so the all-genes pass is the one closer to the benchmark and it governs.
+            t3 = time.time()
+            ref_all = morans_i_ranked_blocked(real.xy, real.counts, k)
+            for label, arr in (
+                ("3. decoded mu", mu.numpy()),
+                ("4. sampled counts", counts_np),
+                (
+                    "4p. Poisson(mu) — emission-free",
+                    np.random.default_rng(SEED).poisson(np.maximum(mu.numpy(), 0.0)),
+                ),
+            ):
+                agreement[f"all genes::{label}"] = morans_agreement(
+                    morans_i_ranked_blocked(xy, np.asarray(arr, dtype=np.float64), k), ref_all
+                )
+            print(f"  all-gene agreement over {len(genes)} genes in {time.time() - t3:.1f}s")
+
     lines.extend(_verdict(rows, emitted, cfg, args, real, panel))
+    lines.extend(agreement_block(agreement, invariant_note))
     lines.extend(cancelling_defects_block(rows, decomposition, mu_spread))
 
     def _column(d: dict[str, float] | None, key: str, fmt: str) -> str:
@@ -2077,11 +2357,13 @@ def main(argv: list[str] | None = None) -> int:
             "genes": panel_genes if panel is not None else None,
             "indices": [int(i) for i in panel] if panel is not None else None,
         },
-        "stages": rows,
+        "stages": [{k: v for k, v in r.items() if k != "per_gene_I_rank"} for r in rows],
+        "agreement": agreement,
+        "invariant_violated": invariant_note or None,
         "emission_ablation": {
             "ran": bool(ablation_rows),
             "seeds": [int(x) for x in args.ablation_seed],
-            "arms": ablation_rows,
+            "arms": [{k: v for k, v in r.items() if k != "per_gene_I_rank"} for r in ablation_rows],
             "level_vs_real": ablation_levels,
             "mu_spread": mu_spread,
         },
