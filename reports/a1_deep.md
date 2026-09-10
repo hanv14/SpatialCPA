@@ -77,6 +77,52 @@ over-smoothing**, and is **not** in the project's scored `METRICS` tuple.
 | all genes | 4. sampled counts | **+0.7306** | +0.6861 | 0.0296 | +0.0072 | +0.0180 | 1017 |
 | all genes | 4p. Poisson(mu) — emission-free | **+0.8400** | +0.7929 | 0.0206 | +0.0160 | +0.0180 | 1017 |
 
+## The ladder — what each rung holds at the truth
+
+Every arm is drawn at the **real section's own cells**, so `pred_xy == gt_xy`. That is an
+advantage stage 4 and bench3 do not have — they compare a generated cell set against the
+real one, each on its own graph — so **a LOW rung here is conclusive and a high one is
+permissive** (`ladder_preregistration.md` §2a).
+
+Reference points on tier-1: the model-free copy floor `flanking_copy` = **0.9836**,
+SpatialZ **0.932**, v25 shipped **0.5574**.
+
+| gene set | rung | **pearson** | across seeds | spearman | mae | genes |
+|---|---|---|---|---|---|---|
+| panel | A1c. counts ~ Poisson(mu_oracle)   [model-free] | **+0.8439** | +0.8383 .. +0.8459 (3) | +0.7698 | 0.1891 | 32 |
+| panel | A1b. counts ~ ZINB(mu_oracle, model theta/pi) | **+0.6140** | +0.6081 .. +0.6255 (3) | +0.5436 | 0.1437 | 32 |
+| panel | A1b-t. counts ~ NB(mu_oracle, model theta), pi=0 | **+0.7967** | +0.7875 .. +0.8006 (3) | +0.6829 | 0.0582 | 32 |
+| panel | A1b-p. counts ~ A1c's Poisson draw, then model pi | **+0.5973** | +0.5954 .. +0.5991 (3) | +0.5495 | 0.1008 | 32 |
+| panel | A1a. counts ~ emission(mu \| h1) | **+0.3797** | +0.3754 .. +0.3847 (3) | +0.4626 | 0.2659 | 32 |
+| panel | 4.  counts ~ emission(mu \| model latent)   [where we are] | **+0.4055** | — | +0.4674 | 0.1961 | 32 |
+| panel | A1n. permutation null (real counts shuffled) | **+0.2578** | -0.0106 .. +0.4465 (3) | +0.1092 | 0.3313 | 32 |
+| all genes | A1c. counts ~ Poisson(mu_oracle)   [model-free] | **+0.9699** | — | +0.8885 | 0.0820 | 1017 |
+| all genes | A1b. counts ~ ZINB(mu_oracle, model theta/pi) | **+0.8242** | — | +0.6837 | 0.0239 | 1017 |
+| all genes | A1b-t. counts ~ NB(mu_oracle, model theta), pi=0 | **+0.9522** | — | +0.8841 | 0.0469 | 1017 |
+| all genes | A1b-p. counts ~ A1c's Poisson draw, then model pi | **+0.8681** | — | +0.7873 | 0.0203 | 1017 |
+| all genes | A1a. counts ~ emission(mu \| h1) | **+0.6732** | — | +0.6138 | 0.0394 | 1017 |
+| all genes | 4.  counts ~ emission(mu \| model latent)   [where we are] | **+0.7306** | — | +0.6861 | 0.0296 | 1017 |
+| all genes | A1n. permutation null (real counts shuffled) | **+0.0594** | — | +0.0794 | 0.0472 | 1017 |
+
+### R1-R3 - is the correlation spatial fidelity, or sparsity matching?
+
+Computed on **all 1017 genes** — the gene set the
+agreement table above says governs.
+
+A sparse gene's Moran's I is bounded low whatever its spatial structure, so a model
+that matched only *which genes are sparse* would score on `paper_morans_pearson`
+without reproducing any spatial fidelity. R3 controls for the tissue's own detection
+rate and asks whether the model still orders genes correctly.
+
+| quantity | detection rate | log mean count |
+|---|---|---|
+| **R1** `corr(I_real, control)` - is the tissue's ordering a sparsity ordering? | +0.6787 | +0.7163 |
+| **R2** `corr(I_model, control)` | +0.9027 | +0.7663 |
+| **R3** partial `corr(I_4, I_real given control)` | +0.2797 | +0.0927 |
+| retained fraction of `r(4)` = +0.7306 | 38.3% | 12.7% |
+
+**UNINFORMATIVE — the two control specifications disagree** — the two specifications differ by 0.256 against a 0.150 tolerance (`ladder_preregistration.md` §4).
+
 ### Stage 4p — the emission-free ceiling
 
 With the emission's noise removed from the model's **own** mean field, `I` = **+0.2594** against the real section's **+0.3123** (0.83x). That is the most any repair to `theta` or `pi` can reach on this fit — it bounds the emission-side work from above. **If it exceeds the tissue, the emission is not the only defect** (`reports/n5_and_m3_review.md` §5), and a repair to it alone cannot land the model on the tissue.
@@ -117,7 +163,7 @@ before the run.
 | arm                                               | median I | across seeds | ch | level | R | band |
 |---------------------------------------------------|---|---|---|---|---|---|
 | A1a'. mu decoded from h1                          | **+0.3399** | — | 32 | — | — | — |
-| A1a. counts ~ emission(mu | h1)                   | **+0.0426** | +0.0395 .. +0.0433 (3) | 32 | 0.93x | **-0.37** | DOES NOT RECOVER |
+| A1a. counts ~ emission(mu \| h1)                  | **+0.0426** | +0.0395 .. +0.0433 (3) | 32 | 0.93x | **-0.37** | DOES NOT RECOVER |
 | A1b'. mu_oracle = kNN mean of real counts         | **+0.9063** | — | 32 | — | — | — |
 | A1b. counts ~ ZINB(mu_oracle, model theta/pi)     | **+0.1722** | +0.1701 .. +0.1799 (3) | 32 | 0.64x | **+0.29** | DOES NOT RECOVER |
 | A1b-t. counts ~ NB(mu_oracle, model theta), pi=0  | **+0.2718** | +0.2716 .. +0.2774 (3) | 32 | 1.00x | **+0.79** | RECOVERS |

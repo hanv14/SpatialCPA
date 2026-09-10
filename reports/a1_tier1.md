@@ -74,6 +74,47 @@ over-smoothing**, and is **not** in the project's scored `METRICS` tuple.
 | panel | 4. sampled counts | **+0.5076** | +0.5435 | 0.1018 | +0.5134 | +0.4635 | 28 |
 | panel | 4p. Poisson(mu) — emission-free | **+0.3878** | +0.4007 | 0.3529 | +0.8358 | +0.4635 | 28 |
 
+## The ladder — what each rung holds at the truth
+
+Every arm is drawn at the **real section's own cells**, so `pred_xy == gt_xy`. That is an
+advantage stage 4 and bench3 do not have — they compare a generated cell set against the
+real one, each on its own graph — so **a LOW rung here is conclusive and a high one is
+permissive** (`ladder_preregistration.md` §2a).
+
+Reference points on tier-1: the model-free copy floor `flanking_copy` = **0.9836**,
+SpatialZ **0.932**, v25 shipped **0.5574**.
+
+| gene set | rung | **pearson** | across seeds | spearman | mae | genes |
+|---|---|---|---|---|---|---|
+| panel | A1c. counts ~ Poisson(mu_oracle)   [model-free] | **+0.8332** | +0.8327 .. +0.8333 (3) | +0.8643 | 0.4230 | 28 |
+| panel | A1b. counts ~ ZINB(mu_oracle, model theta/pi) | **+0.8369** | +0.8341 .. +0.8421 (3) | +0.8517 | 0.0746 | 28 |
+| panel | A1b-t. counts ~ NB(mu_oracle, model theta), pi=0 | **+0.8367** | +0.8341 .. +0.8420 (3) | +0.8517 | 0.0748 | 28 |
+| panel | A1b-p. counts ~ A1c's Poisson draw, then model pi | **+0.8334** | +0.8330 .. +0.8343 (3) | +0.8643 | 0.4229 | 28 |
+| panel | A1a. counts ~ emission(mu \| h1) | **+0.6985** | +0.6927 .. +0.7075 (3) | +0.7269 | 0.0809 | 28 |
+| panel | 4.  counts ~ emission(mu \| model latent)   [where we are] | **+0.5076** | — | +0.5435 | 0.1018 | 28 |
+| panel | A1n. permutation null (real counts shuffled) | **-0.2472** | -0.3928 .. -0.1294 (3) | -0.3361 | 0.4723 | 28 |
+
+🚨 **NULL RUNG IS NOT NULL** — the permutation arm correlates at -0.2472. `ladder_preregistration.md` §5(1): the construction is wrong and **nothing on this ladder may be read.**
+
+### R1-R3 - is the correlation spatial fidelity, or sparsity matching?
+
+Computed on **the scored panel** — the gene set the
+agreement table above says governs.
+
+A sparse gene's Moran's I is bounded low whatever its spatial structure, so a model
+that matched only *which genes are sparse* would score on `paper_morans_pearson`
+without reproducing any spatial fidelity. R3 controls for the tissue's own detection
+rate and asks whether the model still orders genes correctly.
+
+| quantity | detection rate | log mean count |
+|---|---|---|
+| **R1** `corr(I_real, control)` - is the tissue's ordering a sparsity ordering? | +0.2862 | +0.4171 |
+| **R2** `corr(I_model, control)` | +0.1785 | +0.3566 |
+| **R3** partial `corr(I_4, I_real given control)` | +0.4847 | +0.3593 |
+| retained fraction of `r(4)` = +0.5076 | 95.5% | 70.8% |
+
+**UNINFORMATIVE — the two control specifications disagree** — the two specifications differ by 0.247 against a 0.150 tolerance (`ladder_preregistration.md` §4).
+
 ## Why the model sits ABOVE the tissue here, and why that is not fidelity
 
 `I(model counts)` = **+0.5134** against the real section's **+0.4635** — 1.11x. That is **not** a reconstruction result. Two defects point in opposite directions on this dataset and partly cancel:
@@ -126,7 +167,7 @@ before the run.
 | arm                                               | median I | across seeds | ch | level | R | band |
 |---------------------------------------------------|---|---|---|---|---|---|
 | A1a'. mu decoded from h1                          | **+0.6052** | — | 28 | — | — | — |
-| A1a. counts ~ emission(mu | h1)                   | **+0.4053** | +0.4006 .. +0.4103 (3) | 28 | 1.01x | — | — |
+| A1a. counts ~ emission(mu \| h1)                  | **+0.4053** | +0.4006 .. +0.4103 (3) | 28 | 1.01x | — | — |
 | A1b'. mu_oracle = kNN mean of real counts         | **+0.9284** | — | 28 | — | — | — |
 | A1b. counts ~ ZINB(mu_oracle, model theta/pi)     | **+0.5405** | +0.5390 .. +0.5452 (3) | 28 | 1.00x | — | — |
 | A1b-t. counts ~ NB(mu_oracle, model theta), pi=0  | **+0.5405** | +0.5390 .. +0.5452 (3) | 28 | 1.00x | — | — |
