@@ -129,6 +129,13 @@
       "n_channels": 32
     },
     {
+      "stage": "4p. counts ~ Poisson(mu) \u2014 emission noise removed",
+      "median_I": 0.25941543522824034,
+      "p25": 0.18247962993778588,
+      "p75": 0.3965377662250416,
+      "n_channels": 32
+    },
+    {
       "stage": "REF real counts (rank-normalised)",
       "median_I": 0.31233103484527275,
       "p25": 0.2653906122573587,
