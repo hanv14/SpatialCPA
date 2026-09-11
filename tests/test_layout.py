@@ -22,6 +22,7 @@ comments: a positive result whose control also passes measures nothing.
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -1113,6 +1114,111 @@ def test_plane_distance_is_defined_at_an_oblique_plane_where_nearest_z_is_not(
         repulsion=repulsion, flanking=flanking,
     )
     assert old.n_cells != layout.n_cells or not np.array_equal(old.coords_uv, layout.coords_uv)
+
+
+def test_the_empty_slab_fallback_REFUSES_off_axis_instead_of_returning_one_cell(
+    training: TrainingVolume,
+):
+    """The fallback is the coronal rule; off-axis it degenerates and must say so, not return junk.
+
+    A flat section meets a coronal plane in a **face** — every cell at one perpendicular distance,
+    so widening to the minimum returns the section whole. It meets an oblique plane in a **line**:
+    no two cells share a distance, `min` picks one, and the band admits exactly that one cell. A
+    one-cell donor set is a silent degeneracy, so it raises, and the message names the flanking-slab
+    construction that works at an angle.
+    """
+    xyz = np.concatenate([np.asarray(to_xyz(s), dtype=np.float64) for s in training.sections])
+    lo, hi = xyz.min(axis=0), xyz.max(axis=0)
+    centre, extent = 0.5 * (lo + hi), hi - lo
+    t = np.deg2rad(60.0)
+    # far outside the tissue along the normal, so the slab is empty and the fallback engages
+    origin = centre + 5.0 * float(extent[1]) * np.array([0.0, np.sin(t), np.cos(t)])
+    oblique = plane_from_normal(
+        [0.0, np.sin(t), np.cos(t)], origin, (extent[0], max(extent[1], extent[2])), 10.0
+    )
+    assert cells_near_plane(training.sections, oblique).xyz.shape[0] == 0, (
+        "the fixture must present an EMPTY slab here, or the fallback never engages"
+    )
+    with pytest.raises(LayoutError, match="meets this plane in a LINE"):
+        cells_near_plane(training.sections, oblique, expand_to_nearest=True)
+
+
+def test_the_flanking_slab_is_disjoint_from_the_target_slab_at_every_angle(
+    training: TrainingVolume,
+):
+    """The corrected oblique donor set (`oblique_demonstration_preregistration.md` §3-bis).
+
+    Donors are a slab of the same orientation, offset along the normal by one thickness. Leak-free
+    by construction rather than by assertion, and at 0° it is `flanking_copy`'s own two donors.
+    """
+    xyz = np.concatenate([np.asarray(to_xyz(s), dtype=np.float64) for s in training.sections])
+    lo, hi = xyz.min(axis=0), xyz.max(axis=0)
+    centre, extent = 0.5 * (lo + hi), hi - lo
+    thickness = float(np.median(np.diff(sorted(float(s.z) for s in training.sections))))
+
+    for deg in (0.0, 30.0, 60.0, 90.0):
+        t = np.deg2rad(deg)
+        unit = np.array([0.0, np.sin(t), np.cos(t)])
+        half_extent = (extent[0], max(extent[1], extent[2]))
+        target = plane_from_normal(unit, centre, half_extent, thickness)
+        truth = cells_near_plane(training.sections, target)
+        if truth.xyz.shape[0] == 0:
+            continue
+        seen = {tuple(row) for row in truth.xyz}
+        for sign in (-1.0, +1.0):
+            flank = plane_from_normal(
+                unit, centre + sign * thickness * unit, half_extent, thickness
+            )
+            donors = cells_near_plane(training.sections, flank)
+            shared = sum(1 for row in donors.xyz if tuple(row) in seen)
+            assert shared == 0, (
+                f"at {deg:.0f}° the {sign:+.0f} flanking slab shares {shared} cells with the "
+                "evaluation set -- the demonstration would be scoring its own donors"
+            )
+
+
+def test_at_90_degrees_the_band_is_an_IN_PLANE_cut_so_the_z_partition_cannot_matter(
+    training: TrainingVolume,
+):
+    """Why halving `--thickness` is the EXACT V4a manipulation at 90°, not an approximation.
+
+    `specs/10` §8's V4a re-partitions a block into thinner slabs: thickness and the z-labelling
+    change together. A built bench3 file cannot be re-partitioned at all
+    (`tests/test_resection.py`), so the free substitute is to halve the slab thickness and leave
+    the sections alone -- and that substitute is only honest if the z-labelling contributes nothing
+    at the angle the claim is made at.
+
+    At 90° the plane's normal is `(0, 1, 0)`: the band selects on **y**, and `Section.z` never
+    enters. So re-labelling every section's depth leaves the selection bitwise unchanged, and
+    halving the thickness is the whole of the manipulation. At 0° the opposite holds and the
+    substitute says nothing -- which is asserted here too, so the licence cannot be over-read.
+    """
+    xyz = np.concatenate([np.asarray(to_xyz(s), dtype=np.float64) for s in training.sections])
+    lo, hi = xyz.min(axis=0), xyz.max(axis=0)
+    centre, extent = 0.5 * (lo + hi), hi - lo
+    thickness = 40.0
+
+    def band(sections, deg):
+        t = np.deg2rad(deg)
+        plane = plane_from_normal(
+            [0.0, np.sin(t), np.cos(t)], centre, (extent[0], max(extent[1], extent[2])), thickness
+        )
+        return cells_near_plane(sections, plane)
+
+    # the same cells, their sections' depths scrambled: exactly what a re-partition changes
+    shifted = [replace(s, z=float(s.z) + 137.0 * (i + 1)) for i, s in enumerate(training.sections)]
+
+    at90, at90_shifted = band(training.sections, 90.0), band(shifted, 90.0)
+    assert at90.xyz.shape[0] > 0, "the fixture must present cells at 90°, or this proves nothing"
+    assert np.array_equal(at90.coords_uv, at90_shifted.coords_uv), (
+        "at 90° the band is an in-plane cut, so moving every section in z must change nothing"
+    )
+
+    at0, at0_shifted = band(training.sections, 0.0), band(shifted, 0.0)
+    assert at0.xyz.shape[0] != at0_shifted.xyz.shape[0], (
+        "and at 0° it must change everything -- otherwise the licence above would extend to "
+        "angles where the z partition is the whole selection, which it must not"
+    )
 
 
 def nearest_section_id(training: TrainingVolume, plane, *, exclude=()) -> str:

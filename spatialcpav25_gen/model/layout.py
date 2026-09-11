@@ -1241,6 +1241,7 @@ def cells_near_plane(
     plane: Plane,
     *,
     exclude: Collection[str] = (),
+    exclude_within_um: float = 0.0,
     expand_to_nearest: bool = False,
 ) -> NearPlaneCells:
     """Real cells within ``plane.thickness / 2`` of ``plane``, pooled across **all** sections.
@@ -1285,10 +1286,25 @@ def cells_near_plane(
     ``tests/test_layout.py`` asserts it **bitwise** — and the generalisation is in the *non*-empty
     case, where an oblique slab pools the cells it genuinely cuts across several sections.
 
-    ``exclude`` drops whole sections by ``section_id``. It is not optional in practice: an oblique
-    plane's donors and its evaluation set are **the same cells**, so without an exclusion a
-    resampled layout copies the answer it is about to be scored against. This is the mechanism
-    retrieval already uses for its own section (GATE 2's C1), applied to the layout.
+    ``exclude`` drops whole sections by ``section_id``. ``exclude_within_um`` drops individual
+    **cells** within that perpendicular distance of the plane. Both exist because an oblique plane's
+    donors and its evaluation set are **the same cells**, and a resampled layout would otherwise
+    copy the answer it is about to be scored against (GATE 2's C1, applied to the layout) — but they
+    are not interchangeable, and which one is correct depends on the angle:
+
+    * At a **coronal** plane one section holds the whole evaluation set, so dropping that section
+      is exact.
+    * At an **oblique** plane the evaluation set is a band drawn from *many* sections — at 90°
+      through a 10 : 1 block, from all of them — so dropping their sections drops the entire volume
+      and leaves no donors. ``exclude_within_um`` removes precisely the answer and nothing else,
+      which is strictly tighter in the direction that matters and strictly looser in the direction
+      that would make the demonstration impossible.
+
+    Set ``exclude_within_um`` wider than the slab's own half-thickness to put a **guard band**
+    between the donors and the evaluation set: at ``1.5 x thickness`` the nearest donor sits one
+    full slab from the plane, which is the relationship a flanking section has to a held-out section
+    at a coronal plane, so an oblique score is comparable with a coronal one rather than flattered
+    by donors half a slab away.
     """
     origin = np.asarray(plane.origin, dtype=np.float64)
     normal = np.asarray(plane.normal, dtype=np.float64)
@@ -1298,6 +1314,16 @@ def cells_near_plane(
     kept = [s for s in sections if str(s.section_id) not in drop]
     per_section = [np.asarray(to_xyz(s), dtype=np.float64) for s in kept]
     dists = [np.abs((xyz - origin) @ normal) for xyz in per_section]
+
+    guard = float(exclude_within_um)
+    if guard > 0.0:
+        # Cell-level, and applied BEFORE the empty-slab fallback reads the distances, so the
+        # fallback falls through to the nearest cell OUTSIDE the guard rather than re-admitting
+        # the evaluation set it was meant to withhold.
+        alive = [d > guard for d in dists]
+        kept = [s for s, a in zip(kept, alive, strict=True) if a.any()]
+        per_section = [x[a] for x, a in zip(per_section, alive, strict=True) if a.any()]
+        dists = [d[a] for d, a in zip(dists, alive, strict=True) if a.any()]
 
     # The slab is empty: fall back to ONE section, chosen exactly as `nearest-z` chooses it. Not
     # to a distance stratum -- a target plane lies midway between two sections, so both attain the
@@ -1309,6 +1335,23 @@ def cells_near_plane(
         ]
         if candidates:
             half, only = min(candidates)
+            # The fallback is the CORONAL rule and only means anything there. A flat section meets
+            # a coronal plane at one distance, so widening to it returns the section whole -- which
+            # is what `nearest-z` copies. Off-axis it meets the plane in a LINE: no two cells share
+            # a distance, `min` picks one, and the band admits exactly that one cell. Returning a
+            # one-cell "section" as a donor set is the kind of silent degeneracy that has cost this
+            # project a version, so it is refused and the message names the construction that works.
+            chosen = next(d for s, d in zip(kept, dists, strict=True) if str(s.section_id) == only)
+            if int((chosen <= half).sum()) < chosen.size:
+                raise LayoutError(
+                    f"cells_near_plane: the slab is empty and the nearest section "
+                    f"({only!r}) meets this plane in a LINE, not a face — widening to its nearest "
+                    f"cell admits {int((chosen <= half).sum())} of its {chosen.size} cells. The "
+                    "empty-slab fallback is the coronal rule and is meaningless at an angle. For "
+                    "an oblique donor set use a FLANKING SLAB: the same plane orientation with its "
+                    "origin offset along the normal by one slab thickness, read with the ordinary "
+                    "threshold rule. That is `flanking_copy`'s own construction, generalised."
+                )
 
     xyz_parts, type_parts, id_parts = [], [], []
     for section, xyz, dist in zip(kept, per_section, dists, strict=True):

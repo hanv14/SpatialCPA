@@ -63,6 +63,66 @@ near real cells and **their own measurements are the ground truth for that plane
 At 90° on this specimen, `G` is ~1988 cells drawn from many sections, so the exclusion removes most
 of the volume. **That is the point, and it is also the demonstration's main risk** — see §6.
 
+## 3-bis. AMENDMENT (2026-09-11) — the exclusion rule in §3 makes the demonstration impossible
+
+*Found while building the runner, before it ran. §3 steps 2–3 are superseded by this section; §3
+step 1 and preconditions L1/L2 stand, restated below against the corrected construction.*
+
+**What §3 said.** Exclude every *section* contributing to the ground truth `G`.
+
+**Why it cannot work.** At 90° through a 10.3 : 1 block, `G` draws from **all 7 sections**. Excluding
+them removes the entire volume:
+
+```
+90deg ground truth G: 373 cells from 7 sections
+PRE-REGISTERED RULE (exclude whole sections contributing to G):
+  donors = 0 cells NONE   <-- the whole volume is gone
+```
+
+This is prediction 2 of §7 arriving early and worse than predicted: not "at least one angle fails
+P3", but *every* oblique angle fails by construction. **The fix is not to loosen the exclusion.**
+Section-level exclusion is simply the wrong granularity off-axis — at a coronal plane one section
+holds the whole evaluation set, and off-axis `G` is a band drawn from all of them.
+
+**A first correction, also rejected.** Cell-level exclusion within a guard band keeps donors alive,
+but the empty-slab fallback then returns **one cell**: a flat section meets an oblique plane in a
+*line*, so no two cells share a perpendicular distance and widening to the minimum admits exactly
+one. That degeneracy now **raises** rather than returning a one-cell donor set
+(`cells_near_plane`), and its message names the construction below.
+
+**The corrected construction: a FLANKING SLAB.** Donors come from a slab of the same orientation
+with its origin offset along the normal by one slab thickness, read with the ordinary threshold
+rule. Two of them, `±1`, exactly as `flanking_copy` has two flanking sections. Measured on a
+7-slab / 27 µm / 1000 × 1000 µm block:
+
+| θ | `G` | flank −1 | flank +1 | shared cells |
+|---|---|---|---|---|
+| 0° | 2000 from 1 section | 2000 from 1 | 2000 from 1 | **0** |
+| 30° | 795 from 7 | 762 from 7 | 757 from 7 | **0** |
+| 60° | 440 from 7 | 466 from 7 | 468 from 7 | **0** |
+| 90° | 373 from 7 | 401 from 7 | 385 from 7 | **0** |
+
+Three properties, all of which the §3 rule lacked:
+
+1. **Leak-free by construction**, not by assertion — the slabs are disjoint in the perpendicular
+   coordinate, so no cell can appear in both. L1/L2 remain as run-time assertions, now as checks on
+   a construction that should pass them rather than as the mechanism itself.
+2. **It reduces to `flanking_copy` at 0°** — same cells, same two donors. So the coronal control P1
+   is a comparison against the real baseline, not against a differently-constructed one.
+3. **The donor is one full slab from the plane at every angle**, which is the relationship a
+   flanking section has to a held-out section coronally. An oblique score is therefore comparable
+   with a coronal one rather than flattered by donors half a slab away.
+
+**§3 steps 2–3, restated.** Every arm generates from the flanking slabs at `±1 × thickness`;
+`exclude_within_um = half thickness` is set as a belt-and-braces guard so a leak would raise rather
+than be detected afterwards; L1 and L2 are asserted on the returned arrays at run time regardless.
+
+**What this changes in §7.** Prediction 2 is **superseded**: it named the right risk and the wrong
+remedy. I said "if an angle fails P3 after the exclusion, that is a finding, not a reason to loosen
+the exclusion" — and the finding turned out to be that the exclusion was mis-specified, which is a
+third thing, found by building the runner rather than by running it. Predictions 1, 3 and 4 stand
+unchanged and are **not** revised in the light of the table above.
+
 ## 4. The baseline: `flanking_copy` under the same constraints
 
 **The baseline is `flanking_copy` restricted to the same slab under the same exclusion.** Not the
