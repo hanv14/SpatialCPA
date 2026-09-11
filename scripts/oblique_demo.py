@@ -407,6 +407,33 @@ def _self_check() -> int:
          "--score" in Path(__file__).read_text() and "args.score" in Path(__file__).read_text()),
     ]
 
+    # --- the WRITER's contract. §4.2p said "verify the wiring"; the previous version verified the
+    # evaluator's wiring and not the writer's, and the run died at
+    # `all_z.append(r["coords"][:, 2])` on a 2-column array. A signature check could not catch it:
+    # `coords` is one key of an untyped dict. What IS checkable is which columns the writer INDEXES.
+    io_src = (root / "benchmark-pbya-v2/src/benchmark/methods/_v2_io.py").read_text()
+    indexed = {
+        int(m)
+        for m in __import__("re").findall(r'r\["coords"\]\[:,\s*(\d+)\]', io_src)
+    }
+    fake = arm_prediction(
+        np.zeros((4, 2)), np.zeros(4, dtype=int), np.zeros((4, 3)), ["g"], ["a"], "s"
+    )["s"]
+    checks += [
+        ("write_prediction_h5 still indexes coords columns 0, 1 AND 2", indexed == {0, 1, 2}),
+        ("so arm_prediction must emit (n, 3), and does", fake["coords"].shape == (4, 3)),
+        ("the third column is zero — the section lies IN the plane",
+         fake["coords"].shape[1] > 2 and bool(np.all(fake["coords"][:, 2] == 0.0))),
+        ("and the first two are the plane's own (u, v), which is what the evaluator scores on",
+         'gt_spatial[gm, :2]' in ev and 'np.column_stack([pred["x"][pm], pred["y"][pm]])' in ev),
+        ("the evaluator reads NO third column anywhere, so the z convention cannot change a score",
+         '[:, 2]' not in ev and 'pred["z"]' not in ev),
+        ("and a 2-column array is refused here rather than 60 lines later in the writer",
+         _refuses_two_columns()),
+        ("the ground truth is written in the same frame, or the two sides are not comparable",
+         "np.column_stack([uv, np.zeros(uv.shape[0])])" in Path(__file__).read_text()),
+    ]
+
     from _contract import bench3_clamp_discipline, bench3_config_discipline, uses_shared_base_config
 
     checks += uses_shared_base_config("oblique_demo.py")
@@ -697,13 +724,43 @@ def write_slab_dataset(near, gene_names, celltype_names, plane, label: str, path
 
 
 def arm_prediction(coords_uv, cell_type, counts, gene_names, celltype_names, label: str):
-    """One arm, in the shape `_v2_io.write_prediction_h5` expects."""
+    """One arm, in the shape `_v2_io.write_prediction_h5` expects: ``coords`` is ``(n, 3)``.
+
+    **The coordinate convention, and why it is not a judgement call.**
+
+    ``write_prediction_h5`` reads ``r["coords"][:, 0]``, ``[:, 1]`` and ``[:, 2]`` into ``obs/x``,
+    ``obs/y`` and ``obs/z``. Passing the ``(n, 2)`` in-plane coordinates raised
+    ``IndexError: index 2 is out of bounds``. The fix is a third column, and the question that
+    matters is what goes in the first two.
+
+    *The first two columns are the plane's own in-plane frame* ``(u, v)``. That is forced, not
+    chosen: the evaluator computes **every** metric on two dimensions only —
+    ``gt_xy = gt_spatial[gm, :2]`` and ``pred_xy = column_stack([pred["x"], pred["y"]])`` — and
+    builds its ``SPATIAL_K`` kNN graph from them. A section's geometry *is* its in-plane geometry,
+    and the one-section ground truth this is scored against uses the same frame. Writing the cells'
+    real ``(x, y)`` instead would compare them in the **volume's** frame: at 90° the plane's ``v``
+    is ``-(z - z0)``, so real-``y`` would collapse to a band one slab wide and the section's
+    geometry would be destroyed. That choice does change what is scored, which is why it is stated.
+
+    *The third column is a constant 0 in the plane's frame*, and **the evaluator never reads it.**
+    ``load_prediction`` loads ``obs/z`` into ``pred["z"]`` and no metric in ``evaluate_paper`` or
+    ``align.py`` touches it; the only indexing of a third column anywhere is ``[:, :2]``, which
+    excludes it. So the ``z`` convention is a **format requirement of the writer, not a modelling
+    choice**, and 0 is the honest value: the generated section lies *in* the plane, so its depth in
+    the plane's own frame is zero everywhere. ``tests``/``--self-check`` assert both halves.
+    """
     import scipy.sparse as sp
 
+    uv = np.asarray(coords_uv, dtype=np.float64)
+    if uv.ndim != 2 or uv.shape[1] != 2:
+        raise SystemExit(
+            f"arm_prediction: expected (n, 2) in-plane coordinates; got {uv.shape}. The third "
+            "column is added here and must not be supplied."
+        )
     return {
         label: {
             "X": sp.csr_matrix(counts),
-            "coords": np.asarray(coords_uv, dtype=np.float64),
+            "coords": np.column_stack([uv, np.zeros(uv.shape[0], dtype=np.float64)]),
             "cell_type": np.asarray(
                 [str(celltype_names[int(c)]) for c in np.asarray(cell_type)], dtype=object
             ),
@@ -737,6 +794,23 @@ def render_scores(scored: list[dict], rows: list[dict], theta: float) -> list[st
         "- `resample-pd` — the cells the flanking slab actually contains: the plane's own "
         "footprint. **Ours.**",
         "- `null` — `resample-pd`'s positions with types permuted. The floor (P2).",
+        "",
+        "**The coordinate frame, stated because it changes what is scored.** Both the predictions "
+        "and the one-section ground truth carry the **plane's own in-plane coordinates `(u, v)`** "
+        "in the first two columns. The evaluator computes every metric on two dimensions — "
+        "`gt_xy = gt_spatial[gm, :2]`, `pred_xy = column_stack([pred[\"x\"], pred[\"y\"]])` — and "
+        "builds its `SPATIAL_K` kNN graph from them, so this is the choice that matters. A "
+        "section's geometry *is* its in-plane geometry; writing the cells' real `(x, y)` instead "
+        "would compare them in the **volume's** frame, and at 90° the plane's `v` is `−(z − z₀)`, "
+        "so real-`y` would collapse to a band one slab wide.",
+        "",
+        "**The third coordinate is 0**, and the evaluator **never reads it**: `load_prediction` "
+        "loads `obs/z` and no metric in `evaluate_paper` or `align.py` touches it — the only "
+        "indexing of a third column anywhere is `[:, :2]`, which excludes it. So `z` is a format "
+        "requirement of the prediction writer, not a modelling choice, and 0 is the honest value: "
+        "a generated section lies *in* its plane, so its depth in the plane's own frame is zero "
+        "everywhere. Both halves are asserted in `--self-check`, which now reads the writer's own "
+        "source for the columns it indexes.",
         "",
         "| θ | fill | `copy-nearest-z` | `resample-pd` | difference | across-seed spread | "
         "`null` |",
@@ -773,6 +847,16 @@ def render_scores(scored: list[dict], rows: list[dict], theta: float) -> list[st
         "",
     ]
     return out
+
+
+def _refuses_two_columns() -> bool:
+    """`arm_prediction` must reject (n, 2) at its own boundary, not inside the writer."""
+    try:
+        arm_prediction(np.zeros((4, 2))[:, :1], np.zeros(4, dtype=int), np.zeros((4, 3)),
+                       ["g"], ["a"], "s")
+    except SystemExit:
+        return True
+    return False
 
 
 def md_cell(text: str) -> str:

@@ -274,3 +274,53 @@ radius-normalised coordinates, so `blur / radius = √(eps·scale)` ≈ **0.26�
 metric, not a property of any tissue**. The statistic distinguishes roughly **three to four locations
 along a radius, on any dataset at any magnification**. Corrected in all five propagated documents and
 in paper §3.2.
+
+---
+
+## R10 — the scoring path emitted 2-column coordinates
+
+**Not a withdrawn claim — a crash, recorded here because the check that should have caught it was
+written one round earlier and did not.**
+
+`arm_prediction` passed the plane's `(u, v)` straight to `_v2_io.write_prediction_h5`, which reads
+`r["coords"][:, 0]`, `[:, 1]` **and `[:, 2]`**:
+
+```
+IndexError: index 2 is out of bounds for axis 1 with size 2
+```
+
+**Why §4.2p's check missed it.** The previous round added a wiring check for the *scoring* path, and
+it verified the **evaluator's** contract — that the ground truth is still subset by section label,
+that `celltype_localization` is still emitted, that `NearPlaneCells` carries `counts`. It never
+verified the **writer's**. A signature check could not have caught it either: `coords` is one key of
+an untyped dict, so every call type-checks.
+
+**What is checkable, and now is:** *which columns the writer indexes*. The check reads
+`_v2_io.py` and extracts them by pattern — `{0, 1, 2}` — then asserts `arm_prediction` emits `(n, 3)`
+and that its third column is zero. Verified by reintroduction: with the two-column version restored,
+`--self-check` drops 72/72 → 70/72 and **reproduces the identical `IndexError` message without any
+data**.
+
+### And the question the crash raised, settled by evidence rather than judgement
+
+*What should `z` be for an oblique slab — the cells' real depth, or a constant in the plane's frame?*
+
+**Neither choice can affect a score, because the evaluator never reads the third column.**
+`load_prediction` loads `obs/z` into `pred["z"]`; no metric in `evaluate_paper` or `align.py` touches
+it, and the only indexing of a third column anywhere is `[:, :2]`, which excludes it.
+
+**The real decision is which two columns go in `x` and `y`, and it is forced.** Every metric —
+Moran's I, Geary's C, the marker field, `celltype_localization` — is computed from `gt_xy` and
+`pred_xy`, both two-dimensional, and the `SPATIAL_K` kNN graph is built from them. So both sides
+carry the **plane's own `(u, v)`**: a section's geometry is its in-plane geometry, and the
+one-section ground truth uses the same frame. Writing the cells' real `(x, y)` would compare them in
+the *volume's* frame — at 90° the plane's `v` is `−(z − z₀)`, so real-`y` would collapse to a band
+one slab wide and the section's geometry would be destroyed.
+
+`z = 0` is then the honest constant: a generated section lies *in* its plane, so its depth in that
+plane's own frame is zero everywhere. It is a **format requirement of the writer, not a modelling
+choice**, and the report says so where a reader will meet it.
+
+**Class.** §4.2p again, one layer out: *a wiring check must cover every interface the path crosses,
+not the one whose contract was most recently on your mind.* This path crosses two — the writer and
+the evaluator — and the check covered the second.

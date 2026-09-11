@@ -52,6 +52,18 @@ label on it.**
 ⚠️ **G1's margin at 60° is 0.6 of one cell type** — six scorable types against a threshold of 5.4.
 One type crossing the metric's 20-cell floor moves θ\*. It is printed in the table for that reason.
 
+## 5.2b The coordinate frame
+
+Both sides of the comparison carry the **plane's own in-plane coordinates `(u, v)`**. This is stated
+because it is the choice that determines what is measured: the evaluator computes every metric on
+two dimensions and builds its kNN spatial graph from them (`gt_xy = gt_spatial[:, :2]`,
+`pred_xy = (x, y)`). A section's geometry *is* its in-plane geometry. Writing the cells' real
+`(x, y)` would compare them in the volume's frame, where at 90° the plane's second in-plane axis is
+`−z` and real-`y` collapses to a band one slab wide.
+
+The third coordinate is 0 — a generated section lies *in* its plane — and the evaluator never reads
+it, so no metric depends on that convention.
+
 ## 5.3 Results
 
 | θ | fill | `copy-nearest-z` | `resample-pd` | difference | across-seed spread | `null` |

@@ -9478,3 +9478,30 @@ note that `donors` equals the ground truth here because the slab is never empty 
 in the generation setting.
 
 `oblique_demo --self-check` **47/47**; `angle_budget --self-check` **37/37**.
+
+### R10: the writer's contract, and what `z` means for an oblique slab
+
+**The crash.** `arm_prediction` passed the plane's `(u, v)` to `_v2_io.write_prediction_h5`, which
+reads `r["coords"][:, 2]` — `IndexError: index 2 is out of bounds for axis 1 with size 2`.
+
+**Why the §4.2p check missed it.** Last round's scoring-path check verified the **evaluator's**
+contract and never the **writer's**. A signature check could not have caught it either: `coords` is
+one key of an untyped dict, so every call type-checks. What *is* checkable is **which columns the
+writer indexes** — now extracted from `_v2_io.py` by pattern (`{0, 1, 2}`), with `arm_prediction`
+asserted to emit `(n, 3)` and a zero third column. **Verified by reintroduction: 72/72 → 70/72, and
+the self-check reproduces the identical `IndexError` message with no data.**
+
+**The `z` question, settled by evidence.** *Neither choice can affect a score*: the evaluator never
+reads the third column. `load_prediction` loads `obs/z`; no metric in `evaluate_paper` or `align.py`
+touches it, and the only third-column indexing anywhere is `[:, :2]`, which excludes it.
+
+**The real decision is which two columns go in `x` and `y`, and it is forced.** Every metric is
+computed from `gt_xy` and `pred_xy`, both 2-D, and `SPATIAL_K`'s kNN graph is built from them. Both
+sides therefore carry the **plane's own `(u, v)`** — a section's geometry is its in-plane geometry,
+and the one-section ground truth uses the same frame. The cells' real `(x, y)` would compare them in
+the *volume's* frame: at 90° the plane's `v` is `−(z − z₀)`, so real-`y` collapses to a band one slab
+wide and the section's geometry is destroyed. `z = 0` is then the honest constant — a generated
+section lies *in* its plane — and it is a **format requirement of the writer, not a modelling
+choice**. Stated in the report where a reader meets the scores, and in paper §5.2b.
+
+`oblique_demo --self-check` **72/72**.
