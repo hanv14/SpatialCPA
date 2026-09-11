@@ -42,6 +42,8 @@ one new wrapper file. Nothing else.
 (`benchmark-pbya/envs/`), so the environments are *creatable*, but not in this container.
 
 **Consequence.** SpatialZ, FEAST, isoST and v20 cannot be re-scored here, and §13.1 established
+> ⚠️ **STALE 2026-09-11** — they *were* re-scored: `evaluate_all --force` into `results_rescored/`, all six methods, 0 failures, on the pinned evaluator. See `reports/spatialz_claim_struck.md` §6 and the paper's §8.2. The rest of this section's reasoning stands; only its premise that the run was impossible here is superseded.
+
 that re-scoring them is not optional: the recovered results tree is evaluator-heterogeneous, with
 SpatialZ's STARmap rows carrying **0/3** of the newer evaluator's columns against v20's 3/3.
 

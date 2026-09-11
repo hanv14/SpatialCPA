@@ -73,3 +73,50 @@ comparisons that may still be quoted, with their qualifiers attached and never a
 Nothing in the campaign's conclusions depends on this claim. The ceiling result, the copy-floor
 result and the panel-regime result are all measured against **model-free probes on the pinned
 instrument**, and none cites SpatialZ.
+
+---
+
+## 6. AMENDMENT 2026-09-11 — the comparator run happened; one of the two objections is resolved
+
+`evaluate_all --force` was run into `benchmark-pbya-v3/results_rescored/` for
+`starmap_visual_cortex/paper_2_4_6`, **all six methods, 0 failures, on the pinned evaluator**
+(`evaluate_paper.py`, sha256 `7362669…538992`). The tier-1 six-metric table now exists. §1 of this
+file — *"it cannot be located in the record"* — **is resolved and is hereby marked superseded.**
+`reports/pilot.md` §44 and `specs/10` step 5 were true when written and are stale on this point.
+
+**§2's conditions 1 and 2 are also resolved:** the run is on the pinned instrument (not
+cross-instrument), and `flanking_copy` / `oracle` from the probes tree supply the floor and ceiling
+the published rows lacked.
+
+### §3 is NOT resolved, and it was always the reason for the strike
+
+The run supports the arithmetic. On the five metrics that have a probe, `spatialcpav20_gen` exceeds
+SpatialZ on four and loses `celltype_localization` — the shape the struck claim asserted.
+
+**And v20 sits on the copy floor**, which is what §3 said made the claim circular:
+
+| metric | v20 | `flanking_copy` | v20 − floor |
+|---|---|---|---|
+| `celltype_localization` | 0.7766 | 0.7765 | **+0.0001** |
+| `morans_pearson` | 0.9811 | 0.9836 | −0.0025 |
+| `gearys_pearson` | 0.9815 | 0.9840 | −0.0025 |
+| `marker_field_r` | 0.8707 | 0.8857 | −0.0150 |
+| `marker_depth_r` | 0.8963 | 0.9794 | −0.0831 |
+
+**One part in 7 765 on the metric the layout head exists to win.** R13's finding — `cross-mix` under
+`resample` *is* a copy, matching a model-free nearest-section copier to 0.001 on `deep_starmap` — now
+holds on a second dataset, on the pinned instrument, to four decimals.
+
+**So the claim stays struck, on §3 alone.** Quoting v20's win as a method's competitiveness would be
+quoting a model-free probe's score as a result of the model, which `architecture_ceiling.md` exists
+to forbid. §4's restatement stands unchanged and is what the paper says.
+
+**What the run licenses instead**, and what §8.2 of the paper states: *on four of the five readable
+tier-1 metrics, **no** method in the table — SpatialZ, FEAST, isoST, v18, v20, v21 or v25 — reaches
+a model-free copy of the flanking sections.* That is a statement about the benchmark, it generalises
+§6.1 past our own method, and it needs no claim about who beats whom.
+
+**Getting a number does not unstrike a claim.** The evidence objection is gone and the reasoning
+objection is untouched, and it was the reasoning objection that was load-bearing. This is recorded
+here because the natural move on receiving the long-awaited table was to reinstate the sentence it
+appears to support.

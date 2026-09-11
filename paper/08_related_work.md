@@ -9,24 +9,95 @@ protocol, taken unmodified so that "measured under the SpatialZ STARmap protocol
 optimal-transport layout that pulls a point cloud toward both flanks, then an expression step that
 copies from real donor cells of the same cell type.
 
-**It beats this method on axis-aligned reconstruction.** We state that plainly, and we do not need a
-head-to-head to know it: SpatialZ's expression step copies real counts from real cells, and §6.1
-measures where copying sits. On tier-1 `paper_morans_pearson` an optimal copier of the flanking
-sections scores **0.9836** and our method scores **0.5574**, with the architecture ceiling — what the
-decoder reaches given oracle means — at **0.8369**. Any method that emits real donor counts inherits
-the copy level; a method that emits from a ZINB decoder cannot, and no route inside this architecture
-closes the 0.8369 → 0.9836 gap. **This is consistent with §6 because it is §6**: the deficit was
-volunteered there as architectural rather than as a tuning failure, and a copier outscoring us is the
-prediction that framing makes, not an embarrassment to it.
+**It beats this method on axis-aligned reconstruction**, on five of the six tier-1 metrics, and §8.2
+is the table. We state it plainly because it is what the measurement says and because §6 predicts it:
+SpatialZ's expression step copies real counts from real cells, and §6.1 is the argument that copying
+is near the achievable maximum on this protocol while our decoder cannot reach it. A copier
+outscoring us is the prediction that framing makes, not an embarrassment to it.
 
-What follows from that is the shape of the contribution rather than a ranking. A copy has **no
-definition at an arbitrary orientation** — SpatialZ's layout interpolates between two flanking slices
-and its expression step draws from the nearest same-type cells, and neither construction has a
-meaning for a plane that spans the stack. The claim this paper makes is that section generation
-becomes well-defined there, and §3–§5 are about what it costs to check that. It is not that
-reconstruction is better on-axis. It is not.
+What follows is the shape of the contribution rather than a ranking. A copy has **no definition at
+an arbitrary orientation** — SpatialZ's layout interpolates between two flanking slices and its
+expression step draws from the nearest same-type cells, and neither construction has a meaning for a
+plane that spans the stack. The claim this paper makes is that section generation becomes
+well-defined there, and §3–§5 are about what it costs to check that. It is not that reconstruction is
+better on-axis. It is not.
 
-## 8.2 Two mechanisms in the competitor, read from its source
+## 8.2 The tier-1 table, against the floor and the ceiling
+
+Tier-1 `starmap_visual_cortex`, holdout `paper_2_4_6`, the protocol unmodified. The six comparator
+rows — SpatialZ, FEAST, isoST and three SpatialCPA predecessors — were re-scored **together, in one
+call**, by `evaluate_all --force` on the content-hash-pinned evaluator (`evaluate_paper.py`, sha256
+`7362669…538992`, `specs/10` §0), 0 failures. **`flanking_copy` and
+`oracle` are model-free probes** — they copy real cells rather than running a model, so they are
+arm-independent; they come from the probes tree (`r11_starmap_layout_modes.json`, re-measured and
+reproducing to four decimals), as does **this method's own row**, which is the shipped configuration
+at medians over the same three held-out sections.
+
+| metric | spatialz | feast | isost | v18 | v20 | v21 | **v25 (ours)** | **`flanking_copy`** | **`oracle`** |
+|---|---|---|---|---|---|---|---|---|---|
+| `morans_pearson` | 0.9289 | 0.7742 | 0.7884 | 0.9811 | 0.9811 | 0.9768 | **0.5574** | **0.9836** | 1.0000 |
+| `gearys_pearson` | 0.9307 | 0.7746 | 0.7981 | 0.9815 | 0.9815 | 0.9781 | **0.5543** | **0.9840** | 1.0000 |
+| `umap_mixing` | 0.8013 | 0.7742 | **0.9956** | 0.9238 | 0.9238 | 0.9392 | **0.8318** | ⚠️ *no probe* | ⚠️ *none* |
+| `marker_field_r` | 0.8535 | 0.5686 | 0.6344 | 0.8707 | 0.8707 | 0.8757 | **0.5655** | **0.8857** | 0.9997 |
+| `marker_depth_r` | 0.9199 | 0.7690 | 0.6984 | 0.8963 | 0.8963 | 0.9580 | **0.7228** | **0.9794** | 1.0000 |
+| `celltype_localization` | 0.8175 | ⚠️ 0.0000 | ⚠️ 0.0000 | 0.7766 | 0.7766 | 0.7954 | **0.7591** | **0.7765** | 0.9808 |
+
+### The reading, in the order the floor forces
+
+**1. On four of the five metrics that have a floor, not one of the seven methods reaches it.** Not
+SpatialZ, not FEAST, not isoST, not any SpatialCPA version, ours included. The best value in each of
+those columns still sits below a model-free copy of the flanking sections: −0.0025 at the closest
+(v18/v20 on the two autocorrelation metrics) and −0.0100 at best on `marker_field_r`. **The only
+column where anything exceeds the copy is `celltype_localization`**, where SpatialZ clears it by
++0.0410 and v21 by +0.0189.
+
+This is §6.1's finding, generalised past ourselves. We reported it about our own method first
+(§6.1, volunteered) and the comparator run says it is a property of the protocol: **on this
+benchmark, copying the flanking sections is at or above the state of the art on four of the five
+metrics that have a floor.** That is the methodological result this table carries, and it is not a result about any
+method in it.
+
+**2. SpatialZ beats this method on five of six, and our single win is on the unreadable metric.**
+0.5574 against 0.9289, 0.5543 against 0.9307, 0.5655 against 0.8535, 0.7228 against 0.9199, 0.7591
+against 0.8175. The one column we take is **`umap_mixing`, 0.8318 against 0.8013 — the one metric
+with no floor and no ceiling**, which by this paper's own rule (§6) means a score on it cannot be
+read at all. We do not claim it.
+
+**3. v20 is not competing with SpatialZ; the copy is.** `v20` sits **+0.0001** from `flanking_copy`
+on `celltype_localization`, −0.0025 on both autocorrelation metrics. `reports/v20_v21_evidence_audit.md`
+established on other grounds that `cross-mix` under `resample` **is** a copy, matching a model-free
+nearest-section copier to 0.001 on `deep_starmap`; this table is that finding on the pinned
+instrument, on a second dataset, to four decimals.
+
+**This is why we do not quote "v20 beats SpatialZ on 5 of 6" even though the table now supports the
+arithmetic.** That claim was struck earlier in this work for two reasons, and the comparator run
+resolves only one of them. It is no longer unsourced. It is still **circular**: the number doing the
+beating is the copy floor's, and this paper's own §6.1 is the argument that the copy floor is near
+the achievable maximum, so quoting it as a method's competitiveness would be claiming a model-free
+probe's score as a result of the model (`reports/spatialz_claim_struck.md`, amended with this run).
+**What the table licenses is "a copy beats SpatialZ on four of the five readable metrics", which is a
+statement about the benchmark.**
+
+### Four things in the table that are not measurements, flagged rather than smoothed
+
+- **`v18` and `v20` are identical in all six columns, to four decimals.** Two versions do not agree
+  to 1 part in 10⁴ on six statistics by chance. Either they emit the same predictions or the same
+  predictions were scored twice. We have not determined which, and the row is printed twice as it
+  came back rather than merged.
+- **FEAST and isoST score exactly `0.0000` on `celltype_localization`.** An exact zero on a
+  Sinkhorn-divergence-against-null statistic is the value returned when nothing is scorable — no
+  cell type clearing `min_gt_cells`, or no type column — not a measurement of poor localization.
+  **These two cells should be read as blank.** They are shown as returned because a silent blank
+  would hide a run that did not do what it was asked (Convention 6).
+- **isoST's `0.9956` on `umap_mixing` is the largest number in the table**, returned by the method
+  that is otherwise last or second-last in four of the other five columns. A metric on which the
+  weakest reconstruction scores highest is not ordering reconstructions — and it is the same metric
+  that has no floor and no ceiling, and the same one our own single win is on. We take all three
+  facts together as a reason to **read nothing from the `umap_mixing` column**, ours included.
+- **FEAST returns 0.7742 on `morans_pearson` and 0.7742 on `umap_mixing`** — two statistics of
+  different construction agreeing to four decimals. Noted, unexplained.
+
+## 8.3 Two mechanisms in the competitor, read from its source
 
 Both are properties of `reference/SpatialZ.py` at its published defaults (`syn_mode='default'`,
 `k_sam=3`), stated because they bear on what a copy-based construction can and cannot preserve. They
@@ -92,33 +163,39 @@ position is a coordinate the field is queried at.
 seeded generator, so two runs of the expression step are not reproducible without setting a process-
 wide seed. We note it only because determinism is a stated convention of this work.)*
 
-## 8.3 ⛔ What is missing, and what it would take
+## 8.4 What is missing from §8.2, and what it would take
 
-**The six-method tier-1 table does not exist in this repository, and this paper does not contain
-one.** `specs/10` §12 specifies it — SpatialZ, FEAST, isoST, v20, plus `flanking_copy` and `oracle`,
-all on the pinned evaluator under `paper_2_4_6` — and `specs/10` step 5 lists that run as **required
-and not yet performed**, for the reason that the pre-existing comparator numbers cannot be reused.
+**The run happened.** An earlier draft of this section said the comparator re-score had not been
+performed, citing `specs/10` step 5 and `reports/pilot.md` §44. That was true when those were written
+and is not true now: `evaluate_all --force` produced `results_rescored/` for
+`starmap_visual_cortex/paper_2_4_6`, all six methods, 0 failures, on the pinned evaluator. §8.2 is
+that run. What remains missing is narrower and it is about the **reference columns**, not the run.
 
-They cannot be reused for three reasons, all established before this paper was drafted
-(`reports/v20_v21_evidence_audit.md` §3, `reports/pilot.md` §44, `reports/spatialz_claim_struck.md`):
+**1. The floor and ceiling were not produced by the same invocation as the comparator rows.** The six
+comparator rows come from `results_rescored/`; `flanking_copy`, `oracle` and this method's own row
+come from the probes tree. Both are the same pinned evaluator, the same build and the same
+`paper_2_4_6` holdout, and the probes are **model-free and arm-independent** — they copy real cells
+and run no model, which is exactly why they transfer and why the join is legitimate. But it is a
+**join of two invocations, not one table**, and we say so rather than presenting it as one. Closing
+it means re-running the probes inside `evaluate_all` so every cell in §8.2 comes from one call.
 
-1. **Cross-instrument.** The published comparator numbers were produced by earlier `evaluate_paper`
-   revisions; every number in this paper comes from the content-hash-pinned one. Putting them in one
-   table is the comparison the benchmark's own rules forbid. SpatialZ's STARmap rows carry **0 of 3**
-   of the newer evaluator's columns against v20's 3 of 3.
-2. **No floor and no ceiling.** The published rows quote neither `flanking_copy` nor `oracle`, and a
-   score on this metric means nothing until it sits between them — which is the rule §6 is built on.
-3. **A claim of ours was struck on exactly this.** "v20 beats SpatialZ 5 of 6" was quoted through
-   much of this campaign and **could not be located in the record at all**; it is withdrawn in full
-   (`reports/spatialz_claim_struck.md`). We mention our own withdrawn claim here rather than in §7
-   because this is the section where a reader would otherwise expect to meet it.
+**2. `paper_umap_mixing` has no probe at all** — neither floor nor ceiling exists for it, on any run.
+One of the six columns is therefore unreadable by this paper's own rule, and §8.2's fourth flag gives
+two further reasons not to read it. It is printed because omitting a column of the protocol's own
+six would be a silent edit, not because we draw anything from it.
 
-**What this paper claims about the competitor is therefore limited to what is sourced above**: the
-two mechanisms, read from its code, one of them measured on our fixture with a model-free test; and
-that it beats us on reconstruction, which follows from the copy floor in §6.1 without a head-to-head.
-**We make no claim about relative performance on any metric**, in either direction.
+**3. Two cells are not measurements** — FEAST's and isoST's exact `0.0000` on
+`celltype_localization` — and establishing what those runs actually did would take reading their
+outputs, which we have not done.
 
-**What would close it** is one run — the comparators on tier-1, on the pinned evaluator, with the
-floor and ceiling columns attached — and it would be a *corroboration* rather than a dependency:
-under §6.1's framing it would be expected to show every method near the copy floor, which is itself
-the methodological finding. Nothing in §3, §4 or §5 rests on it.
+**4. The `results_rescored/` tree is not in this repository.** It was produced on the author's
+machine and the table in §8.2 was transcribed from it. The evaluator that produced it is pinned by
+content hash and is in the repository, so the run is *specifiable*; it is not yet *re-executable from
+this repository alone*. Committing the tree, or a manifest of it, is what would close that.
+
+**What this section claims about the competitor.** The two mechanisms of §8.3, read from its source,
+one of them measured on our fixture with a model-free test; that SpatialZ beats this method on five
+of the six tier-1 metrics, from §8.2 and consistent with §6; and that no method in the table reaches
+the copy floor on four of the five metrics that have one. **We make no claim that any SpatialCPA
+version beats SpatialZ as a method**, in either direction, for the reason given in §8.2's third
+reading.
