@@ -9176,3 +9176,47 @@ separate, real defect" after noting `celltype_localization` improves to 0.5822 a
 the floor.
 
 `--self-check` 147/147; `test1_field_count.py --self-check` 9/9; `tests/test_config.py` 7/7.
+
+### The fourth new-runner crash, and the check that would have caught it (§4.2q)
+
+`scripts/angle_budget.py` was **9/9** on `--self-check` and died before reading one coordinate:
+
+```
+SchemaError: Section.region: adata.obs['region'] is missing (Config.region_key)
+  loaders.py:218 <- _starmap_run.load_training_volume:143 <- angle_budget.py:100
+```
+
+**Cause.** The runner built its config as `Config()`. `_starmap_run.py` already holds the canonical
+`BENCH3_KEYS` and `base_config(seed, **overrides)`; `t10_chain_diagnostic` and `t10_r11_coupling`
+inline the same keys via a chained `.replace(..., region_key=None)`; `test1_field_count` and
+`test1b_layout_split` work because they restore `Config(**checkpoint["config"])` from a fit made
+under those keys. Mine used none of the three. **Fixed by matching them** — `cfg = base_config(seed=0)`
+— not by patching `region_key` at the call site.
+
+**Why §4.2p's check passed it.** Every call in that chain is well formed and every signature
+correct. `Config` takes no required arguments. The fault is a **default value the dataset cannot
+satisfy**, which is a different class from a signature mismatch.
+
+**What is not checkable, stated plainly.** Whether a particular `.h5ad` has a particular `obs`
+column is not decidable from source, and no check added here makes it so. What *is* decidable is
+whether a new runner prepares a shared resource the way the runners that already work prepare it —
+and that would have caught this exact defect.
+
+**`scripts/_contract.py`** (new): `bench3_config_discipline()` parses all **23** scripts that call
+`load_training_volume` and trusts a construction only when it splats a dict or names `region_key`,
+directly or through a chained `.replace`; `uses_shared_base_config(script)` is the stronger per-file
+form for a runner with no checkpoint to restore from. Wired into the self-checks of `angle_budget`,
+`test1_field_count` and `test1b_layout_split`.
+
+**Two corrections to my own check, both worth recording.** Its first version matched *substrings*
+and named three innocent scripts (`t10_a7_thick_binding`, `t10_r11_budget`, `t10_r11_envelope`) as
+offenders — a checker reporting its own narrowness as a finding is worse than none, so it was made
+structural. And it had no positive control; it now asserts inside itself that the bare `Config()` is
+still rejected, that a checkpoint-restored config and a chained `.replace(region_key=...)` are still
+accepted, and that a chained replace *not* naming the key is still an offender.
+
+**Verified by reintroduction**, not by argument: with `Config()` put back, `angle_budget.py
+--self-check` goes **17/17 -> 14/17** and names the file and the line. Restored: 17/17.
+`test1_field_count` 26/26, `test1b_layout_split` 26/26.
+
+Recorded as `specs/10` §4.2q with the decidability boundary stated in the rule itself.

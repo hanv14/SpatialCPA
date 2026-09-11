@@ -696,6 +696,47 @@ they are the same expression — or the refutation is of something else. A stati
 its definition**, and a name shared with the implementation that happens to be nearest to hand is
 the likeliest way to get this wrong.
 
+### 4.2q A shared resource prepared a way the existing users do not prepare it
+
+**The fourth new runner to pass `--self-check` and then die on the real API.** `angle_budget.py`
+was **9/9** and crashed before reading one coordinate:
+
+```
+SchemaError: Section.region: adata.obs['region'] is missing (Config.region_key)
+  loaders.py:218 <- _starmap_run.load_training_volume:143 <- angle_budget.py:100
+```
+
+The runner built its config as `Config()`. Every call in that chain is well formed and every
+signature correct, so **§4.2p's check passes it**: `Config` takes no required arguments, and
+`load_training_volume(cfg, path)` is exactly the signature it has. The fault is a **default value
+the dataset cannot satisfy** — `Config.region_key = "region"` naming an `obs` column bench3's builds
+do not have.
+
+**What is and is not statically checkable.** Whether a *particular file* has a *particular column*
+is not decidable from source, and no check added here can make it so; that needs the data, which is
+§4.2p's "after the decision to run". So the rule cannot be "verify the config against the dataset".
+
+What **is** decidable, and what would have caught this: the four runners that already load this
+volume all obtain their config from one of two sanctioned places — `_starmap_run.base_config`, or a
+checkpoint that was fitted under it — and the new one obtained it from neither. *Consistency with
+the working users of a shared resource is a source-level property.*
+
+**The rule.** *When a script prepares a resource that other scripts already prepare, the wiring
+check asserts it prepares it the way they do — not merely that its calls type-check.* Enumerate the
+sanctioned forms, scan every script that touches the resource, and name the offenders. Implemented
+as `scripts/_contract.py`: `bench3_config_discipline()` scans all 23 bench3 loaders structurally
+with `ast` (a construction is trusted when it splats a dict or names `region_key`, directly or
+through a chained `.replace`), and `uses_shared_base_config(script)` is the stronger per-file form
+for a runner with no checkpoint to restore from.
+
+**Two things the first version of that check got wrong, both worth keeping in view.** It matched
+*substrings* rather than parsing, and so named three innocent scripts as offenders — a checker
+reporting its own narrowness as a finding is worse than no checker. And it had no positive control:
+it is now asserted, in the check itself, that the bare `Config()` is still rejected and that a
+checkpoint-restored config is still accepted, so a green line means the check still discriminates.
+Verified by reintroduction: with `Config()` put back, `angle_budget.py --self-check` drops
+17/17 -> 14/17 and names the file and line.
+
 ### 4.2p A self-check that covers the scoring and not the wiring
 
 **Two instances, one shape.** In each, a script's `--self-check` passed in full and the run died on
@@ -952,6 +993,7 @@ was written:
 | **whether the statistic chose its own parameters** | 4.2n | One permutation construction reported as −0.2472 / −0.0080 / +0.2634 because three blocks inherited three seed counts; a 2-column table quoting a 3-control span; an F3 that left 1/width of the genes on themselves and inflated the abundance floor to +0.141 where it must be zero. A seed count, a column list, a stratum width and a permutation scheme are part of the measurement |
 | **whether the criterion consumed its own spread** | 4.2o | A floor refused on `< 0.10` while its printed interval read −0.1414 .. +0.2976; an `R` guarded on the deficit's sign printing ±148 on a deficit of 0.0029 against arm spreads of 0.009; a distribution represented by one draw, −0.3928 against the same page's −0.0080. In each the number the decision needed was already on the page |
 | **whether the self-check covers the wiring** | 4.2p | 117/117 through two runs that died at `json.dumps`; 9/9 through a run that died at `TrainingData(specimen_id=...)` with three more constructor defects behind it. A criterion check is not a wiring check, and a wiring check that needs the data runs only after the decision to run |
+| **whether a shared resource is prepared the way its working users prepare it** | 4.2q | The fourth new runner to pass `--self-check` and die on the real API. Every signature correct; the fault was `Config.region_key`'s default naming a column bench3 does not build. Whether a file has a column is not statically decidable — whether a new runner differs from the four that already work is |
 | **whether the run's own alarm reached the run's own report** | 4.2f-i | the `deep_starmap` chain run's spatial-collapse alarm fired at **122 checked steps, 79 of them inversions, and was still firing at the last step (2399, −0.0129)** against a healthy floor of +0.5467 — into stderr, while the report that run wrote carries a provenance block, a stage table and a verdict and says nothing about it. Its `+0.0729` entered a review as a result before the log was opened |
 | **whether the report describes work that was done** | 4.2k | one report said *"top 28 by Moran's I on the real side"* for a selection that kept all 28 genes of a 28-gene panel, and *"matched to the real section: 4073 -> 4073 kept"* for a density match that subsampled nothing — while the other dataset in the same comparison got a genuine top-3.1 % selection, described in the same words |
 | **whether the artifact says which arm it is** | 4.2a-ii | the committed, bitwise-reproducible files behind the six-metric table record no `config_hash`, no `text_emb_mode` and no metric-aware weights, so a correctly measured envelope cannot be matched to them — six clearance figures are flagged rather than numbered for this reason alone |

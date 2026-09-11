@@ -226,10 +226,12 @@ def _contract_check() -> list[tuple[str, bool]]:
     Read from the real source with ``ast``/text, so it needs no torch, no data and no fit -- the
     check runs wherever the code is edited rather than only where the data lives.
     """
+    from _contract import bench3_config_discipline
+
     root = Path(__file__).resolve().parent.parent
     ev = (root / "benchmark-pbya-v3/src/bench3/evaluate_paper.py").read_text()
     al = (root / "benchmark-pbya-v3/src/bench3/align.py").read_text()
-    return [
+    return list(bench3_config_discipline()) + [
         (
             "evaluate_paper still emits `celltype_localization` per section",
             '"celltype_localization"' in ev,

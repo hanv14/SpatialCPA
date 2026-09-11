@@ -97,8 +97,12 @@ def _contract_check() -> list[tuple[str, bool]]:
     """
     import ast
 
+    from _contract import bench3_config_discipline
+
     root = Path(__file__).resolve().parent.parent
-    checks: list[tuple[str, bool]] = []
+    # A signature check cannot catch a config field left at a default the dataset cannot satisfy;
+    # this one asserts every bench3 runner prepares its Config the way the working ones do.
+    checks: list[tuple[str, bool]] = list(bench3_config_discipline())
 
     def parse(rel: str) -> ast.Module:
         return ast.parse((root / rel).read_text())

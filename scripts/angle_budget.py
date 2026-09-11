@@ -89,14 +89,15 @@ def main(argv: list[str] | None = None) -> int:
         return _self_check()
     paths = resolve(args)
 
-    from spatialcpav25_gen.config import Config
     from spatialcpav25_gen.data.schema import to_xyz
     from spatialcpav25_gen.infer.planes import plane_from_normal
     from spatialcpav25_gen.model.layout import cells_near_plane
 
-    from _starmap_run import load_training_volume
+    from _starmap_run import base_config, load_training_volume
 
-    cfg = Config()
+    # `base_config`, not `Config()`: bench3 builds carry no `region` column, and Config's default
+    # `region_key="region"` makes `load_volume` raise a SchemaError before any geometry is read.
+    cfg = base_config(seed=0)
     vol = load_training_volume(cfg, paths.input)
     xyz = np.concatenate([np.asarray(to_xyz(s), dtype=np.float64) for s in vol.sections], axis=0)
     lo, hi = xyz.min(axis=0), xyz.max(axis=0)
@@ -237,6 +238,13 @@ def _self_check() -> int:
          scorable_types(np.array([], dtype=int)) == 0 and largest_type(np.array([], dtype=int)) == 0),
         ("a refusal always says which gate", all(gates(r, coronal)[1] for _l, r, w in cases if not w)),
     ]
+    # The wiring, not the scoring (specs/10 §4.2p, §4.2q). This runner has no checkpoint to
+    # restore a Config from, so `base_config` is the only sanctioned source; reaching for a bare
+    # `Config()` is what took its first real run down inside `loaders.py`.
+    from _contract import bench3_config_discipline, uses_shared_base_config
+
+    checks += uses_shared_base_config("angle_budget.py")
+    checks += bench3_config_discipline()
     for label, ok in checks:
         print(f"  {'ok  ' if ok else 'FAIL'} {label}")
     failed = sum(1 for _l, ok in checks if not ok)
