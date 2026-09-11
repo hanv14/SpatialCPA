@@ -13,6 +13,11 @@ chain's per-section figure is that construction exactly, and its median is that 
 | `flanking_copy` | 0.9517 | 0.9913 | 0.9836 | **0.9836** | **0.9836** | **0.0000** |
 | v25 (stage 4) | 0.5076 | 0.5600 | 0.5826 | **0.5600** | **0.5574** | 0.0026 |
 
+**Every section matches, not merely the median** — `reports/pilot.md` §3 carries the published
+per-section figures as 0.9517 / 0.9913 / 0.9836, which is three-for-three
+(`reports/deep_anchoring_check.md` §2). This document originally claimed only the median match and
+is corrected upward.
+
 The copy matching to four decimals is the **expected** result, not a lucky one — the probe is
 deterministic (the nearest training section, emitted verbatim), so an exact match is what a correct
 reconstruction of `evaluate_paper.py::_agreement` must produce, and getting it is the strongest
@@ -31,9 +36,11 @@ perfect mean field with the model's own emission reaches **0.837** against a cop
 
 ## 3. What it does NOT retire
 
-- **`deep_starmap` is not anchored.** Its panel is 32 of 1017 genes and its all-genes scope is the
-  chain's own construction; no published `paper_*` figure for it has been read from bench3. Deep's
-  numbers stay comparable between stages and to each other, and not to a published score.
+- **`deep_starmap` is not anchored, and cannot be** on the present record: the reference numbers
+  were searched for and **do not exist** — no artifact in this repository carries
+  `paper_morans_pearson` for `deep_starmap`, and `results_rescored/` is gitignored and absent
+  (`reports/deep_anchoring_check.md` §1). Deep's numbers stay comparable between stages and to each
+  other, never to a published score and **never beside a tier-1 magnitude**.
 - **A single generation seed is still a single generation.** The per-section v25 figures carry the
   spread the stage-4 block prints; only the median over three sections is being compared here.
 - **Nothing about the other `paper_*` metrics.** This anchors `paper_morans_pearson` and no other

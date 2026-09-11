@@ -32,21 +32,24 @@ ceiling, on the scale the paper reports, and it loses. No arrangement of the pri
 Fixing the first two *perfectly* reaches 0.837 and still loses by 0.147. That is the closure in one
 table.
 
-### The two datasets put the irreducible remainder in different places
+### ⚠️ The two-datasets comparison is WITHDRAWN
 
-This is not a caveat; it is the mechanism, and it differs by dataset:
+This section previously read *"the two datasets put the irreducible remainder in different
+places — the emission on deep, the mean field's smoothing and the draw on tier-1"*, quoting a gap
+of 0.146 on deep beside 0.14 on tier-1.
 
-- **deep** — `A1c` (0.9699) sits essentially at the copy, and `A1b` is **0.146** below `A1c`. The
-  remainder is the **emission**: a Poisson draw from a perfect mean field reaches the floor and the
-  model's own θ/π is what loses it.
-- **tier-1** — `A1c` (0.8468) ≈ `A1b` (0.8369), and *both* sit ~0.14 below the copy. Removing the
-  emission entirely gains nothing. The remainder is the **kNN mean field's smoothing and the draw
-  itself**: a copy carries real cell-level count structure that no draw from a smoothed field
-  reproduces.
+**Those are not the same units.** Tier-1's ladder is the published statistic
+(`reports/deep_anchoring_check.md` §2: every section matches, not just the median). Deep's has no
+published referent — the reference numbers were searched for and **do not exist**
+(`deep_anchoring_check.md` §1) — and `reports/panel_regime.md` establishes that the two datasets'
+`paper_morans_pearson` are not the same quantity, about half of deep's being per-gene abundance
+against almost none of tier-1's. Setting the two absolute gaps side by side is the cross-scope
+comparison this campaign has been caught by four times.
 
-So "what cannot be reached" has two different causes on the two datasets, and neither is a repair
-route: on deep because Q1.5 measured that removing the emission moves the datasets in opposite
-directions, and on tier-1 because the thing that cannot be reached is not part of the model.
+**Withdrawn, not qualified.** The table above keeps deep's column because within-deep *orderings*
+are internally consistent and are what the copy-floor and panel-regime results rest on; no statement
+in this file compares a deep magnitude to a tier-1 one. `deep_anchoring_check.md` §4 states what
+would anchor deep and reverse this.
 
 ## 1. The ceiling, per section on deep
 
