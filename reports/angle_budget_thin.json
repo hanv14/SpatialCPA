@@ -1,0 +1,146 @@
+{
+  "datasets": [
+    {
+      "dataset": "merfish_thick_hypothalamus",
+      "holdout": "paper_2_4_6",
+      "n_cells": 47189,
+      "n_sections": 4,
+      "n_types": 9,
+      "extent_um": [
+        1613.3213500976562,
+        1883.9052124023438,
+        170.5
+      ],
+      "section_spacing_um": 57.5,
+      "slab_thickness_um": 13.5,
+      "reference_plane_z_um": 73.0,
+      "in_plane_to_depth": 10.255796370967742,
+      "angles": [
+        {
+          "angle_deg": 0.0,
+          "n_cells": 11104,
+          "n_donors": 11104,
+          "n_sections": 1,
+          "scorable_types": 9,
+          "largest_type": 4473,
+          "extent_u": 1877.8565063476562,
+          "extent_v": 1610.9813232421875,
+          "aspect": 0.8578830798821105,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 5.0,
+          "n_cells": 2997,
+          "n_donors": 2997,
+          "n_sections": 3,
+          "scorable_types": 9,
+          "largest_type": 959,
+          "extent_u": 1450.184609469814,
+          "extent_v": 1608.3822021484375,
+          "aspect": 0.9016417910697426,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 10.0,
+          "n_cells": 2242,
+          "n_donors": 2242,
+          "n_sections": 4,
+          "scorable_types": 9,
+          "largest_type": 1001,
+          "extent_u": 1058.0045319542262,
+          "extent_v": 1609.3724975585942,
+          "aspect": 0.6574018964280868,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 15.0,
+          "n_cells": 1736,
+          "n_donors": 1736,
+          "n_sections": 4,
+          "scorable_types": 8,
+          "largest_type": 797,
+          "extent_u": 709.0379480877084,
+          "extent_v": 1609.2993774414062,
+          "aspect": 0.44058797140342776,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 20.0,
+          "n_cells": 1363,
+          "n_donors": 1363,
+          "n_sections": 4,
+          "scorable_types": 8,
+          "largest_type": 638,
+          "extent_u": 535.36265440683,
+          "extent_v": 1609.9618530273438,
+          "aspect": 0.33253126675029193,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 30.0,
+          "n_cells": 940,
+          "n_donors": 940,
+          "n_sections": 4,
+          "scorable_types": 7,
+          "largest_type": 351,
+          "extent_u": 364.2417039267293,
+          "extent_v": 1602.2999267578125,
+          "aspect": 0.22732429668380333,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 45.0,
+          "n_cells": 662,
+          "n_donors": 662,
+          "n_sections": 4,
+          "scorable_types": 5,
+          "largest_type": 250,
+          "extent_u": 254.51410678862112,
+          "extent_v": 1595.748779296875,
+          "aspect": 0.15949509728014086,
+          "clears": false,
+          "why_not": "5 scorable types against the coronal plane's 9 \u2014 below 60% (G1)"
+        },
+        {
+          "angle_deg": 60.0,
+          "n_cells": 480,
+          "n_donors": 480,
+          "n_sections": 4,
+          "scorable_types": 4,
+          "largest_type": 165,
+          "extent_u": 204.55639445559837,
+          "extent_v": 1599.1856079101562,
+          "aspect": 0.12791285354482163,
+          "clears": false,
+          "why_not": "4 scorable types against the coronal plane's 9 \u2014 below 60% (G1)"
+        },
+        {
+          "angle_deg": 90.0,
+          "n_cells": 486,
+          "n_donors": 486,
+          "n_sections": 4,
+          "scorable_types": 4,
+          "largest_type": 241,
+          "extent_u": 170.5,
+          "extent_v": 1594.7249755859375,
+          "aspect": 0.10691498697908992,
+          "clears": false,
+          "why_not": "4 scorable types against the coronal plane's 9 \u2014 below 60% (G1)"
+        }
+      ],
+      "angle_budget_deg": 30.0,
+      "cells_at_budget": 940,
+      "first_failure": [
+        45.0,
+        "5 scorable types against the coronal plane's 9 \u2014 below 60% (G1)"
+      ]
+    }
+  ],
+  "skipped": []
+}

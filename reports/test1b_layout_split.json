@@ -1,0 +1,79 @@
+{
+  "arms": {
+    "base": {
+      "per_section": {
+        "section_2": 0.5371493249796185,
+        "section_4": 0.1862612627161295,
+        "section_6": 0.6602997714805815
+      },
+      "median": 0.5371493249796185,
+      "pose_deg": 1.5,
+      "n_cells": {
+        "section_2": 4165,
+        "section_4": 4276,
+        "section_6": 4289
+      }
+    },
+    "fix_types": {
+      "per_section": {
+        "section_2": 0.6378909280508892,
+        "section_4": 0.2972426689124122,
+        "section_6": 0.7278328983163815
+      },
+      "median": 0.6378909280508892,
+      "pose_deg": 1.5,
+      "n_cells": {
+        "section_2": 4165,
+        "section_4": 4276,
+        "section_6": 4289
+      }
+    },
+    "fix_positions": {
+      "per_section": {
+        "section_2": 0.5888030843320222,
+        "section_4": 0.607517268893386,
+        "section_6": 0.597437032289256
+      },
+      "median": 0.597437032289256,
+      "pose_deg": 0.0,
+      "n_cells": {
+        "section_2": 4073,
+        "section_4": 4169,
+        "section_6": 4110
+      }
+    },
+    "both_oracle": {
+      "per_section": {
+        "section_2": 0.8303301452681463,
+        "section_4": 0.8375317103633729,
+        "section_6": 0.8442855664022929
+      },
+      "median": 0.8375317103633729,
+      "pose_deg": 0.0,
+      "n_cells": {
+        "section_2": 4073,
+        "section_4": 4169,
+        "section_6": 4110
+      }
+    },
+    "null_types": {
+      "per_section": {
+        "section_2": 0.029268786067814016,
+        "section_4": 0.08318653287958198,
+        "section_6": 0.051804884796161604
+      },
+      "median": 0.051804884796161604,
+      "pose_deg": 1.5,
+      "n_cells": {
+        "section_2": 4165,
+        "section_4": 4276,
+        "section_6": 4289
+      }
+    }
+  },
+  "recovered_types": 0.420895420757398,
+  "recovered_positions": 0.2518802476930714,
+  "verdict": "MIXED",
+  "why": "neither mechanism dominates; both shares are reported and no single-mechanism claim may be made",
+  "preconditions_failed": []
+}

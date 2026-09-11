@@ -1,0 +1,583 @@
+{
+  "datasets": [
+    {
+      "dataset": "starmap_visual_cortex",
+      "holdout": "paper_2_4_6",
+      "n_cells": 16527,
+      "n_sections": 4,
+      "n_types": 19,
+      "extent_um": [
+        1545.3410387039185,
+        1300.525975227356,
+        66.0
+      ],
+      "section_spacing_um": 22.0,
+      "slab_thickness_um": 22.0,
+      "reference_plane_z_um": 41.0,
+      "in_plane_to_depth": 21.559598590388443,
+      "angles": [
+        {
+          "angle_deg": 0.0,
+          "n_cells": 4169,
+          "n_donors": 4169,
+          "n_sections": 1,
+          "scorable_types": 19,
+          "largest_type": 456,
+          "extent_u": 1300.525975227356,
+          "extent_v": 1513.5579671859741,
+          "aspect": 0.8592508535667849,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 5.0,
+          "n_cells": 3211,
+          "n_donors": 3211,
+          "n_sections": 4,
+          "scorable_types": 19,
+          "largest_type": 337,
+          "extent_u": 1007.8135562288068,
+          "extent_v": 1410.4780111312866,
+          "aspect": 0.7145191546945711,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 10.0,
+          "n_cells": 1669,
+          "n_donors": 1669,
+          "n_sections": 4,
+          "scorable_types": 17,
+          "largest_type": 187,
+          "extent_u": 503.8035866107188,
+          "extent_v": 1544.4820394515996,
+          "aspect": 0.32619582082651133,
+          "clears": false,
+          "why_not": "the largest type has 187 cells, under the metric's own max_n = 250 subsample cap (G2)"
+        },
+        {
+          "angle_deg": 15.0,
+          "n_cells": 1134,
+          "n_donors": 1134,
+          "n_sections": 4,
+          "scorable_types": 17,
+          "largest_type": 117,
+          "extent_u": 336.5282425583464,
+          "extent_v": 1544.4820394515991,
+          "aspect": 0.217890680475532,
+          "clears": false,
+          "why_not": "the largest type has 117 cells, under the metric's own max_n = 250 subsample cap (G2)"
+        },
+        {
+          "angle_deg": 20.0,
+          "n_cells": 889,
+          "n_donors": 889,
+          "n_sections": 4,
+          "scorable_types": 13,
+          "largest_type": 99,
+          "extent_u": 251.8169764910955,
+          "extent_v": 1545.3410387039185,
+          "aspect": 0.16295236467821694,
+          "clears": false,
+          "why_not": "the largest type has 99 cells, under the metric's own max_n = 250 subsample cap (G2)"
+        },
+        {
+          "angle_deg": 30.0,
+          "n_cells": 567,
+          "n_donors": 567,
+          "n_sections": 4,
+          "scorable_types": 10,
+          "largest_type": 65,
+          "extent_u": 169.1365611467211,
+          "extent_v": 1332.3090562820435,
+          "aspect": 0.12694994479637892,
+          "clears": false,
+          "why_not": "10 scorable types against the coronal plane's 19 \u2014 below 60% (G1)"
+        },
+        {
+          "angle_deg": 45.0,
+          "n_cells": 441,
+          "n_donors": 441,
+          "n_sections": 4,
+          "scorable_types": 9,
+          "largest_type": 50,
+          "extent_u": 114.69838228697922,
+          "extent_v": 1328.8730306625366,
+          "aspect": 0.08631252169350899,
+          "clears": false,
+          "why_not": "9 scorable types against the coronal plane's 19 \u2014 below 60% (G1)"
+        },
+        {
+          "angle_deg": 60.0,
+          "n_cells": 355,
+          "n_donors": 355,
+          "n_sections": 4,
+          "scorable_types": 8,
+          "largest_type": 38,
+          "extent_u": 88.08165736266358,
+          "extent_v": 1328.8730306625366,
+          "aspect": 0.06628297461853724,
+          "clears": false,
+          "why_not": "8 scorable types against the coronal plane's 19 \u2014 below 60% (G1)"
+        },
+        {
+          "angle_deg": 90.0,
+          "n_cells": 304,
+          "n_donors": 304,
+          "n_sections": 4,
+          "scorable_types": 7,
+          "largest_type": 39,
+          "extent_u": 66.0,
+          "extent_v": 1326.2960042953491,
+          "aspect": 0.049762647091035526,
+          "clears": false,
+          "why_not": "7 scorable types against the coronal plane's 19 \u2014 below 60% (G1)"
+        }
+      ],
+      "angle_budget_deg": 5.0,
+      "cells_at_budget": 3211,
+      "first_failure": [
+        10.0,
+        "the largest type has 187 cells, under the metric's own max_n = 250 subsample cap (G2)"
+      ]
+    },
+    {
+      "dataset": "deep_starmap",
+      "holdout": "paper_2_4_6",
+      "n_cells": 115830,
+      "n_sections": 4,
+      "n_types": 137,
+      "extent_um": [
+        4384.639846801758,
+        4154.559804677963,
+        125.30000591278076
+      ],
+      "section_spacing_um": 42.0,
+      "slab_thickness_um": 42.0,
+      "reference_plane_z_um": 52.5,
+      "in_plane_to_depth": 34.07501695340587,
+      "angles": [
+        {
+          "angle_deg": 0.0,
+          "n_cells": 29842,
+          "n_donors": 29842,
+          "n_sections": 1,
+          "scorable_types": 124,
+          "largest_type": 3101,
+          "extent_u": 4153.919804573059,
+          "extent_v": 4353.5998458862305,
+          "aspect": 0.954134498258527,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 5.0,
+          "n_cells": 14209,
+          "n_donors": 14209,
+          "n_sections": 4,
+          "scorable_types": 99,
+          "largest_type": 2014,
+          "extent_u": 1917.2388866346173,
+          "extent_v": 4106.240020751953,
+          "aspect": 0.46690862612642015,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 10.0,
+          "n_cells": 6873,
+          "n_donors": 6873,
+          "n_sections": 4,
+          "scorable_types": 59,
+          "largest_type": 1248,
+          "extent_u": 959.6103043578385,
+          "extent_v": 4020.1600341796884,
+          "aspect": 0.23869952842652106,
+          "clears": false,
+          "why_not": "59 scorable types against the coronal plane's 124 \u2014 below 60% (G1)"
+        },
+        {
+          "angle_deg": 15.0,
+          "n_cells": 4654,
+          "n_donors": 4654,
+          "n_sections": 4,
+          "scorable_types": 45,
+          "largest_type": 870,
+          "extent_u": 639.8042346165993,
+          "extent_v": 3989.4400329589844,
+          "aspect": 0.16037444586980137,
+          "clears": false,
+          "why_not": "45 scorable types against the coronal plane's 124 \u2014 below 60% (G1)"
+        },
+        {
+          "angle_deg": 20.0,
+          "n_cells": 3602,
+          "n_donors": 3602,
+          "n_sections": 4,
+          "scorable_types": 37,
+          "largest_type": 686,
+          "extent_u": 481.2780554864124,
+          "extent_v": 3972.800048828125,
+          "aspect": 0.12114328674265326,
+          "clears": false,
+          "why_not": "37 scorable types against the coronal plane's 124 \u2014 below 60% (G1)"
+        },
+        {
+          "angle_deg": 30.0,
+          "n_cells": 2502,
+          "n_donors": 2502,
+          "n_sections": 4,
+          "scorable_types": 26,
+          "largest_type": 514,
+          "extent_u": 322.31903042663885,
+          "extent_v": 3935.0400390625,
+          "aspect": 0.0819099747974685,
+          "clears": false,
+          "why_not": "26 scorable types against the coronal plane's 124 \u2014 below 60% (G1)"
+        },
+        {
+          "angle_deg": 45.0,
+          "n_cells": 1774,
+          "n_donors": 1774,
+          "n_sections": 4,
+          "scorable_types": 20,
+          "largest_type": 379,
+          "extent_u": 217.3504555080599,
+          "extent_v": 3914.2401123046875,
+          "aspect": 0.05552813554406219,
+          "clears": false,
+          "why_not": "20 scorable types against the coronal plane's 124 \u2014 below 60% (G1)"
+        },
+        {
+          "angle_deg": 60.0,
+          "n_cells": 1504,
+          "n_donors": 1504,
+          "n_sections": 4,
+          "scorable_types": 18,
+          "largest_type": 316,
+          "extent_u": 168.83299553902725,
+          "extent_v": 3898.2401123046875,
+          "aspect": 0.043310055480192344,
+          "clears": false,
+          "why_not": "18 scorable types against the coronal plane's 124 \u2014 below 60% (G1)"
+        },
+        {
+          "angle_deg": 90.0,
+          "n_cells": 1309,
+          "n_donors": 1309,
+          "n_sections": 4,
+          "scorable_types": 14,
+          "largest_type": 267,
+          "extent_u": 125.30000591278076,
+          "extent_v": 3891.5200805664062,
+          "aspect": 0.0321982164600686,
+          "clears": false,
+          "why_not": "14 scorable types against the coronal plane's 124 \u2014 below 60% (G1)"
+        }
+      ],
+      "angle_budget_deg": 5.0,
+      "cells_at_budget": 14209,
+      "first_failure": [
+        10.0,
+        "59 scorable types against the coronal plane's 124 \u2014 below 60% (G1)"
+      ]
+    },
+    {
+      "dataset": "merfish_thick_cortex",
+      "holdout": "paper_2_4_6",
+      "n_cells": 17467,
+      "n_sections": 4,
+      "n_types": 24,
+      "extent_um": [
+        2160.376251220703,
+        1950.0827941894531,
+        83.0
+      ],
+      "section_spacing_um": 27.5,
+      "slab_thickness_um": 27.5,
+      "reference_plane_z_um": 37.0,
+      "in_plane_to_depth": 24.761801478374434,
+      "angles": [
+        {
+          "angle_deg": 0.0,
+          "n_cells": 3875,
+          "n_donors": 3875,
+          "n_sections": 1,
+          "scorable_types": 19,
+          "largest_type": 672,
+          "extent_u": 1948.8396911621094,
+          "extent_v": 2160.376251220703,
+          "aspect": 0.9020834634989777,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 5.0,
+          "n_cells": 2791,
+          "n_donors": 2791,
+          "n_sections": 4,
+          "scorable_types": 19,
+          "largest_type": 533,
+          "extent_u": 1266.3548921397983,
+          "extent_v": 2109.168426513672,
+          "aspect": 0.6004048212655101,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 10.0,
+          "n_cells": 1386,
+          "n_donors": 1386,
+          "n_sections": 4,
+          "scorable_types": 16,
+          "largest_type": 207,
+          "extent_u": 632.7562998320954,
+          "extent_v": 1618.8435668945317,
+          "aspect": 0.3908693296696528,
+          "clears": false,
+          "why_not": "the largest type has 207 cells, under the metric's own max_n = 250 subsample cap (G2)"
+        },
+        {
+          "angle_deg": 15.0,
+          "n_cells": 926,
+          "n_donors": 926,
+          "n_sections": 4,
+          "scorable_types": 14,
+          "largest_type": 124,
+          "extent_u": 422.5655830342621,
+          "extent_v": 1557.3104248046875,
+          "aspect": 0.27134319292010056,
+          "clears": false,
+          "why_not": "the largest type has 124 cells, under the metric's own max_n = 250 subsample cap (G2)"
+        },
+        {
+          "angle_deg": 20.0,
+          "n_cells": 701,
+          "n_donors": 701,
+          "n_sections": 4,
+          "scorable_types": 12,
+          "largest_type": 105,
+          "extent_u": 317.3608179077658,
+          "extent_v": 1511.4190063476562,
+          "aspect": 0.20997540495052272,
+          "clears": false,
+          "why_not": "the largest type has 105 cells, under the metric's own max_n = 250 subsample cap (G2)"
+        },
+        {
+          "angle_deg": 30.0,
+          "n_cells": 486,
+          "n_donors": 486,
+          "n_sections": 4,
+          "scorable_types": 8,
+          "largest_type": 79,
+          "extent_u": 212.78591264405782,
+          "extent_v": 1463.2296142578125,
+          "aspect": 0.1454220927260198,
+          "clears": false,
+          "why_not": "8 scorable types against the coronal plane's 19 \u2014 below 60% (G1)"
+        },
+        {
+          "angle_deg": 45.0,
+          "n_cells": 340,
+          "n_donors": 340,
+          "n_sections": 4,
+          "scorable_types": 8,
+          "largest_type": 50,
+          "extent_u": 143.73041550287607,
+          "extent_v": 1438.5865478515625,
+          "aspect": 0.09991085744373761,
+          "clears": false,
+          "why_not": "8 scorable types against the coronal plane's 19 \u2014 below 60% (G1)"
+        },
+        {
+          "angle_deg": 60.0,
+          "n_cells": 265,
+          "n_donors": 265,
+          "n_sections": 4,
+          "scorable_types": 4,
+          "largest_type": 47,
+          "extent_u": 111.10282579926466,
+          "extent_v": 1424.4732666015625,
+          "aspect": 0.07799572544055408,
+          "clears": false,
+          "why_not": "4 scorable types against the coronal plane's 19 \u2014 below 60% (G1)"
+        },
+        {
+          "angle_deg": 90.0,
+          "n_cells": 232,
+          "n_donors": 232,
+          "n_sections": 4,
+          "scorable_types": 3,
+          "largest_type": 40,
+          "extent_u": 83.0,
+          "extent_v": 1409.5557250976562,
+          "aspect": 0.05888380184064708,
+          "clears": false,
+          "why_not": "3 scorable types against the coronal plane's 19 \u2014 below 60% (G1)"
+        }
+      ],
+      "angle_budget_deg": 5.0,
+      "cells_at_budget": 2791,
+      "first_failure": [
+        10.0,
+        "the largest type has 207 cells, under the metric's own max_n = 250 subsample cap (G2)"
+      ]
+    },
+    {
+      "dataset": "merfish_thick_hypothalamus",
+      "holdout": "paper_2_4_6",
+      "n_cells": 47189,
+      "n_sections": 4,
+      "n_types": 9,
+      "extent_um": [
+        1613.3213500976562,
+        1883.9052124023438,
+        170.5
+      ],
+      "section_spacing_um": 57.5,
+      "slab_thickness_um": 57.5,
+      "reference_plane_z_um": 73.0,
+      "in_plane_to_depth": 10.255796370967742,
+      "angles": [
+        {
+          "angle_deg": 0.0,
+          "n_cells": 11104,
+          "n_donors": 11104,
+          "n_sections": 1,
+          "scorable_types": 9,
+          "largest_type": 4473,
+          "extent_u": 1877.8565063476562,
+          "extent_v": 1610.9813232421875,
+          "aspect": 0.8578830798821105,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 5.0,
+          "n_cells": 12234,
+          "n_donors": 12234,
+          "n_sections": 3,
+          "scorable_types": 9,
+          "largest_type": 5128,
+          "extent_u": 1885.2589936105464,
+          "extent_v": 1611.6133422851562,
+          "aspect": 0.8548498364135536,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 10.0,
+          "n_cells": 9392,
+          "n_donors": 9392,
+          "n_sections": 4,
+          "scorable_types": 9,
+          "largest_type": 4462,
+          "extent_u": 1307.8763577414677,
+          "extent_v": 1611.5053100585942,
+          "aspect": 0.8115867503371201,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 15.0,
+          "n_cells": 6921,
+          "n_donors": 6921,
+          "n_sections": 4,
+          "scorable_types": 9,
+          "largest_type": 3420,
+          "extent_u": 873.020290927431,
+          "extent_v": 1612.4637451171875,
+          "aspect": 0.5414201054573065,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 20.0,
+          "n_cells": 5455,
+          "n_donors": 5455,
+          "n_sections": 4,
+          "scorable_types": 9,
+          "largest_type": 2556,
+          "extent_u": 655.9704694683376,
+          "extent_v": 1612.2443237304688,
+          "aspect": 0.4068679044566456,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 30.0,
+          "n_cells": 3874,
+          "n_donors": 3874,
+          "n_sections": 4,
+          "scorable_types": 9,
+          "largest_type": 1441,
+          "extent_u": 440.47520358517744,
+          "extent_v": 1612.4437255859375,
+          "aspect": 0.27317245035954074,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 45.0,
+          "n_cells": 2583,
+          "n_donors": 2583,
+          "n_sections": 4,
+          "scorable_types": 9,
+          "largest_type": 815,
+          "extent_u": 298.3629974453893,
+          "extent_v": 1609.9574584960938,
+          "aspect": 0.18532352881181002,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 60.0,
+          "n_cells": 2140,
+          "n_donors": 2140,
+          "n_sections": 4,
+          "scorable_types": 9,
+          "largest_type": 735,
+          "extent_u": 229.83907878177024,
+          "extent_v": 1607.4414672851562,
+          "aspect": 0.14298441558183178,
+          "clears": true,
+          "why_not": ""
+        },
+        {
+          "angle_deg": 90.0,
+          "n_cells": 1988,
+          "n_donors": 1988,
+          "n_sections": 4,
+          "scorable_types": 8,
+          "largest_type": 931,
+          "extent_u": 170.5,
+          "extent_v": 1602.9149780273438,
+          "aspect": 0.10636871096546176,
+          "clears": true,
+          "why_not": ""
+        }
+      ],
+      "angle_budget_deg": 90.0,
+      "cells_at_budget": 1988,
+      "first_failure": null
+    }
+  ],
+  "skipped": [
+    {
+      "dataset": "cosmx_nsclc_3d",
+      "why": "the leakage-guarded training input not found at /data/han/projects/Spatial3D/benchmark-pbya-v3/results/_inputs/cosmx_nsclc_3d/paper_2_4_6/train_registered.h5ad. Set it with --input or BENCH_V3_RESULTS (build it with `python -m bench3.selftest`). Nothing is guessed: a scored number has to say which tree it came from."
+    },
+    {
+      "dataset": "exseq_breast_cancer",
+      "why": "the leakage-guarded training input not found at /data/han/projects/Spatial3D/benchmark-pbya-v3/results/_inputs/exseq_breast_cancer/paper_2_4_6/train_registered.h5ad. Set it with --input or BENCH_V3_RESULTS (build it with `python -m bench3.selftest`). Nothing is guessed: a scored number has to say which tree it came from."
+    },
+    {
+      "dataset": "exseq_visual_cortex",
+      "why": "the leakage-guarded training input not found at /data/han/projects/Spatial3D/benchmark-pbya-v3/results/_inputs/exseq_visual_cortex/paper_2_4_6/train_registered.h5ad. Set it with --input or BENCH_V3_RESULTS (build it with `python -m bench3.selftest`). Nothing is guessed: a scored number has to say which tree it came from."
+    },
+    {
+      "dataset": "allen_merfish_brain",
+      "why": "the leakage-guarded training input not found at /data/han/projects/Spatial3D/benchmark-pbya-v3/results/_inputs/allen_merfish_brain/paper_2_4_6/train_registered.h5ad. Set it with --input or BENCH_V3_RESULTS (build it with `python -m bench3.selftest`). Nothing is guessed: a scored number has to say which tree it came from."
+    }
+  ]
+}

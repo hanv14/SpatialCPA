@@ -1,0 +1,363 @@
+{
+  "dataset": "merfish_thick_hypothalamus",
+  "n_sections": 4,
+  "section_spacing_um": 57.5,
+  "median_nn_um": 7.976326578524897,
+  "slab_thickness_um": 28.6,
+  "thickness_measured": false,
+  "angles": [
+    {
+      "angle_deg": 0.0,
+      "fill_ratio": 0.49739130434782614,
+      "stratum_width_um": Infinity,
+      "median_nn_um": 7.976326578524897,
+      "has_measure": true,
+      "g1_margin_types": 3.6000000000000005,
+      "metric_blur_um": 186.26615133589144,
+      "metric_radius_um": 621.1415998680968,
+      "metric_scale": 1.7985256889851327,
+      "comb_gap_um": 0.0,
+      "comb_period_um": Infinity,
+      "residual_modulation": 0.0,
+      "n_truth": 11104,
+      "n_donors": 14585,
+      "n_strata": 1,
+      "scorable_types": 9,
+      "largest_type": 4473,
+      "clears_g1_g2": true,
+      "qualifies": false,
+      "why_not": "",
+      "leaks": [
+        {
+          "check": "L1 \u2014 no donor coordinate coincides with a ground-truth coordinate",
+          "ok": true
+        },
+        {
+          "check": "L2 \u2014 the donor slab and the evaluation slab are disjoint by construction",
+          "ok": true
+        },
+        {
+          "check": "and neither set is empty",
+          "ok": true
+        }
+      ],
+      "arms": {
+        "skipped": "does not qualify under G1, G2 and F2"
+      },
+      "null_ceiling": 0.1,
+      "self_null_at_n": NaN,
+      "self_null_branch": "",
+      "pose_span_deg": NaN
+    },
+    {
+      "angle_deg": 30.0,
+      "fill_ratio": 0.43075350518669475,
+      "stratum_width_um": 49.536653096469905,
+      "median_nn_um": 7.976326578524897,
+      "has_measure": true,
+      "g1_margin_types": 2.6000000000000005,
+      "metric_blur_um": 114.60471969006534,
+      "metric_radius_um": 442.73912967670225,
+      "metric_scale": 1.3401061127173806,
+      "comb_gap_um": 65.46334690353011,
+      "comb_period_um": 115.00000000000001,
+      "residual_modulation": 7.987175851702906e-05,
+      "n_truth": 1906,
+      "n_donors": 1991,
+      "n_strata": 4,
+      "scorable_types": 8,
+      "largest_type": 724,
+      "clears_g1_g2": true,
+      "qualifies": true,
+      "why_not": "",
+      "leaks": [
+        {
+          "check": "L1 \u2014 no donor coordinate coincides with a ground-truth coordinate",
+          "ok": true
+        },
+        {
+          "check": "L2 \u2014 the donor slab and the evaluation slab are disjoint by construction",
+          "ok": true
+        },
+        {
+          "check": "and neither set is empty",
+          "ok": true
+        }
+      ],
+      "self_null": [
+        {
+          "n": 250,
+          "self_null_median": 0.0979809342826204,
+          "self_null_spread": 0.045741949968344624,
+          "values": [
+            0.10256944098935092,
+            0.0979809342826204,
+            0.056827491021006295
+          ]
+        },
+        {
+          "n": 500,
+          "self_null_median": 0.23601369445940373,
+          "self_null_spread": 0.11250632821041062,
+          "values": [
+            0.26157321512353193,
+            0.23601369445940373,
+            0.1490668869131213
+          ]
+        },
+        {
+          "n": 1000,
+          "self_null_median": 0.10702290640195355,
+          "self_null_spread": 0.06176280456986022,
+          "values": [
+            0.058804282264704785,
+            0.120567086834565,
+            0.10702290640195355
+          ]
+        },
+        {
+          "n": 1906,
+          "self_null_median": 0.1714270523764041,
+          "self_null_spread": 0.11285071955072251,
+          "values": [
+            0.13265158569366126,
+            0.1714270523764041,
+            0.24550230524438377
+          ]
+        }
+      ],
+      "null_ceiling": 0.2842777719271266,
+      "self_null_at_n": 0.1714270523764041,
+      "self_null_branch": "self-null +0.1714 > 0.05: the metric has a noise floor at this n, so P2's ceiling is replaced by self-null + spread = 0.2843. **The original 0.10 was mis-set by me**, not failed by the arms",
+      "pose_span_deg": NaN
+    },
+    {
+      "angle_deg": 45.0,
+      "fill_ratio": 0.35170876420756975,
+      "stratum_width_um": 28.600000000000005,
+      "median_nn_um": 7.976326578524897,
+      "has_measure": true,
+      "g1_margin_types": 2.6000000000000005,
+      "metric_blur_um": 112.31376847850647,
+      "metric_radius_um": 424.8875627451983,
+      "metric_scale": 1.3974875811587595,
+      "comb_gap_um": 52.71727983645297,
+      "comb_period_um": 81.31727983645297,
+      "residual_modulation": 1.0763143160042694e-08,
+      "n_truth": 1311,
+      "n_donors": 1456,
+      "n_strata": 4,
+      "scorable_types": 8,
+      "largest_type": 417,
+      "clears_g1_g2": true,
+      "qualifies": true,
+      "why_not": "",
+      "leaks": [
+        {
+          "check": "L1 \u2014 no donor coordinate coincides with a ground-truth coordinate",
+          "ok": true
+        },
+        {
+          "check": "L2 \u2014 the donor slab and the evaluation slab are disjoint by construction",
+          "ok": true
+        },
+        {
+          "check": "and neither set is empty",
+          "ok": true
+        }
+      ],
+      "self_null": [
+        {
+          "n": 250,
+          "self_null_median": 0.053191504569612434,
+          "self_null_spread": 0.09486475641328986,
+          "values": [
+            0.04540894217663834,
+            0.053191504569612434,
+            0.1402736985899282
+          ]
+        },
+        {
+          "n": 500,
+          "self_null_median": 0.08220107045797347,
+          "self_null_spread": 0.07574674117833276,
+          "values": [
+            0.10041307447275914,
+            0.024666333294426385,
+            0.08220107045797347
+          ]
+        },
+        {
+          "n": 1000,
+          "self_null_median": 0.08972578250758557,
+          "self_null_spread": 0.049414808283830665,
+          "values": [
+            0.04952798832993611,
+            0.08972578250758557,
+            0.09894279661376677
+          ]
+        },
+        {
+          "n": 1311,
+          "self_null_median": 0.0333278213916955,
+          "self_null_spread": 0.06221531489543255,
+          "values": [
+            0.06858607393324753,
+            0.0333278213916955,
+            0.006370759037814981
+          ]
+        }
+      ],
+      "null_ceiling": 0.1,
+      "self_null_at_n": 0.0333278213916955,
+      "self_null_branch": "self-null +0.0333 \u2264 0.05: the metric has no material noise floor here, so P2's original 0.10 ceiling stands and an arm above it has really failed",
+      "pose_span_deg": NaN
+    },
+    {
+      "angle_deg": 60.0,
+      "fill_ratio": 0.24869565217391312,
+      "stratum_width_um": 16.512217698823303,
+      "median_nn_um": 7.976326578524897,
+      "has_measure": true,
+      "g1_margin_types": 0.6000000000000005,
+      "metric_blur_um": 115.777367643632,
+      "metric_radius_um": 454.133312952938,
+      "metric_scale": 1.2999020130361705,
+      "comb_gap_um": 49.883063257983665,
+      "comb_period_um": 66.39528095680697,
+      "residual_modulation": 1.6692928965117918e-13,
+      "n_truth": 1011,
+      "n_donors": 1198,
+      "n_strata": 4,
+      "scorable_types": 6,
+      "largest_type": 328,
+      "clears_g1_g2": true,
+      "qualifies": true,
+      "why_not": "",
+      "leaks": [
+        {
+          "check": "L1 \u2014 no donor coordinate coincides with a ground-truth coordinate",
+          "ok": true
+        },
+        {
+          "check": "L2 \u2014 the donor slab and the evaluation slab are disjoint by construction",
+          "ok": true
+        },
+        {
+          "check": "and neither set is empty",
+          "ok": true
+        }
+      ],
+      "self_null": [
+        {
+          "n": 250,
+          "self_null_median": 0.08494139801692248,
+          "self_null_spread": 0.06368605411585582,
+          "values": [
+            0.07817135895695526,
+            0.14185741307281108,
+            0.08494139801692248
+          ]
+        },
+        {
+          "n": 500,
+          "self_null_median": 0.03381814692012931,
+          "self_null_spread": 0.11423586448508166,
+          "values": [
+            0.028433609816573883,
+            0.03381814692012931,
+            0.14266947430165555
+          ]
+        },
+        {
+          "n": 1000,
+          "self_null_median": 0.08914347898427255,
+          "self_null_spread": 0.09916500371479955,
+          "values": [
+            0.08914347898427255,
+            0.1092471365854461,
+            0.010082132870646547
+          ]
+        },
+        {
+          "n": 1011,
+          "self_null_median": 0.1304849580589933,
+          "self_null_spread": 0.0573183783346619,
+          "values": [
+            0.08875388331486518,
+            0.1304849580589933,
+            0.14607226164952708
+          ]
+        }
+      ],
+      "null_ceiling": 0.1878033363936552,
+      "self_null_at_n": 0.1304849580589933,
+      "self_null_branch": "self-null +0.1305 > 0.05: the metric has a noise floor at this n, so P2's ceiling is replaced by self-null + spread = 0.1878. **The original 0.10 was mis-set by me**, not failed by the arms",
+      "pose_span_deg": NaN
+    },
+    {
+      "angle_deg": 90.0,
+      "fill_ratio": 3.045643343966461e-17,
+      "stratum_width_um": 1.7512449227807151e-15,
+      "median_nn_um": 7.976326578524897,
+      "has_measure": false,
+      "g1_margin_types": 1.6000000000000005,
+      "metric_blur_um": 115.17159188073619,
+      "metric_radius_um": 437.4945939994593,
+      "metric_scale": 1.3860386888960745,
+      "comb_gap_um": 57.5,
+      "comb_period_um": 57.5,
+      "residual_modulation": 1.2722366691013434e-17,
+      "n_truth": 989,
+      "n_donors": 913,
+      "n_strata": 4,
+      "scorable_types": 7,
+      "largest_type": 471,
+      "clears_g1_g2": true,
+      "qualifies": false,
+      "why_not": "F2: the evaluation set has zero measure",
+      "leaks": [
+        {
+          "check": "L1 \u2014 no donor coordinate coincides with a ground-truth coordinate",
+          "ok": true
+        },
+        {
+          "check": "L2 \u2014 the donor slab and the evaluation slab are disjoint by construction",
+          "ok": true
+        },
+        {
+          "check": "and neither set is empty",
+          "ok": true
+        }
+      ],
+      "arms": {
+        "skipped": "does not qualify under G1, G2 and F2"
+      },
+      "null_ceiling": 0.1,
+      "self_null_at_n": NaN,
+      "self_null_branch": "",
+      "pose_span_deg": NaN
+    }
+  ],
+  "theta_star_deg": 60.0,
+  "theta_star_censored": false,
+  "null_ceiling_source": "\u00a75-ter",
+  "interval": "leave-one-cell-type-out jackknife",
+  "scored_angles": [
+    30.0,
+    45.0,
+    60.0
+  ],
+  "thickness_source": "EXTERNAL: specs/10 \u00a78 \u2014 a 200 \u00b5m block cut into 7 slabs (200/7 = 28.6)",
+  "seeds": [
+    1,
+    2,
+    3
+  ],
+  "scoring": "NOT RUN \u2014 geometry and preconditions only; pass --score",
+  "null_ceiling_per_angle": {
+    "30": 0.2842777719271266,
+    "45": 0.1,
+    "60": 0.1878033363936552
+  }
+}

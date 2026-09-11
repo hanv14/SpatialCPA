@@ -1,0 +1,54 @@
+{
+  "results": {
+    "flanking-density": {
+      "label": "1b \u2014 SHIPPABLE, governs",
+      "per_section": {
+        "section_2": 0.5371493249796185,
+        "section_4": 0.1862612627161295,
+        "section_6": 0.6602997714805815
+      },
+      "median": 0.5371493249796185,
+      "spread": 0.47403850876445197,
+      "counts": {
+        "section_2": [
+          4165,
+          4187
+        ],
+        "section_4": [
+          4276,
+          4102
+        ],
+        "section_6": [
+          4289,
+          4162
+        ]
+      }
+    },
+    "ground-truth": {
+      "label": "1a \u2014 ORACLE input, upper bound only",
+      "per_section": {
+        "section_2": 0.5401503156100192,
+        "section_4": 0.15131019981737767,
+        "section_6": 0.6663039126192656
+      },
+      "median": 0.5401503156100192,
+      "spread": 0.5149937128018879,
+      "counts": {
+        "section_2": [
+          4187,
+          4187
+        ],
+        "section_4": [
+          4102,
+          4102
+        ],
+        "section_6": [
+          4162,
+          4162
+        ]
+      }
+    }
+  },
+  "verdict": "REFUTED",
+  "why": "+0.5371 is below the shipped layout's 0.7546. The count was not the defect. **No configuration generates a meaningful oblique section, and claim 2 cannot be made at all** -- the framing loses its novelty claim and the paper returns to the negative result of reports/diagnostic_programme_closed.md"
+}

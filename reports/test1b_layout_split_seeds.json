@@ -1,0 +1,165 @@
+{
+  "arms": {
+    "base": {
+      "per_section": {
+        "section_2": 0.5371493249796185,
+        "section_4": 0.20068223907803515,
+        "section_6": 0.6602997714805815
+      },
+      "median": 0.5371493249796185,
+      "pose_deg": 6.0,
+      "n_cells": {
+        "section_2": 4165,
+        "section_4": 4276,
+        "section_6": 4289
+      }
+    },
+    "fix_types": {
+      "per_section": {
+        "section_2": 0.6378909280508892,
+        "section_4": 0.2972426689124122,
+        "section_6": 0.7278328983163815
+      },
+      "median": 0.6378909280508892,
+      "pose_deg": 6.0,
+      "n_cells": {
+        "section_2": 4165,
+        "section_4": 4276,
+        "section_6": 4289
+      }
+    },
+    "fix_positions": {
+      "per_section": {
+        "section_2": 0.6221279618446761,
+        "section_4": 0.607517268893386,
+        "section_6": 0.597437032289256
+      },
+      "median": 0.607517268893386,
+      "pose_deg": 0.0,
+      "n_cells": {
+        "section_2": 4073,
+        "section_4": 4169,
+        "section_6": 4110
+      }
+    },
+    "both_oracle": {
+      "per_section": {
+        "section_2": 0.8303301452681463,
+        "section_4": 0.8375317103633729,
+        "section_6": 0.8442855664022929
+      },
+      "median": 0.8375317103633729,
+      "pose_deg": 0.0,
+      "n_cells": {
+        "section_2": 4073,
+        "section_4": 4169,
+        "section_6": 4110
+      }
+    },
+    "null_types": {
+      "per_section": {
+        "section_2": 0.029268786067814016,
+        "section_4": 0.08318653287958198,
+        "section_6": 0.051804884796161604
+      },
+      "median": 0.051804884796161604,
+      "pose_deg": 6.0,
+      "n_cells": {
+        "section_2": 4165,
+        "section_4": 4276,
+        "section_6": 4289
+      }
+    }
+  },
+  "per_section": {
+    "section_2": {
+      "base": 0.5371493249796185,
+      "deficit": 0.23935067502038143,
+      "recovered_types": 0.420895420757398,
+      "recovered_positions": 0.35503821686661796,
+      "recovered_both": 1.2249007455841205,
+      "verdict": "MIXED"
+    },
+    "section_4": {
+      "base": 0.20068223907803515,
+      "deficit": 0.5758177609219648,
+      "recovered_types": 0.16769269096488146,
+      "recovered_positions": 0.7065343541400164,
+      "recovered_both": 1.1059913648124584,
+      "verdict": "PLACEMENT"
+    },
+    "section_6": {
+      "base": 0.6602997714805815,
+      "deficit": 0.11620022851941847,
+      "recovered_types": 0.5811789503022744,
+      "recovered_positions": -0.5409863645906714,
+      "recovered_both": 1.5833514035728866,
+      "verdict": "MIXED"
+    }
+  },
+  "spreads": {
+    "base": {
+      "positions": "model",
+      "across_section_spread": 0.4596175324025463,
+      "across_seed_spread": {
+        "section_2": 0.04531007283457078,
+        "section_4": 0.03933351618565337,
+        "section_6": 0.02550932716944765
+      },
+      "max_across_seed_spread": 0.04531007283457078
+    },
+    "fix_types": {
+      "positions": "model",
+      "across_section_spread": 0.43059022940396935,
+      "across_seed_spread": {
+        "section_2": 0.001669547997987575,
+        "section_4": 0.09516075818510292,
+        "section_6": 0.04870894617478383
+      },
+      "max_across_seed_spread": 0.09516075818510292
+    },
+    "null_types": {
+      "positions": "model",
+      "across_section_spread": 0.05391774681176797,
+      "across_seed_spread": {
+        "section_2": 0.014450143756560903,
+        "section_4": 0.0179281450298093,
+        "section_6": 0.019420225134107294
+      },
+      "max_across_seed_spread": 0.019420225134107294
+    },
+    "fix_positions": {
+      "positions": "copy",
+      "across_section_spread": 0.02469092955542007,
+      "across_seed_spread": {
+        "section_2": 0.044405845526442,
+        "section_4": 0.06973952675604123,
+        "section_6": 0.017316277608551478
+      },
+      "max_across_seed_spread": 0.06973952675604123
+    },
+    "both_oracle": {
+      "positions": "copy",
+      "across_section_spread": 0.013955421134146606,
+      "across_seed_spread": {
+        "section_2": 0.0,
+        "section_4": 0.0,
+        "section_6": 0.0
+      },
+      "max_across_seed_spread": 0.0
+    }
+  },
+  "seeds": [
+    1,
+    2,
+    3
+  ],
+  "recovered_types": 0.420895420757398,
+  "recovered_positions": 0.2939951763569307,
+  "recovered_both": 1.254988670318878,
+  "verdict": "NOT READABLE",
+  "why": "the arms' alignments span 6.00\u00b0, above 5.0\u00b0: the comparison is across poses",
+  "preconditions_failed": [
+    "the arms' alignments span 6.00\u00b0, above 5.0\u00b0: the comparison is across poses"
+  ]
+}
