@@ -28,8 +28,24 @@ the per-gene Bernoulli is keyed to a call-ordered stream, not to physical positi
 planes select different donors for the same physical cell.
 
 **Under the new framing, expression comes from cross-mix. So claim 3 is currently false of the
-proposed method.** Repairable — key the selection to the 3D field — but that is an unproved code
-change, and the acceptance bar is the existing bitwise one.
+proposed method.**
+
+⚠️ **AMENDED 2026-09-11, and it is worse than written above.** Building the fix exposed that **the
+bitwise test is weaker than the claim it is cited for.**
+`test_generation_is_intersection_consistent_by_construction` computes `points = segment.points(64)`
+**once** and hands the *same array* to both branches. It establishes that `evaluate_branch` is a
+pure function of `(points, labels, neighbours)` and ignores the plane — true, and the mechanism —
+but not that two independently generated crossing sections agree, because each derives its own
+coordinates and GATE 1 G1.2a measures those agreeing to **1.14e-13 um, "to rounding, not exactly"**.
+
+So the record's *"bitwise identical, exactly and without training"* holds under identical supplied
+coordinates and is **unmeasured under independent derivation — for `zinb-flow` as well as for
+cross-mix**. `tests/test_sefl.py::test_intersection_survives_independent_coordinate_derivation` now
+measures that gap. Same family as everything else this campaign has found: a test that verifies the
+code path it exercises rather than the claim it is quoted for.
+
+**The fix is built** — `Config.cross_mix_position_keyed`, default **off** — and my cost estimate of
+"seconds" was wrong in a way worth recording (`reports/position_key_cost_correction.md`).
 
 ## 4. Claim 2 — "arbitrary planes, which no published method can do" ⛔ THE WEAKEST, AND THE NOVELTY
 
