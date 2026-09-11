@@ -137,6 +137,95 @@ section's `z` and the teeth have zero width. Real cells have finite extent, so a
 would have `fill ≈ cell diameter / s ≈ 0.17`. The degeneracy is in the data as built, not in the
 tissue — and since the data as built is what anyone can score, the exclusion stands.
 
+## 0-bis. PRE-COMMITMENT (2026-09-12) — recorded before the repairs that follow
+
+*Written before a line of the repair was made, because the repairs all run in our favour.*
+
+The first scored run found that the baseline arm, `copy-nearest-z`, emits the whole of the section
+the plane passes through — whose cells inside the slab **are the evaluation set**. Roughly a quarter
+of the ground truth is present in the baseline verbatim, at identical coordinates. Removing it will
+**lower the baseline**, and the baseline currently beats us at every angle.
+
+So, fixed now, before the number moves:
+
+> **A corrected comparison may still show `resample-pd` losing.** The gaps are large — 0.11 to 0.27
+> — and a quarter-leak in the baseline does not obviously account for all of them. **If, with the
+> leak removed, P2 and P4 repaired and a real interval attached, the method still loses to a coronal
+> face pasted onto an oblique plane, then the demonstration fails: §5 becomes a negative section,
+> and the comb limit and the metric's resolution carry the paper.**
+
+This is not a hedge. It is the outcome this protocol exists to make reportable, and it is written
+down so that no sequence of repairs can be mistaken for a search for a favourable sign. Every repair
+below is justified by a defect found in the construction, each identified *before* its effect on the
+result was known, and each is listed in `reports/retractions.md` with what disproved it.
+
+**The stopping rule.** The repairs enumerated in §5-bis are the ones the first run's defects
+require. **No further change to the construction may be made after the next scored run**, except to
+fix a defect that is demonstrable without reference to a score. If the corrected run says the method
+loses, that is the result.
+
+## 5-bis. AMENDMENT (2026-09-12) — P2's gate is settled BEFORE re-scoring, and the repairs are enumerated
+
+*Every item here is a defect in the construction, each identified before its effect on the result
+was known. Committed before the corrected run.*
+
+### The repairs
+
+| # | defect | repair |
+|---|---|---|
+| 1 | L1/L2 ran on the **donor slab** only; the baseline arm was never leak-checked | leak-check **every arm's emitted coordinates** against the ground truth |
+| 2 | `copy-nearest-z` emits the whole nearest section, ~25% of whose in-slab cells **are** the ground truth | both arms draw only from cells **outside the evaluation slab**; symmetric and leak-free by construction |
+| 3 | `verdict()` ignored the preconditions it printed beside itself | an angle with any failing precondition is **NOT READABLE**, and no score can overwrite that |
+| 4 | **P4 was pre-registered and never implemented** | the pose span between the two arms being differenced is computed and gated per angle |
+| 5 | three seeds gave spread **0.0000** — both compared arms are deterministic | an interval from **resampling cells**, not from generation seeds |
+| 6 | P2's ceiling may be measuring the metric's noise floor, not the arms | **§5-ter below, run first** |
+
+### 5-ter. P2's gate, settled independently of the arms
+
+**The hypothesis, stated before the test.** A permuted-type null should score ≈ 0. It scored 0.11 to
+0.25. `celltype_localization` is a frequency-weighted mean of per-type Sinkhorn ratios, and **G2
+constrains only the *largest* type** — every other type may sit at the metric's own 20-cell floor. A
+Sinkhorn divergence ratio on a 30-point cloud is noisy, so the null may be measuring the statistic's
+noise floor at these cell counts rather than anything about the arms. That is a gap in a gate I
+wrote.
+
+**The test contains no method, no arm and no donor.** Take the angle's ground-truth slab; permute
+the cell types **among its own cells**; score it against itself. Repeat over seeds, and over
+subsamples of `n` cells. Nothing but the metric and the data is involved, so whatever it reports is
+a property of the statistic.
+
+```
+python scripts/oblique_demo.py --calibrate-null ...
+```
+
+**The reading, fixed now:**
+
+- **`self_null(n) ≤ 0.05`** at an angle's own cell count → the metric has no material noise floor
+  there, P2's original **0.10 ceiling stands unchanged**, and an arm's null above it is a real
+  failure of that arm.
+- **`0.05 < self_null(n)`** → the metric has a noise floor at this `n`. P2's ceiling is **replaced by
+  `self_null + its across-seed spread`**, and the original 0.10 is recorded as **mis-set by me**, not
+  as a property of the arms. An arm's null must still clear the replacement.
+- **`self_null(n) > 0.25`** → the statistic is not usable at this cell count at all. That angle is
+  **NOT SCORABLE**, whatever its arms do, and it is reported as a limit on the metric alongside the
+  comb limit and the resolution limit.
+
+**This is settled before the arms are re-scored.** Diagnosing a failed floor after seeing new scores
+is precisely the trap this protocol exists to avoid, and the order is therefore part of the
+pre-registration rather than a matter of convenience.
+
+**A consequence I accept in advance:** the third branch would make the oblique demonstration
+unscorable on this specimen by this metric, and §5 would become a negative section on those grounds
+rather than on the method's. That is a legitimate outcome and is not to be avoided by choosing a
+different ceiling.
+
+### The interval (repair 5)
+
+**`R = 40` bootstrap replicates**, resampling the *prediction's* cells with replacement and
+re-scoring; the interval is the **16th–84th percentile**, reported beside every score. `R`, the
+resampling unit and the percentiles are fixed here. A difference whose interval spans zero is
+reported as **not distinguishable**, whatever its point estimate.
+
 ## 2-quater. AMENDMENT (2026-09-12) — F2's SECOND repair: measure in micrometres, not in `fill`
 
 *Dated and recorded as a second repair of the same rule, not as a bugfix. F2 has now failed twice,

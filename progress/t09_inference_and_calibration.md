@@ -9505,3 +9505,45 @@ section lies *in* its plane — and it is a **format requirement of the writer, 
 choice**. Stated in the report where a reader meets the scores, and in paper §5.2b.
 
 `oblique_demo --self-check` **72/72**.
+
+### The first scored run: six repairs, a pre-commitment, and P2's gate settled first
+
+**The result was NOT READABLE, and the corrected logic says so on the first run's own numbers.**
+Replaying them through the gating: P2 fails at 30° (+0.1424) and 60° (+0.2461); **P4 fails at all
+three**, by 166.50°, 42.19° and 11.89° against a 5° bound.
+
+**R11 — the baseline was copying the evaluation set.** `copy-nearest-z` emitted the whole nearest
+section, ~25% of whose in-slab cells *are* the ground truth. L1 would have caught it instantly; it
+was pointed at the **donor slab**, which `resample-pd` uses and which does not leak. Both arms now
+draw only from cells outside the slab, and `arm_leak_checks` runs on **every arm**.
+
+**R12 — three seeds bought no interval.** Both compared arms are deterministic, so the reported
+"across-seed spread 0.0000" was structurally zero while appearing to be an uncertainty. Replaced by
+a 40-replicate **cell bootstrap**, 16th–84th percentile, pre-registered before running.
+
+**R13 — the verdict outranked its own preconditions**, and **P4 had never been implemented**. Fixed:
+any failing precondition makes the angle NOT READABLE, and the report prints every one as a row. The
+166.5° is a real finding — a ribbon maps onto itself under a half-turn, so `align_by_expression` has
+two near-equivalent optima on exactly the shape every oblique evaluation set has.
+
+**§5-ter — P2's gate settled BEFORE re-scoring, and arms-free.** Permute the ground truth's types
+among its **own** cells and score it against itself: no method, no arm, no donor, so whatever it
+reports is a property of the statistic at that cell count. Three branches fixed in advance:
+`≤ 0.05` → the original 0.10 ceiling stands and an arm above it really failed; `> 0.05` → the ceiling
+becomes self-null + spread and **the original was mis-set by me**; `> 0.25` → the statistic is
+unusable at this `n` and the angle is **NOT SCORABLE** whatever its arms do. That third branch would
+make the demonstration unscorable on this specimen, and it is accepted in advance rather than avoided
+by choosing a different ceiling.
+
+**§0-bis — the pre-commitment, in the pre-registration and not only in conversation.** Every repair
+runs in our favour; the baseline currently beats us. Recorded before a line was changed: *a corrected
+comparison may still show `resample-pd` losing, in which case §5 becomes a negative section and the
+comb limit and the metric's resolution carry the paper.* With a stopping rule: no further change to
+the construction after the next scored run except for a defect demonstrable without reference to a
+score.
+
+Also fixed: the stale "Scoring is not run here" block, which contradicted the Scores section above
+it, and the JSON's `"clears": true` at 90° beside `"has_measure": false` — now `clears_g1_g2` and
+`qualifies`, so the record cannot read as though the angle qualified.
+
+`--self-check` **91/91**, with each repair asserted to fire on the exact defect it fixes.

@@ -324,3 +324,74 @@ choice**, and the report says so where a reader will meet it.
 **Class.** §4.2p again, one layer out: *a wiring check must cover every interface the path crosses,
 not the one whose contract was most recently on your mind.* This path crosses two — the writer and
 the evaluator — and the check covered the second.
+
+---
+
+## R11 — the baseline arm was copying the evaluation set
+
+**Withdrawn: every score in the first oblique run.** `copy-nearest-z` emitted the **whole** of the
+section nearest the plane's origin — the section the plane passes through the middle of. That
+section's cells inside the slab **are** part of the ground truth, so roughly **475 of the 1 906 GT
+cells at 30° (≈25%)** were present in the baseline verbatim, at identical coordinates.
+
+**The baseline beat us at every angle**, by 0.11 to 0.27, and this is why the direction is
+uninterpretable.
+
+**How L1 missed it.** L1 is an exact-coordinate test and would have fired instantly — it was pointed
+at the wrong object. `leak_checks(best.xyz, truth.xyz, …)` tested the **donor slab**, which
+`resample-pd` uses and which does not leak. `copy-nearest-z` drew from `nearest`, never checked. All
+fifteen green ticks in that run's leakage table were about an arm that does not leak.
+
+**Fixed at source.** Both arms now draw **only from cells outside the evaluation slab**, symmetric
+and leak-free by construction, and `arm_leak_checks` runs on **every arm's emitted coordinates**. The
+self-check asserts it fires on a planted coincidence, on an empty arm, and that the label names which
+arm failed.
+
+**Class.** A check applied to the wrong operand. §4.2p says a wiring check must cover every interface
+the path crosses; this is its sibling — **a correctness check must cover every object the claim
+rests on**, and "we ran L1" is not the same as "we ran L1 on each arm".
+
+---
+
+## R12 — three seeds bought no interval
+
+**Claimed** (the first run's verdict line): "…across-seed spread 0.0000", offered as the uncertainty
+beside a difference of −0.1110.
+
+**Withdrawn.** The spread is exactly zero because **both compared arms are deterministic** — they
+reproduce real cells and nothing in them varies with a generation seed. Only the permuted null
+varies. So the seeds were spent entirely on the one arm not in the comparison, and **the difference
+had no uncertainty attached to it at all** while appearing to have one.
+
+**Fixed at source.** An interval from **resampling the prediction's cells**, `R = 40` replicates at
+the 16th–84th percentile, fixed in the pre-registration before it ran. A difference whose interval
+spans zero is reported as *not distinguishable*, whatever its point estimate.
+
+**Class.** §4.2o — a criterion quoting a spread that cannot vary. Worse than ignoring a spread: it
+displayed one and it was structurally zero.
+
+---
+
+## R13 — the verdict outranked the preconditions it printed
+
+**Withdrawn:** "DEMONSTRATED WITH A COST" in the first scored run.
+
+Three lines below that verdict the same report printed **P2 ❌ FAILED**, and §5 of the
+pre-registration says *"any failing and that angle is NOT READABLE."* `verdict()` computed the
+outcome from the scores alone and never consulted the preconditions. And **P4 was pre-registered and
+never implemented at all** — the poses were recorded in the JSON and never tested. Every angle failed
+it, once by **166.5°**.
+
+**Replayed through the corrected logic, the first run's own numbers give NOT READABLE at every
+angle**: P2 fails at 30° and 60°, P4 fails at 30°, 45° and 60°.
+
+**About that 166.5°.** An oblique strip is a ribbon — 440 × 1612 µm at 30° — and a ribbon maps onto
+itself under a half-turn, so `align_by_expression`'s rotation search has two near-equivalent optima
+and picks between them arbitrarily. It is compounded by the two arms having different *footprints*: a
+near-full section face against the plane's own ribbon. **`align_by_expression` is unstable on
+elongated point clouds**, which is what every oblique evaluation set is, and that is a third bound on
+oblique evaluation alongside the comb limit and the metric's resolution.
+
+**Fixed at source.** An angle with any failing precondition is NOT READABLE and no score can
+overwrite it; P4 is computed between the two arms actually being differenced; and the report prints
+every precondition as a row.
