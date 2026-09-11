@@ -53,9 +53,11 @@ and the result is **bimodal**: three specimens at exactly 5°, one at 60°, noth
 `starmap_visual_cortex` with the same budget. A band would have suggested a dial a preparation can
 turn; four points in two clusters say the opposite, which is §4's actual claim.
 
-With four points this is honestly a table. **Recommended form: keep the table (§4.4) in the main
-text and draw F3 only if the axis is redrawn as `depth` rather than aspect ratio** — depth is what
-separates the clusters (170 µm against 66, 83, 125) and is the variable the section argues for.
+With four points this is honestly a table. **Decided: F3 stays supplementary and is not drawn now.**
+The standing condition for ever drawing it is that the axis be **`depth`, not aspect ratio** — depth
+is what separates the clusters (170 µm against 66, 83, 125) and is the variable the section argues
+for; aspect ratio is the variable that visibly does *not* explain them. §4.4's table carries the
+argument in the main text meanwhile.
 
 **Source** `reports/angle_budget.md` / `.json`. Now committed. ⚠️ **The sweep's records are stale**
 (`retractions.md` R18): they predate the runner's own slab-thickness fix and default `t = s`, so the
@@ -71,9 +73,15 @@ separates the clusters (170 µm against 66, 83, 125) and is the variable the sec
 the plane's own footprint (shaded): the ground truth a 270 µm ribbon at 45°, `resample-pd` the same
 ribbon at 1.00×, `copy-nearest-z` a 1328 µm face at 4.92×.
 
-**Drawn in extent form, not point-cloud form** — same reason as F1, same drop-in replacement. The
-extent form has one advantage worth keeping either way: it shows all three angles at once, where the
-point cloud would show one.
+**⚠️ Extent form is an internal read only. The point-cloud version must be produced before
+submission** — author's decision, recorded here so it cannot be forgotten at the deadline. Seeing the
+cells is more persuasive than seeing a bar, and this is the figure carrying the paper's strongest
+positive claim, so it is the one that most deserves the stronger form. `--emit-coords` exists; the
+run is a re-serialisation, not a re-measurement, and `--verify-unchanged` asserts that.
+
+The extent form has one advantage worth keeping either way: it shows all three angles at once, where
+the point cloud shows one. **The submitted figure should keep both** — the point cloud at 45° as the
+main panel, the extents across angles as an inset or companion.
 
 **Why it is the most important.** It is the paper's strongest positive claim and the one a reviewer
 will press on. The numbers — 4.92× and 75% outside — are convincing; the picture is unarguable. It
@@ -159,6 +167,9 @@ table, and §4.4 already prints that table (see the entry above for the form tha
 | F5 | `paper/figures/F5_null_floor.svg` | as specified, **after the correction in its entry** |
 | F6 | `paper/figures/F6_result.svg` | as specified |
 
+**Before submission:** F4 must be redrawn in point-cloud form (see its entry). Nothing else in this
+list is pending.
+
 SVG, rendered without a plotting library — this container has neither matplotlib nor a rasteriser.
 Every number in them is read from `reports/oblique_demo.json` at draw time rather than typed in,
 including the numbers inside the captions, so a figure cannot drift from the report it is drawn
@@ -206,7 +217,7 @@ available; `--emit-coords` would serialise them. We are choosing not to draw it.
   `(u, v)` coordinates, and `--verify-unchanged` asserts that every previously reported number is
   bitwise identical to the committed record, so the run that produces them is a re-serialisation and
   not a re-measurement. Until then both figures are drawn in extent form and say so.
-- **F3 as a panel** rather than a table, which needs no run at all — only the decision recorded in
-  its entry.
+- **F3 as a panel** rather than a table, which needs no run at all. Decided against for now; the
+  condition under which it would be drawn is recorded in its entry.
 
 Everything else in this list is a rendering of committed JSON, and five of the seven are rendered.
