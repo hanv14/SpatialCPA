@@ -86,6 +86,49 @@ interaction**, and it is the number that distinguishes EITHER SUFFICES from a cl
 4. **Pose.** Arms sharing positions must report **identical** `align_rotation_deg`; arms with
    different positions must be within **5°**. Otherwise the comparison is across poses.
 
+## 6-bis. AMENDMENT — precondition 4 forbids the comparison this test exists to make
+
+*Added after the three-seed run returned **NOT READABLE** on precondition 4. Recorded as a design
+error in the pre-registration, not as a run failure, and written before the split is re-read.*
+
+**What happened.** Model-position arms aligned at 6.000°, copy-position arms at 0.000°; the span is
+6.00° against a 5° bound. Precondition 4 was written to catch an *accidental* pose divergence. But
+the split's entire content is model positions **versus** copy positions, and `align_by_expression`
+gives those two groups different poses by construction. **The precondition cannot ever pass.** It
+rules out the primary comparison structurally and permanently.
+
+That the gate fired is the system working. The repair is to the design, not to the gate.
+
+**The repair: the split is a WITHIN-pose-group comparison.**
+
+| readable | contrast | what it isolates |
+|---|---|---|
+| ✅ | `base` → `fix_types`, both at 6° | oracle typing **on model positions** |
+| ✅ | `fix_positions` → `both_oracle`, both at 0° | oracle typing **on copy positions** |
+| ❌ | anything crossing the two groups | across poses — and now across cell counts too |
+
+**Three consequences, all accepted rather than argued around:**
+
+1. **`recovered_positions` is retired as a statistic.** There is no within-pose contrast that
+   changes positions while holding types, because changing positions *is* what changes the pose. The
+   single headline percentage does not survive this amendment.
+2. **What survives is a comparison of two typing gains**, which is a real and readable statement:
+   oracle typing is worth **+0.101** on model positions and **+0.230** on copy positions — typing
+   helps *more* when placement is already right. Read as medians and subject to §4.2o's spread
+   check before it is quoted.
+3. **The cross-group contrast is confounded by more than pose.** The arms do not even hold cell
+   count fixed: model-position arms carry 4165/4276/4289 cells, copy-position arms 4073/4169/4110.
+   Precondition 4 was right to refuse it; it was merely right for a narrower reason than the full
+   one.
+
+**One further precondition defect, from `reports/test1b_estimator_discrepancy.md`.** `pose_deg` is a
+median over three sections, then a median over three seeds — one number standing for nine — and
+precondition 4 is applied to *that*. `fix_types`'s reported pose moved 1.5° → 6.0° between two runs
+whose three scores are bitwise identical, which is the compression moving, not the poses that were
+used. **Preconditions must be evaluated on the (section, seed) pose that entered each score.** Until
+they are, precondition 4's verdict is correct for the structural reason above but was not reached by
+the evidence it claims to read.
+
 ## 7. Predictions, recorded now
 
 1. **TYPING**, moderate confidence. The intensity's error enters placement through a *normalised*
@@ -95,6 +138,9 @@ interaction**, and it is the number that distinguishes EITHER SUFFICES from a cl
    path.
 2. `both_oracle` **exceeds** the copy floor, probably near oracle: the copy's positions carrying the
    truth's own type field is close to the truth's type clouds by construction.
+   *Confirmed at 0.8375 against the floor's 0.7765 — and see `reports/retractions.md` **R3**: this
+   is what a partial oracle on the scored quantity buys, and may never be quoted as the method
+   beating the copy. The prediction was right; the favourable reading of it is withdrawn.*
 3. `null_types` lands **below 0.05**.
 4. `recovered_types + recovered_positions` is **above 1.0** — the two fixes overlap rather than
    partition, because each repairs part of the same joint assignment.

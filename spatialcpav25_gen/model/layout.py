@@ -1241,20 +1241,45 @@ def cells_near_plane(
     plane: Plane,
     *,
     exclude: Collection[str] = (),
+    expand_to_nearest: bool = False,
 ) -> NearPlaneCells:
     """Real cells within ``plane.thickness / 2`` of ``plane``, pooled across **all** sections.
 
     This is what makes a layout well defined at an arbitrary orientation. ``_resample_layout``'s
     original rule picks the nearest section by ``abs(f.z - plane.origin[2])`` — a *z*-distance,
     which names nothing for a plane that spans the stack — and then copies that whole section. Both
-    halves are wrong off-axis: a flat section at constant ``z`` meets an oblique plane in a **line**,
-    so the cells the plane passes through form a *band* drawn from **several** sections, never one
-    section's full face.
+    halves are wrong off-axis: a flat section at constant ``z`` meets an oblique plane in a
+    **line**, so the cells the plane passes through form a *band* drawn from **several** sections,
+    never one section's full face.
 
-    The selection here is the perpendicular distance ``|(x - origin) . normal|``, per **cell**. It
-    is defined at any angle by construction and reduces to the original at a coronal plane, where
-    every cell of the nearest section is at the same perpendicular distance and every other
-    section's is further — which ``tests/test_layout.py`` asserts **bitwise**.
+    The selection here is the perpendicular distance ``|(x - origin) . normal|``, per **cell**,
+    which is defined at any angle by construction.
+
+    ``expand_to_nearest`` decides what happens when the slab is **empty**, and the two answers are
+    two different questions:
+
+    * ``False`` (the default) — return nothing. This is the right answer for *"what is available to
+      evaluate near this plane"*, which is what ``scripts/angle_budget.py`` asks.
+    * ``True`` — widen the band to ``d_min``, the smallest perpendicular distance any cell attains,
+      and return every cell at that distance. This is the right answer for *"which real cells does
+      this plane reuse"*, which is what ``_resample_by_plane_distance`` asks.
+
+    **The second is what makes the rule a strict generalisation of ``nearest-z``, and the first
+    version of this function got it wrong.** The docstring claimed the reduction — "every cell of
+    the nearest section is at the same perpendicular distance and every other section's is further"
+    — which is a statement about *rank*, while the code implemented a fixed *threshold*. The two
+    agree only when the plane sits on a section, and the generation setting is precisely the one
+    where it does not: the target plane is placed where a **held-out** section was, so on tier-1 the
+    nearest training section is ~22 um away against a half-thickness of 11 um and the threshold rule
+    returns nothing. Under ``expand_to_nearest`` the band widens to exactly that section's distance,
+    every one of its cells ties at it, and the whole section comes back — no subsampling and no
+    tie-break — which ``tests/test_layout.py`` asserts **bitwise** against ``nearest-z``.
+
+    One behaviour is *not* preserved, and is documented rather than hidden: when the plane sits
+    exactly midway between two sections, both attain ``d_min`` and both are returned, where
+    ``nearest-z`` broke the tie on ``section_id`` and took one. An exact tie is not a case the old
+    rule handled meaningfully, and pooling both is the answer consistent with the rest of this
+    function.
 
     ``exclude`` drops whole sections by ``section_id``. It is not optional in practice: an oblique
     plane's donors and its evaluation set are **the same cells**, so without an exclusion a
@@ -1266,12 +1291,20 @@ def cells_near_plane(
     half = 0.5 * float(plane.thickness)
     drop = {str(s) for s in exclude}
 
+    kept = [s for s in sections if str(s.section_id) not in drop]
+    per_section = [np.asarray(to_xyz(s), dtype=np.float64) for s in kept]
+    dists = [np.abs((xyz - origin) @ normal) for xyz in per_section]
+
+    if expand_to_nearest and not any((d <= half).any() for d in dists):
+        # The slab is empty. Widen it to the nearest cell's distance rather than to a chosen
+        # margin: no new constant, and at a coronal plane every cell of the nearest section ties
+        # at exactly d_min, so the whole section comes back and `nearest-z` is reproduced.
+        finite = [d for d in dists if d.size]
+        half = min(float(d.min()) for d in finite) if finite else half
+
     xyz_parts, type_parts, id_parts = [], [], []
-    for section in sections:
-        if str(section.section_id) in drop:
-            continue
-        xyz = np.asarray(to_xyz(section), dtype=np.float64)
-        keep = np.abs((xyz - origin) @ normal) <= half
+    for section, xyz, dist in zip(kept, per_section, dists, strict=True):
+        keep = dist <= half
         if not keep.any():
             continue
         xyz_parts.append(xyz[keep])
@@ -1312,6 +1345,11 @@ def _resample_by_plane_distance(
     ``nearest-z`` rule: the new selection is a strict generalisation, so every tier-1 number
     measured under the old one stands.
 
+    ``expand_to_nearest=True`` is what buys that guarantee and is not a convenience. A target plane
+    is placed where a **held-out** section was, so no training section lies inside the slab and a
+    fixed-threshold band returns nothing — which is how ``tests/test_layout.py`` caught the rule
+    before a real run did.
+
     ``exclude_sections`` is load-bearing rather than optional. An oblique plane's donors and its
     evaluation set are the same real cells, so without it a resampled layout copies the answer.
     """
@@ -1321,17 +1359,27 @@ def _resample_by_plane_distance(
             "sections, not just the flanking pair — the cells a plane passes through are drawn "
             "from several sections. Pass volume_sections=vol.sections."
         )
-    near = cells_near_plane(volume_sections, plane, exclude=exclude_sections)
+    near = cells_near_plane(
+        volume_sections, plane, exclude=exclude_sections, expand_to_nearest=True
+    )
     if near.coords_uv.shape[0] < 1:
+        # Under `expand_to_nearest` this is reachable only when the volume has no cells left at
+        # all -- every section excluded, or every section empty. The band cannot be too narrow.
         raise LayoutError(
-            f"sample_layout: no real cell lies within {0.5 * float(plane.thickness):.3g} um of "
-            f"this plane after excluding {sorted(set(map(str, exclude_sections))) or 'nothing'}. "
-            "At an oblique angle the slab may miss the tissue entirely; widen Plane.thickness or "
-            "check the plane's origin."
+            "sample_layout: Config.resample_donor_selection='plane-distance' found no real cell "
+            f"anywhere in the volume after excluding "
+            f"{sorted(set(map(str, exclude_sections))) or 'nothing'}. The band widens to reach the "
+            "nearest cell, so this is an empty donor set rather than a narrow slab: check the "
+            "exclusion, not Plane.thickness."
         )
+    uv = np.asarray(near.coords_uv, dtype=np.float64)
     return _build_layout(
-        uv=np.asarray(near.coords_uv, dtype=np.float64),
-        xyz=np.asarray(near.xyz, dtype=np.float64),
+        uv=uv,
+        # `plane.to_xyz(uv)`, NOT the donors' own `near.xyz`. A generated section lies **in** the
+        # plane; the donors lie on their own sections, off it by up to the band's width. Keeping
+        # their true z would emit a non-planar "section" and would also break the bitwise
+        # equivalence with `nearest-z`, which projects the same way.
+        xyz=plane.to_xyz(uv),
         marks=np.asarray(near.cell_type, dtype=np.int32),
         n_expected=float(near.coords_uv.shape[0]),
         n_proposals=0,

@@ -75,20 +75,25 @@ def gates(row: dict, coronal: dict) -> tuple[bool, str]:
     return True, ""
 
 
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--thickness", type=float, default=None,
-                    help="slab thickness in um. Default: the volume's own median section spacing, "
-                         "which is what a real section represents")
-    ap.add_argument("--angles", type=float, nargs="+", default=list(ANGLES))
-    ap.add_argument("--out", default="reports/angle_budget.md")
-    ap.add_argument("--self-check", action="store_true")
-    add_path_args(ap)
-    args = ap.parse_args(argv)
-    if args.self_check:
-        return _self_check()
-    paths = resolve(args)
+# Every built dataset that carries cell types, from `specs/10` §5.4's table. The angle budget is
+# FREE -- no fit, no model, no generation -- so §5.4's cost exclusions (which are about fitting)
+# do not apply to it. `allen_merfish_brain` is excluded from the CAMPAIGN at 1.17 M cells and 59
+# sections; reading its geometry costs one h5ad load, and its 59 sections are the single most
+# likely thing in the table to clear a scorable oblique angle.
+ALL_DATASETS = (
+    "starmap_visual_cortex",
+    "deep_starmap",
+    "merfish_thick_cortex",
+    "merfish_thick_hypothalamus",
+    "cosmx_nsclc_3d",
+    "exseq_breast_cancer",
+    "exseq_visual_cortex",
+    "allen_merfish_brain",
+)
 
+
+def measure_one(paths, args) -> dict:
+    """The whole budget for one dataset, as a record. No fit, no model, no generation."""
     from spatialcpav25_gen.data.schema import to_xyz
     from spatialcpav25_gen.infer.planes import plane_from_normal
     from spatialcpav25_gen.model.layout import cells_near_plane
@@ -108,13 +113,24 @@ def main(argv: list[str] | None = None) -> int:
     zs = sorted(float(s.z) for s in vol.sections)
     spacing = float(np.median(np.diff(zs))) if len(zs) > 1 else float(extent[2])
     thickness = float(args.thickness) if args.thickness else spacing
-    centre = 0.5 * (lo + hi)
     in_plane = float(np.mean(extent[:2]))
     aspect = in_plane / float(extent[2]) if extent[2] > 0 else float("inf")
+
+    # RETRACTED (v1): the origin was 0.5 * (lo + hi), the volume's z-MIDPOINT. On tier-1 that is
+    # 52.0 um, exactly midway between the sections at 41 and 63, so the +-11 um band admitted BOTH
+    # on an exact floating-point tie and the coronal reference row was a DOUBLE-thickness plane:
+    # 8279 cells against ~4165 per real section, and G1's 19-type denominator measured on it.
+    # See reports/retractions.md R1. The origin is now the median section's own z, so the 0 deg
+    # row is one section -- which is what the pipeline generates and what every other row is
+    # compared against.
+    z_ref = float(np.median(zs))
+    z_ref = min(zs, key=lambda z: (abs(z - z_ref), z))
+    centre = np.array([0.5 * (lo[0] + hi[0]), 0.5 * (lo[1] + hi[1]), z_ref])
 
     print(f"  volume: {xyz.shape[0]} cells, {len(vol.sections)} sections")
     print(f"  extent x/y/z = {extent[0]:.1f} / {extent[1]:.1f} / {extent[2]:.1f} um")
     print(f"  section spacing {spacing:.2f} um, slab thickness {thickness:.2f} um")
+    print(f"  reference plane centred on the section at z = {z_ref:.2f} um")
     print(f"  IN-PLANE : DEPTH = {aspect:.1f} : 1", flush=True)
 
     rows = []
@@ -123,7 +139,13 @@ def main(argv: list[str] | None = None) -> int:
         plane = plane_from_normal(
             [0.0, np.sin(t), np.cos(t)], centre, (extent[0], max(extent[1], extent[2])), thickness
         )
+        # Two different questions, and the flag is which (see `cells_near_plane`):
+        #   threshold -> what is available to EVALUATE near this plane. These gates' question.
+        #   expanded  -> which real cells the LAYOUT would reuse. Differs only when the slab is
+        #                empty, which is exactly the generation setting and exactly the case the
+        #                first version of the rule got wrong.
         near = cells_near_plane(vol.sections, plane, exclude=())
+        donors = cells_near_plane(vol.sections, plane, exclude=(), expand_to_nearest=True)
         uv = np.asarray(near.coords_uv, dtype=np.float64)
         if uv.shape[0]:
             span = uv.max(axis=0) - uv.min(axis=0)
@@ -133,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         rows.append({
             "angle_deg": float(deg),
             "n_cells": int(uv.shape[0]),
+            "n_donors": int(donors.coords_uv.shape[0]),
             "n_sections": int(len(set(near.section_id.tolist()))),
             "scorable_types": scorable_types(np.asarray(near.cell_type)),
             "largest_type": largest_type(np.asarray(near.cell_type)),
@@ -148,83 +171,229 @@ def main(argv: list[str] | None = None) -> int:
         r["clears"], r["why_not"] = gates(r, coronal)
     clean = [r for r in rows if r["clears"]]
     budget = max((r["angle_deg"] for r in clean), default=0.0)
+    at_budget = next(r for r in rows if r["angle_deg"] == budget)
+    failed = [r for r in rows if not r["clears"] and r["angle_deg"] > budget]
 
-    lines = render(rows, budget, extent, spacing, thickness, aspect, coronal)
+    return {
+        "dataset": paths.dataset,
+        "holdout": paths.holdout,
+        "n_cells": int(xyz.shape[0]),
+        "n_sections": int(len(vol.sections)),
+        "n_types": int(len(vol.celltype_names)),
+        "extent_um": extent.tolist(),
+        "section_spacing_um": spacing,
+        "slab_thickness_um": thickness,
+        "reference_plane_z_um": z_ref,
+        "in_plane_to_depth": aspect,
+        "angles": rows,
+        "angle_budget_deg": budget,
+        "cells_at_budget": int(at_budget["n_cells"]),
+        "first_failure": (failed[0]["angle_deg"], failed[0]["why_not"]) if failed else None,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--thickness", type=float, default=None,
+                    help="slab thickness in um. Default: the volume's own median section spacing, "
+                         "which is what a real section represents")
+    ap.add_argument("--angles", type=float, nargs="+", default=list(ANGLES))
+    ap.add_argument("--datasets", nargs="+", default=None,
+                    help=f"measure several built datasets and write the cross-dataset table. "
+                         f"`all` expands to {', '.join(ALL_DATASETS)}. Default: just --dataset. "
+                         "Free for every one of them: no fit, no model, no generation.")
+    ap.add_argument("--out", default="reports/angle_budget.md")
+    ap.add_argument("--self-check", action="store_true")
+    add_path_args(ap)
+    args = ap.parse_args(argv)
+    if args.self_check:
+        return _self_check()
+
+    names = args.datasets or [args.dataset]
+    if names == ["all"] or "all" in names:
+        names = list(ALL_DATASETS)
+
+    records: list[dict] = []
+    skipped: list[tuple[str, str]] = []
+    for name in names:
+        print(f"\n=== {name}", flush=True)
+        try:
+            paths = resolve(argparse.Namespace(**{**vars(args), "dataset": name}))
+            records.append(measure_one(paths, args))
+        except (SystemExit, OSError, KeyError, ValueError) as exc:
+            # Named and carried into the report, never dropped (Convention 6). A dataset that is
+            # not built on this machine is a fact about the machine, and the table says so rather
+            # than quietly showing one fewer row.
+            reason = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
+            print(f"  SKIPPED: {reason}", flush=True)
+            skipped.append((name, reason))
+
+    if not records:
+        raise SystemExit(
+            "angle_budget: no dataset could be read. Tried: "
+            + "; ".join(f"{n} ({why})" for n, why in skipped)
+        )
+
+    lines = (render_sweep(records, skipped) if len(names) > 1 else []) + [
+        line for rec in records for line in ([""] + render(rec) if len(names) > 1 else render(rec))
+    ]
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text("\n".join(lines) + "\n")
     Path(args.out).with_suffix(".json").write_text(json.dumps(
-        {"extent_um": extent.tolist(), "section_spacing_um": spacing,
-         "slab_thickness_um": thickness, "in_plane_to_depth": aspect,
-         "angles": rows, "angle_budget_deg": budget}, indent=2, default=float))
+        {"datasets": records, "skipped": [{"dataset": n, "why": w} for n, w in skipped]},
+        indent=2, default=float))
     print("\n".join(lines))
     print(f"\nwrote {args.out}")
     return 0
 
 
-def render(rows, budget, extent, spacing, thickness, aspect, coronal) -> list[str]:
+def render_sweep(records: list[dict], skipped: list[tuple[str, str]]) -> list[str]:
+    """The cross-dataset table: aspect ratio beside the budget, which is the whole story."""
+    scored = [r for r in records if r["angle_budget_deg"] >= 30.0]
     out = [
-        "# The angle budget — how far off-axis this specimen allows",
+        "# The angle budget across every built specimen",
         "",
-        "**Free: no fit, no model, no generation.** Real cells only, asking what a plane tilted by",
-        "each angle actually cuts through.",
+        "**Free: no fit, no model, no generation.** For each dataset, real cells only, asking what",
+        "a plane tilted by each angle actually cuts through — and whether what it cuts is enough",
+        "for `celltype_localization` to score.",
         "",
-        f"Volume extent **{extent[0]:.0f} x {extent[1]:.0f} x {extent[2]:.0f} um**, section spacing",
-        f"**{spacing:.1f} um**, slab thickness **{thickness:.1f} um**.",
+        "Gates are the metric's **own** constants: **G1** scorable types (≥ `min_gt_cells` = "
+        f"{METRIC_MIN_GT_CELLS}) ≥ {SCORABLE_TYPE_FRACTION:.0%} of the coronal plane's; "
+        f"**G2** largest type ≥ `max_n` = {METRIC_MAX_N}, its subsample cap. The "
+        f"{SCORABLE_TYPE_FRACTION:.0%} is the one number that is mine.",
         "",
-        f"## IN-PLANE : DEPTH = **{aspect:.1f} : 1**",
-        "",
-        "That ratio is the whole constraint. GATE 2's synthetic fixture was 3000 um across and",
-        "400 um deep — **7.5 : 1** — and it is the only geometry oblique parity has ever been",
-        "measured on. A plane tilted by θ exits the thin dimension after `D / sin θ`.",
-        "",
-        "| θ | cells | sections drawn from | scorable types | largest type | aspect | clears |",
-        "|---|---|---|---|---|---|---|",
+        "| dataset | cells | sections | extent x/y/z µm | **in-plane : depth** | **budget** | "
+        "cells there | first failure |",
+        "|---|---|---|---|---|---|---|---|",
     ]
-    for r in rows:
+    for r in records:
+        e = r["extent_um"]
+        fail = r["first_failure"]
+        why = f"{fail[0]:.0f}° — {fail[1]}" if fail else "clears every angle measured"
         out.append(
-            f"| {r['angle_deg']:.0f}° | {r['n_cells']} | {r['n_sections']} | "
-            f"{r['scorable_types']} | {r['largest_type']} | {r['aspect']:.3f} | "
-            f"{'**yes**' if r['clears'] else 'no'} |"
+            f"| `{r['dataset']}` | {r['n_cells']} | {r['n_sections']} | "
+            f"{e[0]:.0f} × {e[1]:.0f} × {e[2]:.0f} | **{r['in_plane_to_depth']:.1f} : 1** | "
+            f"**{r['angle_budget_deg']:.0f}°** | {r['cells_at_budget']} | {md_cell(why)} |"
         )
+    for name, why in skipped:
+        out.append(f"| `{name}` | — | — | — | — | *not read* | — | {md_cell(why)} |")
+
+    out += ["", "## What this decides", ""]
+    if scored:
+        best = max(scored, key=lambda r: r["angle_budget_deg"])
+        out += [
+            f"**`{best['dataset']}` clears {best['angle_budget_deg']:.0f}°** with "
+            f"{best['cells_at_budget']} cells, at an in-plane : depth ratio of "
+            f"{best['in_plane_to_depth']:.1f} : 1. The oblique demonstration is **scored** rather",
+            "than shown, and the paper's claim is a measured one.",
+        ]
+    else:
+        out += [
+            "**No built specimen clears 30°.** Every one of them is a slab: a few tens of "
+            "micrometres",
+            "of depth against a millimetre or more in plane, so a plane tilted past a few degrees "
+            "exits",
+            "the thin dimension after `(D + t) / sin θ` and returns a sliver the metric's own "
+            "constants",
+            "cannot score.",
+            "",
+            "**This is a finding about the field's data, not a failure of the method.** 3D "
+            "spatial",
+            "transcriptomics is published as stacks of thin sections, and a stack of thin "
+            "sections does",
+            "not contain an obliquely-cut section to score against at any useful angle. The",
+            "well-definedness of the method off-axis is a property of the method; the "
+            "*evaluability*",
+            "of an off-axis section is a property of the specimen, and no published work states "
+            "what",
+            "geometry it needs. This table is that statement.",
+            "",
+            "So the claim splits, and both halves are honest:",
+            "",
+            "- **well-definedness** — shown at 45°: the method produces a coherent section where "
+            "no",
+            "  layout mode previously had a definition. Shown, not scored, and labelled so.",
+            "- **evaluability** — scored at the largest angle that clears, with the cell count and "
+            "the",
+            "  angle stated together, and this table as the reason it is not larger.",
+        ]
     out += [
         "",
-        "**The gates, derived from `celltype_localization`'s own constants rather than chosen:**",
-        "",
-        f"- **G1** — scorable types (≥ `min_gt_cells` = {METRIC_MIN_GT_CELLS} cells) must be at",
-        f"  least **{SCORABLE_TYPE_FRACTION:.0%}** of the coronal plane's {coronal['scorable_types']}."
-        "  *The fraction is mine; the cell count is the metric's.*",
-        f"- **G2** — the largest type must have ≥ `max_n` = {METRIC_MAX_N} cells, the metric's own",
-        "  subsample cap. Below it the strip sits under the design point of the statistic.",
-        "",
-        f"## The budget: **{budget:.0f}°**",
-        "",
-    ]
-    failed = [r for r in rows if not r["clears"] and r["angle_deg"] > budget]
-    if failed:
-        out += ["The first angle that fails, and why:", "",
-                f"- **{failed[0]['angle_deg']:.0f}°** — {failed[0]['why_not']}", ""]
-    out += [
-        "**What this decides.** The oblique demonstration runs at the largest angle that clears,",
-        "and the figure states the angle and the cell count together. If the budget is 10–15°, the",
-        "paper's claim is *oblique within the specimen's geometry* and says so — which is still a",
-        "capability no published method has, and is better than a 45° figure whose few hundred",
-        "cells cannot be scored as a section.",
-        "",
-        "⚠️ **A budget is not a result.** It says what this specimen permits, not what the method",
+        "⚠️ **A budget is not a result.** It says what a specimen permits, not what the method",
         "achieves at that angle. `reports/oblique_layout_cost.md` §3c: there is no real oblique",
         "section to score against, so the evaluation set is the real cells near the plane — which",
         "are also the donors, and must be excluded from them.",
+        "",
+        "---",
     ]
     return out
+
+
+def render(rec: dict) -> list[str]:
+    """One dataset's own table."""
+    rows, extent = rec["angles"], rec["extent_um"]
+    coronal, budget = rows[0], rec["angle_budget_deg"]
+    out = [
+        f"## `{rec['dataset']}` — the angle budget",
+        "",
+        f"{rec['n_cells']} cells, {rec['n_sections']} sections, {rec['n_types']} types. "
+        f"Extent **{extent[0]:.0f} × {extent[1]:.0f} × {extent[2]:.0f} µm**, section spacing "
+        f"**{rec['section_spacing_um']:.1f} µm**, slab thickness "
+        f"**{rec['slab_thickness_um']:.1f} µm**.",
+        "",
+        f"The reference plane is centred on the **real section at z = "
+        f"{rec['reference_plane_z_um']:.1f} µm**, not on the volume's z-midpoint — see "
+        "`reports/retractions.md` R1 for why that distinction cost a published reference row.",
+        "",
+        f"### IN-PLANE : DEPTH = **{rec['in_plane_to_depth']:.1f} : 1**",
+        "",
+        "That ratio is the whole constraint. GATE 2's synthetic fixture was 3000 µm across and",
+        "400 µm deep — **7.5 : 1** — and it is the only geometry oblique parity has ever been",
+        "measured on. A plane tilted by θ exits the thin dimension after `(D + t) / sin θ`.",
+        "",
+        "| θ | cells in slab | donors | sections | scorable types | largest type | strip µm | "
+        "aspect | clears |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for r in rows:
+        out.append(
+            f"| {r['angle_deg']:.0f}° | {r['n_cells']} | {r['n_donors']} | {r['n_sections']} | "
+            f"{r['scorable_types']} | {r['largest_type']} | {r['extent_u']:.0f} | "
+            f"{r['aspect']:.3f} | {'**yes**' if r['clears'] else 'no'} |"
+        )
+    out += [
+        "",
+        f"- **G1** — scorable types (≥ `min_gt_cells` = {METRIC_MIN_GT_CELLS} cells) must be at "
+        f"least **{SCORABLE_TYPE_FRACTION:.0%}** of the coronal plane's "
+        f"{coronal['scorable_types']}. *The fraction is mine; the cell count is the metric's.*",
+        f"- **G2** — the largest type must have ≥ `max_n` = {METRIC_MAX_N} cells, the metric's own "
+        "subsample cap. Below it the strip sits under the design point of the statistic.",
+        "- **cells in slab** is what is available to *evaluate*; **donors** is what the layout "
+        "would *reuse*. They differ only when the slab is empty — the generation setting, and the "
+        "case the first version of the selection rule got wrong.",
+        "",
+        f"**Budget: {budget:.0f}°.**",
+    ]
+    if rec["first_failure"]:
+        deg, why = rec["first_failure"]
+        out += ["", f"First angle that fails: **{deg:.0f}°** — {md_cell(why)}"]
+    return out
+
+
+def md_cell(text: str) -> str:
+    """Escape a pipe so a rendered row cannot shift a value into the wrong column (§4.2m)."""
+    return str(text).replace("|", "\\|")
 
 
 def _self_check() -> int:
     """The gates and the geometry, on synthetic slabs. No data, seconds."""
     coronal = {"scorable_types": 10, "n_cells": 4000, "largest_type": 1200}
     cases = [
-        ("a full coronal plane clears", {"n_cells": 4000, "scorable_types": 10, "largest_type": 1200}, True),
+        ("a full coronal plane clears",
+         {"n_cells": 4000, "scorable_types": 10, "largest_type": 1200}, True),
         ("an empty slab is refused", {"n_cells": 0, "scorable_types": 0, "largest_type": 0}, False),
-        ("too few scorable types (G1)", {"n_cells": 900, "scorable_types": 5, "largest_type": 400}, False),
+        ("too few scorable types (G1)",
+         {"n_cells": 900, "scorable_types": 5, "largest_type": 400}, False),
         (f"largest type under max_n={METRIC_MAX_N} (G2)",
          {"n_cells": 900, "scorable_types": 8, "largest_type": 200}, False),
         ("exactly at both bounds clears",
@@ -238,9 +407,75 @@ def _self_check() -> int:
          scorable_types(codes) == 2),
         ("largest_type is the biggest", largest_type(codes) == 300),
         ("both are 0 on an empty strip",
-         scorable_types(np.array([], dtype=int)) == 0 and largest_type(np.array([], dtype=int)) == 0),
-        ("a refusal always says which gate", all(gates(r, coronal)[1] for _l, r, w in cases if not w)),
+         scorable_types(np.array([], dtype=int)) == 0
+         and largest_type(np.array([], dtype=int)) == 0),
+        ("a refusal always says which gate",
+         all(gates(r, coronal)[1] for _l, r, w in cases if not w)),
     ]
+    # --- the sweep's ASSEMBLY, not just its scoring (specs/10 §4.2p). The sidecar crashed twice
+    # after a measurement was paid for because the self-check exercised every constructor and
+    # never the assembly; a cross-dataset sweep has exactly that shape, so it is built here.
+    def rec(name, budget, aspect, n_sec, fail):
+        rows = [dict(angle_deg=a, n_cells=100, n_donors=100, n_sections=1, scorable_types=9,
+                     largest_type=300, extent_u=500.0, extent_v=900.0, aspect=0.5,
+                     clears=a <= budget, why_not="" if a <= budget else "G2 | with a pipe in it")
+                for a in (0.0, 5.0, 45.0)]
+        return {"dataset": name, "holdout": "h", "n_cells": 9, "n_sections": n_sec, "n_types": 4,
+                "extent_um": [1000.0, 900.0, 66.0], "section_spacing_um": 22.0,
+                "slab_thickness_um": 22.0, "reference_plane_z_um": 41.0,
+                "in_plane_to_depth": aspect, "angles": rows, "angle_budget_deg": budget,
+                "cells_at_budget": 100, "first_failure": fail}
+
+    slabs = [rec("a", 5.0, 21.6, 4, (10.0, "too few | types")), rec("b", 5.0, 30.0, 7, None)]
+    thick = [rec("c", 45.0, 3.0, 59, None)]
+    sweep_slab = "\n".join(render_sweep(slabs, [("d", "not built on this machine")]))
+    sweep_thick = "\n".join(render_sweep(thick, []))
+    one = "\n".join(render(slabs[0]))
+
+    def row_widths(md: str) -> list[bool]:
+        """Each rendered row against its own header's cell count. Walks the RENDERED text (§4.2m).
+
+        Counts what a markdown renderer counts: an **escaped** pipe is data, not a column break,
+        so `\\|` is removed before counting. The first version of this counter did not, and
+        reported a correctly-escaped row as a defect -- a checker miscounting is still a checker
+        that has to be fixed at the counter, never at the render it is judging.
+        """
+        ok, header = [], None
+        for line in md.split("\n"):
+            if not line.startswith("|"):
+                header = None
+                continue
+            n = line.replace("\\|", "").count("|")
+            if header is None:
+                header = n
+            else:
+                ok.append(n == header)
+        return ok
+
+    checks += [
+        ("the sweep renders and names every dataset it was given",
+         all(f"`{r['dataset']}`" in sweep_slab for r in slabs)),
+        ("a dataset it could NOT read is still a row, never a missing one (Convention 6)",
+         "`d`" in sweep_slab and "not read" in sweep_slab),
+        ("every rendered row is square with its header, pipes in the data included (§4.2m)",
+         all(row_widths(sweep_slab)) and all(row_widths(sweep_thick)) and all(row_widths(one))),
+        ("a pipe inside a reason is escaped rather than shifting a column (§4.2m)",
+         "\\|" in sweep_slab),
+        ("all-slabs reads as a finding about the DATA, not a failure of the method",
+         "finding about the field's data" in sweep_slab and "45" in sweep_slab),
+        ("and it splits the claim into well-definedness and evaluability",
+         "well-definedness" in sweep_slab and "evaluability" in sweep_slab),
+        ("a specimen that clears 30 deg flips the conclusion to SCORED",
+         "scored" in sweep_thick.lower() and "finding about the field's data" not in sweep_thick),
+        ("the per-dataset table separates what is EVALUABLE from what the layout REUSES",
+         "cells in slab" in one and "donors" in one),
+        ("and it says the reference plane sits on a real section, not the z-midpoint (R1)",
+         "centred on the **real section" in one),
+        ("`all` expands to more than one dataset, so the sweep is not vacuous",
+         len(ALL_DATASETS) > 1 and "starmap_visual_cortex" in ALL_DATASETS
+         and "allen_merfish_brain" in ALL_DATASETS),
+    ]
+
     # The wiring, not the scoring (specs/10 §4.2p, §4.2q). This runner has no checkpoint to
     # restore a Config from, so `base_config` is the only sanctioned source; reaching for a bare
     # `Config()` is what took its first real run down inside `loaders.py`.

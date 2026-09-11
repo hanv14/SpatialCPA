@@ -227,7 +227,8 @@ def uses_shared_base_config(script: str) -> list[tuple[str, bool]]:
     return [
         (
             f"{script} gets its Config from the shared builder, CLAMP INCLUDED",
-            "prepare_config" in calls or ("base_config" in calls and "clamp_config_to_input" in calls),
+            "prepare_config" in calls
+            or ("base_config" in calls and "clamp_config_to_input" in calls),
         ),
         (f"{script} constructs no Config of its own", not unsafe_config_calls(text)),
     ]

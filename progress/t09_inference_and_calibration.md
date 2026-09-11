@@ -9266,3 +9266,69 @@ is left alone: there the value really is a choice.
 **Verified by reintroduction:** `angle_budget.py --self-check` **22/22** clean; **19/22** with
 `Config()` back; **20/22** with the correctly-keyed-but-unclamped `base_config(seed=0)` back.
 `test1_field_count` 33/33, `test1b_layout_split` 33/33.
+
+### The six steps: estimator, rank rule, cross-dataset budget, retractions
+
+**1. `25.2%` vs `29.4%` settled — two estimators, not a bug.** `_finish` collapses seeds with a
+per-section **median across seeds**; the earlier run passed one seed (median of one = that value,
+i.e. seed 1), the later three. Exactly the two arms with nonzero across-seed spread in the changed
+cells moved. **My Convention 3 suspicion was wrong and is withdrawn**: `both_oracle`'s across-seed
+spread is 0.0 on all three sections and it is bitwise identical between runs. Three real defects
+fall out (`reports/test1b_estimator_discrepancy.md`): the caption says "seed 1" above a 3-seed
+median (§4.2n); the median is applied twice so the headline is one seed on one section chosen twice
+over; and `pose_deg` is a median over sections then over seeds — one number for nine — with the
+precondition applied to *that*.
+
+**2. `plane-distance` was the wrong rule, and the tests caught it before a run did.** The docstring
+claimed a **rank** reduction ("every cell of the nearest section is at the same perpendicular
+distance and every other section's is further"); the code implemented a fixed **threshold**. They
+agree only when the plane sits on a section, and generation places the plane where a **held-out**
+section was — on tier-1 the nearest training section is ~22 µm away against a half-thickness of
+11 µm, so the threshold rule returns nothing on the real data too.
+
+Fixed with `cells_near_plane(..., expand_to_nearest=)`, which makes the two callers' two questions
+explicit: **threshold** = what is available to *evaluate* near this plane (the budget's question),
+**expanded** = which real cells the layout *reuses*. Expanding widens the band to `d_min`, the
+smallest distance any cell attains — no new constant, no subsample, no tie-break, because at a
+coronal plane every cell of the nearest section ties at exactly that distance and the whole section
+comes back. Verified on the fixture's geometry: threshold 0 cells, expanded 500 = the whole nearest
+section at d = 25.0 exactly; excluding it widens to the next section (501 cells, d = 75.0 > 25.0);
+excluding all raises. One divergence documented rather than hidden: a plane exactly midway between
+two sections returns **both**, where `nearest-z` broke the tie on `section_id`.
+
+Also corrected: `_resample_by_plane_distance` passed the donors' **own** `xyz`. A generated section
+lies *in* the plane, so it now passes `plane.to_xyz(uv)` as `nearest-z` does — without which the
+bitwise test could not pass and the output would not be planar.
+
+**Tests were retargeted, not weakened.** The exclusion test now runs in the mode the layout uses and
+drops the section the band would **actually copy** (dropping an arbitrary middle section tested
+nothing), and asserts the band *widens* to strictly-further cells rather than a weaker count
+inequality. A new test pins the defect directly: the same plane must give **nothing** to the budget
+and **the whole nearest section** to the layout.
+
+**3–4. The budget, re-centred and swept across every built specimen.** The reference plane is now
+the median **real section**'s z (R1). `--datasets all` covers all eight built type-carrying
+datasets; §5.4's cost exclusions are about *fitting* and do not apply to reading coordinates, so
+`allen_merfish_brain` (59 sections) is in. The cross-dataset table reports **aspect ratio beside the
+budget**, and a dataset that cannot be read is a named row rather than a missing one. `--self-check`
+**32/32**, now including the sweep's *assembly* and a pipe-escaping squareness walk over the
+rendered rows — whose first version miscounted an escaped pipe and reported a correct row as a
+defect; fixed at the counter, never at the render it judges.
+
+**5. `layout_split_preregistration.md` §6-bis.** Precondition 4 forbids the comparison the test
+exists to make, structurally and permanently: the split *is* model-positions vs copy-positions, and
+`align_by_expression` gives those groups different poses by construction. Recorded as a design error
+in the pre-registration. The repair is a **within-pose-group** reading; `recovered_positions` is
+retired as a statistic, and what survives is two typing gains (+0.101 on model positions, +0.230 on
+copy positions).
+
+**6. `reports/oblique_claim.md`** — well-definedness shown at 45°, evaluability scored at the
+largest clearing angle, the budget table as its own contribution. Written before the sweep runs so
+the framing is not chosen by its result.
+
+**Retractions recorded as retractions** (`reports/retractions.md`): **R1** the 0° double-thickness
+reference (three independent arithmetic disproofs; the 5° budget itself survives), **R2**
+"positional instability" (disproved by `both_oracle`'s exactly-zero across-seed spread; replaced by
+the `fix_types` vs `both_oracle` 31× contrast at fixed types), **R3** `both_oracle` beating the copy
+(a partial oracle on the scored quantity — and its closeness to A1b's 0.8369 is a coincidence
+across two different metrics).

@@ -1125,21 +1125,66 @@ def test_the_exclusion_is_honoured_so_a_layout_cannot_copy_its_own_answer(
     """
     intensity = fixture_intensity(gt_field, mean_cell_density(training.sections))
     plane = target_plane(training)
-    drop = {str(training.sections[len(training.sections) // 2].section_id)}
 
-    kept = cells_near_plane(training.sections, plane)
-    excluded = cells_near_plane(training.sections, plane, exclude=drop)
-    assert drop & set(kept.section_id.tolist()), "the fixture must actually contain the excluded id"
+    # `expand_to_nearest=True` is the mode the layout uses, so it is the mode the exclusion has to
+    # be tested in. And the section to drop is the one the band would ACTUALLY copy -- dropping an
+    # arbitrary middle section tests nothing, because the band never reaches it.
+    kept = cells_near_plane(training.sections, plane, expand_to_nearest=True)
+    assert kept.xyz.shape[0] > 0, "the band must reach cells before an exclusion means anything"
+    drop = set(kept.section_id.tolist())
+    excluded = cells_near_plane(training.sections, plane, exclude=drop, expand_to_nearest=True)
+
     assert not (drop & set(excluded.section_id.tolist())), "the excluded section must not appear"
-    assert excluded.xyz.shape[0] < kept.xyz.shape[0]
+    assert excluded.xyz.shape[0] > 0, (
+        "excluding the donor must WIDEN the band to the next cells, not empty it -- otherwise the "
+        "oblique demonstration has no donors left once its evaluation set is withheld"
+    )
+    assert float(excluded.distance.min()) > float(kept.distance.max()), (
+        "and what it widens to must be strictly further from the plane than what it dropped"
+    )
 
     rs = cfg.replace(layout_mode="resample", resample_donor_selection="plane-distance")
     with pytest.raises(LayoutError, match="needs the volume's sections"):
         sample_layout(intensity, plane, rs, SEED, repulsion=repulsion)
 
-    with pytest.raises(LayoutError, match="no real cell lies within"):
+    with pytest.raises(LayoutError, match="found no real cell anywhere in the volume"):
         sample_layout(
             intensity, plane, rs, SEED, repulsion=repulsion,
             volume_sections=training.sections,
             exclude_sections=[str(s.section_id) for s in training.sections],
         )
+
+
+def test_the_empty_slab_means_two_different_things_and_the_flag_says_which(
+    training: TrainingVolume, cfg: Config
+):
+    """The defect the bitwise test caught, pinned directly. `specs/10` §4.2q's shape, in geometry.
+
+    A target plane is placed where a HELD-OUT section was, so no training section lies inside the
+    slab. The first version of `cells_near_plane` had one answer for that -- return nothing -- and
+    the layout inherited it, which is why `plane-distance` could not reproduce `nearest-z` in the
+    only setting that matters. The two callers want different answers and the flag is which:
+
+    * the angle budget asks *what is available to evaluate near this plane* -> nothing;
+    * the layout asks *which real cells does this plane reuse* -> the nearest ones.
+    """
+    plane = target_plane(training)
+    half = 0.5 * float(plane.thickness)
+    gaps = [abs(float(s.z) - float(plane.origin[2])) for s in training.sections]
+    assert min(gaps) > half, (
+        "the fixture must place the plane BETWEEN sections, which is the generation setting; "
+        f"nearest section is {min(gaps):.3g} um away against a half-thickness of {half:.3g} um"
+    )
+
+    budget = cells_near_plane(training.sections, plane)
+    assert budget.xyz.shape[0] == 0, "the threshold answer is still nothing, and must stay nothing"
+
+    layout = cells_near_plane(training.sections, plane, expand_to_nearest=True)
+    nearest = min(training.sections, key=lambda s: abs(float(s.z) - float(plane.origin[2])))
+    assert set(layout.section_id.tolist()) == {str(nearest.section_id)}, (
+        "expanding must reach exactly the nearest section -- every one of its cells ties at the "
+        "same perpendicular distance, so there is no subsample and no tie-break to get wrong"
+    )
+    assert layout.xyz.shape[0] == int(np.asarray(nearest.coords).shape[0]), (
+        "and it must return the WHOLE section, which is what `nearest-z` copies"
+    )
