@@ -56,6 +56,16 @@ roughly three-quarters of its cells at in-plane positions the plane does not pas
 not a section at that angle; it is a coronal face pasted onto one. That is the capability gap this
 work set out to close, and it is real.
 
+**What "not a section" does and does not mean here.** It follows **for the purpose of scoring a
+section**: three-quarters of the object lies where the plane does not pass, so a per-type comparison
+against that plane's cells is not comparing two renderings of the same thing. It is **not** a general
+claim about the previous method's output — that output is a perfectly good coronal section, simply
+not of the plane it was asked for. This is the strongest positive claim in the paper and it rests on
+one measurement with thresholds we chose (ratio ≥ 3 and ≥ 50% outside, pre-registered before the
+measurement was written). The margins are wide — 4.17 against 3, 71% against 50% — but a reader who
+presses on whether "not a section" follows from "footprint four times too large" should find the
+answer here: it follows for scoring, and only for scoring.
+
 **Our own arm is not co-located either, and the `1.00` column must not be read as saying it is.**
 `resample-pd`'s extent *ratio* is 1.00 at every angle, yet **22–35% of its cells lie outside the
 ground truth's range**: the two ribbons are the same width and are *offset*, because the donor slab

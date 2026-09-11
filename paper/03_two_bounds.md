@@ -29,8 +29,21 @@ Measured on two built volumes, both leakage-guarded training inputs:
 
 | specimen | sections | `s` | `t` | 30° | 45° | 60° | 90° |
 |---|---|---|---|---|---|---|---|
-| `starmap_visual_cortex` | 4 | 22.0 µm | 22.0 µm | 0.87 | 0.71 | 0.50 | **0** |
+| `starmap_visual_cortex` | 4 | 22.0 µm | ≤ 22.0 µm | **≤ 0.87** | **≤ 0.71** | **≤ 0.50** | **0** |
 | `merfish_thick_hypothalamus` | 4 | 57.5 µm | 28.6 µm | 0.43 | 0.35 | 0.25 | **0** |
+
+**The first row is an upper bound, and says so.** No slab thickness is recorded in that build, so `t`
+is taken as the section spacing — but a section cannot be thicker than the gap between sections, so
+`t ≤ s` and every entry in that row is a ceiling on the true fill. The bound is the safe direction:
+the real coverage is lower, not higher. (Taking a missing thickness to equal the spacing is how we
+first overstated a specimen's usable angle by more than a factor of two; the same substitution is
+made here only because it can be labelled as a bound.)
+
+**And the holdout design itself halves the fill.** `paper_2_4_6` removes alternate sections, so the
+*training* volume's spacing is twice the specimen's own slab pitch and `t/s ≈ 0.5` on any dataset
+built this way. `merfish_thick_hypothalamus` is measured at exactly that: 28.6 / 57.5 = 0.497. A
+leakage-guarded volume is a worse instrument for oblique evaluation than the specimen it came from,
+for reasons that have nothing to do with the tissue.
 
 **Aspect ratio and fill are different constraints.** `merfish_thick_hypothalamus` has much the
 better in-plane-to-depth ratio (10.3 : 1 against 21.6 : 1) and therefore retains far more cells at
