@@ -45,19 +45,26 @@ captures a block rather than a stack, which has no `s` and to which the limit do
 ## 3.2 The resolution limit — what the standard metric can distinguish
 
 `paper_celltype_localization`, the metric this literature scores spatial fidelity with, normalises
-coordinates by the tissue radius and transports under an entropic Sinkhorn kernel `exp(−d²/(eps·scale))`
-with `eps = 0.05` and `scale` the median squared inter-cell distance. Its length scale in
-micrometres is therefore
+coordinates by the tissue radius and transports under an entropic Sinkhorn kernel
+`exp(−d²/(eps·scale))` with `eps = 0.05` and `scale` the median squared inter-cell distance. Its
+length scale in micrometres is `radius·√(eps·scale)` — but `scale` is computed on coordinates
+**already divided by the radius**, so it is a pure number, and the ratio is what is invariant:
 
-> ### blur = radius · √(eps · scale)
+> ### blur / radius = √(eps · scale) ≈ 0.26 – 0.30
+>
+> **a constant of the metric, not a property of any tissue**
 
-Every term is the metric's own. On `merfish_thick_hypothalamus` this is **≈ 110 µm against a tissue
-radius of ≈ 400 µm.**
+**The statistic distinguishes roughly three to four locations along a radius — on any dataset, at any
+magnification, in any tissue.** It measures whether a cell type is in the right *region*, not whether
+it is in the right place within it.
 
-**The statistic is blind to spatial structure below roughly a quarter of the tissue radius.** It
-measures whether a cell type is in the right *region*, not whether it is in the right place within
-it. This qualifies every number scored with it — ours and everyone else's — and we state it because
-a reader can compute it from published constants and a coordinate file in a few lines.
+In micrometres, on the **full coronal sections that every published score in this literature is
+computed on**, that is **186 µm against a radius of 621 µm**. (The oblique planes of §5 give
+112–116 µm against radii of 425–454 µm — the same ratio on a smaller cloud.)
+
+This qualifies every number scored with this metric, ours and everyone else's. We state it in the
+dimensionless form because that is the form a reader can verify against their own data, in five
+lines, without ours.
 
 **It also disposes of an objection to §5.** One might expect a comb ground truth to penalise any
 method that fills the gaps. Convolving the comb with this kernel, in closed form —

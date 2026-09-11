@@ -224,3 +224,53 @@ exist**. Now returns 0 when the period is not finite.
 **Class.** New. §4.2 has rules about criteria, references and estimators; this is *a number whose
 value depends on an implementation knob nobody varied*. The general form: **vary the knob before
 reporting the number.** A convergence check is cheap and this one took four lines.
+
+---
+
+## R8 — F2's first form admitted the angle it existed to exclude
+
+**Claimed** (`oblique_demonstration_preregistration.md` §2-ter, and reported in conversation): F2
+excludes 90° because its evaluation set has zero measure, so θ\* = 60°.
+
+**Withdrawn as implemented.** F2 read `fill > 0.0`, and `np.cos(np.deg2rad(90))` is **6.12 × 10⁻¹⁷**,
+so `fill = 3.05 × 10⁻¹⁷ > 0` is `True`. The run returned **θ\* = 90°**, into the headline and into
+`scored_angles`. The criterion was correct in words and compared against exact zero in binary.
+
+**Third floating-point boundary defect in this work** — the `−0.05` band, `fill(90°) = 0` in a
+rendered table, and this — and the only consequential one: the other two were cosmetic, this one
+silently restored a claim ruled out twice.
+
+**Fixed at source, as F2's second form** (§2-quater): the stratum's width `t·cos θ / sin θ` is tested
+in **micrometres** against `TrainingVolume.median_nn_dist`, which the loader already computes. Every
+term is measured; none is chosen. It excludes 90° (1.8 × 10⁻¹⁵ µm), **85° (2.5 µm)** and 75°
+(7.7 µm), and admits 30/45/60/70. Excluding 85° is the test that it is not gerrymandered: a rule
+tuned to exclude only 90° admits 85°, which is 90° in all but name — and the first form did exactly
+that, leaving open a loophole I had flagged and not closed.
+
+**Class.** A criterion stated in exact arithmetic and implemented in floating point. The general
+form: **a rule that turns on a quantity being exactly zero must be tested in units where zero is
+physically meaningful.** `fill` is dimensionless and rounds; a stratum width in micrometres does not.
+
+---
+
+## R9 — the coronal control had no donors, and the blur figure understated the limit
+
+**Two defects from the same run, both repaired in §2-quater and the metric-resolution document.**
+
+**The donor slab was offset by one slab thickness (28.6 µm) where sections sit 57.5 µm apart**, so at
+0° the offset band contained no section and the donor set was **empty**. P1 — the coronal control
+gating every other number in the report — could not run. `flanking_copy`'s donor is the adjacent
+*section*, so the offset is one **spacing**. Caught by *"and neither set is empty"*, the third and
+most trivial-looking leak assertion: **L1 and L2 both pass vacuously on an empty set** — it coincides
+with nothing and is disjoint from everything.
+
+**And `metric_resolution.md` gave the blur as "≈ 110 µm", read off the oblique rows.** Every
+published score in this literature is computed on a **full coronal section**, where the radius is
+621 µm and the blur is **186 µm** — 70% larger. The figure understated the limit on exactly the
+numbers the limit most applies to.
+
+**Replaced by the dimensionless form**, which cannot be misquoted that way: `scale` is computed on
+radius-normalised coordinates, so `blur / radius = √(eps·scale)` ≈ **0.26–0.30 is a constant of the
+metric, not a property of any tissue**. The statistic distinguishes roughly **three to four locations
+along a radius, on any dataset at any magnification**. Corrected in all five propagated documents and
+in paper §3.2.

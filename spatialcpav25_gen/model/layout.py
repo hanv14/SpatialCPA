@@ -1234,6 +1234,9 @@ class NearPlaneCells:
     cell_type: IntArray
     distance: FloatArray
     section_id: npt.NDArray[Any]
+    counts: Any = None
+    """``(M, G)`` sparse raw counts, in the same row order. The donors' own measurements — which is
+    what a copy-based arm emits and what an oblique ground truth is made of."""
 
 
 def cells_near_plane(
@@ -1353,7 +1356,7 @@ def cells_near_plane(
                     "threshold rule. That is `flanking_copy`'s own construction, generalised."
                 )
 
-    xyz_parts, type_parts, id_parts = [], [], []
+    xyz_parts, type_parts, id_parts, count_parts = [], [], [], []
     for section, xyz, dist in zip(kept, per_section, dists, strict=True):
         if only is not None and str(section.section_id) != only:
             continue
@@ -1363,6 +1366,7 @@ def cells_near_plane(
         xyz_parts.append(xyz[keep])
         type_parts.append(np.asarray(section.cell_type, dtype=np.int32)[keep])
         id_parts.append(np.full(int(keep.sum()), str(section.section_id), dtype=object))
+        count_parts.append(section.counts[np.flatnonzero(keep)])
 
     if not xyz_parts:
         return NearPlaneCells(
@@ -1371,7 +1375,10 @@ def cells_near_plane(
             cell_type=np.zeros(0, dtype=np.int32),
             distance=np.zeros(0),
             section_id=np.zeros(0, dtype=object),
+            counts=None,
         )
+    import scipy.sparse as sp
+
     xyz = np.concatenate(xyz_parts, axis=0)
     return NearPlaneCells(
         xyz=xyz,
@@ -1379,6 +1386,10 @@ def cells_near_plane(
         cell_type=np.concatenate(type_parts),
         distance=np.abs((xyz - origin) @ normal),
         section_id=np.concatenate(id_parts),
+        # The donors' own measurements, in the same row order. A copy-based arm emits these, and an
+        # oblique ground truth IS these -- so carrying them here is what lets both be written
+        # without re-deriving which source rows were selected.
+        counts=sp.vstack(count_parts, format="csr") if count_parts else None,
     )
 
 

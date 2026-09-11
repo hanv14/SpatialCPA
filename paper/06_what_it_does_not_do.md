@@ -41,6 +41,7 @@ quantity being scored.
 
 ## 6.4 Everything in §6 is bounded by §3.2
 
-All of the above is `paper_celltype_localization` or `paper_morans_pearson`. The first is blind below
-~110 µm. **None of these numbers is evidence about placement finer than that**, including the ones
-that favour us.
+All of the above is `paper_celltype_localization` or `paper_morans_pearson`. The first resolves
+only ~0.26–0.30 of the tissue radius — **186 µm** on the coronal sections these were scored on.
+**None of these numbers is evidence about placement finer than that**, including the ones that
+favour us.

@@ -137,6 +137,65 @@ section's `z` and the teeth have zero width. Real cells have finite extent, so a
 would have `fill ≈ cell diameter / s ≈ 0.17`. The degeneracy is in the data as built, not in the
 tissue — and since the data as built is what anyone can score, the exclusion stands.
 
+## 2-quater. AMENDMENT (2026-09-12) — F2's SECOND repair: measure in micrometres, not in `fill`
+
+*Dated and recorded as a second repair of the same rule, not as a bugfix. F2 has now failed twice,
+both times admitting the one angle it exists to exclude, and a rule with that history should carry
+it visibly.*
+
+**What happened.** §2-ter's F2 reads *"the evaluation set must have non-zero measure"*, and the
+runner implemented it as `fill > 0.0`. But `fill = t·cos θ / s` and `np.cos(np.deg2rad(90))` is
+**6.12 × 10⁻¹⁷**, not zero, so at 90° `fill = 3.05 × 10⁻¹⁷`, `has_measure` returned `True`, and θ\*
+came back as **90°** — into the headline, into `scored_angles`, into everything. The criterion was
+right and the comparison was against exact zero in binary arithmetic.
+
+This is the third floating-point boundary defect in this work (the `−0.05` band, `fill(90°) = 0` in
+a rendered table, and now this) and the only consequential one: the other two were cosmetic, and
+this one silently restored a claim that had twice been ruled out.
+
+**The repair: measure the stratum in micrometres against the volume's own resolution.**
+
+> **F2 (second form).** Each section contributes a stratum of width `t·cos θ / sin θ` micrometres
+> in the plane. The evaluation set has non-zero measure **in practice** when that width is at least
+> the volume's median nearest-neighbour distance — `TrainingVolume.median_nn_dist`, which the loader
+> already computes. A stratum narrower than the spacing between neighbouring cells contains no
+> spatial extent the data could resolve; it is a line drawn through a point cloud.
+
+On `merfish_thick_hypothalamus` (`t` = 28.6 µm, median NN ≈ 8 µm):
+
+| θ | stratum width | verdict |
+|---|---|---|
+| 30° | 49.5 µm | passes |
+| 45° | 28.6 µm | passes |
+| 60° | 16.5 µm | passes |
+| 70° | 10.4 µm | passes |
+| **75°** | **7.7 µm** | **fails** |
+| **85°** | **2.5 µm** | **fails** |
+| **90°** | **1.8 × 10⁻¹⁵ µm** | **fails** |
+
+**Why this is not gerrymandered toward an angle.** Every term is measured: `t` is the dataset's
+stated slab thickness, `s` and the nearest-neighbour distance come from the volume, and the width is
+trigonometry. Nothing is chosen. The test that it is not reverse-engineered to a preferred answer is
+that **it excludes 85° as well as 90°** — a rule tuned to exclude only 90° would have admitted 85°,
+which is 90° in all but name, and the first form of F2 did exactly that. A loophole I had flagged
+and then left open is closed by the repair rather than by a second rule.
+
+**What it selects: θ\* = 60° on the swept angles, or ~70° if that angle is swept.** Both are below
+75°, and both are reported with fill and stratum width beside them.
+
+**A second precondition defect, found in the same run and repaired here.** At 0° the donor slab came
+back **empty**: it is offset along the normal by one slab *thickness* (28.6 µm), and with sections
+57.5 µm apart the offset band contains no section at all. So **P1, the coronal control that gates
+every other number in this report, could not run.** `flanking_copy`'s donor is the adjacent
+*section*, so the correct offset is **one section spacing**, which also keeps the slabs disjoint at
+oblique angles (57.5 − 28.6 = 28.9 µm of clear space between them). §3-bis's flanking-slab
+construction is amended accordingly: **offset by `s`, not by `t`.**
+
+Worth recording how it was caught: by *"and neither set is empty"*, the third and most trivial-looking
+of the three leak assertions. L1 and L2 both pass vacuously on an empty donor set — it coincides with
+nothing and is disjoint from everything. **A leak check without an emptiness check is a check that
+passes hardest when there is nothing to check.**
+
 ## 3-bis. AMENDMENT (2026-09-11) — the exclusion rule in §3 makes the demonstration impossible
 
 *Found while building the runner, before it ran. §3 steps 2–3 are superseded by this section; §3

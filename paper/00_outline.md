@@ -21,7 +21,7 @@ the literature.
 | 2 | Method: the continuous field, and what it makes well-defined | T03–T07 | drafted |
 | 3 | **Two bounds on oblique evaluation** | `the_comb_limit.md`, `metric_resolution.md` | drafted |
 | 4 | The angle budget across specimens | `angle_budget.md` | drafted |
-| 5 | **The oblique demonstration** | `oblique_demo.md` | `[PENDING]` scores |
+| 5 | **The oblique demonstration** | `oblique_demo.md` | drafted; scores `[PENDING]` |
 | 6 | What the method does not do | `architecture_ceiling.md`, `t09_closeout.md` | drafted |
 | 7 | Limitations, and the record of what we withdrew | `retractions.md` | drafted |
 
@@ -41,7 +41,11 @@ Per `oblique_demonstration_preregistration.md` §6 with 90° replaced by θ\*:
 
 ## The headline angle is an author's decision, not a derived one
 
-F2 (§2-ter) excludes 90° on measure and derives nothing below it. It selects **θ\* = 60°, fill
-0.25**. Whether the headline is 60°, or 45° at fill 0.35, or 30° at fill 0.43, is a judgement about
-how much coverage a claim needs. **It is recorded as a judgement.** All three are scored and
+F2's **second form** (§2-quater) tests the stratum in micrometres against the volume's median
+nearest-neighbour distance. It excludes 75°, 85° and 90°, and admits 30/45/60/70 — so it excludes a
+*regime*, not a value, which is the test that it is not reverse-engineered to a preferred answer.
+It selects **θ\* = 60°, fill 0.25**.
+
+Whether the headline is 60°, or 45° at fill 0.35, or 30° at fill 0.43, is a judgement about how much
+coverage a claim needs. **It is recorded as a judgement, not derived.** All three are scored and
 tabulated either way.

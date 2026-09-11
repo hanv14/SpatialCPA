@@ -10,7 +10,9 @@
    fewer than 2 000 cells in total.
 2. **Four sections.** The training volume has four, so the comb has four teeth. §3.1's bound is
    correspondingly tight and every fill figure is specific to this geometry.
-3. **`celltype_localization` is blind below ~110 µm** (§3.2). Every score in this paper inherits it.
+3. **`celltype_localization` resolves only ~0.26–0.30 of the tissue radius** — 186 µm on a coronal
+   section (§3.2). Every score in this paper inherits it, and so does every score in the literature
+   it is compared against.
 4. **The oblique ground truth is assembled, not observed.** No obliquely-cut section exists in any
    dataset we know of; §3.1 is the statement of what the assembly can and cannot be.
 5. **The expression head is not evidenced by §5.** `celltype_localization` touches generated

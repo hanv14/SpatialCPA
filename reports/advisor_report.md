@@ -1137,15 +1137,17 @@ This project cannot run it. **What would not:** more seeds — §4.2i is the rea
 ## ⚠️ RESOLUTION CAVEAT — added 2026-09-11, applies to every `celltype_localization` number below
 
 `paper_celltype_localization`'s Sinkhorn kernel is `exp(-d^2 / (eps * scale))` with `eps = 0.05` and
-`scale` the median squared inter-cell distance on radius-normalised coordinates, so its length scale
-in micrometres is `radius * sqrt(eps * scale)`. On real tissue that is **≈ 110 µm against a tissue
-radius of ≈ 400 µm**.
+`scale` the median squared inter-cell distance on **radius-normalised** coordinates. `scale` is
+therefore dimensionless, and
 
-**The statistic is blind to spatial structure below roughly a quarter of the tissue radius.** It
-measures whether a cell type is in the right *region*, not whether it is in the right place within
-it. Every `celltype_localization` figure in this document — the 0.7765 copy floor, the 0.9808
-oracle, every arm and every deficit — was computed under that blur, and none of them is evidence
-about placement finer than it.
+> **blur / radius = sqrt(eps * scale) ~ 0.26-0.30 — a constant of the metric, not of any tissue.**
+
+**The statistic distinguishes roughly three to four locations along a radius, on any dataset at any
+magnification.** It measures whether a cell type is in the right *region*, not whether it is in the
+right place within it. On the **full coronal sections every figure in this document was scored on**,
+that is **186 um** against a radius of 621 um. Every `celltype_localization` figure here — the
+0.7765 copy floor, the 0.9808 oracle, every arm and every deficit — was computed under that blur,
+and none of them is evidence about placement finer than it.
 
 Nothing in this document's verdicts changes: the comparisons are between arms measured on the same
 instrument, and gross regional placement is what the layout head was being judged on. What changes

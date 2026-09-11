@@ -30,22 +30,42 @@ Everything on the right is the evaluator's: `eps = 0.05` is its default, `scale`
 squared inter-cell distance it computes, `radius` the mean distance from the centroid it computes.
 **There is no free parameter here and nothing of ours.**
 
-## What it comes to on real tissue
+## The result is dimensionless, and that is the point
 
-On `merfish_thick_hypothalamus`, `scale ≈ 1.4` and `radius ≈ 400–450 µm`, giving
+`scale` is the median squared distance on coordinates **already divided by the tissue radius**, so it
+is a pure number — 1.30 to 1.80 on everything we have measured. Therefore
 
-> ### blur ≈ **105–120 µm**, against a tissue radius of ≈ 400 µm
+> ### blur / radius = √(eps · scale) ≈ **0.26 – 0.30**
+>
+> **a constant of the metric, not a property of any tissue.**
 
-**The statistic is blind to spatial structure below roughly a quarter of the tissue radius.** It
-measures whether a cell type is in the right *region*. It does not measure whether it is in the
-right place within that region.
+The statistic distinguishes roughly **three to four locations along a radius — on any dataset, at any
+magnification, in any tissue.** It measures whether a cell type is in the right *region*; it does not
+measure whether it is in the right place within that region. A reader can check this against their
+own data in five lines and without ours.
+
+Measured on `merfish_thick_hypothalamus`, one plane per row:
+
+| geometry | radius | blur | **blur / radius** |
+|---|---|---|---|
+| **coronal section** (the geometry every published score uses) | 621 µm | **186 µm** | 0.300 |
+| oblique 30° | 443 µm | 115 µm | 0.259 |
+| oblique 45° | 425 µm | 112 µm | 0.264 |
+| oblique 60° | 454 µm | 116 µm | 0.255 |
+| oblique 90° | 437 µm | 115 µm | 0.263 |
+
+⚠️ **CORRECTED.** An earlier version of this document gave the blur as "≈ 110 µm", from the oblique
+rows. **Every published number in this literature is scored on a full coronal section**, where the
+radius is 621 µm and the blur is **186 µm** — 70% larger. Quoting the oblique figure understated the
+limit on exactly the numbers the limit most applies to. The dimensionless ratio is the form that
+cannot be misquoted this way, and it is what the paper leads with.
 
 ## What follows, stated plainly
 
 **1. It applies to every localisation number in this campaign.** The `flanking_copy` floor of
 0.7765, v25's 0.5371, the `both_oracle` ceiling of 0.8375, every arm of the `test1b` split, every
-per-section row — all of them were computed under a ~110 µm blur. None of them is evidence about
-placement finer than that.
+per-section row — all of them were computed on coronal sections and therefore under a **186 µm**
+blur. None of them is evidence about placement finer than that.
 
 **2. It weakens a comparison we have leaned on.** `test1b` reported a 31× gap in across-section
 spread between model positions and copy positions, and we read that as the model's layout being
@@ -55,7 +75,7 @@ a statement about fine structure. It is not one and this metric cannot make one.
 
 **3. It is why the copy floor is so hard to beat.** A copy reproduces gross regional structure
 exactly, which is precisely and only what the statistic rewards. The architecture ceiling we
-measured (A1b) is a ceiling on reproducing structure at ≳ 110 µm.
+measured (A1b) is a ceiling on reproducing structure at ≳ 186 µm.
 
 **4. It cuts the other way on the comb.** `reports/the_comb_limit.md` shows an oblique evaluation
 set is a comb. Convolving that comb with this kernel — closed form, `2|sin(πf)|/(πf)` times
@@ -78,7 +98,7 @@ Two bounds, both on the field rather than on any method, both stated with their 
 | bound | what it limits | value here |
 |---|---|---|
 | **the comb limit** — `fill = t·cos θ / s` | what an oblique ground truth from serial sections *can contain* | 0.43 at 30°, 0.25 at 60°, **0** at 90° |
-| **the metric's resolution** — `radius·√(eps·scale)` | what the statistic can *distinguish* | ≈ **110 µm**, a quarter of the tissue radius |
+| **the metric's resolution** — `blur/radius = √(eps·scale)` | what the statistic can *distinguish* | **0.26–0.30 of the tissue radius**, i.e. 186 µm on a coronal section — dimensionless, so it holds on any dataset |
 
 They are independent, they are both computable from published constants and a coordinate file, and
 we have not found either stated in the literature. Reporting a localisation score without them is

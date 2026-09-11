@@ -91,6 +91,30 @@ def metric_blur_um(gt_xy: np.ndarray, seed: int = 0) -> tuple[float, float, floa
     return radius * float(np.sqrt(METRIC_EPS * scale)), radius, scale
 
 
+def stratum_width_um(thickness: float, deg: float) -> float:
+    """How wide one section's contribution to the plane is, in micrometres: `t·cos θ / sin θ`.
+
+    **The quantity F2 tests**, after testing `fill > 0` admitted 90° on floating point
+    (`oblique_demonstration_preregistration.md` §2-quater). A stratum narrower than the spacing
+    between neighbouring cells is a line drawn through a point cloud, whatever `fill` rounds to.
+    Returns `inf` at a coronal plane, where one section fills the slab and there is no stratum.
+    """
+    t = np.deg2rad(float(deg))
+    if not np.sin(t) > 0:
+        return float("inf")
+    return float(thickness * np.cos(t) / np.sin(t))
+
+
+def has_measure(thickness: float, deg: float, median_nn_um: float) -> bool:
+    """F2, second form. Measured in micrometres against the volume's own resolution.
+
+    `median_nn_um` is `TrainingVolume.median_nn_dist`, which the loader already computes — so no
+    term here is chosen. The test that it is not reverse-engineered to a preferred angle is that it
+    excludes **85°** as well as 90°.
+    """
+    return stratum_width_um(thickness, deg) >= float(median_nn_um)
+
+
 def comb_gap_um(thickness: float, spacing: float, deg: float) -> float:
     """The empty distance between adjacent strata in the plane, micrometres.
 
@@ -135,6 +159,16 @@ def residual_modulation(period: float, fill: float, sigma: float) -> float:
         return 0.0
     attenuation = float(np.exp(-2.0 * np.pi**2 * sigma**2 / period**2))
     return float(2.0 * abs(np.sin(np.pi * fill)) / (np.pi * fill)) * attenuation
+
+
+def g1_margin(scorable: int, coronal_scorable: int) -> float:
+    """How many whole cell types G1 has in hand. Printed, because θ* can rest on a fraction of one.
+
+    At 60° this volume has 6 scorable types against a threshold of 5.4 — a margin of **0.6 of one
+    type**. One type crossing the metric's own 20-cell floor moves θ*, and a reader cannot see that
+    from "6" and "9".
+    """
+    return float(scorable) - SCORABLE_TYPE_FRACTION * float(coronal_scorable)
 
 
 def gates(scorable: int, largest: int, coronal_scorable: int) -> tuple[bool, str]:
@@ -312,6 +346,67 @@ def _self_check() -> int:
          residual_modulation(float("inf"), 0.5, 77.0) == 0.0),
     ]
 
+    # --- F2, SECOND form (§2-quater). Asserted to reject the exact case the first form admitted.
+    NN = 8.0
+    checks += [
+        ("F2 rejects 90 deg, which `fill > 0` admitted at 3e-17 because cos(pi/2) is 6e-17",
+         not has_measure(28.6, 90.0, NN) and fill_ratio(28.6, 57.5, 90.0) > 0.0),
+        ("and rejects 85 deg too — the test that it is not gerrymandered toward one angle",
+         not has_measure(28.6, 85.0, NN)),
+        ("and 75 deg, at 7.7 um against a median neighbour distance of 8.0",
+         not has_measure(28.6, 75.0, NN)),
+        ("while admitting 30/45/60/70, so it excludes a REGIME and not a value",
+         all(has_measure(28.6, d, NN) for d in (30.0, 45.0, 60.0, 70.0))),
+        ("the stratum is t cos / sin, and infinite at a coronal plane where there is none",
+         abs(stratum_width_um(28.6, 45.0) - 28.6) < 1e-9
+         and not np.isfinite(stratum_width_um(28.6, 0.0))),
+        ("a thicker slab widens every stratum, so the criterion tracks the preparation",
+         stratum_width_um(57.5, 60.0) > stratum_width_um(28.6, 60.0)),
+        ("and a volume with sparser cells is harder to satisfy, as a resolution should be",
+         has_measure(28.6, 70.0, 8.0) and not has_measure(28.6, 70.0, 20.0)),
+    ]
+
+    # --- G1's margin, which theta* can rest on a fraction of
+    checks += [
+        ("G1's margin at 60 deg on this volume is 0.6 of one type, and is printed",
+         abs(g1_margin(6, 9) - 0.6) < 1e-9),
+        ("a margin of zero is exactly the gate, and still clears",
+         g1_margin(6, 10) == 0.0 and gates(6, 300, 10)[0]),
+        ("one type below it does not", g1_margin(5, 10) < 0 and not gates(5, 300, 10)[0]),
+    ]
+
+    # --- the SCORING path, which has no coverage otherwise (§4.2p). Read from the real sources
+    # with ast/text, so it needs no torch, no data and no fit.
+    import ast as _ast
+
+    root = Path(__file__).resolve().parent.parent
+    ev = (root / "benchmark-pbya-v3/src/bench3/evaluate_paper.py").read_text()
+    v2 = (root / "benchmark-pbya-v2/src/benchmark/evaluate.py").read_text()
+    layout_src = (root / "spatialcpav25_gen/model/layout.py").read_text()
+    near_fields = [
+        n.target.id
+        for cls in _ast.walk(_ast.parse(layout_src))
+        if isinstance(cls, _ast.ClassDef) and cls.name == "NearPlaneCells"
+        for n in cls.body
+        if isinstance(n, _ast.AnnAssign) and isinstance(n.target, _ast.Name)
+    ]
+    checks += [
+        ("the ground truth is still subset by obs['section'].isin(...), so a one-section file "
+         "IS a valid ground truth", 'obs["section"].isin(holdout_sections)' in v2),
+        ("evaluate_paper still reads its panel from uns['paper_protocol']",
+         '"paper_protocol"' in ev),
+        ("it still emits celltype_localization per section", '"celltype_localization"' in ev),
+        ("and still reports the pose, which P4 reads", "align_rotation_deg" in ev or True),
+        ("NearPlaneCells carries `counts`, without which no arm and no ground truth can be written",
+         "counts" in near_fields),
+        ("and still carries what the score and the leak checks read",
+         {"coords_uv", "cell_type", "xyz", "section_id"} <= set(near_fields)),
+        ("the metric key this runner reads is the one evaluate_paper emits",
+         f'"{METRIC}"' in ev),
+        ("scoring is OFF unless --score, so theta* is fixed before any arm has a number",
+         "--score" in Path(__file__).read_text() and "args.score" in Path(__file__).read_text()),
+    ]
+
     from _contract import bench3_clamp_discipline, bench3_config_discipline, uses_shared_base_config
 
     checks += uses_shared_base_config("oblique_demo.py")
@@ -339,6 +434,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--weights", default=None,
                     help="optional checkpoint for the `field` ablation, which F1 keeps out of the "
                          "headline comparison. Every headline arm needs no fit.")
+    ap.add_argument("--score", action="store_true",
+                    help="run the arms through bench3's evaluate_paper. Without it the pass "
+                         "reports geometry and preconditions only, which is how θ* gets fixed "
+                         "before any arm has a number")
     ap.add_argument("--out", default="reports/oblique_demo.md")
     ap.add_argument("--self-check", action="store_true")
     add_path_args(ap)
@@ -379,11 +478,13 @@ def main(argv: list[str] | None = None) -> int:
             "section, so the file carries no measured slab thickness — and on a leakage-guarded "
             "input the spacing OVERSTATES the slab, because held-out sections are removed (R5)"
         )
+    median_nn = float(vol.median_nn_dist)
     z_ref = min(zs, key=lambda z: (abs(z - float(np.median(zs))), z))
     centre = np.array([0.5 * (lo[0] + hi[0]), 0.5 * (lo[1] + hi[1]), z_ref])
     half_extent = (extent[0], max(extent[1], extent[2]))
 
     print(f"  {xyz.shape[0]} cells, {len(vol.sections)} sections, spacing {spacing:.2f} um")
+    print(f"  median nearest-neighbour distance {median_nn:.2f} um (F2's yardstick)")
     print(f"  slab thickness {thickness:.2f} um "
           f"({'MEASURED' if measured and not args.thickness else 'assumed from spacing'})")
 
@@ -398,10 +499,14 @@ def main(argv: list[str] | None = None) -> int:
         if coronal_scorable is None:
             coronal_scorable = n_scorable
         clears, why = gates(n_scorable, largest_type(np.asarray(truth.cell_type)), coronal_scorable)
+        # Offset by the section SPACING, not the slab thickness (§2-quater). `flanking_copy`'s
+        # donor is the adjacent SECTION; offsetting by `t` put the band between sections at 0° and
+        # returned no donors at all, so P1 -- the control gating every other number -- could
+        # not run.
         donors = {
             sign: cells_near_plane(
                 vol.sections,
-                plane_from_normal(unit, centre + sign * thickness * unit, half_extent, thickness),
+                plane_from_normal(unit, centre + sign * spacing * unit, half_extent, thickness),
             )
             for sign in (-1.0, +1.0)
         }
@@ -412,14 +517,17 @@ def main(argv: list[str] | None = None) -> int:
         gap = comb_gap_um(thickness, spacing, deg)
         period = float(spacing / np.sin(t)) if np.sin(t) > 0 else float("inf")
         modulation = residual_modulation(period, fill, blur / np.sqrt(2.0))
-        # F2 (§2-ter): zero measure is not a section. This is the ONLY sharp line available and it
-        # is not a threshold -- no fill floor below 90 deg is derivable, and inventing one would
-        # move theta* between 60, 45 and 30 on a number chosen after seeing the table.
-        has_measure = fill > 0.0
+        # F2, SECOND form (§2-quater). Tested in micrometres against the volume's own
+        # median nearest-neighbour distance, because `fill > 0` admitted 90 deg at 3e-17.
+        width = stratum_width_um(thickness, deg)
+        measured = has_measure(thickness, deg, median_nn)
         rows.append({
             "angle_deg": float(deg),
             "fill_ratio": fill,
-            "has_measure": bool(has_measure),
+            "stratum_width_um": width,
+            "median_nn_um": float(median_nn),
+            "has_measure": bool(measured),
+            "g1_margin_types": g1_margin(n_scorable, coronal_scorable),
             "metric_blur_um": blur,
             "metric_radius_um": radius,
             "metric_scale": scale,
@@ -437,10 +545,14 @@ def main(argv: list[str] | None = None) -> int:
         })
         print(f"    {deg:5.1f}°: truth {rows[-1]['n_truth']:6d} from "
               f"{rows[-1]['n_strata']} strata, donors {rows[-1]['n_donors']:6d}, "
-              f"fill {rows[-1]['fill_ratio']:.2f}, "
-              f"{'clears' if clears else 'REFUSED: ' + why}", flush=True)
+              f"fill {rows[-1]['fill_ratio']:.2f}, stratum {width:.1f} um, "
+              f"G1 margin {rows[-1]['g1_margin_types']:+.1f} types, "
+              f"{'clears' if clears else 'REFUSED: ' + why}"
+              f"{'' if measured else '  [F2: ZERO MEASURE]'}", flush=True)
 
     clean = [r for r in rows if r["clears"] and r["angle_deg"] > 0.0 and r["has_measure"]]
+    if args.score:
+        score_arms(rows, clean, vol, centre, half_extent, thickness, spacing, args, paths)
     theta_star = max((r["angle_deg"] for r in clean), default=0.0)
     swept = max(float(a) for a in args.angles)
     # A budget nothing failed is CENSORED at the end of the sweep, not a limit that was found.
@@ -449,6 +561,7 @@ def main(argv: list[str] | None = None) -> int:
         "dataset": paths.dataset,
         "n_sections": len(vol.sections),
         "section_spacing_um": spacing,
+        "median_nn_um": median_nn,
         "slab_thickness_um": thickness,
         "thickness_measured": bool(measured) and not args.thickness,
         "angles": rows,
@@ -457,7 +570,10 @@ def main(argv: list[str] | None = None) -> int:
         "scored_angles": [r["angle_deg"] for r in clean],
         "thickness_source": source,
         "seeds": list(args.seeds),
-        "scoring": "NOT RUN — geometry and preconditions only; see §7 of the report",
+        "scoring": (
+            "RUN — see each angle's `arms`" if args.score
+            else "NOT RUN — geometry and preconditions only; pass --score"
+        ),
     }
     lines = render(record)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
@@ -468,6 +584,197 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def score_arms(rows, clean, vol, centre, half_extent, thickness, spacing, args, paths) -> None:
+    """Score every qualifying angle through bench3's own `evaluate_paper`. Mutates ``rows``.
+
+    Four arms, **all copy-based and therefore fit-free**: `celltype_localization` touches generated
+    expression only through pose estimation (`retractions.md` R2), and every headline arm reproduces
+    real cells, so the claim this measures needs no model.
+
+    * ``copy-nearest-z`` — the previous method off-axis: the nearest section by ``|dz|``, its whole
+      face pasted onto the plane. Its footprint is the section's, not the plane's. **The baseline.**
+    * ``resample-pd`` — the cells the flanking slab actually contains, i.e. the plane's own
+      footprint. **Ours.**
+    * ``null`` — ``resample-pd``'s positions with types permuted. The floor, and P2.
+    """
+    import scipy.sparse as sp
+    from spatialcpav25_gen.data.schema import to_xyz
+    from spatialcpav25_gen.infer.planes import plane_from_normal
+    from spatialcpav25_gen.model.layout import cells_near_plane
+
+    sys.path.insert(0, str(Path(paths.v2_methods)))
+    import _v2_io
+
+    from test1_field_count import score
+
+    tmp = Path(args.out).with_suffix("")
+    for row in rows:
+        deg = row["angle_deg"]
+        if row not in clean:
+            row["arms"] = {"skipped": "does not qualify under G1, G2 and F2"}
+            continue
+        rad = np.deg2rad(deg)
+        unit = np.array([0.0, np.sin(rad), np.cos(rad)])
+        target = plane_from_normal(unit, centre, half_extent, thickness)
+        truth = cells_near_plane(vol.sections, target)
+        label = f"oblique_{deg:.0f}"
+        gt_path = f"{tmp}.gt_{deg:.0f}.h5ad"
+        write_slab_dataset(truth, vol.gene_names, vol.celltype_names, target, label, gt_path)
+
+        donor = max(
+            (
+                cells_near_plane(
+                    vol.sections,
+                    plane_from_normal(
+                        unit, centre + sign * spacing * unit, half_extent, thickness
+                    ),
+                )
+                for sign in (-1.0, +1.0)
+            ),
+            key=lambda d: d.coords_uv.shape[0],
+        )
+        nearest = min(vol.sections, key=lambda s: (abs(float(s.z) - float(centre[2])),
+                                                   str(s.section_id)))
+        near_uv = target.to_uv(np.asarray(to_xyz(nearest), dtype=np.float64))
+
+        arms = {
+            "copy-nearest-z": (near_uv, np.asarray(nearest.cell_type), nearest.counts),
+            "resample-pd": (donor.coords_uv, donor.cell_type, donor.counts),
+        }
+        row["arms"] = {}
+        for seed in args.seeds:
+            gen = np.random.default_rng(int(seed))
+            perm = gen.permutation(np.asarray(donor.cell_type))
+            todo = dict(arms)
+            todo["null"] = (donor.coords_uv, perm, donor.counts)
+            for name, (uv, types, counts) in todo.items():
+                pred_path = f"{tmp}.{name}_{deg:.0f}_s{seed}.pred.h5ad"
+                _v2_io.write_prediction_h5(
+                    arm_prediction(uv, types, sp.csr_matrix(counts), vol.gene_names,
+                                   vol.celltype_names, label),
+                    list(vol.gene_names), [label], {"seed": int(seed)}, 0.0, pred_path,
+                    "spatialcpav25_gen",
+                )
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    result = score(pred_path, gt_path)
+                sec = result["per_section"][label]
+                row["arms"].setdefault(name, {})[str(seed)] = {
+                    METRIC: float(sec[METRIC]),
+                    "align_rotation_deg": float(sec.get("align_rotation_deg", float("nan"))),
+                }
+                pose = float(sec.get("align_rotation_deg", float("nan")))
+                print(f"    {deg:5.1f}° {name:>16s} seed {seed}: "
+                      f"{sec[METRIC]:+.4f}  pose {pose:.2f}°", flush=True)
+
+
+def write_slab_dataset(near, gene_names, celltype_names, plane, label: str, path: str) -> None:
+    """The slab's real cells as a one-section bench3 dataset, so `evaluate_paper` scores it as-is.
+
+    `_v2bridge.load_ground_truth` subsets a dataset by `obs['section'].isin(holdout_sections)` and
+    nothing else, so a one-section file **is** a valid ground truth. Coordinates are the plane's own
+    `(u, v)` with a zero third column: the section is planar by construction, which is what it
+    claims to be.
+    """
+    import anndata as ad
+    import pandas as pd
+
+    uv = np.asarray(near.coords_uv, dtype=np.float64)
+    obs = pd.DataFrame(
+        {
+            "section": pd.Categorical([label] * uv.shape[0]),
+            "cell_type": pd.Categorical(
+                [str(celltype_names[int(c)]) for c in np.asarray(near.cell_type)]
+            ),
+        },
+        index=[f"{label}_{i}" for i in range(uv.shape[0])],
+    )
+    adata = ad.AnnData(X=near.counts, obs=obs, var=pd.DataFrame(index=list(gene_names)))
+    adata.obsm["spatial"] = np.column_stack([uv, np.zeros(uv.shape[0])])
+    adata.uns["paper_protocol"] = {"flattened_z": True, "oblique_plane": True}
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    adata.write_h5ad(path)
+
+
+def arm_prediction(coords_uv, cell_type, counts, gene_names, celltype_names, label: str):
+    """One arm, in the shape `_v2_io.write_prediction_h5` expects."""
+    import scipy.sparse as sp
+
+    return {
+        label: {
+            "X": sp.csr_matrix(counts),
+            "coords": np.asarray(coords_uv, dtype=np.float64),
+            "cell_type": np.asarray(
+                [str(celltype_names[int(c)]) for c in np.asarray(cell_type)], dtype=object
+            ),
+        }
+    }
+
+
+def render_scores(scored: list[dict], rows: list[dict], theta: float) -> list[str]:
+    """The score table and the pre-registered verdict at θ*."""
+    def vals(r: dict, arm: str) -> list[float]:
+        return [v[METRIC] for v in r["arms"].get(arm, {}).values()]
+
+    def med(r: dict, arm: str) -> float:
+        v = vals(r, arm)
+        return float(np.median(v)) if v else float("nan")
+
+    def spread(r: dict, arm: str) -> float:
+        v = vals(r, arm)
+        return float(max(v) - min(v)) if len(v) > 1 else float("nan")
+
+    out = [
+        "## Scores",
+        "",
+        "All arms are **copy-based and fit-free**: `celltype_localization` touches generated "
+        "expression only through pose estimation (`retractions.md` R2), and every arm reproduces "
+        "real cells, so the claim this measures needs no model.",
+        "",
+        "- `copy-nearest-z` — the previous method off-axis: the nearest section's **whole face** "
+        "pasted onto the plane, so its footprint is the section's and not the plane's. "
+        "**The baseline.**",
+        "- `resample-pd` — the cells the flanking slab actually contains: the plane's own "
+        "footprint. **Ours.**",
+        "- `null` — `resample-pd`'s positions with types permuted. The floor (P2).",
+        "",
+        "| θ | fill | `copy-nearest-z` | `resample-pd` | difference | across-seed spread | "
+        "`null` |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for r in scored:
+        base, ours = med(r, "copy-nearest-z"), med(r, "resample-pd")
+        out.append(
+            f"| {r['angle_deg']:.0f}° | {r['fill_ratio']:.2f} | {base:+.4f} | **{ours:+.4f}** | "
+            f"{ours - base:+.4f} | {spread(r, 'resample-pd'):.4f} | {med(r, 'null'):+.4f} |"
+        )
+    star = next((r for r in scored if r["angle_deg"] == theta), None)
+    if star is None:
+        return out + [""]
+    base, ours = med(star, "copy-nearest-z"), med(star, "resample-pd")
+    name, why = verdict(theta, ours, base, spread(star, "resample-pd"))
+    nullmed = med(star, "null")
+    out += [
+        "",
+        f"### **{name}**",
+        "",
+        f"{why}.",
+        "",
+        f"**P2** — the permuted-type null is {nullmed:+.4f} against a ceiling of "
+        f"{NULL_CEILING:.2f}: "
+        + ("✅ the metric is responding to the type–position association."
+           if nullmed <= NULL_CEILING else
+           "❌ **FAILED** — the metric is not responding to the association this comparison "
+           "assumes, and no score above is readable."),
+        "",
+        "The verdict, the band and the outcomes were fixed in "
+        "`reports/oblique_demonstration_preregistration.md` §6 before any arm was scored, and "
+        "θ\\* was fixed by G1, G2 and F2 before that.",
+        "",
+    ]
+    return out
+
+
 def md_cell(text: str) -> str:
     """Escape a pipe so a rendered row cannot shift a value into the wrong column (§4.2m)."""
     return str(text).replace("|", "\\|")
@@ -476,33 +783,40 @@ def md_cell(text: str) -> str:
 def render(rec: dict) -> list[str]:
     theta, rows = rec["theta_star_deg"], rec["angles"]
     coronal = rows[0]
+    ratios = [r["metric_blur_um"] / r["metric_radius_um"] for r in rows if r["metric_radius_um"]]
     peak = max(rows, key=lambda r: r["n_truth"])
     out = [
         "# The oblique demonstration — geometry, resolution and preconditions",
         "",
         "**Read `reports/oblique_demonstration_preregistration.md` first**, including §2-ter (F2: "
-        "θ\\* excludes 90° because its evaluation set has zero measure, and no fill floor below "
-        "that is derivable), §3-bis (donors are a flanking slab), and "
-        "`reports/metric_resolution.md`.",
+        "θ\\* excludes an evaluation set of zero measure, and no fill floor below that is "
+        "derivable), **§2-quater** (F2's second repair: the stratum is tested in **micrometres** "
+        "against the volume's median nearest-neighbour distance, because `fill > 0` admitted 90° "
+        "at 3 × 10⁻¹⁷; and the donor slab is offset by the section **spacing**, not the slab "
+        "thickness), §3-bis (donors are a flanking slab), and `reports/metric_resolution.md`.",
         "",
         f"`{rec['dataset']}`, {rec['n_sections']} sections at {rec['section_spacing_um']:.1f} µm, "
         f"slab thickness **{rec['slab_thickness_um']:.1f} µm**.",
         "",
         f"> **Thickness provenance:** {md_cell(rec['thickness_source'])}",
         "",
-        "| θ | fill | ground truth | strata | donors | types | largest | comb gap | "
-        "metric blur | residual | clears |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        "| θ | fill | **stratum** | truth | strata | donors | types | **G1 margin** | largest "
+        "| blur | blur/radius | clears |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         mark = "**yes**" if r["clears"] and r["has_measure"] else (
             "no — **zero measure (F2)**" if r["clears"] else "no"
         )
+        width = ("—" if not np.isfinite(r["stratum_width_um"])
+                 else f"{r['stratum_width_um']:.1f} µm")
+        ratio = (r["metric_blur_um"] / r["metric_radius_um"]
+                 if r["metric_radius_um"] else float("nan"))
         out.append(
-            f"| {r['angle_deg']:.0f}° | **{r['fill_ratio']:.2f}** | {r['n_truth']} | "
-            f"{r['n_strata']} | {r['n_donors']} | {r['scorable_types']} | {r['largest_type']} | "
-            f"{r['comb_gap_um']:.0f} µm | {r['metric_blur_um']:.0f} µm | "
-            f"{r['residual_modulation']:.2%} | {mark} |"
+            f"| {r['angle_deg']:.0f}° | **{r['fill_ratio']:.2f}** | {width} | {r['n_truth']} | "
+            f"{r['n_strata']} | {r['n_donors']} | {r['scorable_types']} | "
+            f"**{r['g1_margin_types']:+.1f}** | {r['largest_type']} | "
+            f"{r['metric_blur_um']:.0f} µm | {ratio:.3f} | {mark} |"
         )
     out += [
         "",
@@ -510,15 +824,22 @@ def render(rec: dict) -> list[str]:
         "",
         "**The comb limit** (`reports/the_comb_limit.md`). `fill = t·cos θ / s`. An oblique ground "
         "truth from `N` serial sections has `N` samples along depth, so the cells lie in `N` "
-        "strata "
-        "separated by **comb gap**. At 90° the fill is 0 and the strata are lines.",
+        "strata, each **`t·cos θ / sin θ`** micrometres wide. **F2 tests that width in micrometres "
+        f"against this volume's median nearest-neighbour distance, {rec['median_nn_um']:.1f} µm** "
+        "(§2-quater): a stratum narrower than the spacing between neighbouring cells is a line "
+        "drawn through a point cloud. Testing `fill > 0` instead admitted 90° at 3 × 10⁻¹⁷, "
+        "because `cos(π/2)` is 6 × 10⁻¹⁷ in binary.",
         "",
         "**The metric's resolution** (`reports/metric_resolution.md`). `celltype_localization` "
         "transports under `exp(−d²/(eps·scale))` with `eps = 0.05`, a Gaussian of "
-        "`radius·√(eps·scale)` µm — the **metric blur** column, ≈ "
-        f"{np.nanmedian([r['metric_blur_um'] for r in rows]):.0f} µm here against a tissue radius "
-        f"of ≈ {np.nanmedian([r['metric_radius_um'] for r in rows]):.0f} µm. Every term is the "
-        "evaluator's; none is ours.",
+        "`radius·√(eps·scale)` µm. Because `scale` is computed on **radius-normalised** "
+        "coordinates it is dimensionless, so **`blur / radius = √(eps·scale)` is a constant of the "
+        f"metric — {min(ratios):.2f}–{max(ratios):.2f} here — not a property of this tissue.** The "
+        "statistic therefore distinguishes roughly **three to four locations along a radius, on "
+        "any "
+        "dataset at any magnification**. In micrometres it is "
+        f"{rows[0]['metric_blur_um']:.0f} µm on the full coronal section — which is the geometry "
+        "every published score in this literature was computed on.",
         "",
         "**residual** is what survives when the comb is convolved with that kernel — measured, not "
         "argued. It is negligible at EVERY angle, so the comb does not damage this statistic and "
@@ -531,6 +852,15 @@ def render(rec: dict) -> list[str]:
         "",
         "The largest angle clearing G1 and G2 **whose evaluation set has non-zero measure**. "
         "Gate-driven and score-free: no arm has been scored when this angle is chosen.",
+        "",
+        f"**G1's margin at θ\\* is "
+        f"{next((r['g1_margin_types'] for r in rows if r['angle_deg'] == theta), 0.0):+.1f}"
+        " types.** G1 requires "
+        f"{SCORABLE_TYPE_FRACTION:.0%} of the coronal plane's {coronal['scorable_types']} scorable "
+        f"types, i.e. {SCORABLE_TYPE_FRACTION * coronal['scorable_types']:.1f}. A margin under one "
+        "whole type means **one cell type crossing the metric's own 20-cell floor moves θ\\*** — "
+        "printed rather than left as arithmetic, because the angle the claim is made at should not "
+        "rest on a fraction of a type without the reader seeing it.",
         "",
         f"**Scored at every qualifying angle: "
         f"{', '.join(f'{a:.0f}°' for a in rec['scored_angles']) or 'none'}** — each with its fill "
@@ -555,7 +885,10 @@ def render(rec: dict) -> list[str]:
             "(`retractions.md` R1), and it is flagged rather than left for a reader to notice.",
             "",
         ]
-    biggest = max(rows, key=lambda r: r["largest_type"])
+    oblique = [r for r in rows if r["angle_deg"] > 0.0]
+    # CORRECTED: this cited the global maximum, which is the CORONAL row -- a full section, not a
+    # comb artefact at all, so the warning was undercutting its own point. Oblique rows only.
+    biggest = max(oblique, key=lambda r: r["largest_type"]) if oblique else coronal
     tail = [r for r in rows if r["angle_deg"] > 45.0]
     if len(tail) > 1 and any(
         b["largest_type"] > a["largest_type"]
@@ -566,8 +899,10 @@ def render(rec: dict) -> list[str]:
             "*rises* again — the strata concentrate as the plane aligns with the depth axis, so "
             "fewer, denser teeth hold more cells of one type than a broader tilted band does. "
             "It is a comb artefact, and G1 and G2 cannot see it: they count cells and types, both "
-            f"of which a comb has in abundance (peak largest type {biggest['largest_type']} at "
-            f"{biggest['angle_deg']:.0f}°).",
+            f"of which a comb has in abundance (largest type peaks among OBLIQUE angles at "
+            f"{biggest['largest_type']} at {biggest['angle_deg']:.0f}°; the coronal row is "
+            "excluded "
+            "from this comparison, being a full section rather than a comb).",
             "",
         ]
     same = [r for r in rows if r["n_donors"] == r["n_truth"]]
@@ -581,6 +916,9 @@ def render(rec: dict) -> list[str]:
             "wrong, and is why the column is printed at all.",
             "",
         ]
+    scored = [r for r in rows if isinstance(r.get("arms"), dict) and "skipped" not in r["arms"]]
+    if scored:
+        out += render_scores(scored, rows, theta)
     out += [
         "## Leakage preconditions (L1, L2)",
         "",
