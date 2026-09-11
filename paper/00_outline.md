@@ -23,7 +23,25 @@ time; and within those bounds the standard metric cannot separate our layout fro
 
 **§3 and §4 are the spine.** They are stated before §5 so the result is read inside the bounds rather
 than defended against them afterwards. §5 is the explained negative. §6 and §7 carry the
-reconstruction deficit and the nineteen retractions.
+reconstruction deficit, the eighteen retractions and the two self-caught fabrications.
+
+## Figures
+
+Five are rendered into `paper/figures/` by `scripts/make_figures.py` and placed in `DRAFT.md` by
+`scripts/assemble_draft.py`. Every number in them, captions included, is read from
+`reports/oblique_demo.json` at draw time rather than typed. `FIGURES.md` is the list, including the
+one deliberate omission (the qualitative side-by-side, refused with its reason) and the standing
+condition on F3.
+
+| | what | state |
+|---|---|---|
+| F1 | the comb, per scored angle | rendered (extent form) |
+| F2 | fill and resolution against angle | rendered |
+| F4 | the footprint | rendered (extent form) — **point-cloud version required before submission** |
+| F5 | the scrambled-section floor, and the arms against it | rendered |
+| F6 | the result, as a forest | rendered |
+| F3 | the angle budget across specimens | supplementary, not drawn — §4.4's table carries it |
+| F7 | the architecture ceiling | not drawn |
 
 ## The result
 
@@ -38,10 +56,15 @@ The capability was not demonstrated, and four measurements say why it could not 
 | the metric's resolution | what the statistic can distinguish | `blur/radius = √(eps·scale)` ≈ **0.26–0.30**, any dataset |
 | the scrambled-section floor | what a section with no type information scores | **0.03–0.24**, and flat in `n` |
 
-## Open editorial decisions
+## Editorial decisions, settled
 
-1. **The headline angle.** F2 selects θ\* = 60°; 60° is not readable on P2, and 30° and 45° are.
-   Which angle leads §5's abstract sentence is an author's judgement about how much coverage a claim
-   needs, and it is recorded as a judgement rather than derived.
-2. **Whether §4.7's two-specimen scope is enough**, or the full eight-dataset sweep table from
-   `reports/angle_budget.md` should be inlined.
+1. **The headline angle: 45°.** θ\* = 60° is the largest *scorable* angle but fails P2, and an angle
+   whose preconditions fail has no readable score. Leading with θ\* would report a number the
+   protocol had already disqualified. Recorded as a judgement, in §5.2.
+2. **The full eight-dataset sweep is inlined** in §4.4, with the four unbuilt datasets as named rows
+   carrying their reasons. The result is **bimodal** (three specimens at 5°, one at 60°) and does not
+   track aspect ratio — which is §4's actual claim, and the reason F3 stays a table.
+3. **`merfish_thick_hypothalamus`'s budget is 60°, not 90°.** The 90° in the sweep is what a slab
+   thickness defaulted to the section spacing gives; it is `retractions.md` R5, reappearing through a
+   sweep that predates R5's own fix, and is withdrawn again as R18. §4.7 carries the note.
+4. **F3 is supplementary and F4's extent form is internal-read-only** — see `FIGURES.md`.
