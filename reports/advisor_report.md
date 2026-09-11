@@ -841,7 +841,7 @@ v21 against SpatialZ" is a **cross-dataset average, which `specs/10` §4.2a forb
 per dataset the comparison is **9–9**; on tier-1 v20 (0.8804) and v21 (0.8881) both **beat**
 SpatialZ (0.8522); in the wide regime v20 wins **7 of 7**. Only the pooled figure favours SpatialZ.
 **The honest count is two clean v25 appearances plus a comparison this project's own methodology
-rejects** — a real pattern in v25, not the three-generation weakness it was written as.
+rejects** 🚩 **STRUCK 2026-09-11 — "v20 beats SpatialZ 5 of 6" is not in the record at all, and even the real figures are unreadable: no floor column, cross-instrument, and v20 is mechanically a copier (`reports/spatialz_claim_struck.md`).** — a real pattern in v25, not the three-generation weakness it was written as.
 
 **Where it lives.** A boundary stratification (zero fits — both sides were on disk) measured
 deficits of **0.1729 / 0.1877 / 0.2043** across the three held-out sections on the shipped arm, a

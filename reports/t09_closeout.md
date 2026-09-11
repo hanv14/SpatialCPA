@@ -490,7 +490,7 @@ negative column and were measured at the selected budget. Writing the caveat bro
    ⚠️ **State appearances 1–2 at their real strength, which is lower than it sounds.** That loss is
    a **cross-dataset pool**, and §4.2a forbids exactly that: read per dataset it is **9–9**, on
    tier-1 v20 (0.8804) and v21 (0.8881) both **beat** SpatialZ (0.8522), and in the wide regime v20
-   wins **7 of 7**. Only the pooled figure favours SpatialZ. So the honest count is **two clean
+   wins **7 of 7**. 🚩 **STRUCK 2026-09-11 — "v20 beats SpatialZ 5 of 6" is not in the record at all, and even the real figures are unreadable: no floor column, cross-instrument, and v20 is mechanically a copier (`reports/spatialz_claim_struck.md`).** Only the pooled figure favours SpatialZ. So the honest count is **two clean
    appearances in v25 plus a pooled comparison our own methodology rejects** — which is still a
    pattern, and still the metric where this line has been weakest for three generations.
 

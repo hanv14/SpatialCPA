@@ -28,7 +28,7 @@ from __future__ import annotations
 import itertools
 import math
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import pytest
@@ -64,6 +64,7 @@ from spatialcpav25_gen.model.expression import (
     cross_mix_counts,
     detection_rate,
     gene_theta_moments,
+    position_keyed_uniforms,
     sample_counts,
     time_embedding,
 )
@@ -1765,3 +1766,120 @@ def test_a_checkpoint_written_before_gene_theta_existed_still_loads():
         matched.load_state_dict(
             {k: v for k, v in matched.state_dict().items() if k != "gene_theta"}, strict=True
         )
+
+
+# --------------------------------------------------------------------------------------
+# the position key — cross-mix's donor selection as a function of physical position
+# --------------------------------------------------------------------------------------
+
+
+def _dense_block(n: int = 800, extent: float = 300.0, seed: int = 1):
+    """Cells at tissue density: ~14 um median nearest-neighbour separation, as STARmap's are."""
+    return np.random.default_rng(seed).uniform(0.0, extent, size=(n, 3))
+
+
+def test_position_key_is_uniform_so_the_mix_keeps_its_distribution():
+    """The donor's marginal selection probability must be what v20's was.
+
+    ``arccos(cos(t)) / pi`` is a triangle wave, and a triangle wave of a uniform phase is uniform.
+    If this drifted, every donor weight would be silently reweighted.
+    """
+    u = position_keyed_uniforms(_dense_block(4000, 3000.0), 200, seed=0)
+    counts, _ = np.histogram(u, bins=10, range=(0.0, 1.0))
+    assert abs(float(u.mean()) - 0.5) < 0.01
+    assert abs(float(u.var()) - 1.0 / 12.0) < 0.002
+    assert np.allclose(counts / (u.size / 10.0), 1.0, atol=0.03)
+
+
+def test_position_key_does_not_correlate_genes():
+    """A key that correlated genes would make the mix quietly more copy-like.
+
+    T06's ``test_per_gene_independence_destroys_covariance`` rests on the selection being
+    independent per gene; this is the same property for the position-keyed route.
+    """
+    u = position_keyed_uniforms(_dense_block(4000, 3000.0), 200, seed=0)
+    c = np.corrcoef(u.T)
+    off = np.abs(c[~np.eye(200, dtype=bool)])
+    assert float(off.mean()) < 0.03, f"mean |gene-gene corr| {off.mean():.4f}"
+
+
+def test_position_key_does_not_correlate_NEIGHBOURING_CELLS():
+    """The constraint that decided ``Config.cross_mix_key_frequency_um``, and caught its first value.
+
+    v20's selection is independent between cells. A key with too long a wavelength makes cells that
+    are close together share donors — at the 40 um first tried, cells under 15 um apart correlated
+    at **+0.26**, which is nearest-neighbour distance in this tissue. The default is 5 um and this
+    test is why.
+    """
+    xyz = _dense_block()
+    u = position_keyed_uniforms(xyz, 400, seed=0)
+    d = np.linalg.norm(xyz[:, None, :] - xyz[None, :, :], axis=2)
+    near = (d > 0.0) & (d < 15.0) & (~np.eye(xyz.shape[0], dtype=bool))
+    assert near.sum() > 100, "fixture is too sparse to test the near field"
+    corr = np.corrcoef(u)[near].mean()
+    assert abs(float(corr)) < 0.05, f"cells < 15 um apart correlate at {corr:+.4f}"
+
+    # and the test is not vacuous: a long-wavelength key fails it loudly
+    long_key = replace(Config(), cross_mix_key_frequency_um=2000.0)
+    bad = np.corrcoef(position_keyed_uniforms(xyz, 400, cfg=long_key, seed=0))[near].mean()
+    assert bad > 0.5, f"a 2000 um key should correlate the near field, got {bad:+.4f}"
+
+
+def test_position_key_is_the_same_at_the_same_point_and_continuous_near_it():
+    """The property the whole thing exists for, and the reason it is not a hash.
+
+    Two crossing planes reach one physical point by different arithmetic and agree to ~1e-13 um
+    (GATE 1 G1.2a). A hash would select a different donor there; a continuous key moves the uniform
+    by ~1e-12 and selects the same one.
+    """
+    xyz = _dense_block()
+    u = position_keyed_uniforms(xyz, 400, seed=0)
+    assert np.array_equal(position_keyed_uniforms(xyz, 400, seed=0), u)
+    moved = position_keyed_uniforms(xyz + 1e-13, 400, seed=0)
+    assert float(np.abs(moved - u).max()) < 1e-9
+
+
+def test_position_key_refuses_what_it_cannot_key():
+    for bad, match in (
+        (np.zeros((4, 2)), "must be \\(N, 3\\)"),
+        (np.zeros(4), "must be \\(N, 3\\)"),
+    ):
+        with pytest.raises(ExpressionError, match=match):
+            position_keyed_uniforms(bad, 4)
+    with pytest.raises(ExpressionError, match="n_genes"):
+        position_keyed_uniforms(np.zeros((4, 3)), 0)
+    with pytest.raises(ExpressionError, match="must be > 0 um"):
+        position_keyed_uniforms(
+            np.zeros((4, 3)), 4, cfg=replace(Config(), cross_mix_key_frequency_um=0.0)
+        )
+
+
+def test_cross_mix_takes_supplied_uniforms_and_the_default_path_is_untouched():
+    """Supplying the uniforms must change *which* donor, and nothing else about the rule."""
+    rng = np.random.default_rng(3)
+    donors = rng.poisson(4.0, size=(64, 3, 12)).astype(np.float64)
+    w = np.full((64, 3), 1.0 / 3.0)
+
+    u = position_keyed_uniforms(_dense_block(64), 12, seed=0)
+    keyed = cross_mix_counts(donors, w, np.random.default_rng(0), uniforms=u)
+    again = cross_mix_counts(donors, w, np.random.default_rng(999), uniforms=u)
+    assert torch.equal(keyed, again), "the RNG must not reach the selection when uniforms are given"
+
+    default = cross_mix_counts(donors, w, np.random.default_rng(0))
+    assert not torch.equal(keyed, default), "the supplied uniforms must actually select"
+
+    # every emitted value is still one donor's real count, verbatim — Convention 5
+    emitted = keyed.numpy()
+    for i in range(emitted.shape[0]):
+        for g in range(emitted.shape[1]):
+            assert emitted[i, g] in set(donors[i, :, g].tolist())
+
+
+def test_cross_mix_refuses_malformed_uniforms():
+    rng = np.random.default_rng(3)
+    donors = rng.poisson(4.0, size=(8, 2, 5)).astype(np.float64)
+    w = np.full((8, 2), 0.5)
+    with pytest.raises(ExpressionError, match="uniforms must be"):
+        cross_mix_counts(donors, w, rng, uniforms=np.zeros((8, 4)))
+    with pytest.raises(ExpressionError, match="must lie in"):
+        cross_mix_counts(donors, w, rng, uniforms=np.full((8, 5), 1.5))

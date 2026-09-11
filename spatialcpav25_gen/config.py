@@ -1229,6 +1229,50 @@ class Config:
     method's "<= 3 donor cells" (``eval/baselines.py``). A deliberate negative control: it is
     the reference point for T06's gene-gene covariance claim and T10 reuses it."""
 
+    cross_mix_position_keyed: bool = False
+    """Key ``cross-mix``'s per-gene donor selection to **physical position** instead of to the
+    generation RNG.
+
+    Off by default: turning it on changes the emission's statistics (see
+    :func:`~spatialcpav25_gen.model.expression.position_keyed_uniforms`), and the framing that
+    needs it is not decided. With it off, ``cross-mix`` draws ``gen.random((N, G))`` — a
+    call-ordered stream — so two crossing planes select **different** donors for the same physical
+    cell and the intersection-consistency property of ``zinb-flow`` does **not** hold for it
+    (``reports/framing_honesty_review.md`` §3).
+
+    With it on, the uniforms are a continuous, deterministic function of ``(x, y, z)``, so the
+    property holds to the same standard ``zinb-flow`` meets.
+    """
+
+    cross_mix_key_frequency_um: float = 5.0
+    """Length scale of the position key's Fourier frequencies, in um.
+
+    Sets how fast ``position_keyed_uniforms`` varies in space, and it is squeezed from both sides.
+
+    **Short relative to the tissue**, or the key introduces spatial correlation the v20 cross-mix
+    does not have: its per-cell selection is independent between cells, and a smoothly varying key
+    would make neighbouring cells share donors and the mix locally more copy-like. Measured, mean
+    correlation between cells less than 15 um apart (800 cells in a 300 um cube, 400 genes):
+
+    ======  =========  ==========
+    value   < 5 um     < 15 um
+    ======  =========  ==========
+    40 um   +0.82      +0.26
+    20 um   +0.48      +0.03
+    10 um   +0.06      +0.005
+    **5 um**  **+0.01**  **-0.000**
+    ======  =========  ==========
+
+    **Long relative to float noise**, or continuity stops buying anything: two plane pathways reach
+    one physical point by different arithmetic and agree to ~1e-13 um (GATE 1 G1.2a). At 5 um that
+    difference passes through as a uniform difference of ~1e-12 — twelve orders below the quantity
+    — rather than as a flipped donor.
+
+    5 um sits about 3x below this tissue's ~14 um median nearest-neighbour distance and 13 orders
+    above the float disagreement. The first default tried was 40 um and it **failed the first
+    constraint**, which is why the table is here rather than a sentence.
+    """
+
     cross_mix_weight_tol: float = 1e-3
     """How far the donor weights of :func:`~spatialcpav25_gen.model.expression.cross_mix_counts`
     may sum away from 1 before it raises. v20's ``alpha_tol``, which snapped a

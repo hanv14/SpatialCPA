@@ -63,6 +63,7 @@ from spatialcpav25_gen.model.expression import (
     ExpressionError,
     assert_detection_rate,
     cross_mix_counts,
+    position_keyed_uniforms,
     sample_counts,
     sample_zigamma,
 )
@@ -447,12 +448,18 @@ def _cross_mix(
     weights: FloatArray,
     gen: np.random.Generator,
     cfg: Config,
+    xyz: FloatArray | None = None,
 ) -> Tensor:
     """Run the ``cross-mix`` path: real donor counts, chosen per gene. ``(N, G)`` float32.
 
     The retrieval score's donor weights *are* v20's mixing weights, renormalised over the
     admissible donors. Padded slots get weight zero, so a cell with fewer than ``K`` donors
     mixes only over the ones it has.
+
+    ``xyz`` is the cells' **physical** positions, required only when
+    ``Config.cross_mix_position_keyed`` is on: with it off the per-gene selection comes from a
+    call-ordered RNG stream, so two crossing planes pick different donors for the same physical
+    cell and this path does **not** inherit ``zinb-flow``'s intersection consistency.
     """
     valid = neighbours >= 0
     w = np.where(valid, weights, 0.0)
@@ -468,7 +475,15 @@ def _cross_mix(
     safe = np.where(valid, neighbours, 0)
     donors = np.asarray(model.data.counts[safe.reshape(-1)].todense(), dtype=np.float64)
     donors = donors.reshape(safe.shape[0], safe.shape[1], -1)
-    return cross_mix_counts(donors, w, gen, cfg=cfg)
+    uniforms = None
+    if cfg.cross_mix_position_keyed:
+        if xyz is None:
+            raise ExpressionError(
+                "Config.cross_mix_position_keyed is on but _cross_mix was given no physical "
+                "coordinates, so the selection cannot be keyed to position. Pass xyz."
+            )
+        uniforms = position_keyed_uniforms(xyz, donors.shape[2], cfg=cfg)
+    return cross_mix_counts(donors, w, gen, cfg=cfg, uniforms=uniforms)
 
 
 def anchor_blend(
@@ -695,7 +710,7 @@ def _expression(
     retrieval-anchored profile wherever the latent variance says the model is *certain*.
     """
     if cfg.expr_mode == "cross-mix":
-        return _cross_mix(model, neighbours, weights, gen, cfg), None
+        return _cross_mix(model, neighbours, weights, gen, cfg, xyz), None
     if cfg.expr_mode == "zinb-flow":
         points = torch.from_numpy(xyz.astype(np.float32))
         with torch.no_grad():
@@ -713,7 +728,7 @@ def _expression(
     if anchor is None:  # pragma: no cover - generate_section refuses auto-blend without one
         raise GenerationError("_expression: auto-blend needs the fitted w(v)")
     generated = _flow_counts(model, uncertainty.h, gen, cfg, calibration)
-    anchored = _cross_mix(model, neighbours, weights, gen, cfg)
+    anchored = _cross_mix(model, neighbours, weights, gen, cfg, xyz)
     return anchor_blend(generated, anchored, anchor.predict(uncertainty.variance), gen), uncertainty
 
 

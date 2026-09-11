@@ -922,12 +922,68 @@ def sample_zigamma(
     return torch.from_numpy(np.where(dropout, 0.0, values).astype(np.float32))
 
 
+def position_keyed_uniforms(
+    xyz: npt.NDArray[Any], n_genes: int, *, cfg: Config | None = None, seed: int = 0
+) -> npt.NDArray[Any]:
+    """Per-cell, per-gene uniforms that are a **continuous function of physical position**.
+
+    ``(N, 3)`` -> ``(N, G)`` float64 in ``[0, 1]``.
+
+    ``cross-mix`` selects a donor per cell and gene from ``gen.random((N, G))`` — a call-ordered
+    stream. Two crossing planes therefore select **different** donors for the same physical cell,
+    so ``zinb-flow``'s intersection-consistency property does not hold for it. Replacing that draw
+    with this one restores it: the same physical point yields the same uniforms whichever plane
+    reached it.
+
+    **Construction.** A triangle wave of a random-Fourier phase::
+
+        u_g(x) = arccos(cos(w_g . x + b_g)) / pi
+
+    Three properties, each load-bearing and each asserted in ``tests/test_expression.py``:
+
+    * **Exactly uniform.** ``arccos(cos(t)) / pi`` is a triangle wave of period ``2 pi`` with range
+      ``[0, 1]``, and a triangle wave of a uniform phase is uniform. So the donor's *marginal*
+      selection probability is unchanged and the mix's distribution is what v20's was.
+    * **Continuous everywhere.** The obvious alternatives are not. A hash of the coordinates is
+      discontinuous, so the ~1e-13 um by which two plane pathways disagree (GATE 1 G1.2a) would
+      select an entirely different donor. A raw fractional part wraps. ``arccos(cos(.))`` has
+      neither defect, so a 1e-13 coordinate difference moves the uniform by ~1e-13.
+    * **Near-independent across genes**, because the ``w_g`` are drawn independently. This is what
+      keeps T06's ``test_per_gene_independence_destroys_covariance`` meaningful: a key that
+      correlated genes would make the mix quietly more copy-like.
+
+    The frequencies come from ``Config.cross_mix_key_frequency_um`` and a fixed ``seed``, so the
+    map is a property of the configuration rather than of a call. It does **not** read the GRF: the
+    GRF has ``latent_dim`` channels and this needs one per gene, and projecting 64 channels up to
+    1017 would correlate the genes — the defect above, reintroduced.
+    """
+    conf = cfg or Config()
+    x = np.asarray(xyz, dtype=np.float64)
+    if x.ndim != 2 or x.shape[1] != 3:
+        raise ExpressionError(
+            f"position_keyed_uniforms: xyz must be (N, 3) physical um, got {x.shape}"
+        )
+    if int(n_genes) < 1:
+        raise ExpressionError(f"position_keyed_uniforms: n_genes must be >= 1, got {n_genes}")
+    scale = float(conf.cross_mix_key_frequency_um)
+    if not scale > 0:
+        raise ExpressionError(
+            f"Config.cross_mix_key_frequency_um must be > 0 um, got {scale}; it is a length"
+        )
+    rng = np.random.default_rng(int(seed))
+    w = rng.normal(0.0, 2.0 * np.pi / scale, size=(int(n_genes), 3))
+    b = rng.uniform(0.0, 2.0 * np.pi, size=int(n_genes))
+    phase = x @ w.T + b
+    return np.arccos(np.clip(np.cos(phase), -1.0, 1.0)) / np.pi
+
+
 def cross_mix_counts(
     donor_counts: Tensor | npt.NDArray[Any],
     weights: Tensor | npt.NDArray[Any],
     gen: np.random.Generator,
     *,
     cfg: Config | None = None,
+    uniforms: npt.NDArray[Any] | None = None,
 ) -> Tensor:
     """Apply the v20 Bernoulli cross-mix. ``(N, D, G)``, ``(N, D)`` -> ``(N, G)`` float32.
 
@@ -988,7 +1044,23 @@ def cross_mix_counts(
             "does not sum to 1 would silently bias the choice towards the base donor"
         )
     n, _, g = counts.shape
-    u = gen.random((n, g))
+    if uniforms is None:
+        u = gen.random((n, g))
+    else:
+        # Supplied by the caller, so the selection can be keyed to physical position rather than
+        # to a call-ordered stream (`position_keyed_uniforms`). The default path is untouched and
+        # stays bitwise identical to v20 -- `test_cross_mix_matches_v20` covers it.
+        u = np.asarray(uniforms, dtype=np.float64)
+        if u.shape != (n, g):
+            raise ExpressionError(
+                f"cross_mix_counts: uniforms must be ({n}, {g}) to match the donor block, got "
+                f"{u.shape}"
+            )
+        if not (np.all(u >= 0.0) and np.all(u <= 1.0)):
+            raise ExpressionError(
+                "cross_mix_counts: supplied uniforms must lie in [0, 1]; the donor rule compares "
+                "them against a cumulative weight and anything outside selects out of range"
+            )
     # Suffix sums, so that with D = 2 the event is exactly v20's `u < w_other`.
     suffix = np.cumsum(w[:, ::-1], axis=1)[:, ::-1]
     chosen = (u[:, None, :] < suffix[:, 1:, None]).sum(axis=1)

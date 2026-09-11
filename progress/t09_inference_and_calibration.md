@@ -3020,7 +3020,7 @@ That is a publishable paper. It is not the paper the design documents describe.
 
 | claim | status | evidence |
 |---|---|---|
-| Oblique planes reconstruct as well as axis-aligned | **PASSES** | GATE 2: depth-matched parity **0.955**, edge-excluded 0.979, against a ≥ 0.90 criterion |
+| Oblique planes reconstruct as well as axis-aligned | **PASSES, ON THE FIXTURE, VIA A LINEAR PROBE** ⚠️ corrected 2026-09-11 | GATE 2: depth-matched parity **0.955**, edge-excluded 0.979, against a ≥ 0.90 criterion — on `make_synthetic_volume(seed=0)` with a linear head on 32 expression PCs, **not** the generation pipeline. E3 (real data) has never run |
 | A 3D GRF prior controls per-gene spatial autocorrelation | **PASSES, on the fixture** | GATE 1: error ratio 0.130, per-gene r 0.917, monotone in `ell` |
 | The learned intensity field places cells better than copying | **REFUTED on real data** | R11: `field` 0.6607 / `hybrid` 0.6692 against `resample` 0.7546 and a 0.7765 copy floor; `resample` ships |
 | Generated expression beats copying a real section | **REFUTED, both datasets** | tier-1 `cross-mix` beats `zinb-flow` by 4.6–5.3x the envelope on three metrics; on `deep_starmap` copying wins all five live metrics |
@@ -3112,7 +3112,7 @@ rules rather than observations.
 
 ### The honest headline
 
-> A continuous-field formulation reconstructs oblique planes at 95% of axis-aligned quality. On
+> A continuous-field formulation reconstructs oblique planes at 95% of axis-aligned quality. ⚠️ **[2026-09-11: on the synthetic fixture, via a linear probe on 32 expression PCs — not real data and not the generation pipeline. `reports/framing_honesty_review.md` §4]** On
 > real tissue, every generative component built on top of it — the intensity-field layout, the
 > flow-matching expression head, the text-grounded gene embedding — loses to copying a real
 > section, and the text channel helps only for genes with no training data, on one metric, pending
@@ -4458,7 +4458,7 @@ withdrawn, and its headline still carried a `decoder_mu_link` claim its own adde
 
 ### The honest headline, corrected
 
-> A continuous-field formulation reconstructs oblique planes at **95 %** of axis-aligned quality.
+> A continuous-field formulation reconstructs oblique planes at **95 %** of axis-aligned quality. ⚠️ **[2026-09-11: on the synthetic fixture, via a linear probe on 32 expression PCs — not real data and not the generation pipeline. `reports/framing_honesty_review.md` §4]**
 > On real tissue, every generative component built on top of it — the intensity-field layout, the
 > flow-matching expression head, the text-grounded gene embedding — **loses to copying a real
 > section**, and the text channel helps only for genes with no training data, on one metric,
@@ -6546,7 +6546,7 @@ is left and where the project stands.
 
 ## The honest headline, updated
 
-> A continuous-field formulation reconstructs oblique planes at **95 %** of axis-aligned quality.
+> A continuous-field formulation reconstructs oblique planes at **95 %** of axis-aligned quality. ⚠️ **[2026-09-11: on the synthetic fixture, via a linear probe on 32 expression PCs — not real data and not the generation pipeline. `reports/framing_honesty_review.md` §4]**
 > On real tissue every generative component built on it — the intensity-field layout, the
 > flow-matching expression head, the text-grounded gene embedding — **loses to copying a real
 > section**, and the sectioning-equivariant losses the method is named for make it **worse** when
@@ -6772,7 +6772,7 @@ That sentence has not been written down before and it should be in the paper, be
 works it out for themselves will trust nothing else in it.
 
 **Against that, one thing works and it is not the generator — it is the representation.** GATE 2
-is a real, clean, unqualified pass: oblique planes reconstruct at **95.5 %** of axis-aligned
+is a real, clean, unqualified pass: oblique planes reconstruct at **95.5 %** of axis-aligned ⚠️ **[2026-09-11: on the synthetic fixture, via a linear probe on 32 expression PCs — not real data and not the generation pipeline. `reports/framing_honesty_review.md` §4]**
 quality (edge-excluded 97.9 %) against a pre-registered 90 %. And the text channel places genes the
 model never saw above a measured floor, on **two datasets** at **2.52x** and **2.08x**, under
 criteria written before the second run. Both of those are statements about **encoding** — that the
@@ -6898,7 +6898,7 @@ checkpoint, exactly**.
 **Where it belongs.** Beside GATE 1's correlated prior and GATE 2's oblique reconstruction, as the
 third statement about the **representation** — and the second that is exact rather than measured.
 The headline should read: the continuous field is a good representation, and here is what
-"good" means concretely — off-axis reconstruction at 95.5 %, controllable per-gene spatial
+"good" means concretely — off-axis reconstruction at 95.5 %, controllable per-gene spatial ⚠️ **[2026-09-11: on the synthetic fixture, via a linear probe on 32 expression PCs — not real data and not the generation pipeline. `reports/framing_honesty_review.md` §4]**
 autocorrelation, and mutual consistency that is exact by construction rather than trained for.
 
 ## Amendment 2 — the budget question, and the premise it was raised on does not hold

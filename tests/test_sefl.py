@@ -503,6 +503,19 @@ def test_noise_identical_along_intersection(built: Built):
     assert float(draws[0].var()) > 0.0
 
 
+# ⚠️ NOTE ON THE TEST BELOW, added 2026-09-11.
+#
+# It hands BOTH branches the same `points` array, computed once from the intersection. So it
+# establishes that `evaluate_branch` is a pure function of (points, labels, neighbours) and ignores
+# the plane -- which is true, and is the mechanism. It does NOT establish that two independently
+# generated crossing sections agree, because each would derive its own coordinates and GATE 1's
+# G1.2a measures those agreeing to 1.14e-13 um, "to rounding, not exactly".
+#
+# The record has quoted this test for the stronger claim. `test_intersection_survives_independent_
+# coordinate_derivation` below measures the gap the stronger claim needs, for both expression
+# paths. See `reports/framing_honesty_review.md` §3.
+
+
 def test_generation_is_intersection_consistent_by_construction(built: Built):
     """Two crossing planes generate **identical** expression along their intersection.
 
@@ -564,6 +577,84 @@ def test_generation_is_intersection_consistent_by_construction(built: Built):
                 for plane in (p1, p2)
             ]
     assert not torch.equal(posed[0].log_mu, posed[1].log_mu)
+
+
+def test_cross_mix_is_intersection_consistent_only_when_position_keyed(built: Built):
+    """`cross-mix` does NOT inherit the property -- unless its selection is keyed to position.
+
+    `_cross_mix` ends in `cross_mix_counts(donors, w, gen, cfg)`, and with
+    `Config.cross_mix_position_keyed` off the per-gene donor comes from `gen.random((N, G))` -- a
+    call-ordered stream. Two crossing planes therefore select different donors for the same
+    physical cell, so the framing that ships `cross-mix` as its expression path does **not** get
+    the intersection-consistency claim for free (`reports/framing_honesty_review.md` §3).
+
+    With the flag on, the uniforms are a continuous function of the cells' physical positions and
+    the property holds to the same standard `zinb-flow` meets.
+    """
+    from spatialcpav25_gen.model.expression import cross_mix_counts, position_keyed_uniforms
+
+    rng = np.random.default_rng(4)
+    n, d, g = 128, 4, 24
+    xyz = rng.uniform(0.0, 300.0, size=(n, 3))
+    donors = rng.poisson(3.0, size=(n, d, g)).astype(np.float64)
+    w = np.full((n, d), 1.0 / d)
+
+    # OFF: two "planes" are two calls, so two RNG streams. They disagree.
+    a = cross_mix_counts(donors, w, np.random.default_rng(1))
+    b = cross_mix_counts(donors, w, np.random.default_rng(2))
+    assert not torch.equal(a, b), "the unkeyed path must be RNG-dependent, or this test is vacuous"
+
+    # ON: the uniforms come from the cells' physical positions, so the stream cannot matter.
+    cfg = built.cfg.replace(cross_mix_position_keyed=True)
+    u = position_keyed_uniforms(xyz, g, cfg=cfg)
+    ka = cross_mix_counts(donors, w, np.random.default_rng(1), cfg=cfg, uniforms=u)
+    kb = cross_mix_counts(donors, w, np.random.default_rng(2), cfg=cfg, uniforms=u)
+    assert torch.equal(ka, kb), "position-keyed selection must not depend on the generator"
+
+
+def test_intersection_survives_independent_coordinate_derivation(built: Built):
+    """The stronger claim: each plane derives its OWN coordinates, as real generation does.
+
+    The bitwise test above supplies one `points` array to both branches. Real generation does not:
+    each plane maps its own `(u, v)` through its own basis, and GATE 1 G1.2a measures the two
+    reconstructions agreeing to **1.14e-13 um**, not exactly. This measures what survives that.
+
+    Asserted as a **bound on the disagreement**, not as bitwise equality, because bitwise is not
+    what the construction can deliver here -- and saying so is the point of the test.
+    """
+    from spatialcpav25_gen.model.expression import cross_mix_counts, position_keyed_uniforms
+
+    p1, p2 = random_plane_pair(built.bbox, 20.0, 160.0, 9, thickness=25.0)
+    segment = intersect(p1, p2)
+    assert segment is not None
+    uv = segment.points(64)
+
+    # the same physical line, reached by each plane's own arithmetic
+    both = []
+    for plane in (p1, p2):
+        local = plane.to_uv(uv) if hasattr(plane, "to_uv") else None
+        both.append(uv if local is None else plane.to_xyz(local))
+    drift = float(np.abs(np.asarray(both[0]) - np.asarray(both[1])).max())
+    assert drift < 1e-6, f"the two pathways should agree to rounding, got {drift:.3e} um"
+
+    rng = np.random.default_rng(7)
+    g = 32
+    donors = rng.poisson(3.0, size=(uv.shape[0], 4, g)).astype(np.float64)
+    w = np.full((uv.shape[0], 4), 0.25)
+    cfg = built.cfg.replace(cross_mix_position_keyed=True)
+    sel = [
+        cross_mix_counts(
+            donors, w, np.random.default_rng(0), cfg=cfg,
+            uniforms=position_keyed_uniforms(np.asarray(pts), g, cfg=cfg),
+        ).numpy()
+        for pts in both
+    ]
+    disagree = float(np.mean(sel[0] != sel[1]))
+    print(f"\ncoordinate drift {drift:.3e} um -> donor disagreement {disagree:.2%}")
+    assert disagree < 0.01, (
+        f"{disagree:.2%} of (cell, gene) selections differ between the two pathways; the key is "
+        "continuous, so a drift of this size must move almost nothing"
+    )
 
 
 def test_retrieval_is_shared_between_branches(built: Built):
