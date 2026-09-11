@@ -226,6 +226,120 @@ re-scoring; the interval is the **16th–84th percentile**, reported beside ever
 resampling unit and the percentiles are fixed here. A difference whose interval spans zero is
 reported as **not distinguishable**, whatever its point estimate.
 
+## 5-sexies. THE INTERVAL, REPLACED (2026-09-12) — and why the bootstrap could not simply be retuned
+
+**The bootstrap of §5-bis repair 5 is withdrawn.** It shifted the estimate it was supposed to put an
+interval around:
+
+| θ | point estimate | bootstrap median | shift | interval width |
+|---|---|---|---|---|
+| 30° | 0.1302 | 0.1253 | −0.005 | 0.021 |
+| 45° | **0.1167** | **0.2349** | **+0.118** | 0.192 |
+| 60° | 0.4054 | 0.4086 | +0.003 | 0.407 |
+
+A shift of 0.118 is larger than two of the three differences the study is trying to measure. **A
+resampling scheme that moves the estimate is not measuring uncertainty about that estimate.** The
+cause is mechanical: resampling cells with replacement creates **duplicate coordinates**, and both
+the Sinkhorn transport and the metric's own `max_n = 250` per-type subsampling behave differently on
+a cloud with ties. Widths from 0.021 to 0.407 across three angles of one arm confirm it.
+
+**Replaced by a leave-one-cell-type-out jackknife**, chosen for a property the bootstrap lacked:
+
+> **The point estimate is the full-sample score, unchanged, by construction.** A jackknife perturbs
+> the data to estimate the *variance* of a statistic; it never replaces the statistic. So the defect
+> that sank the bootstrap **cannot** occur, and this is not a matter of retuning until the shift goes
+> away — which would have been choosing a resampling scheme by its effect on the answer.
+
+It also matches the statistic's own structure: `celltype_localization` is a frequency-weighted mean
+over cell types, so the type is the natural resampling unit, and it creates no duplicate
+coordinates. Cost is one re-score per scorable type — 6 to 8 — against the bootstrap's 40.
+
+**Reported as** the point estimate ± the jackknife standard error, with the pseudo-value count
+printed. **If fewer than three types survive, or any pseudo-value is non-finite, no interval is
+reported and the report says why** — a point estimate with an honest "no interval" is better than a
+second unsound one, and that instruction is the author's.
+
+**A difference whose interval spans zero is reported as *not distinguishable*,** unchanged from
+§5-bis.
+
+## 5-quater. P4 IS DROPPED AS A GATE (2026-09-12) — the author's call, recorded as such
+
+**Decided by the project author, not by me, and it favours us.** Recorded here with both facts
+attached, because a precondition dropped after it failed is the shape this protocol exists to catch.
+
+**The argument, which is about the evaluator and not about our scores.** `evaluate_paper` calls
+`align_by_expression` on **every** prediction independently. Every published comparison in this
+benchmark — v25 against SpatialZ against `flanking_copy`, every coronal number in this campaign — is
+therefore already a comparison between arms at different poses. **P4 as written would invalidate all
+of them.** It was written for `test1b`, where the arms shared positions and a pose difference really
+did signal a broken comparison; here the arms legitimately have different footprints and the metric
+grants each its own alignment by design.
+
+**And it runs in our favour.** P4 was the only precondition blocking readability at every angle. I
+raised the argument, noted that it benefits us, and did **not** act on it: §0-bis's stopping rule
+permits a construction change after a scored run only for a defect demonstrable without reference to
+a score. This one qualifies — it is a fact about `evaluate_paper` — but the conclusion is favourable,
+so the decision was put to the author and **the author made it**. That division is the point of
+recording it.
+
+**What replaces it.** The pose is kept as a **reported diagnostic** at every angle, and the
+degeneracy it revealed is kept as a finding in its own right:
+
+> **The third bound on oblique evaluation.** `resample-pd` aligned at **174°** at 30°, unchanged
+> across two runs in which the baseline changed — so it is a property of our arm's shape against the
+> ground truth, not of the comparison. An oblique strip is a **ribbon**; a ribbon maps onto itself
+> under a half-turn; so `align_by_expression` has two near-equivalent optima and picks between them
+> arbitrarily. **Expression-based alignment is underdetermined on elongated point clouds**, which is
+> what every oblique evaluation set is. It joins the comb limit and the metric's resolution as a
+> bound on the field, and it is reported whether or not it gates anything.
+
+**Also corrected:** the span was printed as **192.00°**, computed as `abs(a − b)` without wrapping.
+Rotations are modulo 360, so 192° apart is 168° apart the other way. The diagnostic now wraps to
+[0°, 180°].
+
+## 5-quinquies. PRE-REGISTERED (2026-09-12) — the footprint measurement, and its reading
+
+*Fixed before the measurement is written, let alone run. It decides how §5 is written, so the
+reading cannot be chosen afterwards.*
+
+**The question.** `copy-nearest-z` pastes a coronal section's face — roughly 1613 × 1632 µm — onto a
+60° plane whose own footprint is a ribbon about 205 µm wide. If it is emitting cells at in-plane
+positions **the plane does not pass through at all**, then it is not a section at that angle, and a
+metric preferring it to a geometrically correct object is telling us something about the metric.
+
+**The measurement, per arm per angle.** The ground truth *is* the section, by construction, so its
+in-plane extent is the plane's own footprint. For each arm:
+
+- `u_extent_ratio` = (arm's u-extent) / (ground truth's u-extent) — `u` is the comb axis, the narrow
+  one.
+- `frac_outside` = the fraction of the arm's cells whose `u` lies outside the ground truth's `u`
+  range. **A cell there claims to be a cell of the section at a location where the section does not
+  exist.**
+
+Both are dimensionless and neither needs a constant to compute. The bands below are mine and are
+labelled as mine.
+
+**The reading, fixed now:**
+
+| verdict | condition on `copy-nearest-z` | what §5 says |
+|---|---|---|
+| **OUTSIDE** | `u_extent_ratio ≥ 3` **and** `frac_outside ≥ 0.5` | The baseline is not a section at that angle. The metric prefers a geometrically wrong object to a correct one — the **same finding as the copy floor**: the statistic rewards gross regional coverage and is nearly blind below ~0.3 of the tissue radius. §5 becomes a **result about the metric**, with our arm's loss as its evidence. |
+| **COMPARABLE** | `u_extent_ratio ≤ 1.5` **and** `frac_outside < 0.1` | **The framing dies.** Both arms are sections of the plane, and `resample-pd` simply loses. §5 is a negative section and the two bounds carry the paper. |
+| **AMBIGUOUS** | anything else | Both numbers are reported, **no claim is made**, and the negative result stands by default. |
+
+**The middle band defaults against us**, deliberately: an inconclusive footprint measurement must
+not rescue a lost comparison.
+
+**A prediction, recorded before measuring.** I expect **OUTSIDE** at 45° and 60° and possibly
+AMBIGUOUS at 30°, because the copy's face is a fixed ~1613 µm wide while the ribbon narrows as
+`(t + s)/sin θ`. If I am wrong and the footprints are comparable, the framing dies by the rule above
+and I will say so.
+
+**What this does not do.** It cannot turn a loss into a win. `resample-pd` scores below
+`copy-nearest-z` at all three angles and no footprint measurement changes that number. It decides
+only whether the comparison is *between two sections* — in which case we lost — or between a section
+and an object that is not one, in which case the metric's preference is the result.
+
 ## 2-quater. AMENDMENT (2026-09-12) — F2's SECOND repair: measure in micrometres, not in `fill`
 
 *Dated and recorded as a second repair of the same rule, not as a bugfix. F2 has now failed twice,

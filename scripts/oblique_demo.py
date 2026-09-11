@@ -463,22 +463,65 @@ def _self_check() -> int:
          all(ok for _l, ok, _k in preconditions_at(good, NULL_CEILING))),
         ("and FAILS one above it — the first run printed a verdict over this",
          not all(ok for _l, ok, _k in preconditions_at(bad_null, NULL_CEILING))),
-        ("P4 is EVALUATED at all, which it never was",
-         any(k == "P4" for _l, _o, k in preconditions_at(good, NULL_CEILING))),
-        ("and fails a 174-degree span", not all(ok for _l, ok, _k in
-                                                preconditions_at(bad_pose, NULL_CEILING))),
-        ("the pose span is between the two arms being DIFFERENCED",
+        ("P4 is NO LONGER a gate, so a 174° span does not block a readable angle (§5-quater)",
+         all(ok for _l, ok, _k in preconditions_at(bad_pose, NULL_CEILING))),
+        ("but the span is still COMPUTED, between the two arms being differenced",
          abs(pose_span(bad_pose["arms"], "copy-nearest-z", "resample-pd") - 174.0) < 1e-9),
+        ("and dropping it did not quietly drop P2 with it",
+         any(k == "P2" for _l, _o, k in preconditions_at(bad_pose, NULL_CEILING))),
     ]
 
     # --- repair 5: an interval from resampling cells, since seeds give exactly 0.0000
-    med_, lo_, hi_ = bootstrap_interval(lambda idx: float(np.mean(idx)) / 100.0, 100, seed=1)
+    ty = np.array(["a"] * 40 + ["b"] * 30 + ["c"] * 20 + ["d"] * 10)
+    rng_ = np.random.default_rng(0)
+    noise = rng_.normal(0, 0.01, size=len(ty))
+    se_, k_ = jackknife_interval(lambda m: 0.5 + float(noise[np.asarray(m)].mean()), ty, 0.5)
+    se0, k0 = jackknife_interval(lambda m: 0.5, ty, 0.5)
+    thin_se, thin_k = jackknife_interval(lambda m: 0.5, np.array(["a"] * 5 + ["b"] * 5), 0.5)
     checks += [
-        ("the bootstrap returns a real interval", np.isfinite(lo_) and np.isfinite(hi_)),
-        ("ordered lo <= median <= hi", lo_ <= med_ <= hi_),
-        ("and it is not degenerate, unlike the across-seed spread it replaces", hi_ > lo_),
-        (f"R = {BOOTSTRAP_R} and the percentiles are pre-registered",
-         BOOTSTRAP_R == 40 and (BOOTSTRAP_LO, BOOTSTRAP_HI) == (16.0, 84.0)),
+        ("the jackknife returns a standard error over the cell TYPES",
+         np.isfinite(se_) and k_ == 4),
+        ("a statistic that does not vary with the type left out has SE exactly 0",
+         se0 == 0.0),
+        ("**the point estimate is untouched by construction** — the property the bootstrap "
+         "lacked, and the reason this was not chosen by retuning until a shift vanished",
+         "point" not in jackknife_interval.__code__.co_names),
+        (f"fewer than {JACKKNIFE_MIN_TYPES} usable types gives NO interval, not a bad one",
+         not np.isfinite(thin_se) and thin_k < JACKKNIFE_MIN_TYPES),
+        ("a non-finite replicate is dropped rather than poisoning the estimate",
+         np.isfinite(jackknife_interval(
+             lambda m: float("nan") if np.asarray(m).sum() > 95 else 0.5, ty, 0.5)[0])),
+    ]
+
+    # --- the pose diagnostic: wrapped, and NOT a gate (§5-quater)
+    checks += [
+        ("192° apart is 168° the other way round, which is what the first run printed",
+         abs(wrapped_pose_gap(174.0, -18.0) - 168.0) < 1e-9),
+        ("and the wrap never exceeds 180", all(
+            wrapped_pose_gap(a, b) <= 180.0 + 1e-9
+            for a in (-350.0, 0.0, 174.0, 359.0) for b in (-18.0, 0.0, 90.0, 350.0))),
+        ("the pose is NOT a precondition — the author's call, recorded in §5-quater",
+         not any(k == "P4" for _l, _o, k in preconditions_at(
+             {"arms": {"copy-nearest-z": {"1": {METRIC: 0.5, "align_rotation_deg": 0.0}},
+                       "resample-pd": {"1": {METRIC: 0.6, "align_rotation_deg": 174.0}},
+                       "null": {"1": {METRIC: 0.02, "align_rotation_deg": 174.0}}},
+              "arm_leaks": {}}, 0.10))),
+    ]
+
+    # --- the footprint, with its bands fixed before the measurement was written
+    ribbon = np.column_stack([np.linspace(-100, 100, 200), np.zeros(200)])
+    face = np.column_stack([np.linspace(-800, 800, 200), np.zeros(200)])
+    checks += [
+        ("a face pasted on a ribbon reads OUTSIDE",
+         footprint_verdict(footprint(face, ribbon))[0] == "OUTSIDE"),
+        ("a matching footprint reads COMPARABLE, and the framing dies",
+         footprint_verdict(footprint(ribbon, ribbon))[0] == "COMPARABLE"),
+        ("and the middle band defaults to AMBIGUOUS, which stands AGAINST us",
+         footprint_verdict({"u_extent_ratio": 2.0, "frac_outside": 0.3})[0] == "AMBIGUOUS"
+         and "negative result stands" in footprint_verdict(
+             {"u_extent_ratio": 2.0, "frac_outside": 0.3})[1]),
+        ("frac_outside counts cells beyond the plane's own footprint",
+         abs(footprint(face, ribbon)["frac_outside"] - 0.875) < 0.02),
     ]
 
     # --- repair 6 / §5-ter: the three branches, each fixed before the calibration ran
@@ -533,9 +576,10 @@ def main(argv: list[str] | None = None) -> int:
                          "it against itself, over seeds and subsample sizes. No method, no arm, "
                          "no donor — it settles whether P2's ceiling tested the arms or the "
                          "metric's noise floor. Run BEFORE re-scoring, per the pre-registration")
-    ap.add_argument("--no-bootstrap", dest="bootstrap", action="store_false",
-                    help=f"skip the {BOOTSTRAP_R}-replicate cell bootstrap (repair 5). It is the "
-                         "only source of an interval here: both compared arms are deterministic")
+    ap.add_argument("--no-interval", dest="interval", action="store_false",
+                    help="skip the leave-one-type-out jackknife (§5-sexies). It is the only source "
+                         "of an interval here: both compared arms are deterministic, and the cell "
+                         "bootstrap it replaced shifted the estimate it was bracketing")
     ap.add_argument("--score", action="store_true",
                     help="run the arms through bench3's evaluate_paper. Without it the pass "
                          "reports geometry and preconditions only, which is how θ* gets fixed "
@@ -674,7 +718,7 @@ def main(argv: list[str] | None = None) -> int:
         "theta_star_deg": theta_star,
         "theta_star_censored": censored,
         "null_ceiling_source": "§5-ter" if args.calibrate_null else "P2's original 0.10",
-        "bootstrap_replicates": BOOTSTRAP_R if args.bootstrap else 0,
+        "interval": "leave-one-cell-type-out jackknife" if args.interval else "none",
         "scored_angles": [r["angle_deg"] for r in clean],
         "thickness_source": source,
         "seeds": list(args.seeds),
@@ -684,15 +728,17 @@ def main(argv: list[str] | None = None) -> int:
         ),
     }
     # §5-ter: the ceiling is resolved from the calibration BEFORE any precondition is evaluated.
-    cal = next((r.get("self_null") for r in rows if r.get("self_null")), None)
-    n_star = next((r["n_truth"] for r in rows if r["angle_deg"] == theta_star), 0)
-    ceiling, self_null, branch = read_self_null(cal or [], n_star)
-    record["null_ceiling"] = ceiling
-    record["self_null"] = self_null
-    record["self_null_branch"] = branch if cal else ""
     for row in rows:
+        ceiling, self_null, branch = read_self_null(row.get("self_null") or [], row["n_truth"])
+        row["null_ceiling"] = ceiling
+        row["self_null_at_n"] = self_null
+        row["self_null_branch"] = branch if row.get("self_null") else ""
+        row["pose_span_deg"] = pose_span(row.get("arms") or {}, "copy-nearest-z", "resample-pd")
         if isinstance(row.get("arms"), dict) and "skipped" not in row["arms"]:
             row["precondition_checks"] = preconditions_at(row, ceiling)
+    record["null_ceiling_per_angle"] = {
+        f"{r['angle_deg']:.0f}": r.get("null_ceiling") for r in rows if r.get("self_null")
+    }
 
     lines = render(record)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
@@ -706,8 +752,9 @@ def main(argv: list[str] | None = None) -> int:
 # Set by `score_arms` so the calibration can reach bench3's prediction writer.
 CALIBRATION_V2_METHODS = ""
 
-BOOTSTRAP_R = 40
-BOOTSTRAP_LO, BOOTSTRAP_HI = 16.0, 84.0
+# The jackknife needs at least this many pseudo-values, or no interval is reported at all --
+# a point estimate with an honest "no interval" beats a second unsound one (§5-sexies).
+JACKKNIFE_MIN_TYPES = 3
 
 # §5-ter's three branches, fixed before the calibration ran.
 SELF_NULL_CLEAN = 0.05
@@ -733,37 +780,120 @@ def arm_leak_checks(name: str, uv, truth_uv) -> list[tuple[str, bool]]:
     ]
 
 
-def bootstrap_interval(score_fn, n: int, seed: int) -> tuple[float, float, float]:
-    """Resample the prediction's cells with replacement, R times. Repair 5.
+def jackknife_interval(score_fn, types, point: float) -> tuple[float, int]:
+    """Leave-one-cell-type-out jackknife. Returns ``(standard_error, n_pseudo)``.
 
-    Generation seeds cannot supply an interval here: both compared arms are deterministic and their
-    across-seed spread was exactly 0.0000, so the seeds were spent on the one arm not in the
-    comparison. ``score_fn(index_array) -> float`` re-scores one replicate.
+    **The point estimate is untouched by construction** — a jackknife estimates the *variance* of a
+    statistic, it never replaces it. That is precisely the property the bootstrap lacked
+    (`reports/retractions.md` R14: at 45° its median sat 0.118 above the estimate it was supposed to
+    bracket, from duplicate coordinates interacting with Sinkhorn and with the metric's own
+    ``max_n`` subsampling). Choosing a resampling scheme by whether its shift disappears would have
+    been choosing it by its effect on the answer; this one cannot shift at all.
+
+    The type is also the statistic's own unit: ``celltype_localization`` is a frequency-weighted
+    mean over cell types.
+
+    ``score_fn(mask) -> float`` re-scores with that boolean cell mask. Returns ``(nan, k)`` when
+    fewer than three pseudo-values survive, and the caller reports **no interval** rather than a
+    second unsound one.
     """
-    rng = np.random.default_rng(int(seed))
-    vals = [score_fn(rng.integers(0, n, size=n)) for _ in range(BOOTSTRAP_R)]
-    finite = [v for v in vals if np.isfinite(v)]
-    if not finite:
-        return float("nan"), float("nan"), float("nan")
-    return (
-        float(np.median(finite)),
-        float(np.percentile(finite, BOOTSTRAP_LO)),
-        float(np.percentile(finite, BOOTSTRAP_HI)),
-    )
+    types = np.asarray(types)
+    labels = np.unique(types)
+    pseudo: list[float] = []
+    for label in labels:
+        keep = types != label
+        if int(keep.sum()) < 2:
+            continue
+        value = score_fn(keep)
+        if np.isfinite(value):
+            pseudo.append(float(value))
+    k = len(pseudo)
+    if k < 3:
+        return float("nan"), k
+    arr = np.asarray(pseudo, dtype=np.float64)
+    # standard jackknife: var = (k-1)/k * sum (x_i - xbar)^2
+    se = float(np.sqrt((k - 1) / k * float(((arr - arr.mean()) ** 2).sum())))
+    del point
+    return se, k
+
+
+def wrapped_pose_gap(a: float, b: float) -> float:
+    """Angular separation in [0°, 180°]. Rotations are modulo 360.
+
+    The first version used ``abs(a - b)`` and printed **192.00°** — which is 168° the other way
+    round. Still a large separation, and still the wrong number.
+    """
+    if not (np.isfinite(a) and np.isfinite(b)):
+        return float("nan")
+    return float(abs((float(a) - float(b) + 180.0) % 360.0 - 180.0))
 
 
 def pose_span(arms: dict, a: str, b: str) -> float:
-    """P4: how far apart the two arms being differenced were aligned. Repair 4.
+    """How far apart the two arms were aligned — a **diagnostic**, not a gate (§5-quater).
 
-    Pre-registered in §5 and never implemented — the poses were recorded and never tested. The
-    first run failed it at every angle, once by **166.5°** -- which on a ribbon is
-    `align_by_expression` finding two near-equivalent optima half a turn apart, not an alignment.
+    Kept because of what it revealed: `resample-pd` aligned at **174°** at 30°, unchanged across two
+    runs in which the baseline changed. An oblique strip is a ribbon, a ribbon maps onto itself
+    under a half-turn, so `align_by_expression` has two near-equivalent optima.
+    **Expression-based alignment is underdetermined on elongated point clouds** — the third bound on
+    oblique evaluation, beside the comb limit and the metric's resolution.
     """
     pa = [v["align_rotation_deg"] for v in arms.get(a, {}).values()]
     pb = [v["align_rotation_deg"] for v in arms.get(b, {}).values()]
     if not pa or not pb:
         return float("nan")
-    return float(abs(float(np.median(pa)) - float(np.median(pb))))
+    return wrapped_pose_gap(float(np.median(pa)), float(np.median(pb)))
+
+
+def footprint(arm_uv, truth_uv) -> dict:
+    """§5-quinquies: is this arm a section of *this* plane, or a face pasted onto it?
+
+    ``u`` is the comb axis — the narrow one — and the ground truth **is** the section, so its
+    ``u``-range is the plane's own footprint. A cell outside that range claims to be a cell of the
+    section at a location the plane does not pass through.
+
+    Both quantities are dimensionless and neither needs a constant. The bands that read them are in
+    the pre-registration and are labelled as the author's.
+    """
+    a = np.asarray(arm_uv, dtype=np.float64)
+    g = np.asarray(truth_uv, dtype=np.float64)
+    if not (a.shape[0] and g.shape[0]):
+        return {"u_extent_ratio": float("nan"), "frac_outside": float("nan"),
+                "u_extent_um": float("nan"), "truth_u_extent_um": float("nan")}
+    lo, hi = float(g[:, 0].min()), float(g[:, 0].max())
+    g_ext = hi - lo
+    a_ext = float(a[:, 0].max() - a[:, 0].min())
+    outside = np.mean((a[:, 0] < lo) | (a[:, 0] > hi))
+    return {
+        "u_extent_ratio": (a_ext / g_ext) if g_ext > 0 else float("inf"),
+        "frac_outside": float(outside),
+        "u_extent_um": a_ext,
+        "truth_u_extent_um": g_ext,
+    }
+
+
+FOOTPRINT_OUTSIDE_RATIO, FOOTPRINT_OUTSIDE_FRAC = 3.0, 0.5
+FOOTPRINT_SAME_RATIO, FOOTPRINT_SAME_FRAC = 1.5, 0.1
+
+
+def footprint_verdict(fp: dict) -> tuple[str, str]:
+    """§5-quinquies's three bands, fixed before the measurement was written."""
+    ratio, frac = fp.get("u_extent_ratio", float("nan")), fp.get("frac_outside", float("nan"))
+    if not (np.isfinite(ratio) and np.isfinite(frac)):
+        return "AMBIGUOUS", "the footprint could not be measured"
+    if ratio >= FOOTPRINT_OUTSIDE_RATIO and frac >= FOOTPRINT_OUTSIDE_FRAC:
+        return "OUTSIDE", (
+            f"the baseline spans {ratio:.1f}x the plane's own footprint and {frac:.0%} of its "
+            "cells lie outside it entirely — it is **not a section at this angle**"
+        )
+    if ratio <= FOOTPRINT_SAME_RATIO and frac < FOOTPRINT_SAME_FRAC:
+        return "COMPARABLE", (
+            f"the baseline spans {ratio:.2f}x the plane's footprint with {frac:.0%} of its cells "
+            "outside — both arms are sections of this plane, and ours simply scores lower"
+        )
+    return "AMBIGUOUS", (
+        f"extent ratio {ratio:.2f}, {frac:.0%} outside — between the bands, so **no claim is "
+        "made** and the negative result stands by default"
+    )
 
 
 def preconditions_at(row: dict, null_ceiling: float) -> list[tuple[str, bool, str]]:
@@ -782,12 +912,11 @@ def preconditions_at(row: dict, null_ceiling: float) -> list[tuple[str, bool, st
             f"P2 — the permuted-type null is {med:+.4f} against a ceiling of {null_ceiling:.4f}",
             med <= null_ceiling, "P2",
         ))
-    span = pose_span(arms, "copy-nearest-z", "resample-pd")
-    if np.isfinite(span):
-        out.append((
-            f"P4 — the two compared arms aligned {span:.2f}° apart, bound {POSE_SPAN_DEG:.0f}°",
-            span <= POSE_SPAN_DEG, "P4",
-        ))
+    # P4 IS NOT A GATE (§5-quater, the author's call, and it favours us). `evaluate_paper` aligns
+    # every prediction independently, so every published number in this benchmark is already
+    # cross-pose; P4 would hold us to a standard nothing else in the literature meets. The pose is
+    # reported as a diagnostic instead, and the 174-degree ribbon degeneracy it revealed is kept as
+    # the third bound on oblique evaluation.
     return out
 
 
@@ -837,7 +966,12 @@ def calibrate_self_null(truth, vol, label: str, gt_path: str, tmp: str, seeds, s
 
 
 def read_self_null(calibration: list[dict], n_truth: int) -> tuple[float, float, str]:
-    """§5-ter's reading, fixed before the calibration ran. Returns (ceiling, self_null, branch)."""
+    """§5-ter's reading. Returns (ceiling, self_null, branch). **Per angle** — see R15.
+
+    The first version resolved ONE ceiling from the first calibrated angle and applied it to every
+    angle, at θ*'s cell count: it mixed 30°'s noise floor with 60°'s `n`. Each angle now reads its
+    own calibration at its own `n`.
+    """
     if not calibration:
         return NULL_CEILING, float("nan"), "not calibrated — P2's original 0.10 ceiling stands"
     at = min(calibration, key=lambda c: abs(c["n"] - int(n_truth)))
@@ -907,6 +1041,11 @@ def score_arms(rows, clean, vol, centre, half_extent, thickness, spacing, args, 
                 truth, vol, label, gt_path, str(tmp), args.seeds,
                 [250, 500, 1000, 2000, 4000, int(truth_uv.shape[0])],
             )
+        if not args.score:
+            # R16: the first calibration pass scored every arm as well, and then recorded
+            # `"scoring": "NOT RUN"`. The ordering §5-ter exists to guarantee was never enforced
+            # and the provenance field was false. `--calibrate-null` alone now calibrates ONLY.
+            continue
 
         # --- repair 2: both arms draw ONLY from cells outside the evaluation slab.
         donor = max(
@@ -940,6 +1079,18 @@ def score_arms(rows, clean, vol, centre, half_extent, thickness, spacing, args, 
         row["arm_leaks"] = {
             name: arm_leak_checks(name, uv, truth_uv) for name, (uv, _t, _c) in arms.items()
         }
+        # §5-quinquies, pre-registered before this was written: is each arm a section of THIS
+        # plane, or a face pasted onto it?
+        row["footprint"] = {
+            name: footprint(uv, truth_uv) for name, (uv, _t, _c) in arms.items()
+        }
+        row["footprint_verdict"], row["footprint_why"] = footprint_verdict(
+            row["footprint"]["copy-nearest-z"]
+        )
+        fp = row["footprint"]["copy-nearest-z"]
+        print(f"    {deg:5.1f}° footprint: copy spans {fp['u_extent_ratio']:.2f}x the plane's "
+              f"{fp['truth_u_extent_um']:.0f} um, {fp['frac_outside']:.0%} of its cells outside "
+              f"-> {row['footprint_verdict']}", flush=True)
         row["arms"] = {}
         for seed in args.seeds:
             gen = np.random.default_rng(int(seed))
@@ -949,8 +1100,11 @@ def score_arms(rows, clean, vol, centre, half_extent, thickness, spacing, args, 
             for name, (uv, types, counts) in todo.items():
                 uv = np.asarray(uv, dtype=np.float64)
 
-                def one(idx, _n=name, _uv=uv, _ty=types, _c=counts, _s=seed) -> float:
-                    path = f"{tmp}.{_n}_{deg:.0f}_s{_s}_bs.pred.h5ad"
+                def one(mask, _n=name, _uv=uv, _ty=types, _c=counts, _s=seed) -> float:
+                    idx = np.flatnonzero(np.asarray(mask))
+                    if idx.size < 2:
+                        return float("nan")
+                    path = f"{tmp}.{_n}_{deg:.0f}_s{_s}_jk.pred.h5ad"
                     _v2_io.write_prediction_h5(
                         arm_prediction(_uv[idx], np.asarray(_ty)[idx],
                                        sp.csr_matrix(_c)[idx], vol.gene_names,
@@ -977,17 +1131,19 @@ def score_arms(rows, clean, vol, centre, half_extent, thickness, spacing, args, 
                     METRIC: float(sec[METRIC]),
                     "align_rotation_deg": float(sec.get("align_rotation_deg", float("nan"))),
                 }
-                # --- repair 5: an interval from resampling CELLS, once per arm (seed 1 only:
-                # the compared arms are deterministic, so R replicates on one seed is the whole
-                # of the available uncertainty).
-                if args.bootstrap and seed == args.seeds[0]:
-                    med, lo, hi = bootstrap_interval(one, uv.shape[0], seed=int(seed))
-                    entry.update({"boot_median": med, "boot_lo": lo, "boot_hi": hi})
+                # --- §5-sexies: a leave-one-type-out jackknife. The point estimate is the
+                # full-sample score, untouched by construction -- the property the bootstrap
+                # lacked (R14). No duplicate coordinates, and the type is the statistic's own unit.
+                if args.interval and seed == args.seeds[0]:
+                    se, k = jackknife_interval(one, types, entry[METRIC])
+                    entry.update({"jk_se": se, "jk_n": k})
                 row["arms"].setdefault(name, {})[str(seed)] = entry
                 pose = float(sec.get("align_rotation_deg", float("nan")))
                 extra = ""
-                if "boot_lo" in entry:
-                    extra = f"  [{entry['boot_lo']:+.4f}, {entry['boot_hi']:+.4f}]"
+                if np.isfinite(entry.get("jk_se", float("nan"))):
+                    extra = f"  ± {entry['jk_se']:.4f} (jackknife, {entry['jk_n']} types)"
+                elif "jk_n" in entry:
+                    extra = f"  no interval ({entry['jk_n']} usable types, need 3)"
                 print(f"    {deg:5.1f}° {name:>16s} seed {seed}: "
                       f"{sec[METRIC]:+.4f}  pose {pose:.2f}°{extra}", flush=True)
 
@@ -1076,9 +1232,11 @@ def render_scores(scored: list[dict], rows: list[dict], theta: float, rec: dict)
 
     def interval(r: dict, arm: str) -> str:
         first = next(iter(r["arms"].get(arm, {}).values()), {})
-        if "boot_lo" not in first:
-            return "—"
-        return f"[{first['boot_lo']:+.4f}, {first['boot_hi']:+.4f}]"
+        se = first.get("jk_se", float("nan"))
+        if not np.isfinite(se):
+            k = first.get("jk_n")
+            return "—" if k is None else f"**no interval** ({k} usable types, need 3)"
+        return f"± {se:.4f} ({first.get('jk_n', 0)} types)"
 
     out = [
         "## Scores",
@@ -1097,6 +1255,47 @@ def render_scores(scored: list[dict], rows: list[dict], theta: float, rec: dict)
         "- `null` — `resample-pd`'s positions with types permuted. P2's arm-side floor.",
         "",
     ]
+    sweep = [r for r in rows if r.get("self_null")]
+    if sweep:
+        out += [
+            "### P2's gate, settled before these scores existed (§5-ter)",
+            "",
+            "The ground truth's types were permuted **among its own cells** and scored against "
+            "itself — no method, no arm, no donor — so whatever it reports is a property of the "
+            "statistic at that cell count.",
+            "",
+            "⚠️ **The hypothesis this test was built on is REFUTED.** I predicted the floor was "
+            "small-`n` noise and would fall as `n` rose. It does not fall at any angle: it is as "
+            "high at the full sample as at 250 cells, so `G2` constraining only the largest type "
+            "is not the mechanism (`retractions.md` R17).",
+            "",
+            "**And the finding is larger than the thing it was testing: a section whose cell types "
+            "have been completely scrambled scores well above zero.** That is a property of "
+            "`celltype_localization` itself — see `reports/metric_resolution.md`.",
+            "",
+            "| n | " + " | ".join(f"{r['angle_deg']:.0f}°" for r in sweep) + " |",
+            "|---|" + "---|" * len(sweep),
+        ]
+        sizes = sorted({e["n"] for r in sweep for e in r["self_null"]})
+        for n in sizes:
+            cells = []
+            for r in sweep:
+                e = next((x for x in r["self_null"] if x["n"] == n), None)
+                cells.append("—" if e is None
+                             else f"{e['self_null_median']:.4f} ± {e['self_null_spread']:.4f}")
+            out.append(f"| {n} | " + " | ".join(cells) + " |")
+        out += [
+            "",
+            "Spreads are over three seeds and are comparable to the values themselves, so these "
+            "medians are not precisely placed. **Each angle's ceiling comes from its own "
+            "calibration at its own `n`** — the first version resolved one ceiling from the first "
+            "angle and applied it to all three (`retractions.md` R15).",
+            "",
+        ]
+        for r in sweep:
+            out.append(f"- **{r['angle_deg']:.0f}°** (n = {r['n_truth']}): "
+                       f"{md_cell(r.get('self_null_branch', ''))}")
+        out += [""]
     if rec.get("self_null_branch"):
         out += [
             "### P2's gate, settled before these scores existed (§5-ter)",
@@ -1109,12 +1308,74 @@ def render_scores(scored: list[dict], rows: list[dict], theta: float, rec: dict)
             "",
         ]
     out += [
-        f"Intervals are **{rec.get('bootstrap_replicates', 0)} bootstrap replicates** resampling "
-        f"the prediction's cells, reported as the {BOOTSTRAP_LO:.0f}th–{BOOTSTRAP_HI:.0f}th "
-        "percentile. Generation seeds cannot supply one: both compared arms are deterministic and "
-        "their across-seed spread is exactly 0.0000 (`retractions.md` R12).",
+        "### The footprint: is each arm a section of *this* plane? (§5-quinquies)",
         "",
-        "| θ | fill | `copy-nearest-z` | `resample-pd` | difference | interval (ours) | `null` |",
+        "Pre-registered **before the measurement was written**, with its bands fixed and the "
+        "middle band defaulting against us. `u` is the comb axis — the narrow one — and the "
+        "ground truth *is* the section, so its `u`-range is the plane's own footprint. A cell "
+        "outside it claims to be a cell of the section where the section does not exist.",
+        "",
+        "| θ | plane's footprint | `copy-nearest-z` | ×  | outside | `resample-pd` | × | outside | "
+        "verdict |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for r in scored:
+        fp = r.get("footprint") or {}
+        c, o = fp.get("copy-nearest-z", {}), fp.get("resample-pd", {})
+        out.append(
+            f"| {r['angle_deg']:.0f}° | {c.get('truth_u_extent_um', float('nan')):.0f} µm | "
+            f"{c.get('u_extent_um', float('nan')):.0f} µm | "
+            f"**{c.get('u_extent_ratio', float('nan')):.2f}** | "
+            f"**{c.get('frac_outside', float('nan')):.0%}** | "
+            f"{o.get('u_extent_um', float('nan')):.0f} µm | "
+            f"{o.get('u_extent_ratio', float('nan')):.2f} | "
+            f"{o.get('frac_outside', float('nan')):.0%} | "
+            f"**{r.get('footprint_verdict', '—')}** |"
+        )
+    out += [""]
+    for r in scored:
+        out.append(f"- **{r['angle_deg']:.0f}°** — {md_cell(r.get('footprint_why', ''))}")
+    out += [
+        "",
+        "### Pose (diagnostic, **not** a gate — §5-quater)",
+        "",
+        "Dropped as a precondition by the project author: `evaluate_paper` aligns every prediction "
+        "independently, so **every published number in this benchmark is already cross-pose** and "
+        "P4 would hold this comparison to a standard nothing else meets. I raised the argument and "
+        "noted that it favours us; the author made the call. Reported here because of what it "
+        "shows.",
+        "",
+        "| θ | `copy-nearest-z` | `resample-pd` | separation |",
+        "|---|---|---|---|",
+    ]
+    for r in scored:
+        pa = [v["align_rotation_deg"] for v in r["arms"].get("copy-nearest-z", {}).values()]
+        pb = [v["align_rotation_deg"] for v in r["arms"].get("resample-pd", {}).values()]
+        out.append(
+            f"| {r['angle_deg']:.0f}° | {np.median(pa) if pa else float('nan'):.2f}° | "
+            f"{np.median(pb) if pb else float('nan'):.2f}° | "
+            f"{r.get('pose_span_deg', float('nan')):.2f}° |"
+        )
+    out += [
+        "",
+        "**The third bound on oblique evaluation.** An oblique strip is a **ribbon**; a ribbon "
+        "maps onto itself under a half-turn, so `align_by_expression` has two near-equivalent "
+        "optima and picks between them arbitrarily. `resample-pd` aligned at 174° at 30° in "
+        "two runs whose baselines differed, so it is a property of the arm's shape against the "
+        "ground truth, not of the comparison. **Expression-based alignment is underdetermined "
+        "on elongated point clouds** — which is what every oblique evaluation set is. "
+        "(Separations are wrapped to [0°, 180°]; an earlier run printed 192°, which is 168° "
+        "the other way.)",
+        "",
+        "### Scores",
+        "",
+        f"Intervals are a **{rec.get('interval', 'none')}**: the point estimate is the full-sample "
+        "score, **untouched by construction**, which is the property the cell bootstrap lacked — "
+        "at 45° its median sat 0.118 above the estimate it was meant to bracket "
+        "(`retractions.md` R14). Generation seeds cannot supply one: both compared arms are "
+        "deterministic and their across-seed spread is exactly 0.0000 (R12).",
+        "",
+        "| θ | fill | `copy-nearest-z` | `resample-pd` | difference | ± (ours) | `null` |",
         "|---|---|---|---|---|---|---|",
     ]
     for r in scored:
@@ -1220,9 +1481,16 @@ def render(rec: dict) -> list[str]:
         "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
-        mark = "**yes**" if r["qualifies"] else (
-            "no — **zero measure (F2)**" if r["clears_g1_g2"] else "no"
-        )
+        if r["qualifies"]:
+            mark = "**yes**"
+        elif r["angle_deg"] <= 0.0:
+            # NOT an F2 exclusion: a coronal plane has no comb at all (its stratum is infinite).
+            # It is excluded for being the coronal control, and the first render said otherwise.
+            mark = "n/a — the coronal control"
+        elif not r["has_measure"]:
+            mark = "no — **zero measure (F2)**"
+        else:
+            mark = "no"
         width = ("—" if not np.isfinite(r["stratum_width_um"])
                  else f"{r['stratum_width_um']:.1f} µm")
         ratio = (r["metric_blur_um"] / r["metric_radius_um"]

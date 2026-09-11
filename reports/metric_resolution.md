@@ -91,6 +91,31 @@ a `FIELD_GRID = 20` square grid; `specs/10` §9 already warns that an oblique st
 degenerate. A comb the Sinkhorn kernel cannot see is a comb a 20-bin grid resolves directly. Any
 oblique result on a grid-based metric needs this analysis redone, not inherited.
 
+## A second property: it scores a scrambled section well above zero
+
+*Measured with no method, no donor and no arm: the ground truth against itself, with its own cell
+type labels randomly permuted among its own cells.*
+
+| n | 30° | 45° | 60° |
+|---|---|---|---|
+| 250 | 0.0980 | 0.0532 | 0.0849 |
+| 500 | **0.2360** | 0.0822 | 0.0338 |
+| 1000 | 0.1070 | 0.0897 | 0.0891 |
+| full slab | 0.1714 | **0.0333** | 0.1305 |
+
+**A section whose cell types carry no information at all scores 0.03–0.24**, where 0 is defined as
+"no better than scattering the type at random". And it does **not** fall with cell count — the floor
+is as high at 1 906 cells as at 250, so it is not small-sample noise (`retractions.md` R17).
+
+This compounds the resolution limit rather than duplicating it. The blur says the statistic cannot
+*see* structure below ~0.3 of the tissue radius; this says that even the structure it can see is
+worth only part of the score, because a randomised section already banks a fifth of the scale on a
+bad draw. **Any difference between two methods smaller than ~0.2 on this metric is inside the range a
+scrambled section can reach**, and we have not seen that stated anywhere.
+
+⚠️ Measured over three seeds, whose spreads (0.046–0.114) are comparable to the values themselves.
+The floor is real and its exact height is not well placed; both facts are reported.
+
 ## The honest summary for the paper
 
 Two bounds, both on the field rather than on any method, both stated with their arithmetic:

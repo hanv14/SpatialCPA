@@ -395,3 +395,80 @@ oblique evaluation alongside the comb limit and the metric's resolution.
 **Fixed at source.** An angle with any failing precondition is NOT READABLE and no score can
 overwrite it; P4 is computed between the two arms actually being differenced; and the report prints
 every precondition as a row.
+
+---
+
+## R14 — the bootstrap shifted the estimate it was bracketing
+
+**Withdrawn:** every interval in the second scored run. At 45° the bootstrap median was **0.2349**
+against a point estimate of **0.1167** — a shift of 0.118, larger than two of the three differences
+the study measures. Widths ran from 0.021 to 0.407 across three angles of one arm.
+
+**Cause.** Resampling cells with replacement creates **duplicate coordinates**, and both the Sinkhorn
+transport and the metric's own `max_n = 250` per-type subsampling behave differently on a cloud with
+ties. **A resampling scheme that moves the estimate is not measuring uncertainty about it.**
+
+**Replaced by a leave-one-cell-type-out jackknife**, chosen for a property the bootstrap lacked
+rather than by retuning until the shift vanished — which would have been choosing a method by its
+effect on the answer. A jackknife estimates the *variance* of a statistic and never replaces it, so
+**the point estimate is the full-sample score by construction** and this defect cannot recur. It also
+matches the statistic's own unit: `celltype_localization` is a frequency-weighted mean over cell
+types. If fewer than three types survive, **no interval is reported** and the report says why.
+
+---
+
+## R15 — one angle's noise floor was applied to all three
+
+**Withdrawn:** the single `null_ceiling = 0.1688` in the second run. `read_self_null` took the
+**first** calibrated row — 30° — and looked up the entry nearest **θ\*'s** cell count, 1011. It mixed
+**30°'s noise floor with 60°'s `n`**, and applied the result to every angle. Each angle's own
+calibration sat unused in the same JSON.
+
+Per-angle, as it should have been: 30° (n = 1906) ceiling 0.2843, passes; **45° (n = 1311) self-null
+0.0333 — the *clean* branch, so the original 0.10 stands** and the run never reported that; 60°
+(n = 1011) ceiling 0.1878, fails at 0.2461. Same verdicts, correct reasoning, and one branch that
+went unseen.
+
+**Class.** §4.2a's scope mix — committed inside the machinery built to settle a scope question.
+
+---
+
+## R16 — the calibration pass scored the arms, and then said it had not
+
+`oblique_null_calibration.md` is **byte-identical to `oblique_demo.md`**, score table included,
+while its JSON records `"scoring": "NOT RUN — geometry and preconditions only"`.
+
+`score_arms` is entered on `args.score or args.calibrate_null` and then scores the arms
+unconditionally. So the pass whose entire purpose was to settle P2 **before any arm was scored**
+scored every arm — and recorded a **false provenance field** saying otherwise. The ordering §5-ter
+exists to guarantee was never enforced.
+
+**Fixed:** `--calibrate-null` without `--score` now calibrates and returns. The calibration's own
+`n`-sweep, which the first pass computed and rendered nowhere, is now a table in the report.
+
+---
+
+## R17 — the small-`n` hypothesis is refuted
+
+**Withdrawn:** my explanation for P2's failure — that `G2` constrains only the largest type, so a
+Sinkhorn ratio on 30-point clouds is noisy and the null was measuring that.
+
+**It does not fall with `n`:**
+
+| n | 30° | 45° | 60° |
+|---|---|---|---|
+| 250 | 0.0980 | 0.0532 | 0.0849 |
+| 500 | **0.2360** | 0.0822 | 0.0338 |
+| 1000 | 0.1070 | 0.0897 | 0.0891 |
+| full | 0.1714 | **0.0333** | 0.1305 |
+
+No trend at any angle; at 45° the largest sample gives the lowest value. The floor is as present at
+n = 1906 as at n = 250, so cell count is not the mechanism and the hypothesis is withdrawn.
+
+**And the test found something larger than what it was testing.** A section whose cell types have
+been **completely scrambled** — the ground truth against itself with its labels randomised, no
+method, no donor, no arm — scores **0.03 to 0.24**. That is a property of `celltype_localization`,
+recorded in `reports/metric_resolution.md` beside the blur.
+
+The spreads are comparable to the values (0.1129 against 0.1714; 0.1142 against 0.0338), so **three
+seeds cannot place this floor precisely** and every ceiling derived from it inherits that.
