@@ -9377,3 +9377,56 @@ design, same thick-slab preparation at half the thickness. And run the **free** 
 — §9's re-partition of the same block into 14 slabs of ~13.5 µm — because if clearance does not
 survive halving the thickness, the claim is about *thick-slab preparations* specifically, and we
 should say that ourselves.
+
+### R5, R6, and the comb limit — the claim moves to θ\* with the fill stated
+
+**R5 — the 90° clearance was measured on a slab 2.1× too thick.** `angle_budget.py` defaulted slab
+thickness to the training volume's **median spacing**, 57.5 µm, where the specimen's slabs are
+~27 µm: `paper_2_4_6` removes every other section, so the training spacing is a multiple of the real
+pitch. Pinned arithmetically — 486/1988 = 0.2445 against 13.5/57.5 = 0.2348, 4% apart. The runner now
+takes `Section.thickness` where the loader recorded it as **measured**, falls back to spacing only
+when the file carries none, and **prints which and why**. Second instance of R1's class, in the same
+runner, both in the *reference* rather than in the gates.
+
+**R6 — my own screen arithmetic.** `oblique_replication_candidates.md` computed `f(90°)` as
+1988/**79 000**, mixing the full dataset's cell count with a training-volume strip count. It is
+1988/47 189 = **4.2%**; the threshold moves from ~12 000 to ~8 300. The conclusion stands by an
+order of magnitude, but a §4.2a scope mix committed in the document ruling other candidates out for
+being unmeasured is worth recording as a retraction rather than a fix.
+
+**`reports/the_comb_limit.md` — the paper's, not a caveat.** The plane's second in-plane coordinate
+is `v = (y − y₀)cos θ − (z − z₀)sin θ`; a section sits at one `z`, so each contributes one stratum of
+width `t·cos θ / sin θ` while adjacent centres are `s / sin θ` apart. The ratio is
+
+**fill(θ) = t·cos θ / s**
+
+with no free constant. `fill(90°) = 0` exactly: `v = −(z − z₀)`, one value per section, so a 90°
+"oblique section" from `N` serial sections is `N` parallel **lines** — whatever generated it.
+Measured: `starmap` (s = t = 22 µm) 0.87/0.71/0.50/0.00 at 30/45/60/90; `merfish_thick_hypothalamus`
+(s = 57.5, t ≈ 27) 0.41/0.33/0.23/0.00. **Aspect ratio and fill are different constraints** — the
+hypothalamus has the better aspect (10.3 : 1) and the worse fill, because holding out alternate
+sections doubles `s` while the slabs stay ~27 µm.
+
+No gate can see it: G1 and G2 are **counts**, and a comb holds as many cells and types as a filled
+cloud (486 cells and 4 types on 4 lines at 90°). So `fill` is its own column in the budget, and
+`the_comb_limit.md` states it as a bound on the field with the three things that would lift it
+(contiguous slabs, a holdout that does not remove alternate sections, an isotropic volume) — none
+of them modelling.
+
+**Pre-registration §2-bis.** §0's "clears 90°" and §2's "report 90° whatever the scores are" are
+struck. The reported angle is **θ\***, the largest clearing G1 and G2 at the true thickness —
+gate-driven, score-free, and fixed in the report before any arm is scored. New rule **F1**: arms
+that reproduce real cells are combs with the same teeth as the ground truth and compare at any fill;
+`field` generates a continuous fill, is charged for the specimen's sampling rather than its own
+error, and is **excluded from the headline**. F1 forbids the one arm whose poor showing would have
+flattered the claim, which is why it is recorded.
+
+**`scripts/oblique_demo.py`** — **zero fits for every headline arm**, because
+`celltype_localization` is nearly blind to expression (R2) and all three reproduce real cells. The
+ground truth is the slab's real cells written as a one-section dataset, so bench3's own
+`evaluate_paper` scores it unchanged (`load_ground_truth` subsets by section label). Donors are the
+flanking slab. This pass reports **geometry and preconditions only**: θ\* is fixed publicly in the
+file before any arm has a number, which is the whole protection against choosing the angle for its
+score. `--self-check` **33/33**, including leak checks that are asserted to **fire** on a planted
+leak, and a band boundary whose 1e-12 slack is numerical — nine orders below the band — not a wider
+band. `angle_budget --self-check` **37/37**.

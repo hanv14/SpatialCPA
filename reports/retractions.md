@@ -126,3 +126,59 @@ exactly the section `nearest-z` would pick under the same exclusion.
 **Class.** Not §4.2n or §4.2o. This one is: *a divergence I documented instead of measuring.* Writing
 the exception down is not the same as checking how often it fires, and the paragraph excusing it was
 doing the work a test should have done.
+
+---
+
+## R5 — "`merfish_thick_hypothalamus` clears 90°"
+
+**Claimed** (`reports/angle_budget.md`, cross-dataset sweep; carried into
+`oblique_demonstration_preregistration.md` §0 and `oblique_replication_candidates.md`): the
+specimen clears **90°** with **1988 cells**, both gates by wide margins, so the oblique
+demonstration is scored at 90°.
+
+**Withdrawn.** It was measured on a slab **2.1× too thick.** `angle_budget.py` defaulted the slab
+thickness to the volume's **median section spacing** — the right concept, *"what a real section
+represents"*, and the wrong quantity on a leakage-guarded input. `paper_2_4_6` removes sections 2, 4
+and 6, so the *training* volume's spacing is **57.5 µm** where the specimen's slabs are **~27 µm**
+(`specs/10` §8: a 200 µm block cut into 7 slabs). The run measured a 57.5 µm slab.
+
+**What disproved it.** The cell count at 90° is proportional to slab thickness, so the two runs pin
+the thickness the first one used:
+
+```
+486 / 1988  = 0.2445     (thin run / original run, measured)
+13.5 / 57.5 = 0.2348     (the ratio those thicknesses imply)
+```
+
+4% apart — density variation. The original run's `t` was 57.5 µm.
+
+**Fixed at source.** The runner now takes `Section.thickness` where the loader recorded it as
+**measured** (`thickness_is_assumed=False`), falls back to spacing only when the file carries none,
+and **prints which it used and why** in the report's own table. The fallback's text now says
+explicitly that on a leakage-guarded input the spacing overstates the slab.
+
+**What replaces it.** The budget at the true thickness, which does not exist yet. My estimate is
+~933 cells and ~5 scorable types against a threshold of 5.4 — **marginal**, and I am not calling it
+in advance. The claim is expected to land at **30–45°**, and `reports/the_comb_limit.md` shows 90°
+was never available on a 4-section volume for reasons that have nothing to do with thickness.
+
+**Class.** `specs/10` §4.2n, and the second instance in this campaign after R1 — a default inherited
+from a general rule that does not hold on this particular input. Both were in the same runner and
+both were in the *reference* the gates are read against, not in the gates.
+
+---
+
+## R6 — my own `f(90°)` screen arithmetic
+
+**Claimed** (`oblique_replication_candidates.md` §2): a strip retains ~2% of a volume at 90°, from
+`starmap` 304/16 600 = 1.8% and `merfish_thick_hypothalamus` 1988/**79 000** = 2.5%.
+
+**Withdrawn.** The 79 000 is the **full dataset**; 1988 was measured on the **training** volume, which
+holds 47 189. The second figure is `1988/47 189` = **4.2%**, and the screen's threshold moves from
+~12 000 cells in the largest type to ~**8 300**.
+
+**The conclusion is unchanged.** `exseq_visual_cortex` (1 130 cells in its entire volume) and
+`exseq_breast_cancer` (1 979) are still ruled out by an order of magnitude. But the arithmetic was
+wrong and a cross-scope mix of a full-dataset count with a training-volume count is exactly the
+error `specs/10` §4.2a exists for — committed in the document that was ruling other things out for
+being unmeasured.

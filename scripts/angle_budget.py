@@ -112,7 +112,26 @@ def measure_one(paths, args) -> dict:
     extent = hi - lo
     zs = sorted(float(s.z) for s in vol.sections)
     spacing = float(np.median(np.diff(zs))) if len(zs) > 1 else float(extent[2])
-    thickness = float(args.thickness) if args.thickness else spacing
+
+    # RETRACTED (v2): the default was the training volume's MEDIAN SPACING. That is the right
+    # concept -- "what a real section represents" -- and the wrong quantity on a leakage-guarded
+    # input: `paper_2_4_6` removes every other section, so the training spacing is ~2x the
+    # specimen's real slab pitch. On merfish_thick_hypothalamus it reported 57.5 um against slabs
+    # of ~27 um, and the first "clears 90 deg" was measured on a slab 2.1x too thick.
+    # `Section.thickness` is measured by the loader, which records whether it had to assume it.
+    measured = [float(s.thickness) for s in vol.sections if not s.thickness_is_assumed]
+    if args.thickness:
+        thickness, source = float(args.thickness), "--thickness, given on the command line"
+    elif measured:
+        thickness = float(np.median(measured))
+        source = f"Section.thickness, MEASURED on {len(measured)}/{len(vol.sections)} sections"
+    else:
+        thickness, source = spacing, (
+            "the volume's median section spacing -- Section.thickness is assumed on every "
+            "section, so the file carries no measured slab thickness. On a leakage-guarded "
+            "input this OVERSTATES the slab: held-out sections are removed, so the spacing "
+            "between the ones that remain is a multiple of the real pitch"
+        )
     in_plane = float(np.mean(extent[:2]))
     aspect = in_plane / float(extent[2]) if extent[2] > 0 else float("inf")
 
@@ -130,6 +149,7 @@ def measure_one(paths, args) -> dict:
     print(f"  volume: {xyz.shape[0]} cells, {len(vol.sections)} sections")
     print(f"  extent x/y/z = {extent[0]:.1f} / {extent[1]:.1f} / {extent[2]:.1f} um")
     print(f"  section spacing {spacing:.2f} um, slab thickness {thickness:.2f} um")
+    print(f"  thickness from: {source}")
     print(f"  reference plane centred on the section at z = {z_ref:.2f} um")
     print(f"  IN-PLANE : DEPTH = {aspect:.1f} : 1", flush=True)
 
@@ -152,10 +172,22 @@ def measure_one(paths, args) -> dict:
             ar = float(min(span) / max(span)) if max(span) > 0 else 0.0
         else:
             span, ar = np.zeros(2), 0.0
+        # The FILL RATIO. A section meets an oblique plane in a line, so the cells the plane cuts
+        # form one stratum per section in the plane's second in-plane coordinate
+        #   v = (y - y0) cos(theta) - (z - z0) sin(theta)
+        # Each stratum is `t cos(theta) / sin(theta)` wide in v; adjacent centres are `s /
+        # sin(theta)` apart. The ratio of the two is `t cos(theta) / s` and it carries no free
+        # constant. At 90 deg it is exactly 0: v = -(z - z0), which takes one value per section,
+        # so the "oblique section" is N parallel LINES. G1 counts types and G2 counts cells;
+        # neither can see that the cloud has collapsed in one dimension.
+        fill = float(thickness * np.cos(t) / spacing) if spacing > 0 else float("inf")
+        strata = int(len(set(near.section_id.tolist())))
         rows.append({
             "angle_deg": float(deg),
             "n_cells": int(uv.shape[0]),
             "n_donors": int(donors.coords_uv.shape[0]),
+            "fill_ratio": fill,
+            "n_strata": strata,
             "n_sections": int(len(set(near.section_id.tolist()))),
             "scorable_types": scorable_types(np.asarray(near.cell_type)),
             "largest_type": largest_type(np.asarray(near.cell_type)),
@@ -185,6 +217,7 @@ def measure_one(paths, args) -> dict:
         "slab_thickness_um": thickness,
         "reference_plane_z_um": z_ref,
         "in_plane_to_depth": aspect,
+        "thickness_source": source,
         "angles": rows,
         "angle_budget_deg": budget,
         "cells_at_budget": int(at_budget["n_cells"]),
@@ -351,15 +384,15 @@ def render(rec: dict) -> list[str]:
         "400 µm deep — **7.5 : 1** — and it is the only geometry oblique parity has ever been",
         "measured on. A plane tilted by θ exits the thin dimension after `(D + t) / sin θ`.",
         "",
-        "| θ | cells in slab | donors | sections | scorable types | largest type | strip µm | "
-        "aspect | clears |",
+        "| θ | cells in slab | donors | strata | **fill** | scorable types | largest type | "
+        "strip µm | clears |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         out.append(
-            f"| {r['angle_deg']:.0f}° | {r['n_cells']} | {r['n_donors']} | {r['n_sections']} | "
-            f"{r['scorable_types']} | {r['largest_type']} | {r['extent_u']:.0f} | "
-            f"{r['aspect']:.3f} | {'**yes**' if r['clears'] else 'no'} |"
+            f"| {r['angle_deg']:.0f}° | {r['n_cells']} | {r['n_donors']} | {r['n_strata']} | "
+            f"**{r['fill_ratio']:.2f}** | {r['scorable_types']} | {r['largest_type']} | "
+            f"{r['extent_u']:.0f} | {'**yes**' if r['clears'] else 'no'} |"
         )
     out += [
         "",
@@ -371,6 +404,13 @@ def render(rec: dict) -> list[str]:
         "- **cells in slab** is what is available to *evaluate*; **donors** is what the layout "
         "would *reuse*. They differ only when the slab is empty — the generation setting, and the "
         "case the first version of the selection rule got wrong.",
+        "- **fill** = `t·cos θ / s` — the fraction of the oblique plane the real cells can cover. "
+        "**Not a gate, and a limit on the field rather than on this method**: an oblique ground "
+        "truth drawn from `N` serial sections has only `N` samples along depth, so at 90° it is "
+        "`N` parallel lines whatever generated it. See `reports/the_comb_limit.md`. Arms that "
+        "reproduce real cells are combs too and compare like with like; an arm that generates a "
+        "continuous fill does not, and is not comparable where this is small.",
+        f"- **thickness** came from {md_cell(rec['thickness_source'])}.",
         "",
         f"**Budget: {budget:.0f}°.**",
     ]
@@ -418,12 +458,14 @@ def _self_check() -> int:
     def rec(name, budget, aspect, n_sec, fail):
         rows = [dict(angle_deg=a, n_cells=100, n_donors=100, n_sections=1, scorable_types=9,
                      largest_type=300, extent_u=500.0, extent_v=900.0, aspect=0.5,
+                     fill_ratio=float(np.cos(np.deg2rad(a))), n_strata=4,
                      clears=a <= budget, why_not="" if a <= budget else "G2 | with a pipe in it")
                 for a in (0.0, 5.0, 45.0)]
         return {"dataset": name, "holdout": "h", "n_cells": 9, "n_sections": n_sec, "n_types": 4,
                 "extent_um": [1000.0, 900.0, 66.0], "section_spacing_um": 22.0,
                 "slab_thickness_um": 22.0, "reference_plane_z_um": 41.0,
                 "in_plane_to_depth": aspect, "angles": rows, "angle_budget_deg": budget,
+                "thickness_source": "Section.thickness, MEASURED on 7/7 sections",
                 "cells_at_budget": 100, "first_failure": fail}
 
     slabs = [rec("a", 5.0, 21.6, 4, (10.0, "too few | types")), rec("b", 5.0, 30.0, 7, None)]
@@ -471,6 +513,19 @@ def _self_check() -> int:
          "cells in slab" in one and "donors" in one),
         ("and it says the reference plane sits on a real section, not the z-midpoint (R1)",
          "centred on the **real section" in one),
+        ("the fill ratio is reported per angle, so the comb is visible in the table",
+         "fill" in one and "0.71" in one),
+        ("and it is stated as a limit on the FIELD, not as a caveat on this method",
+         "limit on the field" in one and "the_comb_limit" in one),
+        ("the table says where its thickness came from, after the default overstated it 2.1x",
+         "MEASURED" in one),
+        # The arithmetic itself: t cos(theta) / s, with t = s so the ratio is cos(theta).
+        ("fill is exactly 1 at 0 deg and exactly 0 at 90 deg, with no free constant",
+         abs(float(np.cos(np.deg2rad(0.0))) - 1.0) < 1e-12
+         and abs(float(np.cos(np.deg2rad(90.0)))) < 1e-15),
+        ("and halving the slab halves the fill, which is why the thickness default mattered",
+         abs((13.5 * np.cos(np.deg2rad(30.0)) / 57.5)
+             - 0.5 * (27.0 * np.cos(np.deg2rad(30.0)) / 57.5)) < 1e-12),
         ("`all` expands to more than one dataset, so the sweep is not vacuous",
          len(ALL_DATASETS) > 1 and "starmap_visual_cortex" in ALL_DATASETS
          and "allen_merfish_brain" in ALL_DATASETS),

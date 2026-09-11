@@ -123,6 +123,52 @@ the exclusion" — and the finding turned out to be that the exclusion was mis-s
 third thing, found by building the runner rather than by running it. Predictions 1, 3 and 4 stand
 unchanged and are **not** revised in the light of the table above.
 
+## 2-bis. AMENDMENT (2026-09-11) — the claim is made at 30–45°, not at 90°, and why
+
+*Supersedes §0's "clears 90°" and §2's "the reported angle is 90° whatever the scores are". Written
+before the true-thickness budget runs and before any demonstration score exists.*
+
+**Two independent reasons, and the second is the one that settles it.**
+
+**R5 — the 90° clearance was measured on a slab 2.1× too thick.** `angle_budget.py` defaulted slab
+thickness to the training volume's median spacing, 57.5 µm, where the specimen's slabs are ~27 µm;
+`paper_2_4_6` removes every other section, so the training spacing is a multiple of the real pitch.
+Fixed at source. The true-thickness budget does not exist yet and my estimate is marginal.
+
+**The comb limit — 90° was never available, at any thickness.** `reports/the_comb_limit.md`: the
+plane's second in-plane coordinate is `v = (y − y₀)cos θ − (z − z₀) sin θ`, which at 90° is
+`−(z − z₀)` exactly. `z` takes one value per section, so a 90° "oblique section" from `N` serial
+sections is **`N` parallel lines**. On a 4-section training volume it is four lines. This is
+geometry, not a shortcoming of any method, and no specimen in the cross-dataset sweep escapes it.
+
+**So the claim is made at the largest angle clearing G1 and G2 at the true thickness, with the fill
+ratio `t·cos θ / s` stated beside it. On present evidence that is 30–45°.** This is fixed now,
+before the number exists, and it is *weaker* than what §0 claimed — which is the direction that
+makes it safe to fix in advance.
+
+**What this changes in §2.** The angle table stands; "the reported angle is 90° whatever the scores
+are" is struck. The rule that replaces it: **the reported angle is the largest that clears G1 and G2
+at the true thickness** — determined by the budget, which is pre-registered, gate-driven and carries
+no score. Picking the best-*scoring* angle remains forbidden. 90° is still measured and still
+reported, with its fill of 0.00 printed beside it, because the comb limit is a result.
+
+**What this changes in §4–§6: one new rule, and it restricts us rather than helping us.**
+
+> **F1 — the fill rule.** Arms that reproduce real cells (`copy`, `resample-pd`, `null`) are combs
+> with the same teeth as the ground truth and may be compared at any fill. An arm that generates a
+> **continuous fill** (`field`) places cells between the teeth, where the ground truth has none by
+> construction, and an optimal-transport metric charges it for the specimen's sampling rather than
+> for its own error. **`field` is therefore excluded from the headline comparison and reported
+> separately, with the fill printed beside it, at every angle.**
+
+This forbids the one arm whose poor showing would have flattered the claim. It is recorded here for
+that reason: `field` losing at low fill would not have been evidence, and we would have had it in
+the table.
+
+**§6's outcomes are unchanged in form**, with `90°` replaced throughout by **`θ*`**, the largest
+angle clearing G1 and G2 at the true thickness. DEMONSTRATED still requires
+`resample-pd(θ*) ≥ copy(θ*) − 0.05` with `|d(θ*)|` set against the across-seed spread.
+
 ## 4. The baseline: `flanking_copy` under the same constraints
 
 **The baseline is `flanking_copy` restricted to the same slab under the same exclusion.** Not the

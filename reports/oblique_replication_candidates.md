@@ -25,11 +25,20 @@ with ≥ 250 cells inside the oblique strip**. The strip retains a fraction `f(�
 | specimen | cells at 90° | cells in volume | `f(90°)` |
 |---|---|---|---|
 | `starmap_visual_cortex` | 304 | ~16 600 | **1.8%** |
-| `merfish_thick_hypothalamus` | 1988 | ~79 000 | **2.5%** |
+| `merfish_thick_hypothalamus` | 1988 | **47 189** | **4.2%** |
 
-Taking `f(90°) ≈ 2%` — read off two measured specimens, not assumed — a dataset can clear G2 at 90°
-only if its **largest type holds roughly ≥ 12 000 cells in the whole volume**. Which needs a volume
-of order 10⁵ cells unless the types are extraordinarily unbalanced.
+*(CORRECTED — `retractions.md` **R6**. The second row first read 79 000, which is the **full**
+dataset against a **training-volume** strip count. Mixing the two scopes is the error §4.2a exists
+for, committed in the document that was ruling other candidates out for being unmeasured.)*
+
+Taking `f(90°) ≈ 2–4%` — read off two measured specimens, not assumed — a dataset can clear G2 at
+90° only if its **largest type holds roughly ≥ 8 300 cells in the whole volume**. Which needs a
+volume of order 10⁵ cells unless the types are extraordinarily unbalanced.
+
+⚠️ **And this screen is now secondary.** `reports/the_comb_limit.md` shows that at 90° an oblique
+ground truth from `N` serial sections is `N` parallel lines whatever its cell count, so **no**
+volume in this table clears 90° meaningfully. The screen still ranks candidates for a 30–45°
+demonstration, which is where the claim now sits.
 
 **That rules out two candidates on their own headline numbers**, with no build and no judgement:
 
