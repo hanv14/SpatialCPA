@@ -37,8 +37,14 @@ against an i.i.d. prior, per-gene `I_gen` vs `I_real` correlating at **r = 0.917
 `I_gen` monotone as `ell` sweeps 0.25x–4x. On the synthetic fixture — stated as such.
 
 **2.2 Oblique reconstruction reaches parity (GATE 2).** Depth-matched parity **0.955**,
-edge-excluded **0.979**, against a pre-registered **≥ 0.90**. A clean, unqualified pass on real
-data, and the strongest single result in the project.
+edge-excluded **0.979**, against a pre-registered **≥ 0.90**.
+
+⚠️ **CORRECTED 2026-09-11.** This read *"a clean, unqualified pass on real data, and the strongest
+single result in the project"*. **GATE 2 ran on the synthetic fixture** —
+`make_synthetic_volume(seed=0, extent_xy=3000)`, "the same fixture GATE 1 was measured on"
+(`reports/gate2.md`) — and its probe is a **linear head on 32 expression PCs**, not the generation
+pipeline, because "the full generative heads do not exist yet". `gate2.md` says so and says T10's
+**E3 is where it meets real data**; E3 has never run. See `reports/framing_honesty_review.md` §4.
 
 **2.3 Intersection consistency is exact by construction.** Two crossing sections emit **bitwise
 identical** expression along their intersection on an **untrained** model, with no consistency loss

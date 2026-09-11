@@ -68,7 +68,7 @@ Three claims, all about **encoding** — representing the volume. None is about 
 | # | claim | measurement | source |
 |---|---|---|---|
 | 2.1 | The correlated prior controls per-gene spatial autocorrelation | error ratio **0.130** against an i.i.d. prior; per-gene `I_gen` vs `I_real` at **r = 0.917**; median `I_gen` monotone as `ell` sweeps 0.25x–4x | `reports/gate1.md` — **synthetic fixture**, stated as such |
-| 2.2 | Oblique planes reconstruct as well as axis-aligned | depth-matched parity **0.955**, edge-excluded **0.979**, against a pre-registered ≥ 0.90 | `reports/gate2.md` — real data |
+| 2.2 | Oblique planes reconstruct as well as axis-aligned | depth-matched parity **0.955**, edge-excluded **0.979**, against a pre-registered ≥ 0.90 | `reports/gate2.md` — ⚠️ **synthetic fixture, corrected 2026-09-11**; linear probe on 32 expression PCs, not the generation pipeline. Real-data oblique validation (E3) has never run (`reports/framing_honesty_review.md` §4) |
 | 2.3 | Two crossing sections agree exactly where they meet | **bitwise identical** expression along the intersection, on an **untrained** model, no consistency loss applied | `tests/test_sefl.py::test_generation_is_intersection_consistent_by_construction` |
 
 **2.2 is the strongest single result in the project** and it is unqualified on real data.
