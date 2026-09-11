@@ -696,6 +696,34 @@ they are the same expression — or the refutation is of something else. A stati
 its definition**, and a name shared with the implementation that happens to be nearest to hand is
 the likeliest way to get this wrong.
 
+### 4.2p A self-check that covers the scoring and not the wiring
+
+**Two instances, one shape.** In each, a script's `--self-check` passed in full and the run died on
+a code path the check never touched — after the expensive part was paid for.
+
+**The sidecar.** `--self-check` was **117/117** through two runs that both died at `json.dumps` on
+their final line, because it exercised every constructor and never the **assembly**. Fixed by
+factoring `build_sidecar` and having the check build and serialise it.
+
+**The runner.** `scripts/test1_field_count.py --self-check` was **9/9** and exercised `band()` —
+the pre-registered criterion — only. The run died at
+`TrainingData.__init__() got an unexpected keyword argument 'specimen_id'`, an argument that
+constructor has never taken; the first version had copied `TrainingVolume`'s field list. Behind it
+sat **three more**: the checkpoint key is `state_dict` and not `model`; `build_embeddings` needs
+`for_checkpoint=True`; and the repulsion must be fitted, without which `sample_layout` raises on
+the very `layout_mode="field"` path the test exists to measure. One symptom, four defects.
+
+**Why "write a smoke test" is not the whole rule.** A smoke test that instantiates the model needs
+torch and a volume, so it runs only where the data lives — which is after the decision to run. The
+check that catches this class must run **wherever the code is edited**.
+
+**The rule.** *A check that verifies the criterion must also verify the wiring, and the wiring check
+must not need the data.* Read the real definitions — `ast` over the source is enough — and assert
+that every constructor, keyword and dict key the script calls actually exists as called. It needs no
+torch, no fixture and no fit, it runs in seconds anywhere, and it is verified by reintroducing each
+defect and watching it fail. `_contract_check` in that runner is the implementation: 13 assertions,
+all four defects caught.
+
 ### 4.2o A criterion that ignores a spread the report has already computed
 
 **Three instances, one run, one shape.** In each, the number the decision needed was printed on the
@@ -923,6 +951,7 @@ was written:
 | **whether the rendered table is square** | 4.2m | `A1a. counts ~ emission(mu \| h1)` carries a markdown delimiter in its label. Unescaped, every cell after it on that row rendered one column to the left, under the wrong heading, in both A1 reports for four rounds. Correctly computed, wrongly displayed — which re-deriving the number cannot catch |
 | **whether the statistic chose its own parameters** | 4.2n | One permutation construction reported as −0.2472 / −0.0080 / +0.2634 because three blocks inherited three seed counts; a 2-column table quoting a 3-control span; an F3 that left 1/width of the genes on themselves and inflated the abundance floor to +0.141 where it must be zero. A seed count, a column list, a stratum width and a permutation scheme are part of the measurement |
 | **whether the criterion consumed its own spread** | 4.2o | A floor refused on `< 0.10` while its printed interval read −0.1414 .. +0.2976; an `R` guarded on the deficit's sign printing ±148 on a deficit of 0.0029 against arm spreads of 0.009; a distribution represented by one draw, −0.3928 against the same page's −0.0080. In each the number the decision needed was already on the page |
+| **whether the self-check covers the wiring** | 4.2p | 117/117 through two runs that died at `json.dumps`; 9/9 through a run that died at `TrainingData(specimen_id=...)` with three more constructor defects behind it. A criterion check is not a wiring check, and a wiring check that needs the data runs only after the decision to run |
 | **whether the run's own alarm reached the run's own report** | 4.2f-i | the `deep_starmap` chain run's spatial-collapse alarm fired at **122 checked steps, 79 of them inversions, and was still firing at the last step (2399, −0.0129)** against a healthy floor of +0.5467 — into stderr, while the report that run wrote carries a provenance block, a stage table and a verdict and says nothing about it. Its `+0.0729` entered a review as a result before the log was opened |
 | **whether the report describes work that was done** | 4.2k | one report said *"top 28 by Moran's I on the real side"* for a selection that kept all 28 genes of a 28-gene panel, and *"matched to the real section: 4073 -> 4073 kept"* for a density match that subsampled nothing — while the other dataset in the same comparison got a genuine top-3.1 % selection, described in the same words |
 | **whether the artifact says which arm it is** | 4.2a-ii | the committed, bitwise-reproducible files behind the six-metric table record no `config_hash`, no `text_emb_mode` and no metric-aware weights, so a correctly measured envelope cannot be matched to them — six clearance figures are flagged rather than numbered for this reason alone |

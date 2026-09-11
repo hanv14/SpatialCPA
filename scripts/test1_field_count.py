@@ -81,6 +81,124 @@ def band(value: float, spread: float, oracle_value: float | None) -> tuple[str, 
 
 
 
+
+def _contract_check() -> list[tuple[str, bool]]:
+    """Do the constructors this runner calls actually have the signatures it uses?
+
+    **This is the check that was missing.** ``--self-check`` was 9/9 and exercised ``band()`` only,
+    so the model-construction path had no coverage and the run died on
+    ``TrainingData(specimen_id=...)`` — an argument that constructor has never taken. Same shape as
+    the sidecar crashing twice after every measurement was paid for: a self-check that verifies the
+    code path it exercises rather than the one that fails.
+
+    It reads the **real definitions** out of the source with ``ast``, so it needs no torch, no data
+    and no fit, and it runs in this container as well as on the campaign machine. That matters: a
+    smoke test that only runs where the data lives would not have caught this before the run.
+    """
+    import ast
+
+    root = Path(__file__).resolve().parent.parent
+    checks: list[tuple[str, bool]] = []
+
+    def parse(rel: str) -> ast.Module:
+        return ast.parse((root / rel).read_text())
+
+    core = parse("spatialcpav25_gen/model/spatialcpav25_gen.py")
+    classes = {n.name: n for n in ast.walk(core) if isinstance(n, ast.ClassDef)}
+
+    td = classes.get("TrainingData")
+    td_methods = {n.name: n for n in (td.body if td else []) if isinstance(n, ast.FunctionDef)}
+    td_fields = [
+        n.target.id
+        for n in (td.body if td else [])
+        if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name)
+    ]
+    build = td_methods.get("build")
+    build_args = [a.arg for a in build.args.args] if build else []
+    checks += [
+        ("TrainingData exists", td is not None),
+        ("it is built by the `build` CLASSMETHOD, not by keyword", build is not None),
+        (
+            "`build` takes (cls, vol, cfg) — the call this runner makes",
+            build_args[:3] == ["cls", "vol", "cfg"],
+        ),
+        (
+            "and it does NOT take `specimen_id` — the argument the first version passed, which "
+            "is TrainingVolume's field list, not TrainingData's",
+            "specimen_id" not in td_fields and "specimen_id" not in build_args,
+        ),
+    ]
+
+    ctf = classes.get("CTFFlow")
+    init = next(
+        (n for n in (ctf.body if ctf else []) if isinstance(n, ast.FunctionDef)
+         and n.name == "__init__"),
+        None,
+    )
+    pos = [a.arg for a in init.args.args] if init else []
+    kw = [a.arg for a in init.args.kwonlyargs] if init else []
+    checks += [
+        ("CTFFlow.__init__ takes (cfg, data, embeddings) positionally", pos[:4] == ["self", "cfg", "data", "embeddings"]),
+        ("and `grf_seed` as a keyword", "grf_seed" in kw),
+    ]
+
+    chain = parse("scripts/t10_chain_diagnostic.py")
+    be = next(
+        (n for n in ast.walk(chain) if isinstance(n, ast.FunctionDef)
+         and n.name == "build_embeddings"),
+        None,
+    )
+    be_kw = [a.arg for a in be.args.kwonlyargs] if be else []
+    checks += [
+        ("build_embeddings takes (cfg, vol)", [a.arg for a in be.args.args][:2] == ["cfg", "vol"]),
+        ("and `for_checkpoint`, which is the branch this runner needs", "for_checkpoint" in be_kw),
+    ]
+
+    # The checkpoint key, read from every site that WRITES one rather than assumed.
+    written: set[str] = set()
+    for rel in ("scripts/t10_chain_diagnostic.py", "scripts/t09_ship_starmap.py"):
+        for node in ast.walk(parse(rel)):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "save"
+                and node.args
+                and isinstance(node.args[0], ast.Dict)
+            ):
+                written |= {
+                    k.value for k in node.args[0].keys if isinstance(k, ast.Constant)
+                }
+    checks += [
+        ("every checkpoint writer uses the key `state_dict`", "state_dict" in written),
+        ("and none writes `model`, which the first version read", "model" not in written),
+    ]
+
+    layout = parse("spatialcpav25_gen/model/layout.py")
+    sl = next(
+        (n for n in ast.walk(layout) if isinstance(n, ast.FunctionDef) and n.name == "sample_layout"),
+        None,
+    )
+    sl_kw = [a.arg for a in sl.args.kwonlyargs] if sl else []
+    src_sl = ast.get_source_segment((root / "spatialcpav25_gen/model/layout.py").read_text(), sl) or ""
+    checks += [
+        ("sample_layout takes `n_target` — this whole test depends on it", "n_target" in sl_kw),
+        (
+            "and it RAISES without fitted repulsion, which is why build_model must fit it",
+            "fit_repulsion" in src_sl,
+        ),
+    ]
+
+    gen = parse("spatialcpav25_gen/infer/generate.py")
+    gs = next(
+        (n for n in ast.walk(gen) if isinstance(n, ast.FunctionDef) and n.name == "generate_section"),
+        None,
+    )
+    checks.append(
+        ("generate_section passes `n_target` through", "n_target" in [a.arg for a in gs.args.kwonlyargs])
+    )
+    return checks
+
+
 def _self_check() -> int:
     """The pre-registered bands, asserted against `reframing_tests_preregistration.md` §1.
 
@@ -100,15 +218,25 @@ def _self_check() -> int:
         ("the broken integral's own value still refutes", FIELD_BROKEN_INTEGRAL, 0.02, None,
          "REFUTED"),
     ]
-    failed = 0
+    results: list[tuple[str, bool]] = []
     for label, value, spread, oracle_value, want in cases:
         got, why = band(value, spread, oracle_value)
-        ok = got == want
-        failed += not ok
-        print(f"  {'ok  ' if ok else 'FAIL'} {label:44s} -> {got}")
-        if not ok:
+        results.append((f"{label} -> {got}", got == want))
+        if got != want:
             print(f"       wanted {want}; reason given: {why}")
-    print(f"\n{len(cases) - failed}/{len(cases)} band cases correct")
+
+    print("the pre-registered bands:")
+    for label, ok in results:
+        print(f"  {'ok  ' if ok else 'FAIL'} {label}")
+
+    print("\nthe construction contract (read from the real definitions, no torch, no data):")
+    contract = _contract_check()
+    for label, ok in contract:
+        print(f"  {'ok  ' if ok else 'FAIL'} {label}")
+
+    everything = results + contract
+    failed = sum(1 for _l, ok in everything if not ok)
+    print(f"\n{len(everything) - failed}/{len(everything)} checks passed")
     return 1 if failed else 0
 
 
@@ -165,8 +293,6 @@ def main(argv: list[str] | None = None) -> int:
     from spatialcpav25_gen.config import Config
     from spatialcpav25_gen.infer.generate import generate_section, plane_at_z
     from spatialcpav25_gen.model.field import BBoxClampWarning
-    from spatialcpav25_gen.model.spatialcpav25_gen import CTFFlow, TrainingData
-
     from _starmap_run import load_training_volume
 
     # The same load the chain diagnostic's --load-model does: the checkpoint carries its own
@@ -176,7 +302,7 @@ def main(argv: list[str] | None = None) -> int:
         layout_mode=args.layout_mode, layout_sampler="grid"
     )
     vol = load_training_volume(cfg, paths.input)
-    model = build_model(checkpoint, cfg, vol, CTFFlow, TrainingData)
+    model = build_model(checkpoint, cfg, vol, args.seed)
 
     truth = ground_truth_counts(paths.ground_truth)
     arms = (
@@ -256,23 +382,44 @@ def main(argv: list[str] | None = None) -> int:
 
 
 
-def build_model(checkpoint, cfg, vol, CTFFlow, TrainingData):
-    """Rebuild the fitted model from the checkpoint. No fit, no re-derivation of embeddings."""
-    # `build_embeddings` lives in the chain diagnostic; four other scripts already
-    # import it from there for exactly this reason.
+def build_model(checkpoint, cfg, vol, seed: int):
+    """Rebuild the fitted model from the checkpoint. No fit.
+
+    Mirrors ``t10_chain_diagnostic``'s ``--load-model`` branch exactly, which is the only path in
+    this project that reconstructs a model from a checkpoint. **Four things here were wrong in the
+    first version** and every one of them is a real constructor detail, not a style choice:
+
+    * ``TrainingData`` is a dataclass of ``(vol, index, counts, total_counts, stats)`` built by the
+      ``build`` **classmethod**. The first version called it with ``specimen_id=``/``sections=``,
+      which is ``TrainingVolume``'s field list.
+    * the checkpoint key is ``"state_dict"``, not ``"model"``.
+    * ``build_embeddings(..., for_checkpoint=True)`` supplies **zero** text vectors on purpose:
+      ``text_vecs`` is a registered buffer, so ``load_state_dict`` restores the fitted MedCPT
+      vectors and this path needs no encoder and no network.
+    * **the repulsion must be fitted.** ``sample_layout`` raises when ``cfg.repulsion`` is on and
+      no ``RepulsionParams`` were given, and ``layout_mode="field"`` is exactly the path that reads
+      it — so without this the run would still have crashed after the first three were fixed.
+    """
+    import warnings as _warnings
+
+    import torch
+    from spatialcpav25_gen.model.field import BBoxClampWarning
+    from spatialcpav25_gen.model.layout import fit_repulsion
+    from spatialcpav25_gen.model.spatialcpav25_gen import CTFFlow, TrainingData
+
+    # `build_embeddings` lives in the chain diagnostic; four other scripts already import it from
+    # there for exactly this reason.
     from t10_chain_diagnostic import build_embeddings
 
-    data = TrainingData(
-        specimen_id=vol.specimen_id,
-        sections=vol.sections,
-        gene_names=vol.gene_names,
-        celltype_names=vol.celltype_names,
-        region_names=vol.region_names,
-        flattened_sections=vol.flattened_sections,
-    )
-    model = CTFFlow(cfg, data, build_embeddings(cfg, vol, for_checkpoint=True), grf_seed=1)
-    model.load_state_dict(checkpoint["model"])
+    data = TrainingData.build(vol, cfg)
+    model = CTFFlow(cfg, data, build_embeddings(cfg, vol, for_checkpoint=True), grf_seed=seed)
+    model.load_state_dict(checkpoint["state_dict"])
     model.eval()
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("ignore", BBoxClampWarning)
+        if cfg.repulsion:
+            model.repulsion = fit_repulsion(vol, cfg, seed=seed + 1)
+    del torch
     return model
 
 
