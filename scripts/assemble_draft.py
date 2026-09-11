@@ -28,6 +28,7 @@ SECTIONS = (
     "05_oblique_demonstration.md",
     "06_what_it_does_not_do.md",
     "07_limitations_and_retractions.md",
+    "08_related_work.md",
 )
 
 TITLE = (

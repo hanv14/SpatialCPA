@@ -31,3 +31,12 @@ logs/
 # and there are hundreds of them: 190 of the 199 files in one commit attempt, which made the
 # patch too large to transfer. The measurement is the report; these are scaffolding.
 *.pred.h5ad
+
+# ...and the ground-truth slabs the oblique runner writes beside them, one per angle:
+# `oblique_demo.py` names them `<out-without-suffix>.gt_<deg>.h5ad`, so with the default
+# `--out reports/oblique_demo.md` they land as `reports/oblique_demo.gt_45.h5ad` and friends.
+# Same argument as above — assembled from the committed volume by a documented geometry step,
+# with no fit and no seed dependence, so the report reproduces them exactly.
+# Left UNANCHORED rather than written as `reports/*.gt_*.h5ad`, so a run pointed elsewhere with
+# `--out` does not quietly start committing them again.
+*.gt_*.h5ad

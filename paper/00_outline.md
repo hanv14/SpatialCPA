@@ -20,6 +20,10 @@ time; and within those bounds the standard metric cannot separate our layout fro
 | 5 | **Off-axis evaluation, and why it could not be resolved** | `oblique_demo.md` | drafted, scored, final |
 | 6 | What the method does not do | `architecture_ceiling.md`, `t09_closeout.md` | drafted |
 | 7 | Limitations, and what we withdrew | `retractions.md` | drafted |
+| 8 | **Related work** | `reference/SpatialZ.py`, `benchmark.md`, `spatialz_claim_struck.md` | drafted |
+
+§8 names the published competitor, states plainly that it beats this method on reconstruction and
+why §6 predicts that, and flags the one table the repository does not hold.
 
 **§3 and §4 are the spine.** They are stated before §5 so the result is read inside the bounds rather
 than defended against them afterwards. §5 is the explained negative. §6 and §7 carry the

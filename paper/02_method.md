@@ -27,12 +27,32 @@ whether or not they lie in the same section. Its correlation lengths are fitted,
 noise is a slice of one 3D field rather than an independently drawn 2D one — which is also what makes
 two overlapping generated planes mutually consistent.
 
+**This was gated before anything downstream was built** (`reports/gate1.md`, verdict PASS).
+Substituting the correlated prior for an i.i.d. one in the same generative map cuts the median
+per-gene Moran's I error to **13%** of the i.i.d. prior's (0.0552 against 0.4233, against a
+threshold of 50%) and raises the per-gene correlation between generated and real Moran's I from
+**r = 0.38 to r = 0.92** (threshold 0.7) — so the correlated prior survives the generative map and
+shows up as preserved spatial autocorrelation in the counts, rather than being smoothed away. That
+report also records the limit of the mechanism: `I_gen(ell)` is not monotone, turning over at 2.52×
+the fitted length-scale, which is a property of the statistic and bounds what the T09 calibration
+loop can be asked to hit.
+
 ## 2.3 The anatomical field and retrieval
 
 A learned field maps a coordinate to a representation of *where in the specimen* it is, trained with
 rotation augmentation over several plane orientations so that the representation does not depend on
 the sectioning axis. Retrieval conditions generation on real cells from elsewhere in the volume,
 excluding the section being generated.
+
+**This was gated too** (`reports/gate2.md`, verdict PASS): reconstruction quality on oblique planes
+reaches **0.955** of axis-aligned quality on held-in sections, worst angle 30°, against a required
+0.90 — with both arms depth-matched, which matters because an oblique strip necessarily draws cells
+from the stack's poorly-reconstructed ends and a single central coronal baseline flatters the
+denominator by 8.5%. Two qualifications travel with that number and are in the report rather than
+only in its appendix. It is measured on a **synthetic fixture 3000 µm across and 400 µm deep —
+7.5 : 1**, a geometry §4 shows no built dataset has; and the criterion **cannot resolve 0.886 from
+0.90** at this sample size, so the margin is real but not precise. §5 is where oblique reconstruction
+becomes a statement about tissue, and §4 is why that statement is available on one specimen.
 
 ## 2.4 The layout: three modes, and the one that ships
 
