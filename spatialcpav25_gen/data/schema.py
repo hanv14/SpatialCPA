@@ -743,13 +743,20 @@ def validate_config_against_volume(cfg: Config, vol: Volume) -> None:
             f"{cfg.small_volume_n_sections}); those z frequencies are unconstrained by so "
             "few sections and will overfit the section positions"
         )
+    # Both of the next two are what `clamp_config_to_volume` narrows, so the message names the
+    # remedy as well as the fault (Convention 6). A caller that hits these has skipped a step,
+    # not chosen a bad value, and the old message left them to find that out from the source.
     if cfg.retrieval_k > vol.n_cells:
         raise ConfigError(
             f"Config.retrieval_k={cfg.retrieval_k} exceeds the {vol.n_cells} cells in "
-            f"specimen {vol.specimen_id!r}"
+            f"specimen {vol.specimen_id!r}. This is a clampable field: narrow it with "
+            "clamp_config_to_volume (or clamp_config_to_input, before the volume is built) "
+            "rather than by hand, so the narrowing is recorded and the config hash changes with it"
         )
     if cfg.expr_pca_dim > vol.n_genes:
         raise ConfigError(
             f"Config.expr_pca_dim={cfg.expr_pca_dim} exceeds the {vol.n_genes} genes in "
-            f"specimen {vol.specimen_id!r}"
+            f"specimen {vol.specimen_id!r}. This is a clampable field: narrow it with "
+            "clamp_config_to_volume (or clamp_config_to_input, before the volume is built) "
+            "rather than by hand, so the narrowing is recorded and the config hash changes with it"
         )

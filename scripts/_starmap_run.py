@@ -53,6 +53,23 @@ def base_config(seed: int, **overrides: object) -> Config:
     return Config(seed=int(seed), **BENCH3_KEYS, **overrides)  # type: ignore[arg-type]
 
 
+def prepare_config(seed: int, input_path: str | Path, **overrides: object) -> Config:
+    """The whole canonical form, in one call: bench3's keys **and** ``specs/10`` §0's clamp.
+
+    ``base_config`` alone is only half of it, and the half that is missing does not announce
+    itself. ``angle_budget.py`` crashed twice on its first real run — once on ``region_key``'s
+    default naming a column bench3 does not build, then one line further on with
+    ``ConfigError: Config.expr_pca_dim=32 exceeds the 28 genes`` — because the canonical form was
+    two steps and only the first was reachable from one name. Nine drivers spell it
+    ``clamp_config_to_input(base_config(seed, **overrides), input_path)``; this is that expression
+    behind one name, so the tenth cannot take half of it.
+
+    Prefer this over calling the two separately. ``base_config`` stays public for the callers that
+    genuinely have no input path yet (a config being *built* to persist rather than to fit under).
+    """
+    return clamp_config_to_input(base_config(int(seed), **overrides), input_path)
+
+
 def flattened_from_input(input_path: str | Path) -> bool:
     """Read ``uns['paper_protocol']['flattened_z']`` — and refuse to guess it.
 

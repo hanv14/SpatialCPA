@@ -93,11 +93,14 @@ def main(argv: list[str] | None = None) -> int:
     from spatialcpav25_gen.infer.planes import plane_from_normal
     from spatialcpav25_gen.model.layout import cells_near_plane
 
-    from _starmap_run import base_config, load_training_volume
+    from _starmap_run import load_training_volume, prepare_config
 
-    # `base_config`, not `Config()`: bench3 builds carry no `region` column, and Config's default
-    # `region_key="region"` makes `load_volume` raise a SchemaError before any geometry is read.
-    cfg = base_config(seed=0)
+    # The whole canonical form, not half of it. Two of Config's defaults are wrong for a bench3
+    # build and BOTH abort the load before any geometry is read: `region_key="region"` names an
+    # obs column these files do not carry, and `expr_pca_dim=32` exceeds tier-1's 28-gene panel.
+    # This script reads neither field -- see reports/angle_budget_config_note.md on why the load
+    # validates them anyway.
+    cfg = prepare_config(seed=0, input_path=paths.input)
     vol = load_training_volume(cfg, paths.input)
     xyz = np.concatenate([np.asarray(to_xyz(s), dtype=np.float64) for s in vol.sections], axis=0)
     lo, hi = xyz.min(axis=0), xyz.max(axis=0)
@@ -241,10 +244,15 @@ def _self_check() -> int:
     # The wiring, not the scoring (specs/10 §4.2p, §4.2q). This runner has no checkpoint to
     # restore a Config from, so `base_config` is the only sanctioned source; reaching for a bare
     # `Config()` is what took its first real run down inside `loaders.py`.
-    from _contract import bench3_config_discipline, uses_shared_base_config
+    from _contract import (
+        bench3_clamp_discipline,
+        bench3_config_discipline,
+        uses_shared_base_config,
+    )
 
     checks += uses_shared_base_config("angle_budget.py")
     checks += bench3_config_discipline()
+    checks += bench3_clamp_discipline()
     for label, ok in checks:
         print(f"  {'ok  ' if ok else 'FAIL'} {label}")
     failed = sum(1 for _l, ok in checks if not ok)

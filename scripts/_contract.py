@@ -133,6 +133,84 @@ def bench3_config_discipline() -> list[tuple[str, bool]]:
     ]
 
 
+# The clamp's sanctioned routes: the helper itself, the two wrappers that call it, or a config
+# restored from a checkpoint (which was persisted by a run that had already clamped).
+CLAMP_ROUTES = ("clamp_config_to_input", "clamp_config_to_volume", "prepare_config", "arm_config")
+
+
+def restores_a_persisted_config(source: str) -> bool:
+    """``Config(**ckpt["config"])`` — a config that was already clamped by whatever persisted it.
+
+    Distinguished structurally from ``Config(**BENCH3_KEYS)``, which splats a bare ``Name`` and
+    clamps nothing: a restored config is splatted from a **subscript** into a loaded checkpoint.
+    """
+    for node in ast.walk(ast.parse(source)):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+            continue
+        if node.func.id != "Config":
+            continue
+        for kw in node.keywords:
+            if kw.arg is None and isinstance(kw.value, ast.Subscript):
+                return True
+    return False
+
+
+def clamps_its_config(source: str) -> bool:
+    """Does this source ask for the clamp, by any of its sanctioned routes?"""
+    return any(route in source for route in CLAMP_ROUTES) or restores_a_persisted_config(source)
+
+
+def bench3_clamp_discipline() -> list[tuple[str, bool]]:
+    """...and must then apply ``specs/10`` §0's clamp, which is the step *after* construction.
+
+    The half of the canonical form that :func:`bench3_config_discipline` missed. Getting the obs
+    keys right gets the load one line further and no further: ``validate_config_against_volume``
+    also refuses ``expr_pca_dim=32`` against tier-1's 28-gene panel, and nine drivers narrow it
+    with ``clamp_config_to_input`` before the volume is built. A runner that constructs its config
+    correctly and skips the clamp still cannot load the volume.
+
+    Statically decidable for the same reason the construction check is, and for the same *limited*
+    reason: what the clamp will narrow *to* depends on the file and is not knowable here. Whether
+    the runner asks for it at all does not.
+    """
+    offenders: list[str] = []
+    scanned = 0
+    for path in sorted(SCRIPTS.glob("*.py")):
+        if path.name.startswith("_"):
+            continue
+        text = path.read_text()
+        if "load_training_volume" not in text:
+            continue
+        scanned += 1
+        if not clamps_its_config(text):
+            offenders.append(path.name)
+    return [
+        (
+            f"every script loading a bench3 volume also applies specs/10 §0's clamp "
+            f"({scanned} scanned)"
+            + (f" — OFFENDERS: {', '.join(offenders)}" if offenders else ""),
+            not offenders,
+        ),
+        (
+            "and it still rejects a correctly-keyed config that skips the clamp — the crash one "
+            "line after the one the construction check was written for",
+            not clamps_its_config("cfg = base_config(0)\nvol = load_training_volume(cfg, p)\n"),
+        ),
+        (
+            "and a checkpoint-restored config still counts, because it was clamped when persisted",
+            clamps_its_config('cfg = Config(**ckpt["config"])'),
+        ),
+        (
+            "while `Config(**BENCH3_KEYS)` does NOT, because splatting keys clamps nothing",
+            not clamps_its_config("cfg = Config(**BENCH3_KEYS)"),
+        ),
+        (
+            "and `prepare_config` counts on its own, being both halves behind one name",
+            clamps_its_config("cfg = prepare_config(0, path)"),
+        ),
+    ]
+
+
 def uses_shared_base_config(script: str) -> list[tuple[str, bool]]:
     """This particular script builds its Config from the shared builder. Scoped to one file.
 
@@ -147,6 +225,9 @@ def uses_shared_base_config(script: str) -> list[tuple[str, bool]]:
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
     }
     return [
-        (f"{script} builds its Config with the shared `base_config`", "base_config" in calls),
+        (
+            f"{script} gets its Config from the shared builder, CLAMP INCLUDED",
+            "prepare_config" in calls or ("base_config" in calls and "clamp_config_to_input" in calls),
+        ),
         (f"{script} constructs no Config of its own", not unsafe_config_calls(text)),
     ]

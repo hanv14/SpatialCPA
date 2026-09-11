@@ -48,6 +48,8 @@ from spatialcpav25_gen.model.layout import fit_repulsion
 from spatialcpav25_gen.model.spatialcpav25_gen import CTFFlow, TrainingData, train_ctfflow
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import t10_chain_diagnostic as chain
+from _starmap_run import clamp_config_to_input
 from t10_chain_diagnostic import build_embeddings, load_training_volume
 
 SEED = 1
@@ -98,6 +100,15 @@ def run_arm(link: str, steps: int, save_to: str | None) -> dict:
         ell_z=132.0,
         decoder_mu_link=link,
     ).replace(section_key="section", coord_key="spatial", celltype_key="cell_type", region_key=None)
+    # specs/10 §0's clamp, which every other bench3 driver applies before the volume is built.
+    # A NO-OP on tier-1 as this arm is written -- expr_pca_dim is pinned to 16 against a 28-gene
+    # panel -- so the config, its hash and this script's recorded numbers are unchanged. Added
+    # because "under the panel width" was an accident of one hardcoded constant and not a
+    # property anyone had checked (`_contract.bench3_clamp_discipline`).
+    # `chain.INPUT` through the module, not a name copied at import time: that global is
+    # reassigned by the diagnostic's own main, and a stale copy here would clamp against a
+    # different file from the one `load_training_volume` then reads.
+    cfg = clamp_config_to_input(cfg, chain.INPUT)
 
     vol = load_training_volume(cfg)
     model = CTFFlow(cfg, TrainingData.build(vol, cfg), build_embeddings(cfg, vol), grf_seed=SEED)
