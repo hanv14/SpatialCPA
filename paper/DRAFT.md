@@ -1,6 +1,7 @@
 # SpatialCPA-v25-Gen: section generation at an arbitrary plane, and the limits of evaluating it
 
 *Full draft. Every number is measured and sourced; the provenance of each is in `reports/`.*
+*Figures are in `paper/figures/`, drawn from committed JSON by `scripts/make_figures.py`; `paper/FIGURES.md` is the figure list, including the one deliberate omission.*
 
 ---
 
@@ -47,6 +48,11 @@ computable from published constants and a coordinate file:
    cell count. **Any difference below roughly 0.2 is inside the range a section carrying no type
    information at all can reach** (§5.6).
 
+They also say that most specimens cannot be evaluated obliquely at all. Across every built dataset we
+could read, **three of four stop at 5°** — a tilt that is, on a 21.6 : 1 slab, a coronal section —
+and the fourth reaches **60°**. What separates it is not size or shape but **depth**: it is a 200 µm
+block cut into slabs, where the others are stacks of thin sections (§4.4).
+
 Together these say that an oblique evaluation on serial-section data is not powered to separate two
 plausible methods, and we show it directly: with the leak removed from the baseline and a real
 precision bound attached, the difference between our layout and the previous one is **0.39σ at 30°
@@ -82,6 +88,9 @@ actually cuts. The two are different objects; the standard metric cannot tell th
 
 That our layout is better off-axis, or worse. That the demonstration succeeded. Both would require a
 resolution the available instrument does not have, and §5.6 says how much more would be needed.
+
+---
+
 # 2. Method
 
 The system carries a volume as a **continuous field** rather than as an indexed stack, so that every
@@ -177,12 +186,20 @@ us.
 
 Held-out sections are never touched by training, calibration or configuration selection; the
 separation is enforced by type rather than by convention.
+
+---
+
 # 3. Two bounds on oblique evaluation
 
 *Written before our own oblique result is shown. Both are properties of serial-section data and of
 the standard evaluation metric, not of any method, and we have not found either stated.*
 
 ## 3.1 The comb limit — what an oblique ground truth can contain
+
+![Figure 1 — An oblique ground truth is a comb, not a section.](figures/F1_comb.svg)
+
+**Figure 1 — An oblique ground truth is a comb, not a section.** One panel per scored angle, drawn to scale from the measured stratum period and gap. `fill = t·cos θ / s` is the fraction of the plane real cells can occupy; at 90° it is exactly 0. This bounds any method, not ours.
+
 
 Three-dimensional spatial transcriptomics is published as a stack of serial sections. There is no
 obliquely-cut section in such a dataset, so an oblique ground truth must be assembled from the cells
@@ -236,6 +253,11 @@ captures a block rather than a stack, which has no `s` and to which the limit do
 
 ## 3.2 The resolution limit — what the standard metric can distinguish
 
+![Figure 2 — Two bounds, and only one of them moves with angle.](figures/F2_bounds.svg)
+
+**Figure 2 — Two bounds, and only one of them moves with angle.** *A*: what an oblique ground truth can contain collapses with angle. *B*: what the statistic can distinguish does not move — `blur / radius = √(eps·scale)` is a dimensionless constant of `celltype_localization`, ≈ 0.26–0.30 on every angle measured, and therefore the same on any dataset at any magnification. The flat line is the surprising half.
+
+
 `paper_celltype_localization`, the metric this literature scores spatial fidelity with, normalises
 coordinates by the tissue radius and transports under an entropic Sinkhorn kernel
 `exp(−d²/(eps·scale))` with `eps = 0.05` and `scale` the median squared inter-cell distance. Its
@@ -269,6 +291,9 @@ second is by far the looser.
 That is not a licence for 90°. It is the reason 90° must still be refused: at `fill = 0` the only
 thing that would make a score look reasonable is the instrument's inability to see that the object
 is a set of lines. We take the exclusion on measure, not on the metric's opinion.
+
+---
+
 # 4. What geometry an oblique evaluation requires
 
 *Free to compute: coordinates and cell-type labels, no fit, no model, no generation. The gates are
@@ -325,26 +350,48 @@ A third condition comes from §3.1 rather than from the metric:
   volume's own median nearest-neighbour distance. A stratum narrower than the spacing between
   neighbouring cells is a line drawn through a point cloud, not a section. Every term is measured.
 
-## 4.4 Two specimens, measured
+## 4.4 Every built specimen, measured
+
+| dataset | cells | extent (µm) | **in-plane : depth** | `s` | **budget** | cells there | first failure |
+|---|---|---|---|---|---|---|---|
+| `starmap_visual_cortex` | 16 527 | 1545 × 1301 × **66** | 21.6 : 1 | 22.0 µm | **5°** | 3 211 | 10° — largest type 187 < 250 (G2) |
+| `deep_starmap` | 115 830 | 4385 × 4155 × **125** | 34.1 : 1 | 42.0 µm | **5°** | 14 209 | 10° — 59 of 124 types, below 60% (G1) |
+| `merfish_thick_cortex` | 17 467 | 2160 × 1950 × **83** | 24.8 : 1 | 27.5 µm | **5°** | 2 791 | 10° — largest type 207 < 250 (G2) |
+| **`merfish_thick_hypothalamus`** | 47 189 | 1613 × 1884 × **170** | **10.3 : 1** | 57.5 µm | **90°** ⚠️ | 1 988 | *clears every angle measured* |
+| `cosmx_nsclc_3d` | — | — | — | — | *not read* | — | leakage-guarded input not built |
+| `exseq_breast_cancer` | — | — | — | — | *not read* | — | leakage-guarded input not built |
+| `exseq_visual_cortex` | — | — | — | — | *not read* | — | leakage-guarded input not built |
+| `allen_merfish_brain` | — | — | — | — | *not read* | — | leakage-guarded input not built |
+
+A dataset that could not be read is a named row with its reason, not a silent omission. ⚠️ **That 90° is what the sweep's `t = s` default gives; the budget this paper quotes for that specimen is 60°** — see the note at the end of §4.7.
+
+### The result is bimodal, not graded
+
+**Three of the four readable specimens give exactly 5°. The fourth gives 60°.** Nothing in between,
+and nothing at 10° — every one of the three fails at the first angle past 5°.
+
+**And the budget does not track the aspect ratio.** The three that stop at 5° span 21.6 : 1, 24.8 : 1
+and **34.1 : 1**, in no particular order; `deep_starmap` has seven times the cells of
+`starmap_visual_cortex` and the same budget. What separates the fourth specimen is not shape or
+size but **depth**: 170 µm against 66, 83 and 125 — and depth is set by the preparation.
+
+`merfish_thick_hypothalamus` is **a 200 µm block cut into seven ~28.6 µm slabs**. The other three are
+stacks of thin sections. That single distinction is the whole of the difference between 5° and 60°.
+
+**A 5° tilt on a 21.6 : 1 slab is a coronal section.** The headline dataset of this literature — and
+the two next-largest — cannot carry an oblique demonstration at any angle a reader would call
+oblique. Not because of any method: because there is nothing to cut.
+
+### The two specimens the rest of this paper uses
 
 | | `starmap_visual_cortex` | `merfish_thick_hypothalamus` |
 |---|---|---|
-| extent (µm) | 1545 × 1301 × **66** | 1613 × 1884 × **170** |
-| **in-plane : depth** | **21.6 : 1** | **10.3 : 1** |
-| sections (training) | 4 | 4 |
-| spacing `s` | 22.0 µm | 57.5 µm |
+| **in-plane : depth** | 21.6 : 1 | **10.3 : 1** |
 | slab `t` | ≤ 22.0 µm (not recorded) | 28.6 µm (from the protocol) |
-| **largest scorable angle** | **5°** | **60°** |
-| cells there | 3 248 | 1 011 |
+| **largest scorable angle** | **5°** | **60°** (90° only under the `t = s` default — see the note at §4.7) |
 | fill there | ≤ 0.99 | 0.25 |
 
-**A 5° tilt on a 21.6 : 1 slab is a coronal section.** The headline dataset of this literature cannot
-carry an oblique demonstration at any angle a reader would call oblique — not because of any method,
-but because 66 µm of depth against 1.5 mm in plane leaves nothing to cut.
-
-**The second specimen is not a stack of thin sections.** It is a 200 µm block cut into seven ~28.6 µm
-slabs, and that single fact — a block rather than a stack — is what moves the largest scorable angle
-from 5° to 60°. Depth is the whole constraint, and it is a property of the *preparation*.
+They bracket the range: the worst geometry in the table and the best.
 
 ## 4.5 A pre-build screen, and two datasets ruled out by arithmetic
 
@@ -402,24 +449,46 @@ pitch and double the fill**, at some cost in how far a held-out plane sits from 
 claim that trade is worth making in general; we claim it is a trade nobody currently knows they are
 making.
 
-## 4.7 The sweep
+## 4.7 Scope
 
-<!-- TABLE PENDING: the eight-dataset sweep from reports/angle_budget.md. Four datasets were read
-     and four could not be, for want of a built input. Rows are not reproduced here because that
-     report has not been read into the draft; the two specimens in §4.4 are quoted from runs held
-     in full. Do not fabricate the missing rows. -->
+Four built datasets were read and four could not be, for want of a built input (§4.4). The full
+per-angle tables for all four readable specimens are in `reports/angle_budget.md`.
 
-`scripts/angle_budget.py --datasets all` sweeps every built dataset carrying cell types. Four were
-read and four could not be, for want of a built input; a dataset that cannot be read is reported as a
-named row rather than a silent omission.
+**The replication candidate was measured and does not clear.** `merfish_thick_cortex` is the closest
+analogue to the specimen that works — the same holdout design, the same thick-slab preparation at
+half the thickness — and it stops at **5°**, failing G2 at 10° with a largest type of 207 against
+250. So the wide-angle result rests on **one specimen**, and the most likely candidate to replicate it has
+been checked and does not. That is §7.1's first limitation and it is now measured rather than
+anticipated.
 
-The two specimens in §4.4 are the two that **bracket** the finding — the worst and the best geometry
-available to us — and the arithmetic of §4.2 and §4.5 is what generalises, not any particular row.
+⚠️ **The sweep behind §4.4 was run before its own correction landed, and one row does not survive
+it.** Slab thickness is recorded in none of the four builds, so the runner defaulted `t` to the
+section spacing on all four. A slab cannot be thicker than its own spacing, so `t = s` is the **most
+generous** geometry available: every cell count, scorable-type count and `fill` in §4.4 is an
+**upper bound**.
 
-⚠️ `starmap_visual_cortex`'s row was measured before two corrections (a reference plane that
-straddled two sections, and a slab thickness defaulted from the section spacing). The **5°** verdict
-is unaffected — G2 is an absolute count and 10° fails it at 159 cells against 250, whichever
-reference row is used — but the fill figures in that row are upper bounds, as §3.1 states.
+For the three 5° rows that is conservative — they fail G1 or G2 on the most generous geometry, and a
+truer `t` can only make them fail harder. **For `merfish_thick_hypothalamus` it runs the other way.**
+The same sweep at `t` = 13.5 µm (`reports/angle_budget_thin.json`) gives that specimen a budget of
+**30°**, failing G1 at 45°. Its 90° figure is a property of the default, not of the specimen.
+**The budget this paper quotes for it is 60°** — measured by §5's own run at the protocol thickness
+of 28.6 µm with the stratum-width gate applied — and 90° is reported only as what the default gives.
+
+This is the **second** time this number has been withdrawn, and the second withdrawal is the more
+useful one. `retractions.md` R5 withdrew it once, on the same cause, and recorded the runner as
+fixed. §4.4 reports it again because that sweep predates the fix. But a **post-fix** run of the same
+specimen is also committed (`reports/angle_budget_true.json`), and it gives the same `t` = 57.5 µm and
+the same 90°: the fix takes a measured thickness where the loader recorded one, and this build
+records none. What the fix added was the record saying, in its own words, that the fallback
+*"OVERSTATES the slab"* on a leakage-guarded input — **and that sentence sat in the artifact while the
+number it qualifies was read off as a budget.** Recorded as R18, with the check that now catches it
+(`angle_budget.py --audit`).
+
+§4's argument does not rest on that number. It rests on the gap between a stack of thin sections and
+a block cut into slabs, and **60° against 5° is the same gap.**
+
+---
+
 # 5. Off-axis evaluation, and why it could not be resolved
 
 *Every number here comes from `reports/oblique_demo.md` and its pre-registration. The angles, the
@@ -476,6 +545,11 @@ of its own noise.**
 
 ## 5.3 The footprint: the baseline is not a section at these angles
 
+![Figure 4 — The previous method's off-axis output is not a section of the plane.](figures/F4_footprint.svg)
+
+**Figure 4 — The previous method's off-axis output is not a section of the plane.** In-plane extent along the comb axis against the plane's own footprint (shaded). `copy-nearest-z` spans 4.2–4.9× the plane with 71–75% of its cells outside it; `resample-pd` spans 1.00× with 22–35% outside. Per §5.3 this is a claim about what can be scored **as a section of this plane**, not a general claim about the previous method's output.
+
+
 Pre-registered with its bands before the measurement was written, the middle band defaulting against
 us:
 
@@ -529,6 +603,11 @@ shift it, because a jackknife estimates the variance of a statistic and never re
 
 ## 5.5 The result
 
+![Figure 6 — Not one readable difference reaches a single standard error.](figures/F6_result.svg)
+
+**Figure 6 — Not one readable difference reaches a single standard error.** The bars are a leave-one-scorable-type-out jackknife combined in quadrature: an **upper bound on precision, not a confidence interval**, and not narrowed (§5.4). 60° is shown greyed rather than omitted because its null control fails P2.
+
+
 **At 45°, the largest fully readable angle, `resample-pd` scores +0.1167 against the baseline's
 +0.3340 — a difference of −0.2173 against a combined precision bound of 0.4171, i.e. 0.52σ.**
 
@@ -553,6 +632,11 @@ What is **not** available from this table is the claim that our layout beats the
 off-axis, or that it loses to it. Neither is supported.
 
 ## 5.6 Why it could not be resolved: four measurements
+
+![Figure 5 — A section with randomised cell types scores 0.03–0.24, and it does not fall with cell count.](figures/F5_null_floor.svg)
+
+**Figure 5 — A section with randomised cell types scores 0.03–0.24, and it does not fall with cell count.** *A*: the ground truth's own types permuted among its own cells and scored against itself — no method, no donor, no arm. *B*: the two arms on the same axis. The arm-to-arm differences are the same size as the band's own width, which is why §5.5 could not resolve them.
+
 
 Three of these are properties of the data and the standard metric rather than of any method, and we
 have not found any of them stated in the literature.
@@ -595,6 +679,9 @@ succeeded. One specimen, one metric, four sections, and a comparison the instrum
 a holdout that does not remove alternate sections (halving `s`), or a metric whose resolution is
 finer than 0.3 of the tissue radius and whose floor under randomised labels is nearer zero. The first
 two are preparation; the third is a measurement problem this work has characterised and not solved.
+
+---
+
 # 6. What the method does not do
 
 *Volunteered, ahead of the demonstration section rather than after it. Everything here was measured
@@ -642,16 +729,22 @@ All of the above is `paper_celltype_localization` or `paper_morans_pearson`. The
 only ~0.26–0.30 of the tissue radius — **186 µm** on the coronal sections these were scored on.
 **None of these numbers is evidence about placement finer than that**, including the ones that
 favour us.
+
+---
+
 # 7. Limitations, and what we withdrew
 
 ## 7.1 Limitations
 
-1. **One specimen carries §5.** `merfish_thick_hypothalamus` is the only built volume whose geometry
-   admits a scorable oblique angle, and it is one specimen. The replication candidate is
-   `merfish_thick_cortex` — same holdout design, same thick-slab preparation at half the thickness —
-   and a pre-build screen rules two other candidates out on arithmetic: an oblique strip retains
-   2–4% of a volume, so a specimen needs ~8 300 cells in its largest type, and two candidates hold
-   fewer than 2 000 cells in total.
+1. **One specimen carries §5, and the replication candidate has been checked and fails.**
+   `merfish_thick_hypothalamus` is the only built volume whose geometry admits a scorable oblique
+   angle. **`merfish_thick_cortex` — the closest analogue, same holdout design, same thick-slab
+   preparation at half the thickness — was measured and stops at 5°**, failing G2 at 10° with a
+   largest type of 207 against the metric's 250 (§4.4). `deep_starmap`, with seven times the cells,
+   also stops at 5°. So the result rests on one specimen and the most likely replication has been
+   attempted and did not succeed. A pre-build screen rules two further candidates out on arithmetic
+   before they are built: an oblique strip retains 2–4% of a volume, so a specimen needs ~8 300
+   cells in its largest type, and those two hold fewer than 2 000 in total.
 2. **Four sections.** The training volume has four, so the comb has four teeth. §3.1's bound is
    correspondingly tight and every fill figure is specific to this geometry.
 3. **`celltype_localization` resolves only ~0.26–0.30 of the tissue radius** — 186 µm on a coronal
@@ -665,9 +758,10 @@ favour us.
 
 ## 7.2 What we withdrew, and why it is here
 
-Seven claims of our own were retracted during this work, each with the evidence that disproved it
-(`reports/retractions.md`). We list them because a reader who cannot see what an analysis rejected
-cannot calibrate what it accepted.
+**Eighteen** claims of our own were retracted during this work, each with the evidence that
+disproved it (`reports/retractions.md`). The eight below are those that would have changed a number
+a reader of this paper would otherwise have seen; the rest are listed in that file. We give them
+because a reader who cannot see what an analysis rejected cannot calibrate what it accepted.
 
 | | claim withdrawn | what disproved it |
 |---|---|---|
@@ -678,11 +772,15 @@ cannot calibrate what it accepted.
 | R5 | "this specimen clears 90°" | measured on a slab 2.1× too thick, because a leakage-guarded input's section spacing is a multiple of the real slab pitch |
 | R6 | a screening ratio | mixed a full-dataset cell count with a training-volume count |
 | R7 | a residual-modulation table | an FFT on a discrete grid, whose value moved two orders of magnitude with the grid size against a true value of 3 × 10⁻¹² |
+| R18 | "this specimen clears 90°", **a second time** | the cross-dataset sweep that reports it predates R5's own fix: its records carry no `thickness_source`, a field only the fixed runner writes |
 
-**R5 and R7 are the two that would have reached print.** R5 would have put a headline claim at 90° on
-a doubled slab; R7 would have published floating-point noise as a measurement. Both were caught by a
-self-check that asserted a *margin* rather than a value — a practice we would recommend to anyone
-reporting a derived quantity.
+**R5, R7 and R18 are the three that would have reached print.** R5 would have put a headline claim
+at 90° on a doubled slab; R7 would have published floating-point noise as a measurement; R18 is R5
+returning through a report generated before its fix, and it was still in §4's table while this paper
+was being assembled. R5 and R7 were caught by a self-check that asserted a *margin* rather than a
+value — a practice we would recommend to anyone reporting a derived quantity. **R18 was not caught by
+any check at all**: it was caught by drawing a figure, which forced the thickness to be read out of
+the record instead of off the table.
 
 ## 7.3 Two methodological rules this work paid for
 
@@ -692,3 +790,8 @@ reporting a derived quantity.
   general ("a section's thickness is the volume's section spacing") and wrong on the particular input
   (a leakage-guarded volume with alternate sections removed). Both were in a *reference* quantity
   rather than in a gate, where they are hardest to see.
+- **A retraction is closed by a re-run, not by a patch.** R5 recorded its runner as fixed and the
+  fix was real, but §4's sweep had already been run and was never redone, so the withdrawn number
+  reappeared in a later report as R18. Nothing in `reports/` distinguished a pre-fix run from a
+  post-fix one until we looked for a field only the fixed runner writes. **Make the fix change the
+  artifact's shape, not only its numbers** — then a stale run is visible without recomputing it.

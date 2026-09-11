@@ -41,6 +41,11 @@ computable from published constants and a coordinate file:
    cell count. **Any difference below roughly 0.2 is inside the range a section carrying no type
    information at all can reach** (§5.6).
 
+They also say that most specimens cannot be evaluated obliquely at all. Across every built dataset we
+could read, **three of four stop at 5°** — a tilt that is, on a 21.6 : 1 slab, a coronal section —
+and the fourth reaches **60°**. What separates it is not size or shape but **depth**: it is a 200 µm
+block cut into slabs, where the others are stacks of thin sections (§4.4).
+
 Together these say that an oblique evaluation on serial-section data is not powered to separate two
 plausible methods, and we show it directly: with the leak removed from the baseline and a real
 precision bound attached, the difference between our layout and the previous one is **0.39σ at 30°

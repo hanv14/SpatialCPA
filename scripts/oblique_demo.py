@@ -579,6 +579,34 @@ def _self_check() -> int:
          read_self_null([], 1000)[0] == NULL_CEILING),
     ]
 
+    # --- the serialisation guard: it must FIRE on a moved number and pass on an added field
+    import json as _json
+    import tempfile as _tf
+
+    base = {"angles": [{"angle_deg": 30.0, "n_truth": 1906, "fill_ratio": 0.43,
+                        "arms": {"a": {"1": {METRIC: 0.13}}}}],
+            "theta_star_deg": 60.0, "scored_angles": [30.0]}
+    with _tf.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+        _json.dump(base, fh)
+        ref = fh.name
+    added = _json.loads(_json.dumps(base))
+    added["angles"][0]["coords"] = {"ground_truth": [[0.0, 0.0]]}
+    moved = _json.loads(_json.dumps(base))
+    moved["angles"][0]["arms"]["a"]["1"][METRIC] = 0.14
+    dropped = _json.loads(_json.dumps(base))
+    dropped["angles"][0].pop("n_truth")
+    checks += [
+        ("adding `coords` and nothing else verifies clean", verify_unchanged(added, ref) == []),
+        ("**a moved score FAILS the guard** — a serialisation that changes a number is a "
+         "re-measurement", any("arms" in d for d in verify_unchanged(moved, ref))),
+        ("and a dropped field fails too, rather than passing as absent",
+         any("n_truth" in d for d in verify_unchanged(dropped, ref))),
+        ("`coords` is the only field excluded, deliberately",
+         "coords" not in VERIFIED_FIELDS and "footprint" in VERIFIED_FIELDS),
+        ("the guard covers the scores, the footprint AND the preconditions",
+         {"arms", "footprint", "precondition_checks"} <= set(VERIFIED_FIELDS)),
+    ]
+
     from _contract import bench3_clamp_discipline, bench3_config_discipline, uses_shared_base_config
 
     checks += uses_shared_base_config("oblique_demo.py")
@@ -606,6 +634,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--weights", default=None,
                     help="optional checkpoint for the `field` ablation, which F1 keeps out of the "
                          "headline comparison. Every headline arm needs no fit.")
+    ap.add_argument("--emit-coords", action="store_true",
+                    help="also serialise each arm's and the ground truth's in-plane (u, v) into "
+                         "the JSON, for figures F1 and F4. A serialisation change only: nothing is "
+                         "re-measured and no scored number is recomputed")
+    ap.add_argument("--verify-unchanged", default=None,
+                    help="path to a previously written JSON. Every scored number, footprint and "
+                         "precondition in this run must match it EXACTLY, or the run fails. Use it "
+                         "with --emit-coords to prove the serialisation changed nothing.")
     ap.add_argument("--calibrate-null", action="store_true",
                     help="§5-ter: permute the ground truth's types among its OWN cells and score "
                          "it against itself, over seeds and subsample sizes. No method, no arm, "
@@ -774,6 +810,20 @@ def main(argv: list[str] | None = None) -> int:
     record["null_ceiling_per_angle"] = {
         f"{r['angle_deg']:.0f}": r.get("null_ceiling") for r in rows if r.get("self_null")
     }
+
+    if args.verify_unchanged:
+        diffs = verify_unchanged(record, args.verify_unchanged)
+        if diffs:
+            raise SystemExit(
+                "oblique_demo: --verify-unchanged FAILED. The serialisation was supposed to add "
+                "coordinates and change nothing else; these fields moved:\n  "
+                + "\n  ".join(diffs)
+                + "\nNothing has been written. A serialisation change that moves a number is a "
+                "re-measurement, and it does not get to pass as one."
+            )
+        print(f"  --verify-unchanged: every reported number matches {args.verify_unchanged} "
+              f"exactly ({len(VERIFIED_FIELDS)} fields x {len(record['angles'])} angles)",
+              flush=True)
 
     lines = render(record)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
@@ -1135,6 +1185,17 @@ def score_arms(rows, clean, vol, centre, half_extent, thickness, spacing, args, 
         row["footprint"] = {
             name: footprint(uv, truth_uv) for name, (uv, _t, _c) in arms.items()
         }
+        # --- F1/F4 serialisation. The coordinates are what the figures draw; the reports until now
+        # summarised them (extents, fractions) and stored none. This is a SERIALISATION change: no
+        # measurement is repeated, no scored number is recomputed, and `--verify-unchanged` asserts
+        # that against the committed report before writing.
+        if args.emit_coords:
+            row["coords"] = {
+                "ground_truth": np.round(truth_uv, 3).tolist(),
+                "ground_truth_type": np.asarray(truth.cell_type).tolist(),
+                **{name: np.round(np.asarray(uv, dtype=np.float64), 3).tolist()
+                   for name, (uv, _t, _c) in arms.items()},
+            }
         row["footprint_verdict"], row["footprint_why"] = footprint_verdict(
             row["footprint"]["copy-nearest-z"]
         )
@@ -1577,6 +1638,49 @@ def _refuses_two_columns() -> bool:
     except SystemExit:
         return True
     return False
+
+
+# Every field a figure must not be allowed to change. `coords` is deliberately absent: it is the
+# one thing the serialisation adds.
+VERIFIED_FIELDS = (
+    "fill_ratio", "stratum_width_um", "has_measure", "g1_margin_types", "metric_blur_um",
+    "metric_radius_um", "metric_scale", "comb_gap_um", "comb_period_um", "residual_modulation",
+    "n_truth", "n_donors", "n_strata", "scorable_types", "largest_type", "clears_g1_g2",
+    "qualifies", "footprint", "footprint_verdict", "arms", "arm_leaks", "precondition_checks",
+    "null_ceiling", "self_null_at_n", "pose_span_deg", "self_null",
+)
+
+
+def verify_unchanged(record: dict, reference_path: str) -> list[str]:
+    """Every previously reported number must be identical. Returns the differences, if any.
+
+    The point of `--emit-coords` is that it adds a field and changes nothing else. That is a claim,
+    and this is the check: it compares the new record against the committed one field by field,
+    excluding only `coords`. A serialisation change that moved a number would be a re-measurement
+    wearing a serialisation's clothes, and this refuses to let one pass as the other.
+    """
+    import json as _json
+
+    reference = _json.loads(Path(reference_path).read_text())
+    diffs: list[str] = []
+    old_rows = {float(r["angle_deg"]): r for r in reference.get("angles", [])}
+    new_rows = {float(r["angle_deg"]): r for r in record.get("angles", [])}
+    if set(old_rows) != set(new_rows):
+        diffs.append(f"angles differ: {sorted(old_rows)} vs {sorted(new_rows)}")
+    for deg in sorted(set(old_rows) & set(new_rows)):
+        for field in VERIFIED_FIELDS:
+            a, b = old_rows[deg].get(field), new_rows[deg].get(field)
+            if _json.dumps(a, sort_keys=True, default=str) != _json.dumps(
+                b, sort_keys=True, default=str
+            ):
+                diffs.append(f"{deg:.0f}°.{field} changed")
+    for key in ("theta_star_deg", "scored_angles", "null_ceiling_per_angle",
+                "slab_thickness_um", "section_spacing_um", "median_nn_um"):
+        if _json.dumps(reference.get(key), sort_keys=True, default=str) != _json.dumps(
+            record.get(key), sort_keys=True, default=str
+        ):
+            diffs.append(f"{key} changed")
+    return diffs
 
 
 def md_cell(text: str) -> str:

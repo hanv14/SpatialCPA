@@ -225,6 +225,51 @@ def measure_one(paths, args) -> dict:
     }
 
 
+# Fields this runner has written since a given retraction was fixed. A committed record that
+# lacks one was produced by a runner from BEFORE that fix, and its numbers are stale even though
+# nothing about them looks wrong. `retractions.md` R18: R5's slab-thickness fix landed in this
+# file, the cross-dataset sweep was never re-run, and the withdrawn 90 deg budget came back into
+# a paper section because no artifact distinguished a pre-fix run from a post-fix one.
+FIX_MARKERS = {"thickness_source": "R5 (slab thickness defaulted to the section spacing)"}
+
+
+def stale_records(payload: dict) -> list[tuple[str, str]]:
+    """(dataset, which fix it predates) for every record missing a post-fix field.
+
+    Reads a loaded `angle_budget*.json`. A record that carries the field -- with any value, the
+    fallback's own explanation included -- was written by a runner that had the fix; one that
+    carries it as null or not at all was not.
+    """
+    out: list[tuple[str, str]] = []
+    for rec in payload.get("datasets", []):
+        for field, fix in sorted(FIX_MARKERS.items()):
+            if rec.get(field) is None:
+                out.append((str(rec.get("dataset", "?")), fix))
+    return out
+
+
+def audit_artifacts(paths: list[str]) -> int:
+    """Name every committed sweep that predates a fix in this file. Reads, measures nothing."""
+    stale = 0
+    for path in paths:
+        f = Path(path)
+        if not f.exists():
+            print(f"  --   {path} (not present)")
+            continue
+        bad = stale_records(json.loads(f.read_text()))
+        if not bad:
+            print(f"  ok   {path}")
+            continue
+        stale += len(bad)
+        print(f"  STALE {path}")
+        for dataset, fix in bad:
+            print(f"         {dataset}: written before the fix for {fix}")
+    if stale:
+        print(f"\n{stale} stale record(s). Re-run the sweep; a fix is closed by a re-run, not by "
+              f"a patch (retractions.md R18).")
+    return 1 if stale else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--thickness", type=float, default=None,
@@ -237,10 +282,16 @@ def main(argv: list[str] | None = None) -> int:
                          "Free for every one of them: no fit, no model, no generation.")
     ap.add_argument("--out", default="reports/angle_budget.md")
     ap.add_argument("--self-check", action="store_true")
+    ap.add_argument("--audit", nargs="*", default=None, metavar="JSON",
+                    help="read committed angle_budget*.json and name any record written before a "
+                         "fix that landed in this file. Measures nothing. Default: reports/.")
     add_path_args(ap)
     args = ap.parse_args(argv)
     if args.self_check:
         return _self_check()
+    if args.audit is not None:
+        return audit_artifacts(args.audit or sorted(str(p) for p in
+                                                    Path("reports").glob("angle_budget*.json")))
 
     names = args.datasets or [args.dataset]
     if names == ["all"] or "all" in names:
@@ -519,6 +570,21 @@ def _self_check() -> int:
          "limit on the field" in one and "the_comb_limit" in one),
         ("the table says where its thickness came from, after the default overstated it 2.1x",
          "MEASURED" in one),
+        # ...and the ARTIFACT check the renderer check could not stand in for. The line above
+        # passes on a record this function built with the field already set, which is exactly how
+        # R18 got past it: the renderer was right and the committed sweep was old. These assert
+        # the auditor, so the auditor can be trusted when it is pointed at reports/.
+        ("a record written before R5's fix is flagged stale, however healthy its numbers look",
+         stale_records({"datasets": [{"dataset": "x", "angle_budget_deg": 90.0}]}) ==
+         [("x", FIX_MARKERS["thickness_source"])]),
+        ("an explicit null is flagged too, which is the exact shape the stale sweep has",
+         bool(stale_records({"datasets": [{"dataset": "x", "thickness_source": None}]}))),
+        ("but the FALLBACK's own explanation counts as post-fix: the fix made it say so, not "
+         "change it",
+         not stale_records({"datasets": [{"dataset": "x", "thickness_source":
+                                          "the volume's median section spacing -- ..."}]})),
+        ("and this runner's own records carry the field, so a fresh sweep audits clean",
+         not stale_records({"datasets": slabs + thick})),
         # The arithmetic itself: t cos(theta) / s, with t = s so the ratio is cos(theta).
         ("fill is exactly 1 at 0 deg and exactly 0 at 90 deg, with no free constant",
          abs(float(np.cos(np.deg2rad(0.0))) - 1.0) < 1e-12

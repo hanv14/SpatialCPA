@@ -54,26 +54,48 @@ A third condition comes from §3.1 rather than from the metric:
   volume's own median nearest-neighbour distance. A stratum narrower than the spacing between
   neighbouring cells is a line drawn through a point cloud, not a section. Every term is measured.
 
-## 4.4 Two specimens, measured
+## 4.4 Every built specimen, measured
+
+| dataset | cells | extent (µm) | **in-plane : depth** | `s` | **budget** | cells there | first failure |
+|---|---|---|---|---|---|---|---|
+| `starmap_visual_cortex` | 16 527 | 1545 × 1301 × **66** | 21.6 : 1 | 22.0 µm | **5°** | 3 211 | 10° — largest type 187 < 250 (G2) |
+| `deep_starmap` | 115 830 | 4385 × 4155 × **125** | 34.1 : 1 | 42.0 µm | **5°** | 14 209 | 10° — 59 of 124 types, below 60% (G1) |
+| `merfish_thick_cortex` | 17 467 | 2160 × 1950 × **83** | 24.8 : 1 | 27.5 µm | **5°** | 2 791 | 10° — largest type 207 < 250 (G2) |
+| **`merfish_thick_hypothalamus`** | 47 189 | 1613 × 1884 × **170** | **10.3 : 1** | 57.5 µm | **90°** ⚠️ | 1 988 | *clears every angle measured* |
+| `cosmx_nsclc_3d` | — | — | — | — | *not read* | — | leakage-guarded input not built |
+| `exseq_breast_cancer` | — | — | — | — | *not read* | — | leakage-guarded input not built |
+| `exseq_visual_cortex` | — | — | — | — | *not read* | — | leakage-guarded input not built |
+| `allen_merfish_brain` | — | — | — | — | *not read* | — | leakage-guarded input not built |
+
+A dataset that could not be read is a named row with its reason, not a silent omission. ⚠️ **That 90° is what the sweep's `t = s` default gives; the budget this paper quotes for that specimen is 60°** — see the note at the end of §4.7.
+
+### The result is bimodal, not graded
+
+**Three of the four readable specimens give exactly 5°. The fourth gives 60°.** Nothing in between,
+and nothing at 10° — every one of the three fails at the first angle past 5°.
+
+**And the budget does not track the aspect ratio.** The three that stop at 5° span 21.6 : 1, 24.8 : 1
+and **34.1 : 1**, in no particular order; `deep_starmap` has seven times the cells of
+`starmap_visual_cortex` and the same budget. What separates the fourth specimen is not shape or
+size but **depth**: 170 µm against 66, 83 and 125 — and depth is set by the preparation.
+
+`merfish_thick_hypothalamus` is **a 200 µm block cut into seven ~28.6 µm slabs**. The other three are
+stacks of thin sections. That single distinction is the whole of the difference between 5° and 60°.
+
+**A 5° tilt on a 21.6 : 1 slab is a coronal section.** The headline dataset of this literature — and
+the two next-largest — cannot carry an oblique demonstration at any angle a reader would call
+oblique. Not because of any method: because there is nothing to cut.
+
+### The two specimens the rest of this paper uses
 
 | | `starmap_visual_cortex` | `merfish_thick_hypothalamus` |
 |---|---|---|
-| extent (µm) | 1545 × 1301 × **66** | 1613 × 1884 × **170** |
-| **in-plane : depth** | **21.6 : 1** | **10.3 : 1** |
-| sections (training) | 4 | 4 |
-| spacing `s` | 22.0 µm | 57.5 µm |
+| **in-plane : depth** | 21.6 : 1 | **10.3 : 1** |
 | slab `t` | ≤ 22.0 µm (not recorded) | 28.6 µm (from the protocol) |
-| **largest scorable angle** | **5°** | **60°** |
-| cells there | 3 248 | 1 011 |
+| **largest scorable angle** | **5°** | **60°** (90° only under the `t = s` default — see the note at §4.7) |
 | fill there | ≤ 0.99 | 0.25 |
 
-**A 5° tilt on a 21.6 : 1 slab is a coronal section.** The headline dataset of this literature cannot
-carry an oblique demonstration at any angle a reader would call oblique — not because of any method,
-but because 66 µm of depth against 1.5 mm in plane leaves nothing to cut.
-
-**The second specimen is not a stack of thin sections.** It is a 200 µm block cut into seven ~28.6 µm
-slabs, and that single fact — a block rather than a stack — is what moves the largest scorable angle
-from 5° to 60°. Depth is the whole constraint, and it is a property of the *preparation*.
+They bracket the range: the worst geometry in the table and the best.
 
 ## 4.5 A pre-build screen, and two datasets ruled out by arithmetic
 
@@ -131,21 +153,40 @@ pitch and double the fill**, at some cost in how far a held-out plane sits from 
 claim that trade is worth making in general; we claim it is a trade nobody currently knows they are
 making.
 
-## 4.7 The sweep
+## 4.7 Scope
 
-<!-- TABLE PENDING: the eight-dataset sweep from reports/angle_budget.md. Four datasets were read
-     and four could not be, for want of a built input. Rows are not reproduced here because that
-     report has not been read into the draft; the two specimens in §4.4 are quoted from runs held
-     in full. Do not fabricate the missing rows. -->
+Four built datasets were read and four could not be, for want of a built input (§4.4). The full
+per-angle tables for all four readable specimens are in `reports/angle_budget.md`.
 
-`scripts/angle_budget.py --datasets all` sweeps every built dataset carrying cell types. Four were
-read and four could not be, for want of a built input; a dataset that cannot be read is reported as a
-named row rather than a silent omission.
+**The replication candidate was measured and does not clear.** `merfish_thick_cortex` is the closest
+analogue to the specimen that works — the same holdout design, the same thick-slab preparation at
+half the thickness — and it stops at **5°**, failing G2 at 10° with a largest type of 207 against
+250. So the wide-angle result rests on **one specimen**, and the most likely candidate to replicate it has
+been checked and does not. That is §7.1's first limitation and it is now measured rather than
+anticipated.
 
-The two specimens in §4.4 are the two that **bracket** the finding — the worst and the best geometry
-available to us — and the arithmetic of §4.2 and §4.5 is what generalises, not any particular row.
+⚠️ **The sweep behind §4.4 was run before its own correction landed, and one row does not survive
+it.** Slab thickness is recorded in none of the four builds, so the runner defaulted `t` to the
+section spacing on all four. A slab cannot be thicker than its own spacing, so `t = s` is the **most
+generous** geometry available: every cell count, scorable-type count and `fill` in §4.4 is an
+**upper bound**.
 
-⚠️ `starmap_visual_cortex`'s row was measured before two corrections (a reference plane that
-straddled two sections, and a slab thickness defaulted from the section spacing). The **5°** verdict
-is unaffected — G2 is an absolute count and 10° fails it at 159 cells against 250, whichever
-reference row is used — but the fill figures in that row are upper bounds, as §3.1 states.
+For the three 5° rows that is conservative — they fail G1 or G2 on the most generous geometry, and a
+truer `t` can only make them fail harder. **For `merfish_thick_hypothalamus` it runs the other way.**
+The same sweep at `t` = 13.5 µm (`reports/angle_budget_thin.json`) gives that specimen a budget of
+**30°**, failing G1 at 45°. Its 90° figure is a property of the default, not of the specimen.
+**The budget this paper quotes for it is 60°** — measured by §5's own run at the protocol thickness
+of 28.6 µm with the stratum-width gate applied — and 90° is reported only as what the default gives.
+
+This is the **second** time this number has been withdrawn, and the second withdrawal is the more
+useful one. `retractions.md` R5 withdrew it once, on the same cause, and recorded the runner as
+fixed. §4.4 reports it again because that sweep predates the fix. But a **post-fix** run of the same
+specimen is also committed (`reports/angle_budget_true.json`), and it gives the same `t` = 57.5 µm and
+the same 90°: the fix takes a measured thickness where the loader recorded one, and this build
+records none. What the fix added was the record saying, in its own words, that the fallback
+*"OVERSTATES the slab"* on a leakage-guarded input — **and that sentence sat in the artifact while the
+number it qualifies was read off as a budget.** Recorded as R18, with the check that now catches it
+(`angle_budget.py --audit`).
+
+§4's argument does not rest on that number. It rests on the gap between a stack of thin sections and
+a block cut into slabs, and **60° against 5° is the same gap.**

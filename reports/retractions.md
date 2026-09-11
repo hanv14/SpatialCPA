@@ -472,3 +472,79 @@ recorded in `reports/metric_resolution.md` beside the blur.
 
 The spreads are comparable to the values (0.1129 against 0.1714; 0.1142 against 0.0338), so **three
 seeds cannot place this floor precisely** and every ceiling derived from it inherits that.
+
+## R18 — R5 came back: §4's sweep predates its own fix
+
+**Withdrawn:** the sentence in §4.7 warning that `starmap_visual_cortex`'s row alone was measured
+before two corrections, and the figure of *159 cells against 250* it cited — which appears in no
+committed report. The reference-plane correction (R1) is applied in **every** row of
+`reports/angle_budget.md`; singling out one dataset was wrong, and the count was invented.
+
+**And the thing it should have warned about instead is R5, reappearing.** R5 withdrew
+"`merfish_thick_hypothalamus` clears 90°" because the slab was measured **2.1× too thick** — the
+runner defaulted `t` to the *training* volume's section spacing, 57.5 µm, where the specimen's slabs
+are ~28.6 µm. R5 says it was *"fixed at source"*. The cross-dataset sweep in
+`reports/angle_budget.md` nonetheless reports **90°** again, on `t` = **57.5 µm**.
+
+**The committed artifacts say why, and the test is one field.** The fixed runner writes a
+`thickness_source` into every record and prints a *"thickness came from …"* line into the report.
+`reports/angle_budget.json` carries `thickness_source: null` on **all four** datasets, and
+`reports/angle_budget.md` carries no such line. **The sweep was run by the pre-R5 runner.** The fix
+is in `scripts/angle_budget.py`; it was never applied to the numbers §4 was written from.
+
+**And re-running it does not change the number — there is a post-fix run in `reports/` that proves
+it.** `reports/angle_budget_true.json` carries `thickness_source`, so it was written by the fixed
+runner. It reports `t` = **57.5 µm** and a budget of **90°**, identically, because the fix takes
+`Section.thickness` only where the loader marked it *measured* and this build marks it assumed on
+every section. What the fix added was the runner saying so, in the record, in its own words:
+
+> *"the volume's median section spacing — `Section.thickness` is assumed on every section, so the
+> file carries no measured slab thickness. **On a leakage-guarded input this OVERSTATES the slab**:
+> held-out sections are removed, so the spacing between the ones that remain is a multiple of the
+> real pitch."*
+
+**The artifact announced its own defect and was read as a budget anyway.** The number moves only if
+someone passes `--thickness 28.6`. A fix that makes a wrong default *visible* is not a fix that makes
+it *right*, and R5's "fixed at source" overstated what had been done — the runner was corrected, the
+measurement was not.
+
+**What the sweep's `t = s` default does to each row.** A slab cannot be thicker than its own spacing,
+so `t = s` is the **most generous** geometry available: it makes the strip `(D + t)/sin θ` as wide as
+it can be, and every cell count, scorable-type count and `fill` in §4.4 an **upper bound**.
+
+| row | direction | verdict |
+|---|---|---|
+| the three 5° budgets | conservative — they fail G1/G2 on the most generous geometry | **stand**; a truer `t` only makes them fail harder |
+| the 90° budget | optimistic | **withdrawn again** |
+
+The same sweep at `t` = 13.5 µm (`reports/angle_budget_thin.json`) gives that specimen **30°**,
+failing G1 at 45° with 5 scorable types of 9. At the protocol's 28.6 µm the answer lies between 30°
+and 90°, and §5's own run — which used 28.6 µm and added the stratum-width gate — measures **60°**.
+**The paper quotes 60°** and reports 90° only as what the default gives.
+
+**What is unaffected.** §4's argument does not rest on 90°: it rests on the gap between a stack of
+thin sections and a block cut into slabs, and 60° against 5° is the same gap. The three 5° budgets,
+the bimodality, the pre-build screen and §4.6.1's `fill` halving are unchanged — §4.6.1 uses the
+protocol thickness (28.6 / 57.5 = 0.497) and never used the default.
+
+**The check that was missing, and now exists.** `angle_budget.py --audit` reads the committed
+`angle_budget*.json` and names every record written before a fix that landed in this file, by looking
+for a field only the fixed runner writes. Pointed at `reports/` it returns:
+
+```
+  STALE reports/angle_budget.json          (all four datasets)
+  STALE reports/angle_budget_thin.json     (merfish_thick_hypothalamus)
+  ok    reports/angle_budget_true.json
+```
+
+Its four self-checks assert the auditor itself — that a record with no field is flagged, that an
+explicit `null` is flagged, that the *fallback's own explanation* counts as post-fix, and that this
+runner's own records audit clean. The existing check on this subject asserted that the **renderer**
+prints the provenance line, on a record the check itself constructed with the field already set.
+That is `specs/10` §4.2p once more: **the renderer was right and the committed sweep was old.**
+
+**How it was found.** Drawing figure F3 required reading each dataset's thickness out of the JSON
+rather than off the table, at which point `thickness_source` was `null` on all four rows while the
+demonstration's JSON had been carrying its provenance for three rounds. **A retraction is not closed
+by a patch to the script; it is closed by a re-run whose output shows the patch ran.** No artifact in
+`reports/` distinguished the two until a field that only the fixed runner writes was looked for.

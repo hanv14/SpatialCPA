@@ -25,3 +25,9 @@ runs/
 # Campaign-machine run logs (`logs/fit_*.log`, `logs/arm_*.log`). The console record of one
 # machine's scheduling; every number in them that matters is committed under `reports/`.
 logs/
+
+# Prediction intermediates written by the scoring runners (`_v2_io.write_prediction_h5`) and by
+# each bootstrap/jackknife replicate. Fully regenerable from the committed reports and the seed,
+# and there are hundreds of them: 190 of the 199 files in one commit attempt, which made the
+# patch too large to transfer. The measurement is the report; these are scaffolding.
+*.pred.h5ad
