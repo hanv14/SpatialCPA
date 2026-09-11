@@ -87,7 +87,7 @@ from __future__ import annotations
 
 import math
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -844,6 +844,8 @@ def sample_layout(
     repulsion: RepulsionParams | None = None,
     flanking: Sequence[FlankingSection] | None = None,
     n_target: int | None = None,
+    volume_sections: Sequence[Section] | None = None,
+    exclude_sections: Collection[str] = (),
 ) -> Layout:
     """Sample a section's layout on ``plane``. Returns a :class:`Layout` of ``N`` cells.
 
@@ -884,9 +886,15 @@ def sample_layout(
     decide only *where* the cells go. It is ignored under ``"resample"``, which has no integral.
     ``Layout.n_expected`` still reports the integral's figure, so an overridden run says what the
     integral would have done.
+
+    ``volume_sections`` and ``exclude_sections`` are read only by
+    ``Config.resample_donor_selection="plane-distance"``, which needs every section rather than the
+    flanking pair, and must be able to drop the ones it is about to be scored against.
     """
     if cfg.layout_mode == "resample":
-        return _resample_layout(plane, cfg, seed, flanking)
+        return _resample_layout(
+            plane, cfg, seed, flanking, volume_sections, exclude_sections
+        )
     if cfg.repulsion and repulsion is None:
         raise LayoutError(
             "sample_layout: Config.repulsion is True but no RepulsionParams were given. "
@@ -1202,6 +1210,139 @@ def _draw_from_grid(
     return np.asarray(centres[drawn] + jitter, dtype=np.float64)
 
 
+@dataclass(frozen=True)
+class NearPlaneCells:
+    """The real cells a plane actually cuts through. Built by :func:`cells_near_plane`.
+
+    Attributes
+    ----------
+    xyz
+        ``(M, 3)`` float64 physical positions.
+    coords_uv
+        ``(M, 2)`` float64 in the plane's own frame.
+    cell_type
+        ``(M,)`` int32 codes.
+    distance
+        ``(M,)`` float64 perpendicular distance to the plane, micrometres.
+    section_id
+        ``(M,)`` the section each cell came from, so a caller can say what it reused and an
+        exclusion can be checked after the fact.
+    """
+
+    xyz: FloatArray
+    coords_uv: FloatArray
+    cell_type: IntArray
+    distance: FloatArray
+    section_id: npt.NDArray[Any]
+
+
+def cells_near_plane(
+    sections: Sequence[Section],
+    plane: Plane,
+    *,
+    exclude: Collection[str] = (),
+) -> NearPlaneCells:
+    """Real cells within ``plane.thickness / 2`` of ``plane``, pooled across **all** sections.
+
+    This is what makes a layout well defined at an arbitrary orientation. ``_resample_layout``'s
+    original rule picks the nearest section by ``abs(f.z - plane.origin[2])`` — a *z*-distance,
+    which names nothing for a plane that spans the stack — and then copies that whole section. Both
+    halves are wrong off-axis: a flat section at constant ``z`` meets an oblique plane in a **line**,
+    so the cells the plane passes through form a *band* drawn from **several** sections, never one
+    section's full face.
+
+    The selection here is the perpendicular distance ``|(x - origin) . normal|``, per **cell**. It
+    is defined at any angle by construction and reduces to the original at a coronal plane, where
+    every cell of the nearest section is at the same perpendicular distance and every other
+    section's is further — which ``tests/test_layout.py`` asserts **bitwise**.
+
+    ``exclude`` drops whole sections by ``section_id``. It is not optional in practice: an oblique
+    plane's donors and its evaluation set are **the same cells**, so without an exclusion a
+    resampled layout copies the answer it is about to be scored against. This is the mechanism
+    retrieval already uses for its own section (GATE 2's C1), applied to the layout.
+    """
+    origin = np.asarray(plane.origin, dtype=np.float64)
+    normal = np.asarray(plane.normal, dtype=np.float64)
+    half = 0.5 * float(plane.thickness)
+    drop = {str(s) for s in exclude}
+
+    xyz_parts, type_parts, id_parts = [], [], []
+    for section in sections:
+        if str(section.section_id) in drop:
+            continue
+        xyz = np.asarray(to_xyz(section), dtype=np.float64)
+        keep = np.abs((xyz - origin) @ normal) <= half
+        if not keep.any():
+            continue
+        xyz_parts.append(xyz[keep])
+        type_parts.append(np.asarray(section.cell_type, dtype=np.int32)[keep])
+        id_parts.append(np.full(int(keep.sum()), str(section.section_id), dtype=object))
+
+    if not xyz_parts:
+        return NearPlaneCells(
+            xyz=np.zeros((0, 3)),
+            coords_uv=np.zeros((0, 2)),
+            cell_type=np.zeros(0, dtype=np.int32),
+            distance=np.zeros(0),
+            section_id=np.zeros(0, dtype=object),
+        )
+    xyz = np.concatenate(xyz_parts, axis=0)
+    return NearPlaneCells(
+        xyz=xyz,
+        coords_uv=plane.to_uv(xyz),
+        cell_type=np.concatenate(type_parts),
+        distance=np.abs((xyz - origin) @ normal),
+        section_id=np.concatenate(id_parts),
+    )
+
+
+
+def _resample_by_plane_distance(
+    plane: Plane,
+    cfg: Config,
+    seed: int,
+    volume_sections: Sequence[Section] | None,
+    exclude_sections: Collection[str],
+) -> Layout:
+    """``resample`` with donors chosen by **point-to-plane distance**. Defined at any angle.
+
+    The positions are the real cells the plane passes through — :func:`cells_near_plane` — rather
+    than one section's face pasted onto the plane. At a coronal plane this returns exactly the
+    nearest section's cells, which ``tests/test_layout.py`` asserts **bitwise** against the
+    ``nearest-z`` rule: the new selection is a strict generalisation, so every tier-1 number
+    measured under the old one stands.
+
+    ``exclude_sections`` is load-bearing rather than optional. An oblique plane's donors and its
+    evaluation set are the same real cells, so without it a resampled layout copies the answer.
+    """
+    if not volume_sections:
+        raise LayoutError(
+            "sample_layout: Config.resample_donor_selection='plane-distance' needs the volume's "
+            "sections, not just the flanking pair — the cells a plane passes through are drawn "
+            "from several sections. Pass volume_sections=vol.sections."
+        )
+    near = cells_near_plane(volume_sections, plane, exclude=exclude_sections)
+    if near.coords_uv.shape[0] < 1:
+        raise LayoutError(
+            f"sample_layout: no real cell lies within {0.5 * float(plane.thickness):.3g} um of "
+            f"this plane after excluding {sorted(set(map(str, exclude_sections))) or 'nothing'}. "
+            "At an oblique angle the slab may miss the tissue entirely; widen Plane.thickness or "
+            "check the plane's origin."
+        )
+    return _build_layout(
+        uv=np.asarray(near.coords_uv, dtype=np.float64),
+        xyz=np.asarray(near.xyz, dtype=np.float64),
+        marks=np.asarray(near.cell_type, dtype=np.int32),
+        n_expected=float(near.coords_uv.shape[0]),
+        n_proposals=0,
+        exhausted=False,
+        cfg=cfg,
+        seed=seed,
+        plane=plane,
+        repulsion=None,
+    )
+
+
 def _flanking_targets(
     flanking: Sequence[FlankingSection] | None, mode: str
 ) -> Sequence[FlankingSection]:
@@ -1253,7 +1394,12 @@ def _swd_polish(
 
 
 def _resample_layout(
-    plane: Plane, cfg: Config, seed: int, flanking: Sequence[FlankingSection] | None
+    plane: Plane,
+    cfg: Config,
+    seed: int,
+    flanking: Sequence[FlankingSection] | None,
+    volume_sections: Sequence[Section] | None = None,
+    exclude_sections: Collection[str] = (),
 ) -> Layout:
     """Reuse the nearest flanking section's coordinates and types (the v20 behaviour).
 
@@ -1261,6 +1407,8 @@ def _resample_layout(
     no-regression fallback, and reproducing the previous version means reproducing that
     too. ``n_expected`` is reported as the reused count so the field is never a lie.
     """
+    if cfg.resample_donor_selection == "plane-distance":
+        return _resample_by_plane_distance(plane, cfg, seed, volume_sections, exclude_sections)
     sections = _flanking_targets(flanking, "resample")
     nearest = min(sections, key=lambda f: (abs(f.z - float(plane.origin[2])), f.section_id))
     uv = np.asarray(nearest.coords_uv, dtype=np.float64)

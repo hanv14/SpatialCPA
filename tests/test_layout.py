@@ -35,6 +35,7 @@ from spatialcpav25_gen.data.schema import Section, TrainingVolume, Volume, to_xy
 from spatialcpav25_gen.infer.planes import Plane, plane_from_normal, section_plane
 from spatialcpav25_gen.losses.reconstruction import layout_poisson_nll
 from spatialcpav25_gen.model.layout import (
+    cells_near_plane,
     FloatArray,
     IntensityFn,
     IntensityHead,
@@ -1038,3 +1039,107 @@ def test_resample_ignores_the_count_override_because_it_has_no_integral(
         intensity, plane, rs, SEED, repulsion=repulsion, flanking=flanking, n_target=7
     )
     assert np.array_equal(a.coords_uv, b.coords_uv)
+
+
+# --------------------------------------------------------------------------------------
+# plane-distance donor selection — defined at any angle, and a strict generalisation
+# --------------------------------------------------------------------------------------
+
+
+def test_plane_distance_is_BITWISE_identical_to_nearest_z_at_a_coronal_plane(
+    training: TrainingVolume, gt_field, cfg: Config, repulsion
+):
+    """**The load-bearing test.** If this holds, the new rule is a strict generalisation.
+
+    Every tier-1 number — `resample` at 0.7546, the copy floor at 0.7765 — was measured under
+    `nearest-z`. If `plane-distance` reproduces it exactly at a coronal plane, those numbers stand
+    unchanged and the new rule only adds angles the old one could not express. If it does not, the
+    two are different methods and every comparison to them becomes cross-construction.
+    """
+    intensity = fixture_intensity(gt_field, mean_cell_density(training.sections))
+    plane = target_plane(training)
+    flanking = [flanking_from_section(sec, plane) for sec in training.sections]
+
+    old = sample_layout(
+        intensity, plane, cfg.replace(layout_mode="resample"), SEED,
+        repulsion=repulsion, flanking=flanking,
+    )
+    new = sample_layout(
+        intensity,
+        plane,
+        cfg.replace(layout_mode="resample", resample_donor_selection="plane-distance"),
+        SEED,
+        repulsion=repulsion,
+        flanking=flanking,
+        volume_sections=training.sections,
+    )
+    assert np.array_equal(old.coords_uv, new.coords_uv), "positions must be bitwise identical"
+    assert np.array_equal(old.cell_type, new.cell_type), "marks must be bitwise identical"
+    assert old.n_cells == new.n_cells
+
+
+def test_plane_distance_is_defined_at_an_oblique_plane_where_nearest_z_is_not(
+    training: TrainingVolume, gt_field, cfg: Config, repulsion
+):
+    """Off-axis the old rule returns one section's face; the new one returns the cells cut."""
+    intensity = fixture_intensity(gt_field, mean_cell_density(training.sections))
+    coronal = target_plane(training)
+    oblique = plane_from_normal(
+        [0.0, np.sin(np.deg2rad(20.0)), np.cos(np.deg2rad(20.0))],
+        coronal.origin,
+        coronal.half_extent,
+        float(coronal.thickness),
+    )
+    rs = cfg.replace(layout_mode="resample", resample_donor_selection="plane-distance")
+    flanking = [flanking_from_section(sec, oblique) for sec in training.sections]
+
+    near = cells_near_plane(training.sections, oblique)
+    assert near.xyz.shape[0] > 0, "the fixture's slab must meet the oblique plane at all"
+    assert len(set(near.section_id.tolist())) > 1, (
+        "an oblique plane must draw cells from SEVERAL sections — that is the whole point, and a "
+        "per-section distance could not express it"
+    )
+    assert float(np.abs(near.distance).max()) <= 0.5 * float(oblique.thickness) + 1e-9
+
+    layout = sample_layout(
+        intensity, oblique, rs, SEED, repulsion=repulsion, flanking=flanking,
+        volume_sections=training.sections,
+    )
+    assert layout.n_cells == near.xyz.shape[0]
+
+    # the old rule, at the same oblique plane, returns one section's whole face instead
+    old = sample_layout(
+        intensity, oblique, cfg.replace(layout_mode="resample"), SEED,
+        repulsion=repulsion, flanking=flanking,
+    )
+    assert old.n_cells != layout.n_cells or not np.array_equal(old.coords_uv, layout.coords_uv)
+
+
+def test_the_exclusion_is_honoured_so_a_layout_cannot_copy_its_own_answer(
+    training: TrainingVolume, gt_field, cfg: Config, repulsion
+):
+    """An oblique plane's donors and its evaluation set are the same cells (GATE 2's C1 applied).
+
+    Without this, `resample` at an oblique plane copies the real cells it is about to be scored
+    against, and the demonstration scores itself.
+    """
+    intensity = fixture_intensity(gt_field, mean_cell_density(training.sections))
+    plane = target_plane(training)
+    drop = {str(training.sections[len(training.sections) // 2].section_id)}
+
+    kept = cells_near_plane(training.sections, plane)
+    excluded = cells_near_plane(training.sections, plane, exclude=drop)
+    assert drop & set(kept.section_id.tolist()), "the fixture must actually contain the excluded id"
+    assert not (drop & set(excluded.section_id.tolist())), "the excluded section must not appear"
+    assert excluded.xyz.shape[0] < kept.xyz.shape[0]
+
+    rs = cfg.replace(layout_mode="resample", resample_donor_selection="plane-distance")
+    with pytest.raises(LayoutError, match="needs the volume's sections"):
+        sample_layout(intensity, plane, rs, SEED, repulsion=repulsion)
+
+    with pytest.raises(LayoutError, match="no real cell lies within"):
+        sample_layout(
+            intensity, plane, rs, SEED, repulsion=repulsion,
+            volume_sections=training.sections,
+            exclude_sections=[str(s.section_id) for s in training.sections],
+        )

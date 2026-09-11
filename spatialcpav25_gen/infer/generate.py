@@ -527,6 +527,7 @@ def generate_section(
     exclude_z: set[float] | None = None,
     z_window: float | None = None,
     n_target: int | None = None,
+    exclude_sections: object = (),
 ) -> Any:
     """Generate a virtual section on ``plane``. Returns an ``AnnData``.
 
@@ -610,7 +611,8 @@ def generate_section(
     gen = np.random.default_rng(seed)
     with _using_field(model, cfg, grf_seed):
         layout = _layout_on(
-            model, plane, vol, cfg, seed, exclude_z=excluded, n_target=n_target
+            model, plane, vol, cfg, seed, exclude_z=excluded, n_target=n_target,
+            exclude_sections=exclude_sections,
         )
         xyz = layout.coords_xyz.astype(np.float64)
         cell_type = torch.from_numpy(layout.cell_type.astype(np.int64))
@@ -674,6 +676,7 @@ def _layout_on(
     *,
     exclude_z: set[float] | None = None,
     n_target: int | None = None,
+    exclude_sections: object = (),
 ) -> Layout:
     """Sample the section's cells and their types on ``plane`` (T05).
 
@@ -690,6 +693,8 @@ def _layout_on(
         seed,
         repulsion=model.repulsion,
         n_target=n_target,
+        volume_sections=vol.sections,
+        exclude_sections=exclude_sections,
         flanking=[
             flanking_from_section(s, plane) for s in _flanking(vol, plane, exclude_z=exclude_z)
         ],

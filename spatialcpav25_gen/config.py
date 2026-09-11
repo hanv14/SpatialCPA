@@ -51,6 +51,8 @@ __all__ = [
 
 LAYOUT_MODES: Final[frozenset[str]] = frozenset({"field", "hybrid", "resample"})
 LAYOUT_SAMPLERS: Final[frozenset[str]] = frozenset({"grid", "rejection"})
+RESAMPLE_DONOR_SELECTIONS = frozenset({"nearest-z", "plane-distance"})
+"""How ``layout_mode="resample"`` picks its donors. See ``Config.resample_donor_selection``."""
 SUMMARY_FALLBACKS: Final[frozenset[str]] = frozenset({"none", "ortholog"})
 MU_LINKS: Final[frozenset[str]] = frozenset({"exp", "softplus"})
 THETA_MODES: Final[frozenset[str]] = frozenset({"learned", "moment_matched"})
@@ -1229,6 +1231,23 @@ class Config:
     method's "<= 3 donor cells" (``eval/baselines.py``). A deliberate negative control: it is
     the reference point for T06's gene-gene covariance claim and T10 reuses it."""
 
+    resample_donor_selection: str = "nearest-z"
+    """How ``layout_mode="resample"`` chooses the cells it copies.
+
+    ``"nearest-z"`` is the shipped rule and the one every tier-1 number was measured under: the
+    section minimising ``abs(f.z - plane.origin[2])``, copied whole. It is **undefined off-axis** —
+    ``plane.origin[2]`` is one point's depth, which names nothing for a plane spanning the stack,
+    and a flat section meets an oblique plane in a line rather than a face.
+
+    ``"plane-distance"`` selects by the perpendicular distance ``|(x - origin) . normal|``, per
+    **cell**, pooled across every section. Defined at any angle by construction, and **bitwise
+    identical to ``nearest-z`` at a coronal plane** (``tests/test_layout.py``), so it is a strict
+    generalisation rather than a second method.
+
+    Default ``"nearest-z"``: the new rule is what the oblique work needs, and nothing shipped
+    changes until a measurement says it should.
+    """
+
     cross_mix_position_keyed: bool = False
     """Key ``cross-mix``'s per-gene donor selection to **physical position** instead of to the
     generation RNG.
@@ -1943,6 +1962,7 @@ class Config:
             ("device", self.device, DEVICES),
             ("layout_mode", self.layout_mode, LAYOUT_MODES),
             ("layout_sampler", self.layout_sampler, LAYOUT_SAMPLERS),
+            ("resample_donor_selection", self.resample_donor_selection, RESAMPLE_DONOR_SELECTIONS),
             ("prior_mode", self.prior_mode, PRIOR_MODES),
             ("expr_mode", self.expr_mode, EXPR_MODES),
             ("text_emb_mode", self.text_emb_mode, TEXT_EMB_MODES),

@@ -255,6 +255,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--weights", help="the r11 checkpoint; no fit is run")
     ap.add_argument("--layout-mode", default="field", choices=("field", "hybrid", "resample"))
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument(
+        "--seeds",
+        type=int,
+        nargs="+",
+        default=None,
+        help="repeat the WHOLE split at each generation seed. Gives a WITHIN-section "
+        "across-seed spread to set against the across-SECTION spread, which is what "
+        "the positional-instability observation needs and what retires the one-seed "
+        "caveat standing on every field-layout number since R11.",
+    )
     ap.add_argument("--out", default="reports/test1b_layout_split.md")
     ap.add_argument("--self-check", action="store_true")
     add_path_args(ap)
@@ -288,99 +298,166 @@ def main(argv: list[str] | None = None) -> int:
     gt_sections = gt.obs["section"].values.astype(str)
     gt_spatial = np.asarray(gt.obsm["spatial"], dtype=np.float64)
 
-    arms: dict[str, dict] = {k: {} for k in
+    seeds = [int(x) for x in (args.seeds or [args.seed])]
+    per_seed: dict[int, dict] = {}
+    for gen_seed in seeds:
+      arms: dict[str, dict] = {k: {} for k in
                              ("base", "fix_types", "fix_positions", "both_oracle", "null_types")}
-    for name, z in TARGETS:
-        plane = plane_at_z(vol, z, cfg)
-        n_target = flanking_density_count(vol, plane, z)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", BBoxClampWarning)
-            warnings.simplefilter("ignore")
-            with torch.no_grad():
-                emitted = generate_section(model, plane, vol, cfg, args.seed, n_target=n_target)
-        mx = emitted.X
-        m_X = np.asarray(mx.toarray() if sp.issparse(mx) else mx, dtype=np.float32)
-        m_xyz = np.asarray(emitted.obsm["xyz"], dtype=np.float64)
-        m_ct = np.asarray(emitted.obs[cfg.celltype_key].values, dtype=str)
+      for name, z in TARGETS:
+          plane = plane_at_z(vol, z, cfg)
+          n_target = flanking_density_count(vol, plane, z)
+          with warnings.catch_warnings():
+              warnings.simplefilter("ignore", BBoxClampWarning)
+              warnings.simplefilter("ignore")
+              with torch.no_grad():
+                  emitted = generate_section(model, plane, vol, cfg, gen_seed, n_target=n_target)
+          mx = emitted.X
+          m_X = np.asarray(mx.toarray() if sp.issparse(mx) else mx, dtype=np.float32)
+          m_xyz = np.asarray(emitted.obsm["xyz"], dtype=np.float64)
+          m_ct = np.asarray(emitted.obs[cfg.celltype_key].values, dtype=str)
 
-        gm = gt_sections == name
-        g_xyz = gt_spatial[gm]
-        g_ct = gt.obs["cell_type"].values[gm].astype(str)
-        gx = gt.X[gm]
-        g_X = np.asarray(gx.toarray() if sp.issparse(gx) else gx, dtype=np.float32)
+          gm = gt_sections == name
+          g_xyz = gt_spatial[gm]
+          g_ct = gt.obs["cell_type"].values[gm].astype(str)
+          gx = gt.X[gm]
+          g_X = np.asarray(gx.toarray() if sp.issparse(gx) else gx, dtype=np.float32)
 
-        # `flanking_copy`'s own donor: the nearest TRAINING section, emitted verbatim.
-        src = min(vol.sections, key=lambda s: (abs(float(s.z) - z), str(s.section_id)))
-        c_xyz = np.asarray(
-            np.column_stack([np.asarray(src.coords, dtype=np.float64)[:, :2],
-                             np.full(len(src.coords), float(src.z))])
-        )
-        cx = src.counts
-        c_X = np.asarray(cx.toarray() if sp.issparse(cx) else cx, dtype=np.float32)
-        c_ct = np.asarray([types[int(i)] for i in np.asarray(src.cell_type)], dtype=str)
+          # `flanking_copy`'s own donor: the nearest TRAINING section, emitted verbatim.
+          src = min(vol.sections, key=lambda s: (abs(float(s.z) - z), str(s.section_id)))
+          c_xyz = np.asarray(
+              np.column_stack([np.asarray(src.coords, dtype=np.float64)[:, :2],
+                               np.full(len(src.coords), float(src.z))])
+          )
+          cx = src.counts
+          c_X = np.asarray(cx.toarray() if sp.issparse(cx) else cx, dtype=np.float32)
+          c_ct = np.asarray([types[int(i)] for i in np.asarray(src.cell_type)], dtype=str)
 
-        (gt_on_model,) = transfer(g_xyz, m_xyz, g_ct)
-        (model_on_copy,) = transfer(m_xyz, c_xyz, m_ct)
-        (gt_on_copy,) = transfer(g_xyz, c_xyz, g_ct)
-        permuted = m_ct[np.random.default_rng(args.seed).permutation(len(m_ct))]
+          (gt_on_model,) = transfer(g_xyz, m_xyz, g_ct)
+          (model_on_copy,) = transfer(m_xyz, c_xyz, m_ct)
+          (gt_on_copy,) = transfer(g_xyz, c_xyz, g_ct)
+          permuted = m_ct[np.random.default_rng(gen_seed).permutation(len(m_ct))]
 
-        for key, (X, xyz, ct) in {
-            "base": (m_X, m_xyz, m_ct),
-            "fix_types": (m_X, m_xyz, gt_on_model),
-            "fix_positions": (c_X, c_xyz, model_on_copy),
-            "both_oracle": (c_X, c_xyz, gt_on_copy),
-            "null_types": (m_X, m_xyz, permuted),
-        }.items():
-            arms[key][name] = {
-                "X": sp.csr_matrix(X), "coords": xyz, "cell_type": ct
-            }
-        print(f"  {name}: model {len(m_ct)} cells, copy {len(c_ct)} ({src.section_id}), "
-              f"gt {len(g_ct)}", flush=True)
+          for key, (X, xyz, ct) in {
+              "base": (m_X, m_xyz, m_ct),
+              "fix_types": (m_X, m_xyz, gt_on_model),
+              "fix_positions": (c_X, c_xyz, model_on_copy),
+              "both_oracle": (c_X, c_xyz, gt_on_copy),
+              "null_types": (m_X, m_xyz, permuted),
+          }.items():
+              arms[key][name] = {
+                  "X": sp.csr_matrix(X), "coords": xyz, "cell_type": ct
+              }
+          print(f"  {name}: model {len(m_ct)} cells, copy {len(c_ct)} ({src.section_id}), "
+                f"gt {len(g_ct)}", flush=True)
 
+      out: dict[str, dict] = {}
+      for key, per_section in arms.items():
+          tmp = Path(args.out).with_suffix(f".{key}.pred.h5ad")
+          write_prediction(per_section, genes, str(tmp), gen_seed)
+          scored = score(str(tmp), paths.ground_truth)
+          vals, poses = {}, {}
+          for name, _z in TARGETS:
+              sec = scored["per_section"][name]
+              vals[name] = float(sec[METRIC])
+              poses[name] = float(sec.get("align_rotation_deg", float("nan")))
+          out[key] = {
+              "per_section": vals,
+              "median": float(np.median(list(vals.values()))),
+              "pose_deg": float(np.median(list(poses.values()))),
+              "n_cells": {n: int(arms[key][n]["coords"].shape[0]) for n, _z in TARGETS},
+          }
+          print(f"  {key}: median {out[key]['median']:+.4f}  pose {out[key]['pose_deg']:.3f}°",
+                flush=True)
+
+      per_seed[gen_seed] = out
+      print(f"  --- seed {gen_seed} done ---", flush=True)
+
+    return _finish(per_seed, seeds, args)
+
+
+MODEL_POSITION_ARMS = ("base", "fix_types", "null_types")
+COPY_POSITION_ARMS = ("fix_positions", "both_oracle")
+
+
+def spread_table(per_seed: dict, seeds: list[int]) -> dict:
+    """Across-SECTION spread against across-SEED spread, per arm.
+
+    The observation this exists to test, stated in `reports/layout_split_preregistration.md`'s
+    review: every arm using the MODEL's positions swings ~0.45 across sections, every arm using the
+    COPY's is flat to ~0.02. If that is positional instability rather than section-to-section
+    biology, the across-seed spread of the model-position arms will be **small** beside it — the
+    field is unstable *per plane*, not noisy per draw.
+
+    Reported, never verdicted: the observation was read off a table this project had already seen,
+    so nothing here claims it. It is the number a pre-registered test would be built on.
+    """
     out: dict[str, dict] = {}
-    for key, per_section in arms.items():
-        tmp = Path(args.out).with_suffix(f".{key}.pred.h5ad")
-        write_prediction(per_section, genes, str(tmp), args.seed)
-        scored = score(str(tmp), paths.ground_truth)
-        vals, poses = {}, {}
-        for name, _z in TARGETS:
-            sec = scored["per_section"][name]
-            vals[name] = float(sec[METRIC])
-            poses[name] = float(sec.get("align_rotation_deg", float("nan")))
-        out[key] = {
+    for arm in MODEL_POSITION_ARMS + COPY_POSITION_ARMS:
+        by_section = {n: [per_seed[s][arm]["per_section"][n] for s in seeds]
+                      for n, _z in TARGETS}
+        across_section = [float(np.median(v)) for v in by_section.values()]
+        out[arm] = {
+            "positions": "model" if arm in MODEL_POSITION_ARMS else "copy",
+            "across_section_spread": float(max(across_section) - min(across_section)),
+            "across_seed_spread": {n: float(max(v) - min(v)) for n, v in by_section.items()},
+            "max_across_seed_spread": float(max(max(v) - min(v) for v in by_section.values())),
+        }
+    return out
+
+
+def _finish(per_seed: dict, seeds: list[int], args) -> int:
+    """Collapse the seeds, apply the pre-registered bands, write the report."""
+    out: dict[str, dict] = {}
+    for arm in per_seed[seeds[0]]:
+        vals = {n: float(np.median([per_seed[s][arm]["per_section"][n] for s in seeds]))
+                for n, _z in TARGETS}
+        out[arm] = {
             "per_section": vals,
             "median": float(np.median(list(vals.values()))),
-            "pose_deg": float(np.median(list(poses.values()))),
-            "n_cells": {n: int(arms[key][n]["coords"].shape[0]) for n, _z in TARGETS},
+            "pose_deg": float(np.median([per_seed[s][arm]["pose_deg"] for s in seeds])),
+            "n_cells": per_seed[seeds[0]][arm]["n_cells"],
         }
-        print(f"  {key}: median {out[key]['median']:+.4f}  pose {out[key]['pose_deg']:.3f}°",
-              flush=True)
 
     base = out["base"]["median"]
     denom = COPY_FLOOR - base
     rec_t = (out["fix_types"]["median"] - base) / denom if denom else float("nan")
     rec_p = (out["fix_positions"]["median"] - base) / denom if denom else float("nan")
+    rec_b = (out["both_oracle"]["median"] - base) / denom if denom else float("nan")
     bad = preconditions(
         out["both_oracle"]["median"], out["null_types"]["median"], denom,
         {k: v["pose_deg"] for k, v in out.items()},
     )
-    if bad:
-        name, why = "NOT READABLE", "; ".join(bad)
-    else:
-        name, why = verdict(rec_t, rec_p)
+    name, why = ("NOT READABLE", "; ".join(bad)) if bad else verdict(rec_t, rec_p)
+    spreads = spread_table(per_seed, seeds) if len(seeds) > 1 else {}
 
-    lines = render(out, base, denom, rec_t, rec_p, name, why, bad, args)
+    # Per section, because at n = 3 the median IS a section and the three can disagree in SIGN.
+    per_sec = {}
+    for n, _z in TARGETS:
+        b = out["base"]["per_section"][n]
+        d = COPY_FLOOR - b
+        per_sec[n] = {
+            "base": b, "deficit": d,
+            "recovered_types": (out["fix_types"]["per_section"][n] - b) / d if d else float("nan"),
+            "recovered_positions": (out["fix_positions"]["per_section"][n] - b) / d if d else float("nan"),
+            "recovered_both": (out["both_oracle"]["per_section"][n] - b) / d if d else float("nan"),
+        }
+        per_sec[n]["verdict"] = verdict(
+            per_sec[n]["recovered_types"], per_sec[n]["recovered_positions"]
+        )[0]
+
+    lines = render(out, base, denom, rec_t, rec_p, rec_b, per_sec, spreads, seeds, name, why, bad, args)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text("\n".join(lines) + "\n")
     Path(args.out).with_suffix(".json").write_text(json.dumps(
-        {"arms": out, "recovered_types": rec_t, "recovered_positions": rec_p,
+        {"arms": out, "per_section": per_sec, "spreads": spreads, "seeds": seeds,
+         "recovered_types": rec_t, "recovered_positions": rec_p, "recovered_both": rec_b,
          "verdict": name, "why": why, "preconditions_failed": bad}, indent=2, default=float))
     print("\n".join(lines))
     print(f"\nwrote {args.out}")
     return 0
 
 
-def render(out, base, denom, rec_t, rec_p, name, why, bad, args) -> list[str]:
+def render(out, base, denom, rec_t, rec_p, rec_b, per_sec, spreads, seeds, name, why, bad, args) -> list[str]:
     lines = [
         "# Step 1 — splitting the layout deficit into placement and typing",
         "",
@@ -425,8 +502,39 @@ def render(out, base, denom, rec_t, rec_p, name, why, bad, args) -> list[str]:
         f"| fixing the **types** (`fix_types`) | **{rec_t:.1%}** |",
         f"| fixing the **positions** (`fix_positions`) | **{rec_p:.1%}** |",
         f"| sum — its distance from 100% is the **interaction** | {rec_t + rec_p:.1%} |",
+        f"| fixing **both** (`both_oracle`) | **{rec_b:.1%}** |",
         "",
+        "⚠️ **The median at n = 3 IS a section**, and the three can disagree in sign. The verdict",
+        "above is the pre-registered one; the table below is why it is not the whole story.",
+        "",
+        "| section | base | deficit | types | positions | both | verdict |",
+        "|---|---|---|---|---|---|---|",
     ]
+    for n, _z in TARGETS:
+        r = per_sec[n]
+        lines.append(
+            f"| {n} | {r['base']:+.4f} | {r['deficit']:.4f} | {r['recovered_types']:.1%} "
+            f"| {r['recovered_positions']:.1%} | {r['recovered_both']:.1%} | {r['verdict']} |"
+        )
+    lines += [""]
+    if spreads:
+        lines += [
+            "## Across sections against across seeds",
+            "",
+            f"Seeds: {seeds}. **Reported, not verdicted** — the observation this tests was read off",
+            "a table already seen, so nothing here claims it.",
+            "",
+            "| arm | positions | across-section spread | worst across-seed spread | ratio |",
+            "|---|---|---|---|---|",
+        ]
+        for arm, r in spreads.items():
+            ratio = (r["across_section_spread"] / r["max_across_seed_spread"]
+                     if r["max_across_seed_spread"] > 0 else float("inf"))
+            lines.append(
+                f"| `{arm}` | {r['positions']} | {r['across_section_spread']:.4f} "
+                f"| {r['max_across_seed_spread']:.4f} | {ratio:.1f}x |"
+            )
+        lines += [""]
     if bad:
         lines += ["## **NOT READABLE**", "", "Preconditions failed (§6):", ""]
         lines += [f"- {b}" for b in bad]
@@ -435,9 +543,14 @@ def render(out, base, denom, rec_t, rec_p, name, why, bad, args) -> list[str]:
         lines += [f"## **{name}**", "", why + "."]
     lines += [
         "",
-        "⚠️ **One seed, one fit.** The r11 arms are one fit and one seed, so no across-seed spread",
-        "exists for this metric on the field arms (`envelope_correction.md` §3). Raw deficits only;",
-        "**no multiple-of-envelope may be quoted.**",
+        (
+            f"✅ **{len(seeds)} generation seeds** — the one-seed caveat that stood on every "
+            "field-layout number since R11 is retired for this measurement."
+            if len(seeds) > 1
+            else "⚠️ **One seed, one fit.** No across-seed spread exists for this metric on the "
+            "field arms (`envelope_correction.md` §3). Raw deficits only; **no "
+            "multiple-of-envelope may be quoted.** Pass `--seeds 1 2 3` to retire this."
+        ),
         "",
         "⚠️ This splits **one metric at axis-aligned planes**. It says nothing about oblique planes",
         "— see `reports/oblique_layout_cost.md` for why those need a different evaluation set.",
