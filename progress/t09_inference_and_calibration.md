@@ -9332,3 +9332,48 @@ reference (three independent arithmetic disproofs; the 5° budget itself survive
 the `fix_types` vs `both_oracle` 31× contrast at fixed types), **R3** `both_oracle` beating the copy
 (a partial oracle on the scored quantity — and its closeness to A1b's 0.8369 is a coincidence
 across two different metrics).
+
+### R4: the tie was the central case, and `merfish_thick_hypothalamus` clears 90°
+
+**The two tests failed again, one cause.** The `d_min` fallback returned **every cell at the minimum
+distance** — and a target plane lies **midway between two sections**
+(`tests/test_layout.py::target_plane`: *"what generation actually asks for"*), so both attain it
+exactly and two sections came back where `nearest-z` copies one. I had documented that case in the
+docstring as a curiosity about exact ties. It is not a curiosity: with evenly spaced sections it is
+every target plane there is — on tier-1 the flanking sections are at exactly ±22 µm from every
+held-out plane. Recorded as `retractions.md` **R4**: a divergence documented instead of measured.
+
+**Fixed:** the empty-slab fallback selects a **section**, not a distance stratum, tie-broken on
+`(perpendicular distance, section_id)` — `nearest-z`'s own key. Verified against that key
+transcribed verbatim on all **8** midway planes of the fixture stack, the on-section case, and the
+post-exclusion case. The generalisation now lives entirely in the *non*-empty case, where an oblique
+slab pools the cells it genuinely cuts across several sections.
+
+**One assertion of mine was false on the same premise** and is corrected rather than weakened: the
+exclusion test asserted the band widens to *strictly further* cells (`min > max`); at a midway plane
+the fall-through section is at the **same** distance (50.0 vs 50.0). Now `>=`, with the equality
+asserted positively — the result must equal what `nearest-z` picks under the same exclusion. Both
+tests also now call one helper carrying `nearest-z`'s key verbatim, so they cannot drift from it.
+
+**The sweep found the specimen.** `merfish_thick_hypothalamus` clears **90°** with **1988 cells** at
+**10.3 : 1**, both gates by wide margins, against tier-1's 5° at 21.6 : 1. It is a **200 µm block cut
+into 7 slabs of ~27 µm** (`specs/10` §8) — a block that happens to be sliced, not a stack of thin
+sections, which is mechanically why it clears. **The oblique demonstration is scored, not shown.**
+
+**`reports/oblique_demonstration_preregistration.md`** commits the angles (0/30/60/90, reported at
+90° whatever the scores), the evaluation set (the slab's real cells, threshold form), the exclusion
+(L1 asserted on returned `section_id` arrays at run time, L2 on coordinates), the baseline
+(`flanking_copy` re-measured **on this specimen, in this slab, under the same exclusion** — never the
+published tier-1 floor, §4.2a), five preconditions, and four outcomes. My prediction is **PARTIAL or
+DEMONSTRATED WITH A COST**, and that the **exclusion, not the angle**, is what bites.
+
+**`reports/oblique_replication_candidates.md`** answers the four unread datasets. Two are ruled out
+**by arithmetic before any build**: G2 needs one type with ≥ 250 cells in the strip, the strip
+retains ~2% of a volume at 90° (measured on both read specimens: 1.8% and 2.5%), so a candidate needs
+~12 000 cells in its largest type — and `exseq_visual_cortex` (1130 cells total) and
+`exseq_breast_cancer` (1979) hold fewer in their entire volumes than the strip would need from one
+type. Build **`merfish_thick_cortex`** first: cheapest claim-bearing volume, same `paper_2_4_6`
+design, same thick-slab preparation at half the thickness. And run the **free** internal check first
+— §9's re-partition of the same block into 14 slabs of ~13.5 µm — because if clearance does not
+survive halving the thickness, the claim is about *thick-slab preparations* specifically, and we
+should say that ourselves.

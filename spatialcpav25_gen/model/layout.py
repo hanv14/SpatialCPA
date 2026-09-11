@@ -1260,26 +1260,30 @@ def cells_near_plane(
 
     * ``False`` (the default) — return nothing. This is the right answer for *"what is available to
       evaluate near this plane"*, which is what ``scripts/angle_budget.py`` asks.
-    * ``True`` — widen the band to ``d_min``, the smallest perpendicular distance any cell attains,
-      and return every cell at that distance. This is the right answer for *"which real cells does
-      this plane reuse"*, which is what ``_resample_by_plane_distance`` asks.
+    * ``True`` — fall back to the **single nearest section**, whole, chosen by
+      ``(perpendicular distance, section_id)``. This is the right answer for *"which real cells does
+      this plane reuse"*, which is what ``_resample_by_plane_distance`` asks, and it is
+      ``nearest-z``'s own rule with a *z*-distance replaced by a perpendicular one.
 
-    **The second is what makes the rule a strict generalisation of ``nearest-z``, and the first
-    version of this function got it wrong.** The docstring claimed the reduction — "every cell of
-    the nearest section is at the same perpendicular distance and every other section's is further"
-    — which is a statement about *rank*, while the code implemented a fixed *threshold*. The two
-    agree only when the plane sits on a section, and the generation setting is precisely the one
-    where it does not: the target plane is placed where a **held-out** section was, so on tier-1 the
-    nearest training section is ~22 um away against a half-thickness of 11 um and the threshold rule
-    returns nothing. Under ``expand_to_nearest`` the band widens to exactly that section's distance,
-    every one of its cells ties at it, and the whole section comes back — no subsampling and no
-    tie-break — which ``tests/test_layout.py`` asserts **bitwise** against ``nearest-z``.
+    **Two wrong versions preceded this one, and the second is the instructive one.**
 
-    One behaviour is *not* preserved, and is documented rather than hidden: when the plane sits
-    exactly midway between two sections, both attain ``d_min`` and both are returned, where
-    ``nearest-z`` broke the tie on ``section_id`` and took one. An exact tie is not a case the old
-    rule handled meaningfully, and pooling both is the answer consistent with the rest of this
-    function.
+    The first implemented a fixed threshold everywhere. That returns nothing in the generation
+    setting, because the target plane is placed where a **held-out** section was: the nearest
+    training section is a whole spacing away against a half-thickness of half a spacing.
+
+    The second widened the band to ``d_min`` and returned **every cell at that distance**, on the
+    reasoning that a flat section's cells all tie there. They do — but so do the cells of the
+    section on the *other* side. A target plane sits **midway between two training sections**
+    (``tests/test_layout.py::target_plane``: *"what generation actually asks for"*), so both attain
+    ``d_min`` exactly and two sections came back where ``nearest-z`` copies one. That case was
+    written off in this docstring as a curiosity about exact ties. **It is not a curiosity: with
+    evenly spaced sections it is every target plane there is** — on tier-1, the two flanking
+    sections are at exactly ±22 um from every held-out plane.
+
+    So the fallback selects a **section**, not a distance stratum, and breaks its tie the way
+    ``nearest-z`` breaks it: on ``section_id``. That makes the rule a strict generalisation —
+    ``tests/test_layout.py`` asserts it **bitwise** — and the generalisation is in the *non*-empty
+    case, where an oblique slab pools the cells it genuinely cuts across several sections.
 
     ``exclude`` drops whole sections by ``section_id``. It is not optional in practice: an oblique
     plane's donors and its evaluation set are **the same cells**, so without an exclusion a
@@ -1295,15 +1299,21 @@ def cells_near_plane(
     per_section = [np.asarray(to_xyz(s), dtype=np.float64) for s in kept]
     dists = [np.abs((xyz - origin) @ normal) for xyz in per_section]
 
+    # The slab is empty: fall back to ONE section, chosen exactly as `nearest-z` chooses it. Not
+    # to a distance stratum -- a target plane lies midway between two sections, so both attain the
+    # minimum distance and a stratum returns two sections where `nearest-z` copies one.
+    only: str | None = None
     if expand_to_nearest and not any((d <= half).any() for d in dists):
-        # The slab is empty. Widen it to the nearest cell's distance rather than to a chosen
-        # margin: no new constant, and at a coronal plane every cell of the nearest section ties
-        # at exactly d_min, so the whole section comes back and `nearest-z` is reproduced.
-        finite = [d for d in dists if d.size]
-        half = min(float(d.min()) for d in finite) if finite else half
+        candidates = [
+            (float(d.min()), str(s.section_id)) for s, d in zip(kept, dists, strict=True) if d.size
+        ]
+        if candidates:
+            half, only = min(candidates)
 
     xyz_parts, type_parts, id_parts = [], [], []
     for section, xyz, dist in zip(kept, per_section, dists, strict=True):
+        if only is not None and str(section.section_id) != only:
+            continue
         keep = dist <= half
         if not keep.any():
             continue

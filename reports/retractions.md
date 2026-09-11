@@ -84,3 +84,45 @@ of 0.8369. **These are different metrics.** The ladder is `paper_morans_pearson`
 1.0000); this table is `celltype_localization` (its `oracle` is 0.9808). Reading the two as
 corroborating each other is the cross-scope comparison this campaign has been caught by four times
 and will not make a fifth.
+
+---
+
+## R4 — "an exact tie is not a case the old rule handled meaningfully"
+
+**Claimed** (`cells_near_plane`'s docstring, and `progress/t09_inference_and_calibration.md`, one
+commit ago): the `plane-distance` rule's one divergence from `nearest-z` is that a plane sitting
+*exactly midway* between two sections returns both, where `nearest-z` broke the tie on `section_id`
+and took one — and this was "documented rather than hidden" as a curiosity about exact ties.
+
+**Withdrawn.** It is not a curiosity. **With evenly spaced sections it is every target plane there
+is.** `tests/test_layout.py::target_plane` says so in its own docstring — *"A plane halfway between
+two training sections: what generation actually asks for"* — and on tier-1 the two flanking sections
+sit at exactly ±22 µm from every held-out plane. I read the central case as an edge case and wrote a
+paragraph excusing it.
+
+**What disproved it.** The load-bearing test, on the second try:
+
+```
+test_plane_distance_is_BITWISE_identical_to_nearest_z_at_a_coronal_plane
+  AssertionError: positions must be bitwise identical
+test_the_empty_slab_means_two_different_things_and_the_flag_says_which
+  expanding reached {'synthetic_s00', 'synthetic_s01'}, expected {'synthetic_s00'}
+```
+
+Two failures, one cause. Until they passed, `plane-distance` was not a strict generalisation and
+every tier-1 number measured under `nearest-z` would have become cross-construction.
+
+**Fixed at source.** The empty-slab fallback now selects a **section**, not a distance stratum, and
+breaks its tie exactly as `nearest-z` does — on `(perpendicular distance, section_id)`. Verified
+against `nearest-z`'s key transcribed verbatim, on all **8** midway planes of the fixture's stack,
+plus the on-section and post-exclusion cases.
+
+**And one assertion of mine was simply false**, on the same wrong premise: the exclusion test
+asserted the band widens to cells *strictly further* from the plane (`min > max`). At a midway plane
+the section the exclusion falls through to is at **the same** distance — 50.0 against 50.0 on the
+fixture. Corrected to `>=`, with the equality asserted positively instead: the result must be
+exactly the section `nearest-z` would pick under the same exclusion.
+
+**Class.** Not §4.2n or §4.2o. This one is: *a divergence I documented instead of measuring.* Writing
+the exception down is not the same as checking how often it fires, and the paragraph excusing it was
+doing the work a test should have done.

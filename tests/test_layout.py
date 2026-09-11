@@ -1115,6 +1115,20 @@ def test_plane_distance_is_defined_at_an_oblique_plane_where_nearest_z_is_not(
     assert old.n_cells != layout.n_cells or not np.array_equal(old.coords_uv, layout.coords_uv)
 
 
+def nearest_section_id(training: TrainingVolume, plane, *, exclude=()) -> str:
+    """Which section `nearest-z` would copy. Its key verbatim, so the tests cannot drift from it.
+
+    `_resample_layout`: ``min(sections, key=lambda f: (abs(f.z - plane.origin[2]), f.section_id))``.
+    The `section_id` half is not decoration -- a target plane sits midway between two sections, so
+    the first half ties on every target plane there is and the second half decides all of them.
+    """
+    drop = {str(e) for e in exclude}
+    candidates = [s for s in training.sections if str(s.section_id) not in drop]
+    best = min(candidates, key=lambda s: (abs(float(s.z) - float(plane.origin[2])),
+                                          str(s.section_id)))
+    return str(best.section_id)
+
+
 def test_the_exclusion_is_honoured_so_a_layout_cannot_copy_its_own_answer(
     training: TrainingVolume, gt_field, cfg: Config, repulsion
 ):
@@ -1136,12 +1150,14 @@ def test_the_exclusion_is_honoured_so_a_layout_cannot_copy_its_own_answer(
 
     assert not (drop & set(excluded.section_id.tolist())), "the excluded section must not appear"
     assert excluded.xyz.shape[0] > 0, (
-        "excluding the donor must WIDEN the band to the next cells, not empty it -- otherwise the "
-        "oblique demonstration has no donors left once its evaluation set is withheld"
+        "excluding the donor must fall through to the NEXT section, not empty the donor set -- "
+        "otherwise the oblique demonstration has no donors left once its evaluation set is withheld"
     )
-    assert float(excluded.distance.min()) > float(kept.distance.max()), (
-        "and what it widens to must be strictly further from the plane than what it dropped"
-    )
+    assert set(excluded.section_id.tolist()) == {nearest_section_id(training, plane, exclude=drop)}
+    # CORRECTED: this asserted `min > max` -- strictly further. That was false, and false for the
+    # reason the whole rule got wrong: a target plane lies MIDWAY between two sections, so the
+    # section the exclusion falls through to is at *the same* distance, not a greater one.
+    assert float(excluded.distance.min()) >= float(kept.distance.max())
 
     rs = cfg.replace(layout_mode="resample", resample_donor_selection="plane-distance")
     with pytest.raises(LayoutError, match="needs the volume's sections"):
@@ -1180,11 +1196,20 @@ def test_the_empty_slab_means_two_different_things_and_the_flag_says_which(
     assert budget.xyz.shape[0] == 0, "the threshold answer is still nothing, and must stay nothing"
 
     layout = cells_near_plane(training.sections, plane, expand_to_nearest=True)
-    nearest = min(training.sections, key=lambda s: abs(float(s.z) - float(plane.origin[2])))
-    assert set(layout.section_id.tolist()) == {str(nearest.section_id)}, (
-        "expanding must reach exactly the nearest section -- every one of its cells ties at the "
-        "same perpendicular distance, so there is no subsample and no tie-break to get wrong"
+    want = nearest_section_id(training, plane)
+    nearest = next(s for s in training.sections if str(s.section_id) == want)
+    assert set(layout.section_id.tolist()) == {want}, (
+        "the fallback must reach exactly ONE section, the one `nearest-z` copies. Returning every "
+        "cell at the minimum distance instead returns TWO here, because a target plane lies midway "
+        "between two sections and both attain it -- which is every target plane in an evenly "
+        "spaced stack, not an exact-tie curiosity"
     )
     assert layout.xyz.shape[0] == int(np.asarray(nearest.coords).shape[0]), (
         "and it must return the WHOLE section, which is what `nearest-z` copies"
+    )
+    both = [s for s in training.sections if abs(float(s.z) - float(plane.origin[2])) ==
+            abs(float(nearest.z) - float(plane.origin[2]))]
+    assert len(both) == 2, (
+        "and the fixture must actually PRESENT the tie, or this test proves nothing: the plane is "
+        "halfway between two sections, so two of them are equidistant"
     )
