@@ -21,12 +21,18 @@ the literature.
 | 2 | Method: the continuous field, and what it makes well-defined | T03–T07 | drafted |
 | 3 | **Two bounds on oblique evaluation** | `the_comb_limit.md`, `metric_resolution.md` | drafted |
 | 4 | The angle budget across specimens | `angle_budget.md` | drafted |
-| 5 | **The oblique demonstration** | `oblique_demo.md` | drafted; scores `[PENDING]` |
+| 5 | **Off-axis evaluation, and why it could not be resolved** | `oblique_demo.md` | **drafted, scored, final** |
 | 6 | What the method does not do | `architecture_ceiling.md`, `t09_closeout.md` | drafted |
 | 7 | Limitations, and the record of what we withdrew | `retractions.md` | drafted |
 
 §3 leads §5. The bounds are stated before our result is shown, so the result is read inside them
 rather than defended against them afterwards.
+
+## The result
+
+**NOT DISTINGUISHABLE at every readable angle** — 0.39σ at 30°, 0.52σ at 45°; 60° is not readable.
+§5 is the *explained negative*: the capability was not demonstrated, and four measurements say why
+it could not be. §3 and §4 are the spine; §6 and §7 carry the reconstruction deficit.
 
 ## What §5 may say, fixed now
 

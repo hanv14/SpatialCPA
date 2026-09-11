@@ -222,9 +222,26 @@ def leak_checks(
     ]
 
 
-def verdict(theta: float, ours: float, base: float, spread: float) -> tuple[str, str]:
-    """§6's four outcomes, with 90° replaced by θ* per §2-bis."""
+def verdict(theta: float, ours: float, base: float, spread: float,
+            se_ours: float = float("nan"), se_base: float = float("nan")) -> tuple[str, str]:
+    """§6's outcomes, with 90° replaced by θ* per §2-bis — **gated on the interval** (R18).
+
+    §5-bis fixed the rule before any score existed: *a difference whose interval spans zero is
+    reported as NOT DISTINGUISHABLE, whatever its point estimate.* The first version computed the
+    outcome from the point estimates alone and printed a cost of 0.2173 with a ±0.2841 twenty lines
+    above it, unconnected — the third time in this sub-project a verdict outran something the report
+    had already computed (§4.2o).
+    """
     d = ours - base
+    combined = float(np.sqrt(np.nansum([se_ours ** 2, se_base ** 2])))
+    if np.isfinite(combined) and combined > 0 and abs(d) <= combined:
+        return "NOT DISTINGUISHABLE", (
+            f"at {theta:.0f}°, plane-distance scores {ours:+.4f} against the baseline's "
+            f"{base:+.4f} — a difference of {d:+.4f} against a combined precision bound of "
+            f"{combined:.4f}, i.e. **{abs(d) / combined:.2f}σ**. The evaluation cannot "
+            "distinguish the two arms. **This is not a success**: the capability was not "
+            "demonstrated, and §5 reports why it could not be"
+        )
     # `>= -COST_BAND` up to float slack. §6 says "at or within the band", and a difference that IS
     # the band lands at -0.05000000000000004 in binary. 1e-12 is numerical slack on a quantity of
     # order 0.05 -- nine orders below the band -- and is NOT the band being widened: no real score
@@ -475,9 +492,11 @@ def _self_check() -> int:
     ty = np.array(["a"] * 40 + ["b"] * 30 + ["c"] * 20 + ["d"] * 10)
     rng_ = np.random.default_rng(0)
     noise = rng_.normal(0, 0.01, size=len(ty))
-    se_, k_ = jackknife_interval(lambda m: 0.5 + float(noise[np.asarray(m)].mean()), ty, 0.5)
-    se0, k0 = jackknife_interval(lambda m: 0.5, ty, 0.5)
-    thin_se, thin_k = jackknife_interval(lambda m: 0.5, np.array(["a"] * 5 + ["b"] * 5), 0.5)
+    se_, k_ = jackknife_interval(lambda m: 0.5 + float(noise[np.asarray(m)].mean()), ty)
+    se0, k0 = jackknife_interval(lambda m: 0.5, ty)
+    thin_se, thin_k = jackknife_interval(lambda m: 0.5, np.array(["a"] * 5 + ["b"] * 5))
+    scored_only = jackknife_interval(lambda m: 0.5 + float(noise[np.asarray(m)].mean()), ty,
+                                     scorable={"a", "b", "c"})
     checks += [
         ("the jackknife returns a standard error over the cell TYPES",
          np.isfinite(se_) and k_ == 4),
@@ -486,11 +505,27 @@ def _self_check() -> int:
         ("**the point estimate is untouched by construction** — the property the bootstrap "
          "lacked, and the reason this was not chosen by retuning until a shift vanished",
          "point" not in jackknife_interval.__code__.co_names),
+        ("it leaves out only the types the metric SCORES, not every type the arm carries",
+         scored_only[1] == 3 and k_ == 4),
         (f"fewer than {JACKKNIFE_MIN_TYPES} usable types gives NO interval, not a bad one",
          not np.isfinite(thin_se) and thin_k < JACKKNIFE_MIN_TYPES),
         ("a non-finite replicate is dropped rather than poisoning the estimate",
          np.isfinite(jackknife_interval(
-             lambda m: float("nan") if np.asarray(m).sum() > 95 else 0.5, ty, 0.5)[0])),
+             lambda m: float("nan") if np.asarray(m).sum() > 95 else 0.5, ty)[0])),
+    ]
+
+    # --- the verdict must now consult the interval it prints (R18)
+    checks += [
+        ("a difference inside the combined bound is NOT DISTINGUISHABLE",
+         verdict(45, 0.1167, 0.3340, 0.28, 0.2841, 0.3053)[0] == "NOT DISTINGUISHABLE"),
+        ("and the report says so in sigma, not just in words",
+         "σ" in verdict(45, 0.1167, 0.3340, 0.28, 0.2841, 0.3053)[1]),
+        ("**and says plainly that it is NOT a success**",
+         "not a success" in verdict(45, 0.1167, 0.3340, 0.28, 0.2841, 0.3053)[1]),
+        ("a difference well outside the bound still gets its pre-registered verdict",
+         verdict(45, 0.10, 0.60, 0.01, 0.01, 0.01)[0] == "DEMONSTRATED WITH A COST"),
+        ("and with no interval at all the rule cannot silently fire",
+         verdict(45, 0.10, 0.60, 0.01)[0] == "DEMONSTRATED WITH A COST"),
     ]
 
     # --- the pose diagnostic: wrapped, and NOT a gate (§5-quater)
@@ -780,7 +815,7 @@ def arm_leak_checks(name: str, uv, truth_uv) -> list[tuple[str, bool]]:
     ]
 
 
-def jackknife_interval(score_fn, types, point: float) -> tuple[float, int]:
+def jackknife_interval(score_fn, types, scorable=None) -> tuple[float, int]:
     """Leave-one-cell-type-out jackknife. Returns ``(standard_error, n_pseudo)``.
 
     **The point estimate is untouched by construction** — a jackknife estimates the *variance* of a
@@ -796,9 +831,23 @@ def jackknife_interval(score_fn, types, point: float) -> tuple[float, int]:
     ``score_fn(mask) -> float`` re-scores with that boolean cell mask. Returns ``(nan, k)`` when
     fewer than three pseudo-values survive, and the caller reports **no interval** rather than a
     second unsound one.
+
+    ⚠️ **What the returned number is, and is not.** With only 6 to 9 scorable types, leaving one
+    out removes 11–17% of the data *and* re-normalises the metric's ``radius``, ``scale`` and null
+    draws — not the small, smooth perturbation a jackknife's asymptotics assume. The SEs it returns
+    are therefore reported as an **upper bound on precision**, not as a confidence interval. They
+    are wide: ±0.55 on a statistic of 0.41, bounded in roughly [0, 1]. **Their width is the
+    finding** (§5 of the paper) and they are not narrowed.
     """
     types = np.asarray(types)
     labels = np.unique(types)
+    if scorable is not None:
+        # Only the types the metric actually SCORES. The first version jackknifed over all nine
+        # types the arm carries while the ground truth had 8, 8 and 6 scorable ones -- dropping an
+        # unscored type is nearly a no-op, dropping a scored one is not, and mixing the two makes
+        # the pseudo-values incommensurable.
+        keep_labels = set(np.asarray(list(scorable)).tolist())
+        labels = np.asarray([lab for lab in labels if lab in keep_labels])
     pseudo: list[float] = []
     for label in labels:
         keep = types != label
@@ -813,7 +862,6 @@ def jackknife_interval(score_fn, types, point: float) -> tuple[float, int]:
     arr = np.asarray(pseudo, dtype=np.float64)
     # standard jackknife: var = (k-1)/k * sum (x_i - xbar)^2
     se = float(np.sqrt((k - 1) / k * float(((arr - arr.mean()) ** 2).sum())))
-    del point
     return se, k
 
 
@@ -1033,6 +1081,9 @@ def score_arms(rows, clean, vol, centre, half_extent, thickness, spacing, args, 
         gt_path = f"{tmp}.gt_{deg:.0f}.h5ad"
         write_slab_dataset(truth, vol.gene_names, vol.celltype_names, target, label, gt_path)
         truth_uv = np.asarray(truth.coords_uv, dtype=np.float64)
+        # The types the metric actually scores: its own `min_gt_cells` floor on the GROUND TRUTH.
+        gt_codes, gt_counts = np.unique(np.asarray(truth.cell_type), return_counts=True)
+        gt_scorable = set(gt_codes[gt_counts >= METRIC_MIN_GT_CELLS].tolist())
 
         if args.calibrate_null:
             print(f"    {deg:5.1f}°: calibrating the self-null (§5-ter, no arms involved)",
@@ -1135,7 +1186,7 @@ def score_arms(rows, clean, vol, centre, half_extent, thickness, spacing, args, 
                 # full-sample score, untouched by construction -- the property the bootstrap
                 # lacked (R14). No duplicate coordinates, and the type is the statistic's own unit.
                 if args.interval and seed == args.seeds[0]:
-                    se, k = jackknife_interval(one, types, entry[METRIC])
+                    se, k = jackknife_interval(one, types, scorable=gt_scorable)
                     entry.update({"jk_se": se, "jk_n": k})
                 row["arms"].setdefault(name, {})[str(seed)] = entry
                 pose = float(sec.get("align_rotation_deg", float("nan")))
@@ -1221,6 +1272,58 @@ def arm_prediction(coords_uv, cell_type, counts, gene_names, celltype_names, lab
     }
 
 
+def render_self_null(rows: list[dict]) -> list[str]:
+    """§5-ter's own table. Rendered by the CALIBRATION pass too, which is where it is established.
+
+    The first version lived inside `render_scores`, so the calibration pass computed the most
+    important table of its round and printed it nowhere (`retractions.md` R19).
+    """
+    sweep = [r for r in rows if r.get("self_null")]
+    if not sweep:
+        return []
+    out: list[str] = []
+    out += [
+        "### P2's gate, settled before these scores existed (§5-ter)",
+        "",
+        "The ground truth's types were permuted **among its own cells** and scored against "
+        "itself — no method, no arm, no donor — so whatever it reports is a property of the "
+        "statistic at that cell count.",
+        "",
+        "⚠️ **The hypothesis this test was built on is REFUTED.** I predicted the floor was "
+        "small-`n` noise and would fall as `n` rose. It does not fall at any angle: it is as "
+        "high at the full sample as at 250 cells, so `G2` constraining only the largest type "
+        "is not the mechanism (`retractions.md` R17).",
+        "",
+        "**And the finding is larger than the thing it was testing: a section whose cell types "
+        "have been completely scrambled scores well above zero.** That is a property of "
+        "`celltype_localization` itself — see `reports/metric_resolution.md`.",
+        "",
+        "| n | " + " | ".join(f"{r['angle_deg']:.0f}°" for r in sweep) + " |",
+        "|---|" + "---|" * len(sweep),
+    ]
+    sizes = sorted({e["n"] for r in sweep for e in r["self_null"]})
+    for n in sizes:
+        cells = []
+        for r in sweep:
+            e = next((x for x in r["self_null"] if x["n"] == n), None)
+            cells.append("—" if e is None
+                         else f"{e['self_null_median']:.4f} ± {e['self_null_spread']:.4f}")
+        out.append(f"| {n} | " + " | ".join(cells) + " |")
+    out += [
+        "",
+        "Spreads are over three seeds and are comparable to the values themselves, so these "
+        "medians are not precisely placed. **Each angle's ceiling comes from its own "
+        "calibration at its own `n`** — the first version resolved one ceiling from the first "
+        "angle and applied it to all three (`retractions.md` R15).",
+        "",
+    ]
+    for r in sweep:
+        out.append(f"- **{r['angle_deg']:.0f}°** (n = {r['n_truth']}): "
+                   f"{md_cell(r.get('self_null_branch', ''))}")
+    out += [""]
+    return out
+
+
 def render_scores(scored: list[dict], rows: list[dict], theta: float, rec: dict) -> list[str]:
     """The score table, the preconditions that gate it, and the pre-registered verdict at θ*."""
     def vals(r: dict, arm: str) -> list[float]:
@@ -1255,47 +1358,7 @@ def render_scores(scored: list[dict], rows: list[dict], theta: float, rec: dict)
         "- `null` — `resample-pd`'s positions with types permuted. P2's arm-side floor.",
         "",
     ]
-    sweep = [r for r in rows if r.get("self_null")]
-    if sweep:
-        out += [
-            "### P2's gate, settled before these scores existed (§5-ter)",
-            "",
-            "The ground truth's types were permuted **among its own cells** and scored against "
-            "itself — no method, no arm, no donor — so whatever it reports is a property of the "
-            "statistic at that cell count.",
-            "",
-            "⚠️ **The hypothesis this test was built on is REFUTED.** I predicted the floor was "
-            "small-`n` noise and would fall as `n` rose. It does not fall at any angle: it is as "
-            "high at the full sample as at 250 cells, so `G2` constraining only the largest type "
-            "is not the mechanism (`retractions.md` R17).",
-            "",
-            "**And the finding is larger than the thing it was testing: a section whose cell types "
-            "have been completely scrambled scores well above zero.** That is a property of "
-            "`celltype_localization` itself — see `reports/metric_resolution.md`.",
-            "",
-            "| n | " + " | ".join(f"{r['angle_deg']:.0f}°" for r in sweep) + " |",
-            "|---|" + "---|" * len(sweep),
-        ]
-        sizes = sorted({e["n"] for r in sweep for e in r["self_null"]})
-        for n in sizes:
-            cells = []
-            for r in sweep:
-                e = next((x for x in r["self_null"] if x["n"] == n), None)
-                cells.append("—" if e is None
-                             else f"{e['self_null_median']:.4f} ± {e['self_null_spread']:.4f}")
-            out.append(f"| {n} | " + " | ".join(cells) + " |")
-        out += [
-            "",
-            "Spreads are over three seeds and are comparable to the values themselves, so these "
-            "medians are not precisely placed. **Each angle's ceiling comes from its own "
-            "calibration at its own `n`** — the first version resolved one ceiling from the first "
-            "angle and applied it to all three (`retractions.md` R15).",
-            "",
-        ]
-        for r in sweep:
-            out.append(f"- **{r['angle_deg']:.0f}°** (n = {r['n_truth']}): "
-                       f"{md_cell(r.get('self_null_branch', ''))}")
-        out += [""]
+    out += render_self_null(rows)
     if rec.get("self_null_branch"):
         out += [
             "### P2's gate, settled before these scores existed (§5-ter)",
@@ -1335,6 +1398,23 @@ def render_scores(scored: list[dict], rows: list[dict], theta: float, rec: dict)
     out += [""]
     for r in scored:
         out.append(f"- **{r['angle_deg']:.0f}°** — {md_cell(r.get('footprint_why', ''))}")
+    ours_out = [(r["angle_deg"], (r.get("footprint") or {}).get("resample-pd", {})
+                 .get("frac_outside", float("nan"))) for r in scored]
+    finite = [v for _a, v in ours_out if np.isfinite(v)]
+    if finite:
+        per = ", ".join(f"{a:.0f}°: {v:.0%}" for a, v in ours_out if np.isfinite(v))
+        out += [
+            "",
+            "⚠️ **`resample-pd` is not co-located either, and the `1.00` column invites the "
+            "opposite reading.** Our arm's extent *ratio* is 1.00 at every angle, yet "
+            f"**{min(finite):.0%}–{max(finite):.0%} of its cells still lie outside the ground "
+            f"truth's `u`-range** ({per}). The two ribbons are the same **width** and are "
+            "**offset**: the donor slab sits one section-spacing away along the normal, and the "
+            "tissue it cuts there is displaced. That is the honest analogue of `flanking_copy` at "
+            "a coronal plane — but at the narrowest angle a third of our cells fall outside the "
+            "target's footprint, and a table showing 1.00 against 4.17 must not be read as one "
+            "arm being a clean section of the plane.",
+        ]
     out += [
         "",
         "### Pose (diagnostic, **not** a gate — §5-quater)",
@@ -1369,13 +1449,22 @@ def render_scores(scored: list[dict], rows: list[dict], theta: float, rec: dict)
         "",
         "### Scores",
         "",
-        f"Intervals are a **{rec.get('interval', 'none')}**: the point estimate is the full-sample "
+        f"Intervals are a **{rec.get('interval', 'none')}** over the metric's **scorable** "
+        "types: the point estimate is the full-sample "
         "score, **untouched by construction**, which is the property the cell bootstrap lacked — "
         "at 45° its median sat 0.118 above the estimate it was meant to bracket "
         "(`retractions.md` R14). Generation seeds cannot supply one: both compared arms are "
         "deterministic and their across-seed spread is exactly 0.0000 (R12).",
         "",
-        "| θ | fill | `copy-nearest-z` | `resample-pd` | difference | ± (ours) | `null` |",
+        "⚠️ **These are an upper bound on precision, not confidence intervals, and they are not "
+        "narrowed.** With only 6–9 scorable types, leaving one out removes 11–17% of the data "
+        "*and* re-normalises the metric's `radius`, `scale` and null draws — not the small, smooth "
+        "perturbation a jackknife's asymptotics assume. They are wide: ±0.55 on a statistic of "
+        "0.41 in a range of roughly [0, 1]. **Their width is the finding**, and it is what the "
+        "verdict below reads.",
+        "",
+        "| θ | fill | `copy-nearest-z` | `resample-pd` | difference | ± bound (ours) | "
+        "`null` |",
         "|---|---|---|---|---|---|---|",
     ]
     for r in scored:
@@ -1387,36 +1476,75 @@ def render_scores(scored: list[dict], rows: list[dict], theta: float, rec: dict)
 
     out += ["", "### Preconditions — an angle failing any of them is NOT READABLE", "",
             "| θ | precondition | |", "|---|---|---|"]
-    readable = []
+    readable, knife_edge = [], []
     for r in scored:
         checks = r.get("precondition_checks", [])
-        for label, ok, _kind in checks:
+        for label, ok, kind in checks:
             out.append(f"| {r['angle_deg']:.0f}° | {md_cell(label)} | "
                        f"{'✅' if ok else '❌ **FAILED**'} |")
+            if kind == "P2" and not ok:
+                nulls = [v[METRIC] for v in r["arms"].get("null", {}).values()]
+                null_se = float(next(iter(r["arms"].get("null", {}).values()), {})
+                                .get("jk_se", float("nan")))
+                margin = float(np.median(nulls)) - float(r.get("null_ceiling", float("nan")))
+                if np.isfinite(null_se) and null_se > 0:
+                    knife_edge.append((r["angle_deg"], margin, null_se))
         if checks and all(ok for _l, ok, _k in checks):
             readable.append(r)
+    for angle, margin, null_se in knife_edge:
+        out += [
+            "",
+            f"⚠️ **P2 fails at {angle:.0f}° by {margin:+.4f} against the null's own precision "
+            f"bound of {null_se:.4f}** — a margin of **{margin / null_se:.2f}σ**. The verdict "
+            "stands, because the pre-registered rule compares medians and that comparison fails. "
+            "But the gate that moves θ\\* off this angle is itself not resolved, in the same way "
+            "G1's +0.6-of-one-type margin is not.",
+        ]
+
+    def se(r: dict, arm: str) -> float:
+        return float(next(iter(r["arms"].get(arm, {}).values()), {}).get("jk_se", float("nan")))
 
     star = next((r for r in scored if r["angle_deg"] == theta), None)
     star_ok = star in readable if star else False
-    out += ["", f"### **{'' if star_ok else 'NOT READABLE at θ* — '}"]
+    out += ["", "### **"]
     if star_ok and star:
-        base, ours = med(star, "copy-nearest-z"), med(star, "resample-pd")
-        first = next(iter(star["arms"].get("resample-pd", {}).values()), {})
-        width = float(first.get("boot_hi", np.nan)) - float(first.get("boot_lo", np.nan))
-        name, why = verdict(theta, ours, base, width)
+        name, why = verdict(theta, med(star, "resample-pd"), med(star, "copy-nearest-z"),
+                            se(star, "resample-pd"), se(star, "resample-pd"),
+                            se(star, "copy-nearest-z"))
         out[-1] = f"### **{name}**"
         out += ["", f"{why}.", ""]
     elif readable:
         best = max(readable, key=lambda r: r["angle_deg"])
-        base, ours = med(best, "copy-nearest-z"), med(best, "resample-pd")
-        out[-1] = "### **PARTIAL**"
+        name, why = verdict(best["angle_deg"], med(best, "resample-pd"),
+                            med(best, "copy-nearest-z"), se(best, "resample-pd"),
+                            se(best, "resample-pd"), se(best, "copy-nearest-z"))
+        names = ", ".join(f"{r['angle_deg']:.0f}°" for r in readable)
+        out[-1] = f"### **PARTIAL — {name} at every readable angle**"
         out += [
             "",
             f"θ\\* = {theta:.0f}° fails a precondition above, so **no score at that angle is "
-            f"readable** — the verdict may not outrank a precondition the report has already "
-            f"printed (`retractions.md` R13). The largest angle passing **every** precondition is "
-            f"**{best['angle_deg']:.0f}°**, where `resample-pd` scores {ours:+.4f} against the "
-            f"baseline's {base:+.4f} ({ours - base:+.4f}).",
+            "readable** — the verdict may not outrank a precondition the report has already "
+            f"printed (`retractions.md` R13). **{len(readable)} angles pass every precondition: "
+            f"{names}**, and the largest is {best['angle_deg']:.0f}°.",
+            "",
+            f"{why}.",
+            "",
+            "| θ | difference | combined bound | separation |",
+            "|---|---|---|---|",
+        ]
+        for r in readable:
+            d = med(r, "resample-pd") - med(r, "copy-nearest-z")
+            c = float(np.sqrt(np.nansum([se(r, "resample-pd") ** 2,
+                                         se(r, "copy-nearest-z") ** 2])))
+            out.append(f"| {r['angle_deg']:.0f}° | {d:+.4f} | {c:.4f} | "
+                       f"**{abs(d) / c if c else float('nan'):.2f}σ** |")
+        out += [
+            "",
+            "**Not one difference reaches a single standard error.** The rule applied here was "
+            "fixed in §5-bis **before any of these numbers existed**, and it is predicted "
+            "independently by the scrambled-section floor above: if a section with randomised "
+            "types scores 0.03–0.24, differences of 0.05–0.22 were always going to be inside the "
+            "noise. Two separate measurements agree.",
             "",
         ]
     else:
@@ -1602,6 +1730,11 @@ def render(rec: dict) -> list[str]:
     scored = [r for r in rows if isinstance(r.get("arms"), dict) and "skipped" not in r["arms"]]
     if scored:
         out += render_scores(scored, rows, theta, rec)
+    else:
+        # R19: the calibration pass established §5-ter's table and rendered it nowhere, because
+        # the section lived inside `render_scores`. It is where the gate is SET, so it belongs in
+        # the report of the pass that sets it.
+        out += render_self_null(rows)
     out += [
         "## Leakage preconditions (L1, L2)",
         "",
