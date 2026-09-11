@@ -886,8 +886,18 @@ better on-axis. It is not.
 
 Tier-1 `starmap_visual_cortex`, holdout `paper_2_4_6`, the protocol unmodified. The six comparator
 rows — SpatialZ, FEAST, isoST and three SpatialCPA predecessors — were re-scored **together, in one
-call**, by `evaluate_all --force` on the content-hash-pinned evaluator (`evaluate_paper.py`, sha256
-`7362669…538992`, `specs/10` §0), 0 failures. **`flanking_copy` and
+call**, by `evaluate_all --force`, 0 failures, on the content-hash-pinned evaluator:
+
+```
+7362669200bbd2be905adf1715c4c6d44842ef1652edb2f4aba697c039538992  src/bench3/evaluate_paper.py
+```
+
+**That hash is verified three ways**: it is what the scoring run reported, it is what `specs/10` §0
+pins (764 lines), and it is what `benchmark-pbya-v3/src/bench3/evaluate_paper.py` in this repository
+hashes to. `tests/test_instrument_pin.py` asserts the last two on every test run, so the claim
+"these numbers came from the pinned instrument" is checked rather than stated.
+
+**`flanking_copy` and
 `oracle` are model-free probes** — they copy real cells rather than running a model, so they are
 arm-independent; they come from the probes tree (`r11_starmap_layout_modes.json`, re-measured and
 reproducing to four decimals), as does **this method's own row**, which is the shipped configuration
@@ -1048,10 +1058,13 @@ six would be a silent edit, not because we draw anything from it.
 `celltype_localization` — and establishing what those runs actually did would take reading their
 outputs, which we have not done.
 
-**4. The `results_rescored/` tree is not in this repository.** It was produced on the author's
-machine and the table in §8.2 was transcribed from it. The evaluator that produced it is pinned by
-content hash and is in the repository, so the run is *specifiable*; it is not yet *re-executable from
-this repository alone*. Committing the tree, or a manifest of it, is what would close that.
+**4. The `results_rescored/` tree is not in this repository**, and the table in §8.2 was transcribed
+from it. What *is* here is the instrument: `evaluate_paper.py` is committed and hashes to the pin the
+run reported, asserted by `tests/test_instrument_pin.py`. So the measuring device is reproducible from
+this repository and the measurement is not — what is missing is the tree of scored outputs and the
+comparator methods' own predictions, not the thing that scored them. Committing the tree, or a
+manifest of it, closes the gap; transcription is the only step in §8.2 that a reader has to take on
+trust, and it is one table of 42 numbers.
 
 **What this section claims about the competitor.** The two mechanisms of §8.3, read from its source,
 one of them measured on our fixture with a model-free test; that SpatialZ beats this method on five
