@@ -38,10 +38,25 @@ leaves the circularity objection (§3) untouched — and §3 was the load-bearin
 dated §6 amendment to that file, with the sentence the situation needed: **getting a number does not
 unstrike a claim.**
 
-### Four cells reported as returned rather than smoothed
+### RESOLVED — v18 and v20 are one prediction on tier-1, and it is a finding
 
-- `v18` and `v20` **identical in all six columns to four decimals** — undetermined whether they emit
-  the same predictions or the same predictions were scored twice. **Open; worth resolving.**
+Raised as an open flag, settled the same day by diffing the prediction files directly. On
+`paper_2_4_6` the two are **identical array by array** — `X/data`, `X/indices`, `X/indptr`,
+`cell_id`, `cell_type`, `section`, `x`, `y`, `z`, across **12 403 cells / 344 361 non-zeros**. Only
+`/uns` differs, and `/uns` is not scored.
+
+They are not the same method: in the **wide** regime they differ, and **only in expression** — on
+`allen_merfish_brain/wide_26_…_34`, `X` differs while every coordinate, `cell_id`, `cell_type` and
+`section` matches. **v20's changes over v18 are expression-path only and gated on the section gap
+exceeding the median spacing, which `paper_2_4_6` never reaches.**
+
+So the tier-1 protocol does not fail to *resolve* the two versions — **it never executes the code
+that separates them.** The six comparator columns are five distinct predictions. Promoted out of the
+flag list into §8.2's fourth reading, because two rows identical to four decimals reads as a
+transcription error and is not one.
+
+### Three cells reported as returned rather than smoothed
+
 - FEAST and isoST return **exactly `0.0000`** on `celltype_localization`: the not-scorable value, not
   a measurement. Read as blank, shown as returned (Convention 6).
 - isoST's **0.9956** on `umap_mixing` — largest number in the table, from the method otherwise last

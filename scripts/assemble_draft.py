@@ -21,6 +21,7 @@ from pathlib import Path
 PAPER = Path(__file__).resolve().parent.parent / "paper"
 
 SECTIONS = (
+    "00_abstract.md",
     "01_introduction.md",
     "02_method.md",
     "03_two_bounds.md",

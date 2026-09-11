@@ -43,7 +43,7 @@ arm-independent; they come from the probes tree (`r11_starmap_layout_modes.json`
 reproducing to four decimals), as does **this method's own row**, which is the shipped configuration
 at medians over the same three held-out sections.
 
-| metric | spatialz | feast | isost | v18 | v20 | v21 | **v25 (ours)** | **`flanking_copy`** | **`oracle`** |
+| metric | spatialz | feast | isost | v18 † | v20 † | v21 | **v25 (ours)** | **`flanking_copy`** | **`oracle`** |
 |---|---|---|---|---|---|---|---|---|---|
 | `morans_pearson` | 0.9289 | 0.7742 | 0.7884 | 0.9811 | 0.9811 | 0.9768 | **0.5574** | **0.9836** | 1.0000 |
 | `gearys_pearson` | 0.9307 | 0.7746 | 0.7981 | 0.9815 | 0.9815 | 0.9781 | **0.5543** | **0.9840** | 1.0000 |
@@ -51,6 +51,8 @@ at medians over the same three held-out sections.
 | `marker_field_r` | 0.8535 | 0.5686 | 0.6344 | 0.8707 | 0.8707 | 0.8757 | **0.5655** | **0.8857** | 0.9997 |
 | `marker_depth_r` | 0.9199 | 0.7690 | 0.6984 | 0.8963 | 0.8963 | 0.9580 | **0.7228** | **0.9794** | 1.0000 |
 | `celltype_localization` | 0.8175 | ⚠️ 0.0000 | ⚠️ 0.0000 | 0.7766 | 0.7766 | 0.7954 | **0.7591** | **0.7765** | 0.9808 |
+
+† `v18` and `v20` emit **bitwise-identical predictions** under this holdout — the same file, not two runs that agree. See the fourth reading below; the row is printed twice as returned.
 
 ### The reading, in the order the floor forces
 
@@ -88,12 +90,34 @@ probe's score as a result of the model (`reports/spatialz_claim_struck.md`, amen
 **What the table licenses is "a copy beats SpatialZ on four of the five readable metrics", which is a
 statement about the benchmark.**
 
-### Four things in the table that are not measurements, flagged rather than smoothed
+**4. Two of the six comparator rows are the same prediction, and that is a result about the
+protocol.** `v18` and `v20` agree in all six columns to four decimals. They are not two runs of one
+method and not a transcription error: **their prediction files are identical array by array** on
+`paper_2_4_6` — `X/data`, `X/indices`, `X/indptr`, `cell_id`, `cell_type`, `section`, `x`, `y`, `z`,
+across **12 403 cells and 344 361 non-zero entries**. The only difference between the two files is
+`/uns`, which carries provenance and is not scored.
 
-- **`v18` and `v20` are identical in all six columns, to four decimals.** Two versions do not agree
-  to 1 part in 10⁴ on six statistics by chance. Either they emit the same predictions or the same
-  predictions were scored twice. We have not determined which, and the row is printed twice as it
-  came back rather than merged.
+They are not the same method. In the **wide** holdout regime the two differ — and differ **only in
+expression**: on `allen_merfish_brain/wide_26_…_34`, `X` differs while every coordinate, `cell_id`,
+`cell_type` and `section` is identical. So v20's changes over v18 are **expression-path only, and
+they fire only when the section gap exceeds the volume's median spacing.** `paper_2_4_6` never
+reaches that gap, so on tier-1 the two versions execute the same code path and emit the same file.
+
+**The headline table of this literature cannot distinguish two released versions of a method** — not
+in the weak sense that their scores are close, but in the strong sense that there is nothing to
+distinguish: the protocol never activates the code that separates them. The six comparator columns
+are **five distinct predictions**. We report the row twice, as returned, because merging it would
+hide that.
+
+This is the sharpest available statement of a limit this paper reports in three other places. §6.3
+found the metric nearly blind to the expression head (an oracle-position arm's across-seed spread is
+exactly zero); §5.6 found the statistic resolves ~0.26–0.30 of the tissue radius; §8.2's first
+reading found no method clearing a model-free copy. Here the protocol does not merely fail to resolve
+a difference — **on this holdout there is no difference to resolve**, and a reader comparing the two
+published versions on tier-1 would be comparing one file with itself.
+
+### Three things in the table that are not measurements, flagged rather than smoothed
+
 - **FEAST and isoST score exactly `0.0000` on `celltype_localization`.** An exact zero on a
   Sinkhorn-divergence-against-null statistic is the value returned when nothing is scorable — no
   cell type clearing `min_gt_cells`, or no type column — not a measurement of poor localization.

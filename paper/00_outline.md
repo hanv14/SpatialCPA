@@ -13,6 +13,7 @@ time; and within those bounds the standard metric cannot separate our layout fro
 
 | § | title | rests on | status |
 |---|---|---|---|
+| — | Abstract (280 words) | §3-§8 | drafted; long form in `00_abstract_extended.md` |
 | 1 | Introduction | — | drafted |
 | 2 | Method | T03–T09 | drafted |
 | 3 | **Two bounds on oblique evaluation** | `the_comb_limit.md`, `metric_resolution.md` | drafted |

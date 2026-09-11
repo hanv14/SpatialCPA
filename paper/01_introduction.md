@@ -73,9 +73,13 @@ actually cuts. The two are different objects; the standard metric cannot tell th
   where the slab thickness is recorded. A leakage-guarded volume is a factor of two worse as an
   instrument for this than the specimen it came from, and the loss is invisible to any summary that
   counts cells rather than geometry (§4.6.1).
+- **A comparator table with a floor**: six methods re-scored together on the pinned evaluator, with a
+  model-free copy of the flanking sections beside them. **On four of the five metrics that have such
+  a floor, not one method reaches it** — and two of the six published versions emit the *same
+  prediction file* under this holdout, so the protocol cannot separate them at all (§8.2).
 - **A negative result reported in full**, with the reconstruction deficit our own method does not
-  close (§6) and nineteen retractions of our own claims, each with the evidence that overturned it
-  (§7).
+  close (§6) and eighteen retractions of our own claims, plus two fabrications we caught in our own
+  drafting, each with the evidence that overturned it (§7).
 
 ## What we do not claim
 
