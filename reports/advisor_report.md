@@ -1131,3 +1131,23 @@ literature.
 **What would change the assessment:** a change to the emission model or its objective that closes
 the amplitude/dispersion trade, followed by a re-run of the six-metric comparison against copying.
 This project cannot run it. **What would not:** more seeds — §4.2i is the reason.
+
+---
+
+## ⚠️ RESOLUTION CAVEAT — added 2026-09-11, applies to every `celltype_localization` number below
+
+`paper_celltype_localization`'s Sinkhorn kernel is `exp(-d^2 / (eps * scale))` with `eps = 0.05` and
+`scale` the median squared inter-cell distance on radius-normalised coordinates, so its length scale
+in micrometres is `radius * sqrt(eps * scale)`. On real tissue that is **≈ 110 µm against a tissue
+radius of ≈ 400 µm**.
+
+**The statistic is blind to spatial structure below roughly a quarter of the tissue radius.** It
+measures whether a cell type is in the right *region*, not whether it is in the right place within
+it. Every `celltype_localization` figure in this document — the 0.7765 copy floor, the 0.9808
+oracle, every arm and every deficit — was computed under that blur, and none of them is evidence
+about placement finer than it.
+
+Nothing in this document's verdicts changes: the comparisons are between arms measured on the same
+instrument, and gross regional placement is what the layout head was being judged on. What changes
+is what those verdicts may be *said* to mean. Full derivation, and the two things it cuts against us
+on, in `reports/metric_resolution.md`.

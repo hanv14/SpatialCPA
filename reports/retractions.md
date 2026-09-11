@@ -182,3 +182,45 @@ holds 47 189. The second figure is `1988/47 189` = **4.2%**, and the screen's th
 wrong and a cross-scope mix of a full-dataset count with a training-volume count is exactly the
 error `specs/10` §4.2a exists for — committed in the document that was ruling other things out for
 being unmeasured.
+
+---
+
+## R7 — the first residual-modulation table was floating-point noise
+
+**Claimed** (`oblique_demonstration_preregistration.md` §2-ter, first version, and reported in
+conversation): the comb's residual modulation under the metric's kernel is 0.01% at 30°, 0.00% at
+45°, 0.03% at 60°.
+
+**Withdrawn.** Those came from an FFT convolution on a discrete grid. At 60° that implementation
+returned **1.8 × 10⁻⁵, 9.4 × 10⁻⁴, 2.0 × 10⁻⁴ and 7.7 × 10⁻⁵** as the grid went 10⁵ → 8 × 10⁵
+points. The true value is **3 × 10⁻¹²** — far below what a double-precision convolution can
+represent, so the grid was reporting its own rounding.
+
+**A quantity that moves two orders of magnitude with an implementation parameter is not a
+measurement.** It was one edit from being published as one, and the only reason it was not is that
+the self-check asserted a *margin* ("four orders of magnitude") rather than a value, and the margin
+failed.
+
+**Fixed at source.** The closed form is exact and stable: a square comb of duty cycle `f` has
+first-harmonic amplitude `sin(πf)/π` against a mean of `f`, and a Gaussian of width `σ` multiplies
+it by `exp(−2π²σ²/p²)`, so
+
+```
+modulation = (2·|sin(π f)| / (π f)) · exp(−2 π² σ² / p²)
+```
+
+Correct values: **1.7 × 10⁻⁴ (30°), 2.3 × 10⁻⁸ (45°), 3.1 × 10⁻¹² (60°)**.
+
+**And the corrected numbers change the reading.** The modulation *falls* with angle, because the
+strata crowd together as `period = s / sin θ` shrinks. The limit as `f → 0` is
+`2·exp(−2π²σ²/p²)`, also negligible. **So the metric cannot see the comb at any angle, 90° included**
+— which means this quantity discriminates nothing and cannot be the criterion. F2 rests on measure
+zero instead, and it is a better criterion for having been forced off the wrong one.
+
+**A second defect from the same function**, caught in a dry run of the renderer: at a coronal plane
+`period` is infinite, `exp(0) = 1`, and it reported **128% modulation for a comb that does not
+exist**. Now returns 0 when the period is not finite.
+
+**Class.** New. §4.2 has rules about criteria, references and estimators; this is *a number whose
+value depends on an implementation knob nobody varied*. The general form: **vary the knob before
+reporting the number.** A convergence check is cheap and this one took four lines.

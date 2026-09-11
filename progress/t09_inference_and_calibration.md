@@ -9430,3 +9430,51 @@ file before any arm has a number, which is the whole protection against choosing
 score. `--self-check` **33/33**, including leak checks that are asserted to **fire** on a planted
 leak, and a band boundary whose 1e-12 slack is numerical — nine orders below the band — not a wider
 band. `angle_budget --self-check` **37/37**.
+
+### F2, the metric's resolution, and R7
+
+**Step 1 — θ\* needed a fill criterion, and there is no principled fill floor.** §2-bis defined θ\*
+by G1 and G2, which `the_comb_limit.md` had just proved blind to the comb; the runner faithfully
+returned **90°** at `fill = 0.00`. **F2**: θ\* is the largest angle clearing the gates whose
+evaluation set has **non-zero measure**. 90° is excluded because `fill = t·cos 90°/s = 0` exactly —
+a set of measure zero is not a section. Below that **no floor is derivable**: the metric supplies no
+coverage constant, and 0.25/0.33/0.40 would move θ\* between 60°, 45° and 30° on a number chosen
+after seeing the table. So none was invented. **F2 selects θ\* = 60°, fill 0.25** — *not* the 30–45°
+previously accepted, and the amendment says so explicitly and leaves the headline choice to the
+author rather than laundering it through a threshold. Every qualifying angle (30/45/60) is scored
+with its fill beside its score; the curve is the result.
+
+**Step 2 — the blur, measured with the evaluator's own constants.** `metric_blur_um` computes
+`radius·√(eps·scale)` exactly as `celltype_localization` does, per angle. ≈ **110 µm against a
+tissue radius of ≈ 400 µm**.
+
+**Step 4 — `reports/metric_resolution.md`, and propagated.** The statistic is blind to structure
+below roughly a quarter of the tissue radius: it measures *region*, not placement within it. The
+caveat is appended verbatim to `advisor_report.md`, `t09_closeout.md`,
+`layout_split_preregistration.md`, `diagnostic_programme_closed.md` and `architecture_ceiling.md`.
+It qualifies the 0.7765 copy floor, the 0.9808 oracle, every `test1b` arm and every deficit. No
+verdict changes — the comparisons are between arms on the same instrument — but what they may be
+*said to mean* narrows, and it explains why the copy floor is hard to beat: a copy reproduces gross
+regional structure exactly, which is precisely and only what the statistic rewards.
+
+**R7 — and it nearly went out.** The first modulation table (0.01/0.00/0.03%) was an FFT on a
+discrete grid; at 60° it returned 1.8e-5, 9.4e-4, 2.0e-4, 7.7e-5 as the grid went 1e5 → 8e5 points
+against a true value of 3e-12. Caught only because the self-check asserted a *margin* rather than a
+value. Replaced by the closed form `2|sin(πf)|/(πf)·exp(−2π²σ²/p²)`. The corrected numbers **change
+the reading**: modulation falls with angle and is negligible even as `f → 0`, so **the metric cannot
+see the comb at any angle** — it discriminates nothing, cannot be the criterion, and F2 rests on
+measure zero instead. **F1 is withdrawn**; `field` returns as an ordinary ablation. A second defect
+from the same function, caught in a renderer dry run: 128% modulation reported at a coronal plane,
+where there is no comb.
+
+**Step 3 — `--thickness` now *requires* `--thickness-source`**, recorded verbatim in the report. A
+number whose provenance is not written down becomes "measured" in the next reader's hands, which is
+R5.
+
+**Step 5 — the four small things**, each now emitted by the runner rather than left to a reader:
+"≥ θ\*" when no angle failed (a budget nobody hit is not a budget), a flag when the coronal row is
+not the maximum (second time, after R1), a flag on the non-monotone counts at wide angles, and a
+note that `donors` equals the ground truth here because the slab is never empty — it diverges only
+in the generation setting.
+
+`oblique_demo --self-check` **47/47**; `angle_budget --self-check` **37/37**.

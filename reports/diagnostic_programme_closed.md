@@ -104,3 +104,23 @@ pre-registrations earned their keep by firing against this project's interest at
 
 `specs/10` §4.2's rules — §4.2f-i, §4.2k, §4.2l, §4.2m, §4.2n and now §4.2o — were all earned by this
 project's own defects, most of them in instruments built to catch the previous one.
+
+---
+
+## ⚠️ RESOLUTION CAVEAT — added 2026-09-11, applies to every `celltype_localization` number below
+
+`paper_celltype_localization`'s Sinkhorn kernel is `exp(-d^2 / (eps * scale))` with `eps = 0.05` and
+`scale` the median squared inter-cell distance on radius-normalised coordinates, so its length scale
+in micrometres is `radius * sqrt(eps * scale)`. On real tissue that is **≈ 110 µm against a tissue
+radius of ≈ 400 µm**.
+
+**The statistic is blind to spatial structure below roughly a quarter of the tissue radius.** It
+measures whether a cell type is in the right *region*, not whether it is in the right place within
+it. Every `celltype_localization` figure in this document — the 0.7765 copy floor, the 0.9808
+oracle, every arm and every deficit — was computed under that blur, and none of them is evidence
+about placement finer than it.
+
+Nothing in this document's verdicts changes: the comparisons are between arms measured on the same
+instrument, and gross regional placement is what the layout head was being judged on. What changes
+is what those verdicts may be *said* to mean. Full derivation, and the two things it cuts against us
+on, in `reports/metric_resolution.md`.

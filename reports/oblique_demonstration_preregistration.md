@@ -63,6 +63,80 @@ near real cells and **their own measurements are the ground truth for that plane
 At 90° on this specimen, `G` is ~1988 cells drawn from many sections, so the exclusion removes most
 of the volume. **That is the point, and it is also the demonstration's main risk** — see §6.
 
+## 2-ter. AMENDMENT (2026-09-11, second) — θ\* needs a fill criterion, because G1 and G2 cannot see the comb
+
+*Written before any arm is scored. §2-bis defined θ\* as "the largest angle clearing G1 and G2"; the
+runner implemented that faithfully and returned **90°**, at `fill = 0.00`, where the evaluation set
+is four parallel lines. That is the angle `the_comb_limit.md` says is unavailable, so the two
+documents contradicted each other and the fault is in §2-bis's definition — G1 and G2 are **counts**,
+and the comb document had just finished proving counts are blind to the comb. Mine to fix.*
+
+### What the metric actually does to the comb — measured, not assumed
+
+`celltype_localization`'s Sinkhorn kernel is `exp(−C/eps)` with `C = d²/scale` and `eps = 0.05`,
+where `scale` is the median squared distance between ground-truth cells on coordinates normalised by
+the tissue radius. In micrometres that is a Gaussian of
+`σ = radius·√(eps·scale/2)`. Convolving the comb with that kernel and measuring what survives:
+
+| θ | fill | period | gap | metric's blur | **residual modulation** |
+|---|---|---|---|---|---|
+| 30° | 0.43 | 115 µm | 65 µm | 119 µm | **1.7 × 10⁻⁴** |
+| 45° | 0.35 | 81 µm | 53 µm | 114 µm | **2.3 × 10⁻⁸** |
+| 60° | 0.25 | 66 µm | 50 µm | 109 µm | **3.1 × 10⁻¹²** |
+| 90° | **0.00** | 58 µm | 58 µm | 106 µm | **zero measure** |
+
+*(At the externally-sourced 28.6 µm thickness. The modulation **falls** with angle because the
+strata crowd together — `period = s / sin θ` shrinks — so a fixed blur suppresses them harder.)*
+
+⚠️ **CORRECTED before publication, and worth recording.** The first version of this table read
+0.01% / 0.00% / 0.03%, from an FFT convolution on a discrete grid. At 60° that implementation
+returned 1.8 × 10⁻⁵, 9.4 × 10⁻⁴, 2.0 × 10⁻⁴ and 7.7 × 10⁻⁵ as the grid went 10⁵ → 8 × 10⁵ points,
+against a true value of 3 × 10⁻¹². **A quantity that moves two orders of magnitude with an
+implementation parameter is floating-point noise wearing a measurement's clothes**, and it was one
+edit from being published as one. The closed form — a square comb's first harmonic
+`2|sin(πf)|/(πf)` times the Gaussian's `exp(−2π²σ²/p²)` — is exact, stable and now what the runner
+computes.
+
+**Two conclusions, and they point in opposite directions.**
+
+1. **The comb does not damage this metric at any angle — 90° included.** The modulation limit as
+   `f → 0` is `2·exp(−2π²σ²/p²)`, also negligible here. So **F1 is withdrawn**: a continuous-fill
+   arm is not penalised for filling gaps the statistic cannot see, and `field` returns to the table
+   as an ordinary ablation. **And this quantity therefore discriminates nothing** — it cannot be
+   the criterion, which is why F2 below rests on measure zero instead.
+2. **That is because the metric cannot resolve anything below ~110 µm**, on a tissue of radius
+   ~400 µm. This is a much larger fact than the oblique question and it cuts against us; see §8-bis
+   and `reports/metric_resolution.md`.
+
+### F2 — the criterion, and the honest limits of it
+
+> **F2.** θ\* is the largest angle clearing G1 and G2 whose evaluation set has **non-zero measure**
+> in the plane — i.e. `fill > 0`. **θ = 90° is excluded**: `fill = t·cos 90° / s = 0` exactly, so
+> the evaluation set is `N` lines with zero area, and no score computed on it is a score on a
+> section. Every scored angle reports its fill in the same row as its score.
+
+**Why this and not a fill floor.** I looked for a principled floor on `fill` and **there is not
+one.** The metric supplies no coverage constant; `min_gt_cells` and `max_n` are counts. Any floor I
+picked now — 0.25, 0.33, 0.40 — would be a number chosen after seeing the table, and it would move
+θ\* between 60°, 45° and 30°. Inventing one and calling it derived is exactly what this campaign
+keeps catching, so it is not done. `fill = 0` is the **only sharp line available**, and it is sharp
+for a reason that is not about thresholds: a set of measure zero is not a section.
+
+**What F2 therefore selects: θ\* = 60°, with `fill = 0.25`.** That is *not* the 30–45° previously
+accepted, and the difference must not be smuggled in. The derivation excludes 90° and says nothing
+about 60° versus 45°. **Choosing a headline below 60° is a judgement about how much coverage a claim
+needs, and it is the author's to make explicitly**, not mine to launder through a threshold. Recorded
+here so that whichever is chosen, the reason is on the record.
+
+**What is scored regardless: every angle clearing G1 and G2 with `fill > 0`** — 30°, 45° and 60° —
+each reported with its fill beside its score. The curve is the result; θ\* is a label on it.
+
+**One nuance, because it qualifies the sharp line.** `fill = 0` at 90° is a property of the
+*representation*: `load_volume` requires one depth per section, so cells are points at their
+section's `z` and the teeth have zero width. Real cells have finite extent, so a physical 90° section
+would have `fill ≈ cell diameter / s ≈ 0.17`. The degeneracy is in the data as built, not in the
+tissue — and since the data as built is what anyone can score, the exclusion stands.
+
 ## 3-bis. AMENDMENT (2026-09-11) — the exclusion rule in §3 makes the demonstration impossible
 
 *Found while building the runner, before it ran. §3 steps 2–3 are superseded by this section; §3
