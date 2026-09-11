@@ -17,7 +17,11 @@ The ceiling analysis is anchored to the published scale on tier-1 (exact per-sec
 `flanking_copy`, `reports/deep_anchoring_check.md` §2), pre-registered, and replicated 6/6 sections
 across both datasets. **This is the paper's best contribution and it stands as stated.**
 
-## 3. Claim 3 — "exact agreement between crossing sections" ⚠️ TRUE OF A CONFIGURATION THE FRAMING DOES NOT SHIP
+## 3. Claim 3 — "exact agreement between crossing sections" ✅ SUPPORTED, once the fix lands
+
+*(This section originally read ⚠️ TRUE OF A CONFIGURATION THE FRAMING DOES NOT SHIP. Both the
+diagnosis and my subsequent amendment to it were partly wrong; the sequence is kept below because
+the second error is the more instructive one.)*
 
 Bitwise, untrained, with a test — for **`zinb-flow`**, where every conditioning pathway is queried
 at physical points.
@@ -30,19 +34,33 @@ planes select different donors for the same physical cell.
 **Under the new framing, expression comes from cross-mix. So claim 3 is currently false of the
 proposed method.**
 
-⚠️ **AMENDED 2026-09-11, and it is worse than written above.** Building the fix exposed that **the
-bitwise test is weaker than the claim it is cited for.**
-`test_generation_is_intersection_consistent_by_construction` computes `points = segment.points(64)`
-**once** and hands the *same array* to both branches. It establishes that `evaluate_branch` is a
-pure function of `(points, labels, neighbours)` and ignores the plane — true, and the mechanism —
-but not that two independently generated crossing sections agree, because each derives its own
-coordinates and GATE 1 G1.2a measures those agreeing to **1.14e-13 um, "to rounding, not exactly"**.
+⚠️ **MY AMENDMENT OF 2026-09-11 IS WITHDRAWN — I overstated the gap.** It said the bitwise claim
+holds only "to rounding, not exactly", for `zinb-flow` as well as cross-mix. That is wrong, and the
+mechanism I missed was written in the record I was reading: `progress/t03_noise_field.md` G1.2
+records *"coords agree to 2.8e-14 um and **round to the same float32**"*.
 
-So the record's *"bitwise identical, exactly and without training"* holds under identical supplied
-coordinates and is **unmeasured under independent derivation — for `zinb-flow` as well as for
-cross-mix**. `tests/test_sefl.py::test_intersection_survives_independent_coordinate_derivation` now
-measures that gap. Same family as everything else this campaign has found: a test that verifies the
-code path it exercises rather than the claim it is quoted for.
+**`CTFFlow.prior_latent` casts to float32 before querying the GRF.** The float32 step at these
+coordinates is ~1e-5 to ~1e-4 um; GATE 1 G1.2a's pathway disagreement is 1.14e-13 um. So the two
+pathways round to the same float32 with about **nine orders of margin** — measured here at **0 of
+6,000,000 coordinates** changing under that drift. And G1.2 *does* test independently derived
+coordinates (256 points, two plane pathways, **max diff exactly 0.0**), which is the test I said did
+not exist.
+
+**So "bitwise" stands.** What it needs is its mechanism stated, because "exact by construction" is
+half the story: it is physical-point conditioning **plus** float32 quantisation of a disagreement
+nine orders below the quantisation step. Structural *and* numerical, with an enormous margin — not
+merely structural.
+
+**What genuinely remains untested**, and it is much narrower than what I claimed: the generation
+test supplies `points`, `labels` *and* `neighbours` to both branches, so **retrieval's neighbour
+selection under independently derived coordinates is not exercised**. That channel is *discrete* —
+a tie between two equidistant donors could in principle break differently — and float32
+quantisation covers it for the same reason it covers the rest, but it has not been measured. One
+test, and worth having.
+
+**Cross-mix now inherits the property at the same standard**: `position_keyed_uniforms` quantises to
+float32 first, and is bitwise under G1.2a's drift. So claim 3 is **true for both expression paths**
+with the flag on — which is the one place in this review where the answer improved on checking.
 
 **The fix is built** — `Config.cross_mix_position_keyed`, default **off** — and my cost estimate of
 "seconds" was wrong in a way worth recording (`reports/position_key_cost_correction.md`).
@@ -94,9 +112,13 @@ I could not locate a "5 of 6 against SpatialZ" result in the record at all.
 danger is that its own virtue is what it would violate.**
 
 Claim 4 says *we proved the design choice instead of asserting it*. On today's evidence the paper
-would assert claims 1, 2 and 3 — with claim 2, the novelty, resting on a synthetic probe result that
+would assert claims 1 and 2 — with claim 2, the novelty, resting on a synthetic probe result that
 two documents mislabel as real data, for a configuration that cannot produce an oblique section at
-all. A paper whose selling point is proof-not-assertion cannot carry three asserted claims.
+all. A paper whose selling point is proof-not-assertion cannot carry asserted claims.
+
+**Updated 2026-09-11: claim 3 has moved to supported** (§3), and claim 1 has been **struck and
+restated** (§5). The verdict now rests on claim 2 alone — which is the right place for it, because
+claim 2 is the novelty.
 
 **That is a statement about the evidence, not about the idea.** The framing is worth pursuing. It is
 not yet a paper.
@@ -105,7 +127,7 @@ not yet a paper.
 
 | | claim | what would support it | cost |
 |---|---|---|---|
-| 1 | claim 3 | key cross-mix's Bernoulli to the 3D field; the existing bitwise test | small code change, seconds to test |
+| 1 | ~~claim 3~~ | ✅ **DONE.** `position_keyed_uniforms`, float32-quantised, bitwise under G1.2a's drift; `Config.cross_mix_position_keyed` (default off). Cost estimate was wrong — `reports/position_key_cost_correction.md` | done |
 | 2 | claim 2, mechanism | **Test 1** — the field layout with the count supplied externally | zero fits, minutes |
 | 3 | claim 2, real data | **E3** — oblique validation on the re-sectioned STARmap, through the generation pipeline rather than a linear probe | a re-sectioning build plus generation; the largest item, and unavoidable |
 | 4 | claim 1 | the comparator run: SpatialZ, FEAST, isoST on tier-1, same instrument and holdout | `specs/10` step 5, already scoped as required |

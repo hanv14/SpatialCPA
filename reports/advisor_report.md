@@ -69,7 +69,7 @@ Three claims, all about **encoding** — representing the volume. None is about 
 |---|---|---|---|
 | 2.1 | The correlated prior controls per-gene spatial autocorrelation | error ratio **0.130** against an i.i.d. prior; per-gene `I_gen` vs `I_real` at **r = 0.917**; median `I_gen` monotone as `ell` sweeps 0.25x–4x | `reports/gate1.md` — **synthetic fixture**, stated as such |
 | 2.2 | Oblique planes reconstruct as well as axis-aligned | depth-matched parity **0.955**, edge-excluded **0.979**, against a pre-registered ≥ 0.90 | `reports/gate2.md` — ⚠️ **synthetic fixture, corrected 2026-09-11**; linear probe on 32 expression PCs, not the generation pipeline. Real-data oblique validation (E3) has never run (`reports/framing_honesty_review.md` §4) |
-| 2.3 | Two crossing sections agree exactly where they meet | **bitwise identical** expression along the intersection, on an **untrained** model, no consistency loss applied | `tests/test_sefl.py::test_generation_is_intersection_consistent_by_construction` |
+| 2.3 | Two crossing sections agree exactly where they meet | **bitwise identical** expression along the intersection, on an **untrained** model, no consistency loss applied. ⚠️ **Mechanism, stated 2026-09-11:** bitwise because the conditioning is at physical points **and** `prior_latent` quantises to float32 — the two plane pathways disagree by 1.14e-13 um (GATE 1 G1.2a) against a float32 step of ~1e-5 um, so they round to the same value with ~9 orders of margin (0 of 6,000,000 coordinates change). Structural **and** numerical, not structural alone. Untested: retrieval's *discrete* neighbour selection under independently derived coordinates (`reports/framing_honesty_review.md` §3). | `tests/test_sefl.py::test_generation_is_intersection_consistent_by_construction` |
 
 **2.2 is the strongest single result in the project** and it is unqualified on real data.
 
@@ -1095,7 +1095,7 @@ and both were describing a state that had ceased to exist. Only the **reflog** s
 |---|---|---|
 | Oblique planes reconstruct as well as axis-aligned | **PASSES** — 0.955 / 0.979 against ≥ 0.90 | `reports/gate2.md` |
 | A 3D GRF prior controls per-gene spatial autocorrelation | **PASSES, on the fixture** — 0.130, r 0.917 | `reports/gate1.md` |
-| Crossing sections agree along their intersection | **PASSES, exactly and untrained** | `tests/test_sefl.py` |
+| Crossing sections agree along their intersection | **PASSES, exactly and untrained** — via physical-point conditioning **and** float32 quantisation (~9 orders of margin); retrieval's discrete tie-breaking under independently derived coordinates is untested | `tests/test_sefl.py` |
 | The learned intensity field places cells better than copying | **REFUTED on real data** — below the copy floor | `reports/r11_starmap_layout_modes.json` |
 | Generated expression beats copying a real section | **REFUTED, both datasets** | `reports/t09_audit_deep_expr_mode.json` |
 | Text embeddings help genes the model was fitted on | **REFUTED, three three-seed negatives** | `reports/t09_zeroshot_deep.md` |

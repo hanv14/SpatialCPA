@@ -1,5 +1,11 @@
 # STRUCK — "v20 beats SpatialZ 5 of 6"
 
+> **The reason for the strike is §3: under the copy-based framing the claim is CIRCULAR.** It is not
+> merely unsupported. Even if the comparator run returned exactly this number, quoting it as the
+> method's competitiveness would be claiming the copy floor as a result of the method — which is the
+> move `reports/architecture_ceiling.md` exists to forbid. §4's restatement is **adopted** as the
+> claim the paper makes instead.
+
 **The claim is withdrawn in full, not carried with a caveat.** It has been quoted since early in the
 campaign and it cannot be located in the record.
 
@@ -41,14 +47,17 @@ ceiling analysis is the argument that a copy is near the achievable maximum. Quo
 method's competitiveness claims the copy floor as a result of the method — the exact move the
 ceiling analysis exists to forbid.
 
-## 4. The honest restatement, which is a better claim
+## 4. The restatement — ADOPTED 2026-09-11 as the paper's claim 1
 
 > Reconstruction quality is **at the copy level**, and this paper shows the copy level is near the
 > achievable maximum on this protocol. The contribution is not exceeding it — it is reaching it at
 > **arbitrary orientations**, with **coherent volumes**, which copying cannot do.
 
-That concedes the comparison and moves the claim onto the axis where the method is actually
-different. It also makes the comparator run (`specs/10` step 5) a **corroboration** rather than a
+**Why it is stronger and not a retreat.** The struck version competed on an axis where a copy
+already wins, using a copy's own score. The restatement competes on an axis **no copy can reach at
+all** — a copy has no definition at an arbitrary orientation — and it uses the ceiling result as
+support rather than being embarrassed by it. It concedes the comparison and moves the claim onto the
+axis where the method is actually different. It also makes the comparator run (`specs/10` step 5) a **corroboration** rather than a
 load-bearing dependency: it would confirm that everyone is near the copy floor, which is the
 methodological finding, rather than being needed to show we beat anyone.
 

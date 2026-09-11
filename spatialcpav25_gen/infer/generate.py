@@ -526,6 +526,7 @@ def generate_section(
     anchor: IsotonicRegressor | None = None,
     exclude_z: set[float] | None = None,
     z_window: float | None = None,
+    n_target: int | None = None,
 ) -> Any:
     """Generate a virtual section on ``plane``. Returns an ``AnnData``.
 
@@ -608,7 +609,9 @@ def generate_section(
 
     gen = np.random.default_rng(seed)
     with _using_field(model, cfg, grf_seed):
-        layout = _layout_on(model, plane, vol, cfg, seed, exclude_z=excluded)
+        layout = _layout_on(
+            model, plane, vol, cfg, seed, exclude_z=excluded, n_target=n_target
+        )
         xyz = layout.coords_xyz.astype(np.float64)
         cell_type = torch.from_numpy(layout.cell_type.astype(np.int64))
         region = _region_of(model, xyz)
@@ -670,11 +673,15 @@ def _layout_on(
     seed: int,
     *,
     exclude_z: set[float] | None = None,
+    n_target: int | None = None,
 ) -> Layout:
     """Sample the section's cells and their types on ``plane`` (T05).
 
     ``exclude_z`` is the generation's own exclusion set and reaches :func:`_flanking`, so the
     layout draws on the same evidence the retrieval does and no more.
+
+    ``n_target`` supplies the cell count from outside the intensity integral
+    (``reports/reframing_tests_preregistration.md`` §1). ``None`` is the shipped behaviour.
     """
     return sample_layout(
         intensity_fn_from_head(model.intensity, model.field),
@@ -682,6 +689,7 @@ def _layout_on(
         cfg,
         seed,
         repulsion=model.repulsion,
+        n_target=n_target,
         flanking=[
             flanking_from_section(s, plane) for s in _flanking(vol, plane, exclude_z=exclude_z)
         ],

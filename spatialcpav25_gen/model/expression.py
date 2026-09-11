@@ -945,9 +945,10 @@ def position_keyed_uniforms(
       ``[0, 1]``, and a triangle wave of a uniform phase is uniform. So the donor's *marginal*
       selection probability is unchanged and the mix's distribution is what v20's was.
     * **Continuous everywhere.** The obvious alternatives are not. A hash of the coordinates is
-      discontinuous, so the ~1e-13 um by which two plane pathways disagree (GATE 1 G1.2a) would
-      select an entirely different donor. A raw fractional part wraps. ``arccos(cos(.))`` has
-      neither defect, so a 1e-13 coordinate difference moves the uniform by ~1e-13.
+      discontinuous; a raw fractional part wraps. ``arccos(cos(.))`` has neither defect. With the
+      float32 quantisation above this is belt and braces — the quantisation already makes two plane
+      pathways agree bitwise — but it means the property degrades *gracefully* rather than
+      catastrophically if a coordinate ever did land on a rounding boundary.
     * **Near-independent across genes**, because the ``w_g`` are drawn independently. This is what
       keeps T06's ``test_per_gene_independence_destroys_covariance`` meaningful: a key that
       correlated genes would make the mix quietly more copy-like.
@@ -958,7 +959,14 @@ def position_keyed_uniforms(
     1017 would correlate the genes — the defect above, reintroduced.
     """
     conf = cfg or Config()
-    x = np.asarray(xyz, dtype=np.float64)
+    # Quantise to float32 FIRST, exactly as `CTFFlow.prior_latent` does before querying the GRF.
+    # This is what makes the property bitwise rather than merely continuous: two plane pathways
+    # reach one physical point 1.14e-13 um apart (GATE 1 G1.2a) and the float32 step at these
+    # coordinates is ~1e-5 to ~1e-4 um, so they round to the same float32 with about nine orders of
+    # margin -- measured at 0 of 6,000,000 coordinates changing. GATE 1's G1.2 relies on the same
+    # cast and reports "max diff exactly 0.0" for the noise field under independently derived
+    # coordinates. Continuity (below) is the second line of defence, not the first.
+    x = np.asarray(np.asarray(xyz, dtype=np.float32), dtype=np.float64)
     if x.ndim != 2 or x.shape[1] != 3:
         raise ExpressionError(
             f"position_keyed_uniforms: xyz must be (N, 3) physical um, got {x.shape}"

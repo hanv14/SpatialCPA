@@ -843,6 +843,7 @@ def sample_layout(
     *,
     repulsion: RepulsionParams | None = None,
     flanking: Sequence[FlankingSection] | None = None,
+    n_target: int | None = None,
 ) -> Layout:
     """Sample a section's layout on ``plane``. Returns a :class:`Layout` of ``N`` cells.
 
@@ -878,6 +879,11 @@ def sample_layout(
     nearest flanking section's coordinates and types unchanged: the previous version's
     behaviour, kept as the no-regression fallback, and the one mode whose count does not
     come from the intensity.
+
+    ``n_target`` overrides the count the intensity integral would give, leaving the intensity to
+    decide only *where* the cells go. It is ignored under ``"resample"``, which has no integral.
+    ``Layout.n_expected`` still reports the integral's figure, so an overridden run says what the
+    integral would have done.
     """
     if cfg.layout_mode == "resample":
         return _resample_layout(plane, cfg, seed, flanking)
@@ -893,7 +899,25 @@ def sample_layout(
     mc_xyz = uniform_slab_points(plane, int(cfg.layout_n_mc), gen)
     lam_mc = _check_intensity(intensity_fn(mc_xyz), mc_xyz.shape[0], "the slab MC sample")
     n_expected = expected_count(lam_mc, plane.slab_volume)
-    n_target = int(gen.poisson(n_expected))
+    if n_target is None:
+        n_target = int(gen.poisson(n_expected))
+    else:
+        # The cell count supplied from OUTSIDE the intensity integral. R11 localised the field
+        # layout's defect to that integral's scale -- unstable 3.7x across refits of one config,
+        # and 163 cells placed where the ground truth has 4102 -- while leaving open whether the
+        # PATTERN is right. Overriding the count separates the two, which is
+        # `reports/reframing_tests_preregistration.md` §1's existence test for oblique generation.
+        #
+        # `n_expected` keeps the integral's own figure so the two are visible side by side and the
+        # field is never a lie (`_resample_layout`'s docstring makes the same promise). The draw is
+        # still consumed, so a run with an override and one without differ only in the count.
+        _ = int(gen.poisson(n_expected))
+        n_target = int(n_target)
+        if n_target < 1:
+            raise LayoutError(
+                f"sample_layout: n_target={n_target} must be >= 1; it is a cell count supplied "
+                "from outside the intensity integral"
+            )
 
     if cfg.layout_sampler == "grid":
         uv, n_proposals, exhausted = _propose_points_grid(

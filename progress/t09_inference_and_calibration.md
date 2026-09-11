@@ -9117,3 +9117,62 @@ and the abundance floor entirely.
 
 **Measuring stops here.** Nothing meets `diagnostic_programme_closed.md` §3, checked twice, and the
 answer has not moved in three rounds. What remains is the paper.
+
+---
+
+## Round 16 — the framing's three propagations, and Test 1's runner
+
+**Claim 1's restatement is adopted, with the circularity as the reason for the strike.** Not merely
+unsupported: under the copy-based framing, *"expression comes from cross-mix because copying wins"*
+plus *"we are competitive because cross-mix beats SpatialZ"* claims the copy floor as the method's
+result — the move `architecture_ceiling.md` exists to forbid. Even a comparator run returning that
+number would not rescue it. The adopted claim: **reconstruction at the copy level, the copy shown
+near the ceiling, at orientations copying cannot reach** — which competes on an axis no copy has a
+definition on, and uses the ceiling result as support rather than being embarrassed by it.
+
+**GATE 2's correction reached nine sites**: both `PROGRESS.md` rows, `specs/11`, `numbers.md`, the
+T09 claims table and five headline occurrences. Each now says synthetic fixture, linear probe on 32
+expression PCs, not the generation pipeline, E3 never run.
+
+### ⚠️ I over-corrected claim 3, and the withdrawal matters more than the correction
+
+I amended the record to say intersection consistency holds *"to rounding, not exactly"*, for
+`zinb-flow` as well as cross-mix. **That is wrong, and the mechanism I missed was in the record I
+was reading**: `progress/t03_noise_field.md` G1.2 records *"coords agree to 2.8e-14 um and round to
+the same float32"*.
+
+`CTFFlow.prior_latent` casts to float32 before querying the GRF. The float32 step at these
+coordinates is ~1e-5 um against GATE 1 G1.2a's 1.14e-13 um pathway disagreement — **nine orders of
+margin**, measured at **0 of 6,000,000 coordinates** changing. And G1.2 *does* test independently
+derived coordinates (256 points, max diff exactly 0.0), which is the test I said did not exist.
+
+**"Bitwise" stands.** What it needed was its mechanism stated, since "exact by construction" is half
+of it: physical-point conditioning **plus** float32 quantisation. Structural *and* numerical.
+Recorded at all five sites that assert it.
+
+**What genuinely remains untested is much narrower**: the generation test supplies `points`,
+`labels` *and* `neighbours`, so retrieval's **discrete** neighbour selection under independently
+derived coordinates is unexercised. One test, worth having.
+
+**And the fix improved on checking.** `position_keyed_uniforms` now quantises to float32 first, so
+**cross-mix is bitwise under G1.2a's drift too** — claim 3 is true for both expression paths with
+the flag on. Continuity is now the second line of defence rather than the first.
+
+### Test 1's runner
+
+`scripts/test1_field_count.py`, against `reframing_tests_preregistration.md` §1. `sample_layout`
+gains `n_target`, which overrides the intensity integral's count while leaving the intensity to
+decide *where* the cells go — `Layout.n_expected` still reports the integral's own figure, so an
+overridden run is not silent about it. Zero fits: `layout_mode` is fit-invariant and the r11 arms
+are provably one fit.
+
+`band()` **is** the pre-registration in code and gets a `--self-check`: **9/9**, including both
+boundaries and the UNINFORMATIVE rule that stops the oracle-fed arm standing in for the shippable
+one. The flanking-density arm governs; the ground-truth arm is reported as an upper bound and the
+report says so in the table.
+
+**My prediction stands: PARTIAL, not CONFIRMED** — `pilot.md` §6.3 already calls the layout "a
+separate, real defect" after noting `celltype_localization` improves to 0.5822 and stays well below
+the floor.
+
+`--self-check` 147/147; `test1_field_count.py --self-check` 9/9; `tests/test_config.py` 7/7.

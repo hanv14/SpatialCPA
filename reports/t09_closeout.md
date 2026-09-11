@@ -46,7 +46,9 @@ single result in the project"*. **GATE 2 ran on the synthetic fixture** —
 pipeline, because "the full generative heads do not exist yet". `gate2.md` says so and says T10's
 **E3 is where it meets real data**; E3 has never run. See `reports/framing_honesty_review.md` §4.
 
-**2.3 Intersection consistency is exact by construction.** Two crossing sections emit **bitwise
+**2.3 Intersection consistency is exact by construction.** ⚠️ **Mechanism, stated 2026-09-11:** bitwise because the conditioning is at physical points **and** `prior_latent` quantises to float32 — the two plane pathways disagree by 1.14e-13 um (GATE 1 G1.2a) against a float32 step of ~1e-5 um, so they round to the same value with ~9 orders of margin (0 of 6,000,000 coordinates change). Structural **and** numerical, not structural alone. Untested: retrieval's *discrete* neighbour selection under independently derived coordinates (`reports/framing_honesty_review.md` §3).
+
+ Two crossing sections emit **bitwise
 identical** expression along their intersection on an **untrained** model, with no consistency loss
 applied (`test_generation_is_intersection_consistent_by_construction`). Not approximately, not at a
 particular checkpoint: the 3D noise field is continuous and every conditioning pathway — retrieval,

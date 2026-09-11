@@ -997,3 +997,44 @@ def test_fixture_rarest_type_is_six_percent():
     )
     prevalence = counts / counts.sum()
     assert 0.05 < prevalence.min() < 0.08, prevalence.tolist()
+
+
+def test_sample_layout_takes_the_count_from_outside_the_integral(
+    training: TrainingVolume, gt_field, cfg: Config, repulsion
+):
+    """``n_target`` overrides the intensity integral's count and nothing else.
+
+    R11 localised the field layout's defect to that integral's scale -- unstable 3.7x across refits
+    and 163 cells placed where the ground truth has 4102 -- while leaving open whether the *pattern*
+    is right. This is the override that separates them
+    (``reports/reframing_tests_preregistration.md`` §1).
+    """
+    intensity = fixture_intensity(gt_field, mean_cell_density(training.sections))
+    plane = target_plane(training)
+
+    free = sample_layout(intensity, plane, cfg, SEED, repulsion=repulsion)
+    forced = sample_layout(intensity, plane, cfg, SEED, repulsion=repulsion, n_target=137)
+
+    assert forced.n_cells == 137, "the supplied count must be the count placed"
+    assert free.n_cells != 137, "the fixture must not already produce 137"
+
+    # `n_expected` still reports what the integral would have said, so an overridden run is not
+    # silent about having been overridden.
+    assert forced.n_expected == pytest.approx(free.n_expected)
+
+    with pytest.raises(LayoutError, match="must be >= 1"):
+        sample_layout(intensity, plane, cfg, SEED, repulsion=repulsion, n_target=0)
+
+
+def test_resample_ignores_the_count_override_because_it_has_no_integral(
+    training: TrainingVolume, gt_field, cfg: Config, repulsion
+):
+    intensity = fixture_intensity(gt_field, mean_cell_density(training.sections))
+    plane = target_plane(training)
+    rs = cfg.replace(layout_mode="resample")
+    flanking = [flanking_from_section(sec, plane) for sec in training.sections[:2]]
+    a = sample_layout(intensity, plane, rs, SEED, repulsion=repulsion, flanking=flanking)
+    b = sample_layout(
+        intensity, plane, rs, SEED, repulsion=repulsion, flanking=flanking, n_target=7
+    )
+    assert np.array_equal(a.coords_uv, b.coords_uv)

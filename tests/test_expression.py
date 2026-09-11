@@ -1835,8 +1835,16 @@ def test_position_key_is_the_same_at_the_same_point_and_continuous_near_it():
     xyz = _dense_block()
     u = position_keyed_uniforms(xyz, 400, seed=0)
     assert np.array_equal(position_keyed_uniforms(xyz, 400, seed=0), u)
-    moved = position_keyed_uniforms(xyz + 1e-13, 400, seed=0)
-    assert float(np.abs(moved - u).max()) < 1e-9
+
+    # BITWISE under GATE 1 G1.2a's measured pathway disagreement, because the key quantises to
+    # float32 first and the float32 step here is ~1e-5 um -- nine orders above 1.14e-13.
+    drifted = position_keyed_uniforms(xyz + 1.13687e-13, 400, seed=0)
+    assert np.array_equal(drifted, u), "the float32 quantisation must absorb the pathway drift"
+
+    # and continuity is the second line of defence: a drift large enough to survive the
+    # quantisation still moves the uniform smoothly rather than selecting a different donor
+    big = position_keyed_uniforms(xyz + 1e-4, 400, seed=0)
+    assert 0.0 < float(np.abs(big - u).max()) < 0.1
 
 
 def test_position_key_refuses_what_it_cannot_key():
