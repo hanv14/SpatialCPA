@@ -9220,3 +9220,49 @@ accepted, and that a chained replace *not* naming the key is still an offender.
 `test1_field_count` 26/26, `test1b_layout_split` 26/26.
 
 Recorded as `specs/10` §4.2q with the decidability boundary stated in the rule itself.
+
+### ...and the fifth, one line later: the clamp is the other half (§4.2q amended)
+
+With `region_key` fixed, `angle_budget.py` died at `loaders.py:159`:
+
+```
+ConfigError: Config.expr_pca_dim=32 exceeds the 28 genes in specimen 'train_registered'
+```
+
+**The §4.2q check verified construction and stopped there** — which is precisely why it passed a
+runner that then failed on the step after construction. Nine drivers spell the canonical form
+`clamp_config_to_input(base_config(seed, **overrides), input_path)`; `base_config` names only the
+first half, so the tenth runner remembered only the first half. **The ritual had two steps and one
+discoverable name.** `_starmap_run.prepare_config(seed, input_path, **overrides)` is now both halves
+behind one name; `base_config` stays public for callers that have no input path yet.
+
+**`_contract.bench3_clamp_discipline()`** scans the same 23 scripts for the clamp by its sanctioned
+routes — `clamp_config_to_input`, `clamp_config_to_volume`, `prepare_config`, `arm_config`, or a
+config splatted from a **checkpoint subscript** (distinguished structurally from `Config(**BENCH3_KEYS)`,
+which splats a bare `Name` and clamps nothing). What it **cannot** check is what the clamp narrows
+*to*: that needs `n_vars`/`n_obs` from the file. Same boundary as §4.2q, one step further along.
+
+**One genuine holdout besides mine.** `t10_r11_coupling.py` skipped the clamp and survived only
+because its hardcoded `expr_pca_dim=16` happens to sit under tier-1's 28-gene panel. The clamp is a
+**no-op** there — config, config hash and recorded numbers unchanged — but "under the panel width"
+was an accident of one constant, not a property anyone had checked.
+
+**Where the clamp belongs** (`reports/angle_budget_config_note.md`, answering the question directly):
+in the runner, and `validate_config_against_volume` should keep checking fields the run will not use.
+"Fields the run will use" is not a set that exists at load time — `load_volume` hands the same
+`Volume` to fitters, scorers, generators and the selector, so the caller would have to *declare* the
+set, which is the same defect class with a wider blast radius. And the clamp is a **recording**
+mechanism: it emits `ConfigClampWarning` saying the content hash changes, because a config claiming
+`expr_pca_dim=32` against a 28-gene panel is wrong *as a persisted record* whether or not this
+process reads the field.
+
+**The conceded cost, and what I fixed instead.** A script asking about angles being stopped by a
+message about principal components is a real ergonomic defect — the error said what was wrong and
+not what to do, and a new runner could learn the remedy only by reading nine other drivers. Both
+**clampable** errors in `validate_config_against_volume` now name `clamp_config_to_volume` /
+`clamp_config_to_input` as the remedy and say why not to edit the number by hand. `fourier_bands_z`
+is left alone: there the value really is a choice.
+
+**Verified by reintroduction:** `angle_budget.py --self-check` **22/22** clean; **19/22** with
+`Config()` back; **20/22** with the correctly-keyed-but-unclamped `base_config(seed=0)` back.
+`test1_field_count` 33/33, `test1b_layout_split` 33/33.
