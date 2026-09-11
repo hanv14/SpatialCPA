@@ -68,6 +68,12 @@ actually cuts. The two are different objects; the standard metric cannot tell th
 - **A free, pre-build screen** answering *"can an oblique evaluation be done on this specimen at
   all?"* from coordinates alone, with two candidate datasets ruled out by arithmetic before anyone
   builds them (§4).
+- **A fact about how this field builds its benchmarks, not about its tissue:** holding out alternate
+  sections doubles the training volume's section spacing while the slabs stay as cut, so it **halves
+  the oblique coverage of every dataset built that way** — measured at 0.497 on the one specimen
+  where the slab thickness is recorded. A leakage-guarded volume is a factor of two worse as an
+  instrument for this than the specimen it came from, and the loss is invisible to any summary that
+  counts cells rather than geometry (§4.6.1).
 - **A negative result reported in full**, with the reconstruction deficit our own method does not
   close (§6) and nineteen retractions of our own claims, each with the evidence that overturned it
   (§7).
@@ -369,21 +375,46 @@ any modelling:
 3. the **resolution** their statistic will bring to it, as a fraction of the tissue radius (§3.2);
 4. whether the specimen clears the **pre-build screen** at all.
 
-And three conclusions that are properties of how this field prepares tissue, not of any method:
+And three conclusions that are properties of how this field **prepares tissue and builds its
+benchmarks**, not of any method:
 
-- **Stacks of thin sections cannot support oblique evaluation.** At 21.6 : 1 the largest scorable
-  angle is 5°.
-- **Blocks cut into slabs can.** The same gates give 60° on a 10.3 : 1 block.
-- **The standard holdout design halves the fill** (§3.1): removing alternate sections doubles the
-  training volume's spacing while the slabs stay as thick as they were cut, so a leakage-guarded
-  volume is a worse instrument for this than the specimen it came from.
+1. **Stacks of thin sections cannot support oblique evaluation.** At 21.6 : 1 the largest scorable
+   angle is 5°.
+2. **Blocks cut into slabs can.** The same gates give 60° on a 10.3 : 1 block. Depth is the whole
+   constraint, and it is set by the preparation.
+3. **A leakage-guarded volume is a worse instrument for oblique evaluation than the specimen it came
+   from — and the loss is a factor of two.** This is the one that is not about tissue at all.
 
-## 4.7 Scope
+### 4.6.1 The holdout design halves the fill
 
-Two specimens are measured here in full. Four further built datasets were swept and four could not be
-read for want of a built input; the complete table is in `reports/angle_budget.md`. The two specimens
-quoted are the two that bracket the finding — the worst and the best geometry available to us — and
-the arithmetic of §4.2 and §4.5 is what generalises, not the two rows.
+The standard design holds out **alternate** sections. That doubles the *training* volume's spacing
+while the slabs stay exactly as thick as they were cut, so `t/s` falls to ≈ 0.5 and, since
+`fill = t·cos θ / s`, **coverage of the oblique plane halves at every angle**.
+`merfish_thick_hypothalamus` measures it exactly: 28.6 / 57.5 = **0.497**.
+
+This is not a property of the tissue, the microscope or the method. It is a consequence of how the
+benchmark is constructed, it applies to **every** dataset built under this design, and it is
+invisible in any summary that reports cell counts rather than geometry — the strip still holds
+hundreds of cells and dozens of types; it simply covers half as much of the plane.
+
+**A holdout that removed a contiguous run of sections instead would leave `s` at the specimen's own
+pitch and double the fill**, at some cost in how far a held-out plane sits from its donors. We do not
+claim that trade is worth making in general; we claim it is a trade nobody currently knows they are
+making.
+
+## 4.7 The sweep
+
+<!-- TABLE PENDING: the eight-dataset sweep from reports/angle_budget.md. Four datasets were read
+     and four could not be, for want of a built input. Rows are not reproduced here because that
+     report has not been read into the draft; the two specimens in §4.4 are quoted from runs held
+     in full. Do not fabricate the missing rows. -->
+
+`scripts/angle_budget.py --datasets all` sweeps every built dataset carrying cell types. Four were
+read and four could not be, for want of a built input; a dataset that cannot be read is reported as a
+named row rather than a silent omission.
+
+The two specimens in §4.4 are the two that **bracket** the finding — the worst and the best geometry
+available to us — and the arithmetic of §4.2 and §4.5 is what generalises, not any particular row.
 
 ⚠️ `starmap_visual_cortex`'s row was measured before two corrections (a reference plane that
 straddled two sections, and a slab thickness defaulted from the section spacing). The **5°** verdict
@@ -421,15 +452,27 @@ expression only through pose estimation (§6.3). This section is a claim about l
 
 ## 5.2 The angle
 
-θ\* = **60°**, the largest angle clearing three criteria none of which reads a score: **G1** (scorable
-types ≥ 60% of the coronal plane's — the 60% is ours and labelled so), **G2** (largest type ≥ the
-metric's own `max_n` = 250), and **F2** (each stratum at least as wide as the volume's median
-nearest-neighbour distance, 8.0 µm — so 75°, 85° and 90° are excluded, their strata being 7.7, 2.5
-and 1.8 × 10⁻¹⁵ µm).
+Two angles matter and they are not the same one.
+
+**θ\* = 60°** is the largest angle *scorable at all*, by three criteria none of which reads a score:
+**G1** (scorable types ≥ 60% of the coronal plane's — the 60% is ours and labelled so), **G2**
+(largest type ≥ the metric's own `max_n` = 250), and **F2** (each stratum at least as wide as the
+volume's median nearest-neighbour distance, 8.0 µm — so 75°, 85° and 90° are excluded, their strata
+being 7.7, 2.5 and 1.8 × 10⁻¹⁵ µm wide).
+
+**45° is the angle this section leads with**, because 60° **fails a precondition** (§5.4) and an angle
+whose preconditions fail has no readable score. Leading with θ\* would be reporting a number the
+protocol had already disqualified.
+
+45° is also the cleaner of the two readable angles in a way that is not a matter of choice: its
+permuted-type ceiling comes from the **clean branch** of the calibration — the metric shows no
+material noise floor at its cell count, so its ceiling is the **original pre-registered 0.10**, not a
+raised one. 30° is readable too, but only against a ceiling of 0.2843 lifted by that angle's own
+noise floor.
 
 Two margins are thin and are printed rather than left as arithmetic: **G1 clears 60° by 0.6 of one
-cell type** (6 against a threshold of 5.4), and **the precondition that ultimately excludes 60°
-fails by 0.29σ of its own noise.**
+cell type** (6 against a threshold of 5.4), and **the precondition that excludes 60° fails by 0.29σ
+of its own noise.**
 
 ## 5.3 The footprint: the baseline is not a section at these angles
 
@@ -472,8 +515,10 @@ plane, and it is a real cost of holding the donors out.
 | 45° | 0.35 | +0.3340 | +0.1167 | −0.2173 | ± 0.2841 | +0.0290 |
 | 60° | 0.25 | +0.4516 | +0.4054 | −0.0462 | ± 0.5477 | +0.2461 |
 
-60° is **not readable**: its permuted-type null exceeds the ceiling set for it by the calibration in
-§5.6. 30° and 45° pass every precondition.
+**60° is not readable.** Its permuted-type null (+0.2461) exceeds the ceiling the calibration sets for
+it (0.1878). **30° and 45° pass every precondition**, and their ceilings differ in kind: 45° sits on
+the calibration's **clean branch** and is judged against the original pre-registered 0.10, while 30°
+is judged against 0.2843, raised by its own measured noise floor.
 
 The ± figures are a leave-one-scorable-type-out jackknife. **They are an upper bound on precision,
 not confidence intervals, and they are not narrowed.** With 6–9 scorable types, leaving one out
@@ -484,12 +529,16 @@ shift it, because a jackknife estimates the variance of a statistic and never re
 
 ## 5.5 The result
 
-| θ | difference | combined bound | separation |
-|---|---|---|---|
-| 30° | −0.1183 | 0.2999 | **0.39σ** |
-| 45° | −0.2173 | 0.4171 | **0.52σ** |
+**At 45°, the largest fully readable angle, `resample-pd` scores +0.1167 against the baseline's
++0.3340 — a difference of −0.2173 against a combined precision bound of 0.4171, i.e. 0.52σ.**
 
-**Not one difference reaches a single standard error.**
+| θ | difference | combined bound | separation | ceiling used |
+|---|---|---|---|---|
+| **45°** | **−0.2173** | **0.4171** | **0.52σ** | **0.10 (clean branch)** |
+| 30° | −0.1183 | 0.2999 | 0.39σ | 0.2843 (raised) |
+| ~~60°~~ | ~~−0.0462~~ | ~~0.6492~~ | ~~0.07σ~~ | **not readable — P2 fails** |
+
+**Not one readable difference reaches a single standard error.**
 
 > **The evaluation cannot distinguish the two arms. This is not a success: the capability was not
 > demonstrated, and this section reports why it could not be.**

@@ -104,21 +104,46 @@ any modelling:
 3. the **resolution** their statistic will bring to it, as a fraction of the tissue radius (§3.2);
 4. whether the specimen clears the **pre-build screen** at all.
 
-And three conclusions that are properties of how this field prepares tissue, not of any method:
+And three conclusions that are properties of how this field **prepares tissue and builds its
+benchmarks**, not of any method:
 
-- **Stacks of thin sections cannot support oblique evaluation.** At 21.6 : 1 the largest scorable
-  angle is 5°.
-- **Blocks cut into slabs can.** The same gates give 60° on a 10.3 : 1 block.
-- **The standard holdout design halves the fill** (§3.1): removing alternate sections doubles the
-  training volume's spacing while the slabs stay as thick as they were cut, so a leakage-guarded
-  volume is a worse instrument for this than the specimen it came from.
+1. **Stacks of thin sections cannot support oblique evaluation.** At 21.6 : 1 the largest scorable
+   angle is 5°.
+2. **Blocks cut into slabs can.** The same gates give 60° on a 10.3 : 1 block. Depth is the whole
+   constraint, and it is set by the preparation.
+3. **A leakage-guarded volume is a worse instrument for oblique evaluation than the specimen it came
+   from — and the loss is a factor of two.** This is the one that is not about tissue at all.
 
-## 4.7 Scope
+### 4.6.1 The holdout design halves the fill
 
-Two specimens are measured here in full. Four further built datasets were swept and four could not be
-read for want of a built input; the complete table is in `reports/angle_budget.md`. The two specimens
-quoted are the two that bracket the finding — the worst and the best geometry available to us — and
-the arithmetic of §4.2 and §4.5 is what generalises, not the two rows.
+The standard design holds out **alternate** sections. That doubles the *training* volume's spacing
+while the slabs stay exactly as thick as they were cut, so `t/s` falls to ≈ 0.5 and, since
+`fill = t·cos θ / s`, **coverage of the oblique plane halves at every angle**.
+`merfish_thick_hypothalamus` measures it exactly: 28.6 / 57.5 = **0.497**.
+
+This is not a property of the tissue, the microscope or the method. It is a consequence of how the
+benchmark is constructed, it applies to **every** dataset built under this design, and it is
+invisible in any summary that reports cell counts rather than geometry — the strip still holds
+hundreds of cells and dozens of types; it simply covers half as much of the plane.
+
+**A holdout that removed a contiguous run of sections instead would leave `s` at the specimen's own
+pitch and double the fill**, at some cost in how far a held-out plane sits from its donors. We do not
+claim that trade is worth making in general; we claim it is a trade nobody currently knows they are
+making.
+
+## 4.7 The sweep
+
+<!-- TABLE PENDING: the eight-dataset sweep from reports/angle_budget.md. Four datasets were read
+     and four could not be, for want of a built input. Rows are not reproduced here because that
+     report has not been read into the draft; the two specimens in §4.4 are quoted from runs held
+     in full. Do not fabricate the missing rows. -->
+
+`scripts/angle_budget.py --datasets all` sweeps every built dataset carrying cell types. Four were
+read and four could not be, for want of a built input; a dataset that cannot be read is reported as a
+named row rather than a silent omission.
+
+The two specimens in §4.4 are the two that **bracket** the finding — the worst and the best geometry
+available to us — and the arithmetic of §4.2 and §4.5 is what generalises, not any particular row.
 
 ⚠️ `starmap_visual_cortex`'s row was measured before two corrections (a reference plane that
 straddled two sections, and a slab thickness defaulted from the section spacing). The **5°** verdict

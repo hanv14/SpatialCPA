@@ -62,6 +62,12 @@ actually cuts. The two are different objects; the standard metric cannot tell th
 - **A free, pre-build screen** answering *"can an oblique evaluation be done on this specimen at
   all?"* from coordinates alone, with two candidate datasets ruled out by arithmetic before anyone
   builds them (§4).
+- **A fact about how this field builds its benchmarks, not about its tissue:** holding out alternate
+  sections doubles the training volume's section spacing while the slabs stay as cut, so it **halves
+  the oblique coverage of every dataset built that way** — measured at 0.497 on the one specimen
+  where the slab thickness is recorded. A leakage-guarded volume is a factor of two worse as an
+  instrument for this than the specimen it came from, and the loss is invisible to any summary that
+  counts cells rather than geometry (§4.6.1).
 - **A negative result reported in full**, with the reconstruction deficit our own method does not
   close (§6) and nineteen retractions of our own claims, each with the evidence that overturned it
   (§7).
