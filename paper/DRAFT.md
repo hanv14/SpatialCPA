@@ -989,9 +989,26 @@ across **12 403 cells and 344 361 non-zero entries**. The only difference betwee
 
 They are not the same method. In the **wide** holdout regime the two differ — and differ **only in
 expression**: on `allen_merfish_brain/wide_26_…_34`, `X` differs while every coordinate, `cell_id`,
-`cell_type` and `section` is identical. So v20's changes over v18 are **expression-path only, and
-they fire only when the section gap exceeds the volume's median spacing.** `paper_2_4_6` never
-reaches that gap, so on tier-1 the two versions execute the same code path and emit the same file.
+`cell_type` and `section` is identical. So v20's changes over v18 are expression-path only, and on
+tier-1 **v20 contains no reachable statement that v18 does not**: a symbol-level diff of the two
+files finds 75 of 79 shared symbols byte-identical, no shared default changed, and every one of
+v20's additions inside a branch this protocol does not enter (`reports/inert_mechanisms.md`).
+
+The reason is sharper than a gap that happens to be narrow. v20 gates its additions on
+`alpha = clip((this_gap/med_gap − 1)/(gap_scale − 1), 0, 1)`, where `med_gap` is the median spacing
+of the *training* sections. An alternating hold-out leaves the odd sections as input, so the flanking
+pair bracketing any held-out section is a pair of **consecutive** training sections, and
+`this_gap ≡ med_gap`. The numerator is identically zero. `alpha` is therefore not small on this
+protocol — it is **exactly zero by construction**, for every dataset in the benchmark, at every
+section thickness, under any `--gap-scale`. Bitwise identity is the only outcome the code permits,
+and it would survive any change of seed.
+
+A second default compounds it. The `METHODS` entries pass no `wrapper_args`, so the wrappers' own
+`--edit-weight` default of `0.25` stands, and four further mechanisms — v18's gene-mix, v18's
+raw-output path, v20's `edit_gap_extra`, v21's field repair — are each gated on `edit_weight == 0.0`
+and never ran either. That affects both versions equally, so it does not bear on the identity; it
+does mean **neither version ever executed its own expression mechanisms** on any scored row, v18's
+EASI-FISH variance fix included.
 
 **The headline table of this literature cannot distinguish two released versions of a method** — not
 in the weak sense that their scores are close, but in the strong sense that there is nothing to

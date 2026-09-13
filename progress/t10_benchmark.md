@@ -55,6 +55,44 @@ that separates them.** The six comparator columns are five distinct predictions.
 flag list into §8.2's fourth reading, because two rows identical to four decimals reads as a
 transcription error and is not one.
 
+#### 2026-09-13 — the mechanism, and a correction to the sentence above
+
+The empirical finding stands unchanged. The *explanation* — "gated on the section gap exceeding the
+median spacing, which `paper_2_4_6` never reaches" — is right in direction, weaker than the truth,
+and misses half the cause. Audited in `reports/inert_mechanisms.md`; the two corrections are now in
+§8.2.
+
+1. **`alpha` is zero by construction, not by a threshold that was missed.**
+   `alpha = clip((this_gap/med_gap − 1)/(gap_scale − 1), 0, 1)`
+   (`learn_spatialcpav21.py:1573-1580`), and `med_gap` is the median spacing of the **training**
+   sections. `config.held_out_indices` holds out every other section, so the flanking pair bracketing
+   any held-out section is a pair of consecutive training sections and `this_gap ≡ med_gap`. The
+   numerator is identically zero — on every dataset, at any section thickness, under any
+   `--gap-scale`. Only `--design wide` reaches `alpha > 0`. "Never reaches that gap" implies a margin;
+   there is no margin.
+
+2. **A second, unrelated default disables four more mechanisms, in both versions.** No `METHODS`
+   entry passes `wrapper_args`, so `--edit-weight` keeps its wrapper default of `0.25`
+   (`run_spatialcpav21.py:335`; `V14Config.edit_weight`, `:1038`). v18's gene-mix (`:1715`), v18's
+   raw-output path (`:1792`), v20's `edit_gap_extra` (`:1770`) and v21's field repair (`:1778`) are
+   each gated on `edit_weight == 0.0`. None has run in a scored row. It bears equally on both
+   versions so it does not affect the identity — but **neither version ever executed its own
+   expression mechanisms**, and that includes the raw-output path written specifically to fix
+   `gene_var_spearman` on the three EASI-FISH volumes.
+
+Pinned by a symbol-level diff rather than by reading: 79 shared top-level symbols between v18 and
+v20, **75 byte-identical**; only `V14Config` (added fields, **no shared default changed**),
+`_generate` and `_phase_b` differ. `_phase_b`'s only difference is the `curriculum_flow` branch,
+whose RNG draw short-circuits when the flag is off, so training consumes an identical stream. At
+`alpha = 0` the cross-mix and `edit_gap_extra` blocks are skipped **without consuming any RNG**.
+Bitwise identity is the only outcome the code permits, at any seed.
+
+Consequence for the record: **v21 vs v20 on tier-1 is a layout-and-donor-selection comparison, not an
+expression one.** The only two v21 changes reachable at `alpha = 0` are its narrow-gap adaptations —
+patch frequency `4.0 → 8.0` (`:1538-1541`) and re-grounding margin `1.0 → 5.0` (`:1666-1669`).
+v21's coherent mix, multi-partner draws, field alignment and field repair are all in the dead set,
+so no `paper_*` row is evidence about them.
+
 ### Three cells reported as returned rather than smoothed
 
 - FEAST and isoST return **exactly `0.0000`** on `celltype_localization`: the not-scorable value, not

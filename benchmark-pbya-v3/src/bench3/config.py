@@ -1363,6 +1363,68 @@ METHODS = {
         "family": "published",
         "notes": "Li et al. 2025 — biaxial SDE generation",
     },
+    # ── v21 expression ablation: donor copying vs learned regression ─────────
+    # Five variants of v21 that differ from it, and from each other, in ONE
+    # thing: the step that decides what expression value a generated cell emits.
+    # v21's layout, donor selection, cell-type vote, composition matching and
+    # every configuration knob are unchanged — the wrapper calls v21's own
+    # ``generate_virtual_slice`` and replaces only the returned ``expression``
+    # array, so ``learn_spatialcpav21.py`` is not touched and no part of
+    # ``_generate`` is copied.
+    #
+    # What they measure: v21 emits a real donor cell's profile (blended 0.75/0.25
+    # with a PCA decode of the flow latent); these emit the conditional mean a
+    # learner predicts from (x, y, z, cell type, local morphology). The
+    # difference between the two is what donor copying contributes.
+    #
+    # What they do NOT measure: the cross-mix. Under every ``paper_*`` design
+    # ``alpha`` is exactly zero by construction — the alternating hold-out makes
+    # the flanking gap equal the median training gap — so v21's cross-mix,
+    # field alignment, field repair and gene-mix never execute on these rows at
+    # all. See ``reports/inert_mechanisms.md``. Read these rows as
+    # "copy vs regress", never as "cross-mix vs regress".
+    #
+    # One wrapper, five entries: ``wrapper_args`` pins the learner, the same
+    # mechanism ``spatialcpav8_gen`` uses, so a bare invocation is reproducible
+    # from this file. The ``invalid_log_markers`` are v21's own — these variants
+    # still run v21's flow for donor selection, so the numpy fallback is just as
+    # much "not the method under test" here as it is there — plus the two this
+    # wrapper adds when scikit-learn is missing or v21's defaults have drifted
+    # away from ``V14Config``'s (which would mean the config being benchmarked is
+    # no longer v21's).
+    **{
+        f"v21_{_lrn}": {
+            "wrapper": _v3_wrapper("run_spatialcpav21_ml.py"),
+            "conda_env": "bench_spatialcpa",
+            "available": True,
+            "family": "spatialcpa",
+            "notes": f"v21 layout + donor selection, expression by {_desc}",
+            "wrapper_args": ["--learner", _lrn],
+            "invalid_log_markers": ("flow-matching model trained: False",
+                                    "torch UNAVAILABLE",
+                                    "[v14] torch unavailable",
+                                    "[v14] training failed",
+                                    "[v14] generation failed",
+                                    "ERROR: scikit-learn is required",
+                                    "no longer mirror V14Config"),
+        }
+        for _lrn, _desc in (
+            ("ridge", "multi-output ridge regression (the linear floor)"),
+            ("knn", "distance-weighted kNN regression (a local average of donors)"),
+            ("rf", "multi-output random forest"),
+            ("gbm", "histogram gradient boosting, one booster per gene"),
+            ("mlp", "a two-layer multi-output MLP"),
+        )
+    },
+    # Deliberately absent, and recorded rather than omitted:
+    #   lasso — at F ~= 3 + 2*n_types + 1 dense geometric features, L1 selection
+    #           is a no-op; it lands within noise of `v21_ridge` and adds a row,
+    #           not a data point.
+    #   SVR   — not multi-output, so one fit per gene, each O(n^2)-O(n^3) in the
+    #           kernel. At n ~= 16.5k training cells the RBF Gram alone is ~2 GB
+    #           per fit, and G reaches 960 (CosMx) and 3000 (ST/Visium).
+    #           Infeasible at this interface; LinearSVR would be ridge with a
+    #           different loss, which `v21_ridge` already covers.
 }
 
 # Order used in tables and figures: published baselines first, then SpatialCPA,
@@ -1383,6 +1445,9 @@ METHOD_ORDER = [
     "spatialcpav18_gen", "spatialcpav19_gen", "spatialcpav20_gen",
     "spatialcpav21_gen", "spatialcpav22_gen", "spatialcpav23_gen",
     "spatialcpav24_gen",
+    # v21 expression ablation (see METHODS): v21 in every respect but the step
+    # that emits expression. Appended, so every existing row keeps its position.
+    "v21_ridge", "v21_knn", "v21_rf", "v21_gbm", "v21_mlp",
 ]
 
 
