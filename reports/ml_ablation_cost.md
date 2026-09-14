@@ -1,13 +1,14 @@
-# `v21_<learner>` and `v14_<learner>` — the marginal cost, measured
+# `v21_<learner>`, `v14_<learner>`, `v18_<learner>` — the marginal cost, measured
 
 **2026-09-13.** The bill for the expression ablation, before it runs. Supersedes an
 earlier extrapolation that was **roughly an order of magnitude too high** on the
 learner that dominates: it was built from a guessed constant, this is built from a
 measured one.
 
-Covers **both** ablation families. The learners, features, target and swap point
-are identical between them, so the measured table applies to each; only the host
-method differs. Two families of five over 17 datasets is **170 runs**, not 85.
+Covers **all three** ablation families. The learners, features and swap point are
+identical between them, so the measured table applies to each; only the host
+method and the target scale differ. Three families of five over 17 datasets is
+**255 runs**.
 
 Nothing here covers the host method's own cost. Every variant runs a complete v21
 (or v14) —
@@ -69,8 +70,8 @@ STARmap are estimates until `describe_datasets` runs.
 
 **Total marginal, five learners × 17 datasets: ~2–6 CPU-hours on 4 cores**,
 dominated by `rf` and `gbm`, with `gbm`'s share the uncertain half for the reason
-above. **Double it for both families: ~4–12 CPU-hours.** Proportionally less on a
-larger box. The earlier 40–60 hour figure is withdrawn.
+above. **Triple it for all three families: ~6–18 CPU-hours.** Proportionally less
+on a larger box. The earlier 40–60 hour figure is withdrawn.
 
 `openst_lymph_node` is excluded — it is uncapped whole-transcriptome and already
 OOM-kills the v14 family (bench3 README, "Known gap: Open-ST is still uncapped"),
@@ -96,7 +97,8 @@ trained. Measured against the real dataset shapes:
 | `allen_*` (each) | 140 000 × 500 | 0.28 GB | 0.56 GB |
 | **`openst_lymph_node`** | **473 684 × 20 000** | **37.9 GB** | **75.8 GB** |
 
-So budget roughly **15 GB per family** of new `prediction.h5`, and treat
+So budget roughly **15 GB per family** of new `prediction.h5` — about 45 GB for
+all three — and treat
 `openst_lymph_node` as **out of scope for these variants**. It is uncapped
 whole-transcriptome, and at ~20 000 genes a dense prediction is tens of gigabytes
 per learner per dataset. The three ways out, in the order I would take them:
@@ -110,6 +112,25 @@ per learner per dataset. The three ways out, in the order I would take them:
 **Never** threshold small predictions to zero to shrink the file: that
 contaminates `paper_gene_detection_spearman`, which is the column the whole
 ablation exists to read.
+
+## One asymmetry between the families, on exactly that column
+
+v14 and v21 emit through `expm1`, which cannot produce a zero, so their density is
+a flat **1.000** — the clean signal that a squared-loss regressor models no
+sparsity at all.
+
+The `v18_*` variants emit on the **raw** scale (mirroring v18's own `raw_ok` path
+at `learn_spatialcpav18.py:1240`), and the raw path clips negative predictions to
+zero. That *manufactures* zeros: measured density **0.86–1.00** across the five
+learners on a fixture whose real zero fraction was 0.39 — ridge 0.963, knn 0.999,
+rf 1.000, gbm 0.999, mlp 0.864.
+
+So a `v18_*` detection score will look less catastrophic than a `v14_*` or
+`v21_*` one, **and the difference is the clip, not the learner.** Do not compare
+`paper_gene_detection_spearman` across families without saying so, and do not read
+a v18 row as the regressor recovering sparsity. `--target-scale log` routes the
+prediction through `expm1` instead and is the cross-check when the distinction
+bears on a claim.
 
 **Evaluation.** 85 new predictions through `evaluate_all`, at the same per-run cost
 the existing methods pay. `specs/10` §13.1a is explicit that no per-prediction

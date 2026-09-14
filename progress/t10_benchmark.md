@@ -138,6 +138,40 @@ Marginal cost measured rather than modelled: ~2–6 CPU-hours per family on 4 co
 `rf` and `gbm`. The host methods' own training (170 complete runs) is the real bill and is not
 measured here. Not run.
 
+### 2026-09-14 (2) — the ablation's third family, `v18_<learner>`
+
+Same five learners, same `VirtualSlice` swap point. v18's wrapper is a v3 wrapper with a
+module-level `_build_config`, so this one imports and CALLS it: no config mapping is duplicated at
+all and the startup guard checks the **24 flags** only (exercised both ways — drifted default,
+added flag). `learn_spatialcpav18.py` untouched, `config.py` insertions only, evaluator hash
+unchanged.
+
+Two properties specific to v18 at `--edit-weight 0.0`, both verified against the source rather
+than assumed:
+
+* **The baseline is already a per-gene chimera.** The gene-mix at `:1231` is live at
+  `edit_weight == 0`, so at `--gene-mix-frac 0.15` ~15 % of each cell's genes come from a second
+  local same-type donor. It is a per-gene *value* choice, so it is expression, so the ablation
+  replaces it. That makes v18 the closest of the three baselines to a per-gene synthesis method,
+  and v14 (no gene-mix, verbatim single copy) the cleanest single-copy contrast.
+* **v18 emits RAW measurements, not `expm1` of log** (`:1240`). The wrapper mirrors v18's own
+  `raw_ok` predicate and trains the learner on whichever scale v18 would emit, so baseline and
+  variant are scored on one scale. `--target-scale` overrides; `auto` is the default and is what
+  keeps the rows comparable.
+
+⚠️ **The raw path's zero-clip confounds the detection column, for this family only.** v18 never
+clips (it copies real, non-negative measurements); a regressor can predict below zero, so the
+prediction is clipped at 0 — and that manufactures zeros. Measured density **0.86–1.00** across the
+five learners (ridge 0.963, knn 0.999, rf 1.000, gbm 0.999, mlp 0.864) against a fixture zero
+fraction of 0.39, where v14/v21 emit a flat 1.000 through `expm1`. So a `v18_*`
+`paper_gene_detection_spearman` is not comparable to a `v14_*`/`v21_*` one, and the difference is
+the clip rather than the learner. Recorded in `method_params` as `raw_clipped_at_zero`, in the
+wrapper docstring, in `METHODS`, and in `reports/ml_ablation_cost.md`. `--target-scale log` is the
+cross-check.
+
+Campaign is now three families of five over 17 datasets: 255 runs, ~6–18 CPU-hours marginal, ~45 GB
+of predictions, host training on top. Not run.
+
 ### Three cells reported as returned rather than smoothed
 
 - FEAST and isoST return **exactly `0.0000`** on `celltype_localization`: the not-scorable value, not

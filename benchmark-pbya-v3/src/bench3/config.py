@@ -1471,6 +1471,57 @@ METHODS = {
             ("mlp", "a two-layer multi-output MLP"),
         )
     },
+    # ── and on v18 ───────────────────────────────────────────────────────────
+    # Third host method, same five learners and the same VirtualSlice swap point.
+    # Two things make the v18 rows read differently from the other two, and both
+    # are consequences of running v18 at `--edit-weight 0.0`:
+    #
+    #   1. v18's BASELINE IS ALREADY A PER-GENE CHIMERA. The gene-mix
+    #      (`learn_spatialcpav18.py:1231`) is live at edit_weight 0, so ~15% of
+    #      each cell's genes come from a second local same-type donor. That is a
+    #      per-gene value choice, so it is expression, so the ablation replaces
+    #      it. Read v18 rows as "two-donor per-gene chimera vs learned
+    #      regression" — the closest of the three baselines to per-gene synthesis.
+    #      v14 (no gene-mix) is the single-copy contrast.
+    #
+    #   2. v18 EMITS RAW MEASUREMENTS, not expm1 of log (`:1240`). The wrapper
+    #      mirrors v18's own `raw_ok` predicate and trains the learner on
+    #      whichever scale v18 would emit, so the two are compared on one scale.
+    #      `--target-scale` can override the mirror; `auto` is the default.
+    #      Consequence to watch: the raw path clips negative predictions to zero,
+    #      which MANUFACTURES zeros (measured density 0.86-1.00 vs a flat 1.000
+    #      for the log-scale families). A v18_* detection score is therefore not
+    #      comparable to a v14_*/v21_* one, and the difference is the clip, not
+    #      the learner.
+    #
+    # Like the v14 family this one is flag-driven, so it declares v18's whole CLI;
+    # unlike it, no config mapping is duplicated at all — v18's own
+    # `_build_config` is imported and called. The startup guard therefore checks
+    # the 24 flags only.
+    **{
+        f"v18_{_lrn}": {
+            "wrapper": _v3_wrapper("run_spatialcpav18_ml.py"),
+            "conda_env": "bench_spatialcpa",
+            "available": True,
+            "family": "spatialcpa",
+            "notes": f"v18 layout + donor selection, expression by {_desc}",
+            "wrapper_args": ["--learner", _lrn],
+            "invalid_log_markers": ("flow-matching model trained: False",
+                                    "torch UNAVAILABLE",
+                                    "[v14] torch unavailable",
+                                    "[v14] training failed",
+                                    "[v14] generation failed",
+                                    "ERROR: scikit-learn is required",
+                                    "has drifted from run_spatialcpav18.py"),
+        }
+        for _lrn, _desc in (
+            ("ridge", "multi-output ridge regression (the linear floor)"),
+            ("knn", "distance-weighted kNN regression (a local average of donors)"),
+            ("rf", "multi-output random forest"),
+            ("gbm", "histogram gradient boosting, one booster per gene"),
+            ("mlp", "a two-layer multi-output MLP"),
+        )
+    },
 }
 
 # Order used in tables and figures: published baselines first, then SpatialCPA,
@@ -1495,6 +1546,7 @@ METHOD_ORDER = [
     # that emits expression. Appended, so every existing row keeps its position.
     "v21_ridge", "v21_knn", "v21_rf", "v21_gbm", "v21_mlp",
     "v14_ridge", "v14_knn", "v14_rf", "v14_gbm", "v14_mlp",
+    "v18_ridge", "v18_knn", "v18_rf", "v18_gbm", "v18_mlp",
 ]
 
 
