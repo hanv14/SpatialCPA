@@ -302,6 +302,45 @@ def learner_params(name, args):
 
 
 # ── run ──────────────────────────────────────────────────────────────────────
+
+def check_output_size(adata, n_targets, max_gb):
+    """Refuse before training if the dense prediction cannot be written.
+
+    A donor-copy method emits sparse real counts; a squared-loss regressor emits
+    the conditional mean, which has NO zeros (measured: density 1.000). The
+    prediction is stored as CSR, so every one of the Q x G entries costs its value
+    plus its column index — roughly 8 bytes, on top of a dense Q x G array that
+    has to be materialized first.
+
+    On the targeted panels this is nothing. On an uncapped whole-transcriptome
+    volume it is fatal: `openst_lymph_node` is ~20 000 genes and holds out roughly
+    half of ~10^6 cells, which is tens of gigabytes per prediction file, per
+    learner. That is a property of the ablation, not a bug to code around, so it
+    is reported up front rather than discovered after the flow has trained.
+    """
+    n_sections = int(adata.obs["section"].nunique())
+    est_q = (adata.n_obs / max(n_sections, 1)) * max(n_targets, 1)
+    dense_gb = est_q * adata.n_vars * 4 / 1e9
+    print(f"  dense-output estimate: ~{est_q:,.0f} cells x {adata.n_vars} genes "
+          f"= {dense_gb:.2f} GB dense (~{dense_gb * 2:.2f} GB as CSR)")
+    if dense_gb > max_gb:
+        raise SystemExit(
+            f"ERROR: this prediction would be ~{dense_gb:.1f} GB dense, over the "
+            f"--max-dense-gb limit of {max_gb}. A regressor emits no zeros, so an "
+            f"uncapped whole-transcriptome panel ({adata.n_vars} genes here) cannot "
+            f"be written as a prediction.\n"
+            f"  Options, in the order I would take them:\n"
+            f"    1. Leave this dataset out of the ablation and say so — the "
+            f"targeted panels answer the question.\n"
+            f"    2. Build a gene-capped copy of it (prepare_dataset --n-hvg 3000) "
+            f"and register it as a SEPARATE dataset; capping in place would change "
+            f"the panel that previously-reported rows were measured on.\n"
+            f"    3. Raise --max-dense-gb deliberately, if you really have the disk.\n"
+            f"  Do NOT threshold small predictions to zero: that contaminates "
+            f"paper_gene_detection_spearman, which is the column this ablation "
+            f"exists to read.")
+
+
 def run_method(adata, targets, gene_names, X_log, X_raw, args):
     SpatialCPAv14 = _V21.SpatialCPAv14
 
@@ -399,6 +438,10 @@ def main():
     p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"],
                    help="device for v21's flow (layout/donor selection is v21's)")
     p.add_argument("--n-jobs", type=int, default=-1)
+    p.add_argument("--max-dense-gb", type=float, default=8.0,
+                   help="refuse before training if the dense Q x G "
+                        "prediction would exceed this (a regressor "
+                        "emits no zeros; see check_output_size)")
     # learner knobs (defaults are the ones the campaign runs)
     p.add_argument("--ridge-alpha", type=float, default=1.0)
     p.add_argument("--knn-k", type=int, default=15)
@@ -418,6 +461,7 @@ def main():
     print(f"Loading training-only input {args.input} ...")
     adata = ad.read_h5ad(args.input)
     _v2_io.guard_no_holdout(adata, target_sections)
+    check_output_size(adata, len(targets), args.max_dense_gb)
     gene_names = list(adata.var_names)
     print(f"  input: {adata.n_obs} cells x {adata.n_vars} genes, "
           f"{adata.obs['section'].nunique()} sections")

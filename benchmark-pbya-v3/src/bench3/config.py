@@ -1425,6 +1425,52 @@ METHODS = {
     #           per fit, and G reaches 960 (CosMx) and 3000 (ST/Visium).
     #           Infeasible at this interface; LinearSVR would be ridge with a
     #           different loss, which `v21_ridge` already covers.
+    # ── the same ablation on v14 ─────────────────────────────────────────────
+    # Same framing, same five learners, same VirtualSlice swap point — so a
+    # `v14_*` row and a `v21_*` row are readable against each other.
+    #
+    # The v14 contrast is the CLEANER of the two, and the reason is the
+    # configuration this project runs v14 at. With `--edit-weight 0.0` v14 emits a
+    # VERBATIM real profile (`spatialcpav14/trainer.py:662`, with the decode blend
+    # at `:532` skipped), so the comparison is exactly "one real cell's profile"
+    # vs "a regressed conditional mean" with nothing in between. v21 runs at
+    # `edit_weight=0.25`, so a quarter of its output is already a PCA decode
+    # (`reports/inert_mechanisms.md`) and its contrast is muddier.
+    #
+    # Unlike the v21 family, this one is DRIVEN BY FLAGS: v14's tuning arrives
+    # through run_all's `extra_args`, e.g.
+    #     -- --edit-weight 0.0 --ground-blend-flow 1.0 --ground-k 2
+    # so the wrapper declares v14's entire CLI and maps it onto
+    # SpatialCPAv14Config exactly as v2's wrapper does. Two source-level guards
+    # check that at startup — the flag table and the `cfg.*` assignment block are
+    # both compared against benchmark-pbya-v2's run_spatialcpav14.py — and any
+    # drift fails the run. Whatever flags you give spatialcpav14_gen, give these.
+    **{
+        f"v14_{_lrn}": {
+            "wrapper": _v3_wrapper("run_spatialcpav14_ml.py"),
+            "conda_env": "bench_spatialcpa",
+            "available": True,
+            "family": "spatialcpa",
+            "notes": f"v14 layout + donor selection, expression by {_desc}",
+            "wrapper_args": ["--learner", _lrn],
+            # v14's fallback markers are its own (the package prints
+            # `[spatialcpav14] ...`, not `[v14]`), plus this wrapper's two.
+            "invalid_log_markers": ("flow-matching model trained: False",
+                                    "torch UNAVAILABLE",
+                                    "[spatialcpav14] PyTorch unavailable",
+                                    "[spatialcpav14] training failed",
+                                    "[spatialcpav14] generation failed",
+                                    "ERROR: scikit-learn is required",
+                                    "has drifted from run_spatialcpav14.py"),
+        }
+        for _lrn, _desc in (
+            ("ridge", "multi-output ridge regression (the linear floor)"),
+            ("knn", "distance-weighted kNN regression (a local average of donors)"),
+            ("rf", "multi-output random forest"),
+            ("gbm", "histogram gradient boosting, one booster per gene"),
+            ("mlp", "a two-layer multi-output MLP"),
+        )
+    },
 }
 
 # Order used in tables and figures: published baselines first, then SpatialCPA,
@@ -1448,6 +1494,7 @@ METHOD_ORDER = [
     # v21 expression ablation (see METHODS): v21 in every respect but the step
     # that emits expression. Appended, so every existing row keeps its position.
     "v21_ridge", "v21_knn", "v21_rf", "v21_gbm", "v21_mlp",
+    "v14_ridge", "v14_knn", "v14_rf", "v14_gbm", "v14_mlp",
 ]
 
 

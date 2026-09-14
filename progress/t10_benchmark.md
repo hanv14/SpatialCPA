@@ -93,6 +93,51 @@ patch frequency `4.0 → 8.0` (`:1538-1541`) and re-grounding margin `1.0 → 5.
 v21's coherent mix, multi-partner draws, field alignment and field repair are all in the dead set,
 so no `paper_*` row is evidence about them.
 
+### 2026-09-14 — the expression ablation, two families
+
+`v21_<learner>` and `v14_<learner>`, five learners each (`ridge`, `knn`, `rf`, `gbm`, `mlp`),
+registered in `METHODS` and appended to `METHOD_ORDER`. One new wrapper per host method under
+`benchmark-pbya-v3/src/bench3/methods/`; `learn_spatialcpav21.py`, `spatialcpav14/` and
+`benchmark-pbya-v2/` are all untouched, `config.py` is insertions only, and `evaluate_paper.py`
+still hashes to `7362669…38992`.
+
+The swap point is the **`VirtualSlice` boundary**: both host methods return
+`VirtualSlice(coords, expression, cell_type, cell_type_idx)` with layout, donor selection, type
+placement and composition matching already applied, so replacing `.expression` ablates the
+expression step and nothing else — without editing either method or copying its `_generate`.
+
+**v14's contrast is the cleaner of the two, and it is worth stating which is which.** At
+`--edit-weight 0.0` — the configuration this project runs v14 at — v14 emits a *verbatim* real
+profile (`spatialcpav14/trainer.py:662`; the decode blend at `:532` is skipped), so the comparison
+is "one real cell's profile" vs "a regressed conditional mean" with nothing in between. v21 runs
+at `edit_weight=0.25`, so a quarter of its output is already a PCA decode (see the 2026-09-13
+entry above) and its contrast is muddier. Neither family measures the cross-mix; `alpha` is zero
+by construction on every `paper_*` design.
+
+Two things duplication guards catch rather than trust. The v21 wrapper builds `V14Config()`
+directly, justified by a startup check that **51 knobs** equal their wrapper defaults. The v14
+wrapper cannot do that — v14 *is* driven by flags (`-- --edit-weight 0.0 --ground-blend-flow 1.0
+--ground-k 2` arrive through `run_all`'s `extra_args`) — so it declares v14's whole CLI and
+verifies **28 flags and 31 `cfg.*` assignments** against `benchmark-pbya-v2`'s wrapper. Both
+guards were exercised in the failing direction (drifted default, added flag, rewired config line).
+
+Two findings from building it:
+
+* **Random forest predicts non-deterministically** at `n_jobs=-1` even with `random_state` fixed —
+  the fit is bit-identical (checked on `tree_.value`), but joblib threads accumulate per-tree
+  contributions in varying order. Single-threaded prediction after the parallel fit; all five
+  learners now reproduce bitwise.
+* **`openst_lymph_node` cannot run these variants at all.** A regressor emits no zeros (measured
+  density 1.000), and at ~20 000 genes over ~474 k held-out cells that is 37.9 GB dense / 75.8 GB
+  as CSR, per learner. Both wrappers now estimate this *before training* and refuse
+  (`--max-dense-gb`, default 8). Every other dataset is under 0.6 GB. `reports/ml_ablation_cost.md`
+  has the table and the three ways out — none of which is thresholding predictions to zero, which
+  would contaminate the detection column the ablation exists to read.
+
+Marginal cost measured rather than modelled: ~2–6 CPU-hours per family on 4 cores, dominated by
+`rf` and `gbm`. The host methods' own training (170 complete runs) is the real bill and is not
+measured here. Not run.
+
 ### Three cells reported as returned rather than smoothed
 
 - FEAST and isoST return **exactly `0.0000`** on `celltype_localization`: the not-scorable value, not

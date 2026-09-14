@@ -1,11 +1,16 @@
-# `v21_<learner>` — the marginal cost, measured
+# `v21_<learner>` and `v14_<learner>` — the marginal cost, measured
 
 **2026-09-13.** The bill for the expression ablation, before it runs. Supersedes an
 earlier extrapolation that was **roughly an order of magnitude too high** on the
 learner that dominates: it was built from a guessed constant, this is built from a
 measured one.
 
-Nothing here covers v21's own cost. Every variant runs a complete v21 —
+Covers **both** ablation families. The learners, features, target and swap point
+are identical between them, so the measured table applies to each; only the host
+method differs. Two families of five over 17 datasets is **170 runs**, not 85.
+
+Nothing here covers the host method's own cost. Every variant runs a complete v21
+(or v14) —
 layout, donor selection and the flow are unchanged, so Phase A (60 epochs) plus
 Phase B (160) is paid in full, 85 times (5 learners × 17 datasets). **That is the
 real bill and it is not measured here**; per-run wall time is recorded as `wall`
@@ -62,10 +67,10 @@ STARmap are estimates until `describe_datasets` runs.
 | ST / Visium (`n_hvg` 3 000) | ~5–8 k × 3 000 | ~5 min (measured) |
 | Allen ×3 (`max_cells_per_section` 20 000) | ~160 k × 500 | ~17 min |
 
-**Total marginal, all five learners × 17 datasets: ~2–6 CPU-hours on 4 cores**,
+**Total marginal, five learners × 17 datasets: ~2–6 CPU-hours on 4 cores**,
 dominated by `rf` and `gbm`, with `gbm`'s share the uncertain half for the reason
-above. Proportionally less on a larger box. The earlier 40–60 hour figure is
-withdrawn.
+above. **Double it for both families: ~4–12 CPU-hours.** Proportionally less on a
+larger box. The earlier 40–60 hour figure is withdrawn.
 
 `openst_lymph_node` is excluded — it is uncapped whole-transcriptome and already
 OOM-kills the v14 family (bench3 README, "Known gap: Open-ST is still uncapped"),
@@ -73,12 +78,38 @@ which these variants inherit. 17 datasets, not 18.
 
 ## Two non-CPU costs, which do not shrink
 
-**Disk.** v21 emits sparse donor copies; a squared-loss regressor emits the
-conditional mean, which has **no zeros** — measured at density 1.000 for all five
-learners on the smoke fixture. `write_prediction_h5` stores CSR, so a fully dense
-`Q × G` block costs roughly 3× its dense size. Allen: `Q ≈ 140 k × 500` → ~840 MB
-*per variant per dataset*. Budget **~15–20 GB** of new `prediction.h5` across the
-campaign, against a few hundred MB for the existing tree.
+**Disk, and one dataset that cannot run at all.** v14 and v21 emit sparse donor
+copies; a squared-loss regressor emits the conditional mean, which has **no
+zeros** — measured at density 1.000 for all five learners. `write_prediction_h5`
+stores CSR, so every entry costs its value plus its column index on top of a dense
+`Q × G` array that must be materialized first.
+
+Both wrappers now estimate this **before training** (`check_output_size`, default
+limit `--max-dense-gb 8`) and refuse rather than discovering it after the flow has
+trained. Measured against the real dataset shapes:
+
+| dataset | est. Q × G | dense | as CSR |
+|---|---|---|---|
+| `starmap_visual_cortex` | 12 419 × 28 | 0.00 GB | 0.00 GB |
+| `st_mouse_brain_ortiz` | 7 000 × 3 000 | 0.08 GB | 0.17 GB |
+| `cosmx_nsclc_3d` | 20 000 × 960 | 0.08 GB | 0.15 GB |
+| `allen_*` (each) | 140 000 × 500 | 0.28 GB | 0.56 GB |
+| **`openst_lymph_node`** | **473 684 × 20 000** | **37.9 GB** | **75.8 GB** |
+
+So budget roughly **15 GB per family** of new `prediction.h5`, and treat
+`openst_lymph_node` as **out of scope for these variants**. It is uncapped
+whole-transcriptome, and at ~20 000 genes a dense prediction is tens of gigabytes
+per learner per dataset. The three ways out, in the order I would take them:
+
+1. Leave it out and say so — the targeted panels answer the question.
+2. Build a gene-capped copy (`prepare_dataset --n-hvg 3000`) registered as a
+   **separate** dataset; capping in place changes the panel that previously
+   reported `openst` rows were measured on.
+3. Raise `--max-dense-gb` deliberately, with the disk to back it.
+
+**Never** threshold small predictions to zero to shrink the file: that
+contaminates `paper_gene_detection_spearman`, which is the column the whole
+ablation exists to read.
 
 **Evaluation.** 85 new predictions through `evaluate_all`, at the same per-run cost
 the existing methods pay. `specs/10` §13.1a is explicit that no per-prediction
