@@ -212,6 +212,30 @@ the tag machinery. Fixed, and the hand-rolled `get_params`/`set_params` deleted 
 
 Campaign is now 357 runs. Not run.
 
+### 2026-09-15 (2) — a regression I introduced, and the guard that now catches its class
+
+Moving the learner flags into `_ml_learners.py` sliced **v21's `--device` out of its parser**: the
+flag sat between two learner flags, and the edit took the whole span. Every `v21_*` run then died at
+`cfg.device = args.device` — *after* loading the input and building the cell-type vocabulary, so it
+looked like a data problem rather than a wrapper bug. v14 and v18 were untouched: their flag-parity
+guards compare against their host wrapper's entire flag table, so a deleted host flag cannot survive
+startup there. v21_ml declares no host flags at all (it builds `V14Config()` directly), so it had no
+equivalent check — the one wrapper without that guard is the one that broke.
+
+My own post-refactor test missed it because it passed each wrapper only the flags I listed, and for
+v21 that list was empty. A test that exercises the flags you remembered cannot catch the flag you
+forgot.
+
+Fixed, and the class closed: `ML.assert_args_declared(args, __file__)` now runs in all three wrappers
+immediately after `parse_args`, before any data is touched. It walks the wrapper's own AST for
+attribute reads on the name `args` — exact, so a mention in a docstring or comment cannot cause a
+false failure — and fails naming the missing flag. Verified on all three (33 / 26 / 6 distinct
+`args.X` reads, all declared) and verified firing when `--device` is removed again.
+
+No results were affected: the failure was before `write_prediction_h5`, so nothing was written and
+`--skip-existing` will re-run the `v21_*` cells cleanly. All seven `v21_*` learners were blocked, not
+just `lasso`; `v14_*` and `v18_*` were never affected.
+
 ### Three cells reported as returned rather than smoothed
 
 - FEAST and isoST return **exactly `0.0000`** on `celltype_localization`: the not-scorable value, not

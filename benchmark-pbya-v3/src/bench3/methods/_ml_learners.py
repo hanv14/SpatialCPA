@@ -14,6 +14,8 @@ target-scale decision and its output tail. What lives here: the learners, the
 determinism fix, the parameter record and the dense-output pre-flight check.
 """
 
+import pathlib
+
 import numpy as np
 from sklearn.base import BaseEstimator, RegressorMixin
 
@@ -261,6 +263,37 @@ def require_learner_deps(learner):
             return None
         versions += f", xgboost {xgboost.__version__}"
     return versions
+
+
+def assert_args_declared(args, wrapper_file):
+    """Every ``args.<name>`` the wrapper reads must exist on the parsed namespace.
+
+    This exists because it was needed. Refactoring the learner flags into this
+    module sliced v21's ``--device`` out of its parser along with them — the flag
+    sat between two learner flags — and nothing noticed until the run reached
+    ``cfg.device = args.device`` and died *after* loading the input and building
+    the cell-type vocabulary. v14 and v18 were untouched because their flag-parity
+    guards compare against their host wrapper's whole flag table; v21_ml declares
+    no host flags at all (it builds ``V14Config()`` directly), so it had no
+    equivalent check.
+
+    Walks the wrapper's own AST for attribute reads on the name ``args`` — exact,
+    so a mention in a docstring or comment cannot produce a false failure — and
+    fails before any data is read rather than partway through a run.
+    """
+    import ast
+    tree = ast.parse(pathlib.Path(wrapper_file).read_text())
+    used = {n.attr for n in ast.walk(tree)
+            if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
+            and n.value.id == "args" and isinstance(n.ctx, ast.Load)}
+    missing = sorted(a for a in used if not hasattr(args, a))
+    if missing:
+        raise SystemExit(
+            f"ERROR: {pathlib.Path(wrapper_file).name} reads "
+            f"{', '.join('args.' + a for a in missing)}, which its parser does not "
+            f"declare. This is a wrapper bug, not a configuration problem — the run "
+            f"would have failed partway through. Add the flag(s) to build_parser().")
+    return len(used)
 
 
 def check_output_size(adata, n_targets, max_gb):

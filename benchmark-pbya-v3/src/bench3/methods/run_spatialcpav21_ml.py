@@ -316,11 +316,18 @@ def build_parser():
                     "(layout, donor selection and every v21 flag unchanged)")
     _v2_io.add_v2_args(p)
     ML.add_learner_args(p)
+    # v21-specific. Its siblings declare --device inside their host flag
+    # tables; v21_ml declares no host flags (it builds V14Config() directly),
+    # so this one lives here.
+    p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"],
+                   help="device for v21's flow (layout and donor selection are v21's)")
     return p
 
 
 def main():
     args = build_parser().parse_args()
+    # Fail on a wrapper bug before touching any data (see the guard's docstring).
+    ML.assert_args_declared(args, __file__)
 
     if not check_environment(args.learner):
         return 1

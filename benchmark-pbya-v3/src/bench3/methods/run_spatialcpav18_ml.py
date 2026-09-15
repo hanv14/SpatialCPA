@@ -381,6 +381,8 @@ def build_parser():
 
 def main():
     args = build_parser().parse_args()
+    # Fail on a wrapper bug before touching any data (see the guard's docstring).
+    ML.assert_args_declared(args, __file__)
 
     if not check_environment(args.learner):
         return 1
