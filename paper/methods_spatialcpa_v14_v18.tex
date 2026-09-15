@@ -1,0 +1,159 @@
+\subsection{SpatialCPA-v14} \label{subsec:spatialcpav14}
+
+SpatialCPA-v14 is a reference-based method for virtual section generation, implemented in Python as
+the package \texttt{spatialcpav14}. It synthesises a two-dimensional tissue section at an arbitrary
+depth $z$ from a stack of real sections, by conditional flow matching in a joint
+molecular--morphological latent space. The input for v14 includes: (i) a spatial transcriptomics
+volume of cells by genes, with per-cell coordinates $(x, y, z)$ in micrometres and, optionally, cell
+type labels, and (ii) one scalar target depth $z$ per section to be synthesised. The method operates
+in a generation-only regime: the held-out sections are physically absent from the input file, so the
+method never observes the cells it is asked to reconstruct, and receives no information about them
+beyond the scalar $z$. Expression is log-normalised on the input side according to the assay: raw
+counts are library-normalised to a common total of $10^{4}$ and then $\log(1+x)$-transformed, whereas
+fluorescence intensities are $\log(1+x)$-transformed only, and matrices that are already normalised
+are passed through unchanged. The sections are ordered by their median $z$ into a stack, and all
+subsequent computation uses only sections in that stack.
+
+Two per-cell representations are computed first. The expression latent is obtained by standardising
+each gene and then projecting onto the leading $d_{e} = 32$ principal axes by truncated SVD, giving a
+compact code $\textrm{\textbf{e}}$ that is smooth enough to model with a flow and approximately
+invertible. The morphology channels are a per-cell pseudo-image computed \textit{within} a single
+section: for each cell, its $k = 12$ nearest in-plane neighbours are weighted by
+$w = \exp\left(-\left(d / (\sigma \, \tilde{d})\right)^{2}\right)$, where $\tilde{d}$ is the median
+neighbour distance and $\sigma = 1$, yielding a soft local cell-type composition (one column per type)
+together with a local density channel defined as the inverse mean neighbour distance, robustly scaled
+by its own median. The two representations are fused by an encoder into a joint latent
+$\textrm{\textbf{h}}$ of dimension $d = 48$ (hidden width 128, dropout 0.05), which also carries
+decoders back to $\textrm{\textbf{e}}$, to the morphology channels, and to a cell-type head.
+
+Conditioning is provided by a three-dimensional positional-attention module: for each query position,
+tokens are drawn from the $n_{\textrm{context}} = 16$ nearest real cells plus one global summary token
+per section, over the nearest real section on each side of $z$ (\texttt{context\_slices\_each\_side}
+$= 1$) together with both flanking sections, with $(x, y, z)$ encoded by 6 Fourier bands and attended
+by 4 heads at model width 96. The generative component is a velocity field (hidden width 192, 4
+layers, time embedding 32) trained by conditional flow matching on the optimal-transport
+straight-line path. Training proceeds in two phases: Phase A fits the encoder and its decoders by
+reconstruction for 60 epochs, and Phase B fits the velocity field and the attention module for 160
+epochs, using AdamW at learning rate $3\times 10^{-4}$, weight decay $10^{-4}$, gradient clipping at
+2.0, and batches of 256 cells. Two perturbations make the model gap-aware: a whole context section is
+dropped with probability 0.35, and the query depth is jittered by a Gaussian of scale 0.15 (in units
+of the $z$ half-range) so that the model marginalises over depth uncertainty. Phase B additionally
+carries biology-informed regularisers, annealed in over the first 40 epochs: a closed-loop
+consistency term at weight 0.10 that penalises the discrepancy between a latent and its
+re-encoding after decoding; a latent total-variation term, relaxed at morphological edges, whose
+smoothness and interface weights (0.05 and 0.10) enter as a single summed coefficient; and a
+soft-margin hypoxia term at weight 0.05 with margin 0.02, which enforces the directionality of the
+core-to-periphery gradient.
+
+Generation begins by selecting the two real sections that bracket the requested depth. Writing
+$z_{lo}$ and $z_{hi}$ for their centres, the interpolation fraction is
+$t = (z - z_{lo}) / (z_{hi} - z_{lo})$ and the number of cells to synthesise is
+$n = \textrm{round}\left((1-t) \, n_{lo} + t \, n_{hi}\right)$. Positions are then drawn by resampling
+the two flanking sections' real coordinates rather than being generated. To prevent the two flanks
+from being interleaved cell by cell, which would scramble local neighbourhoods, v14 builds a smooth
+random field over the plane as the sum of three random sinusoids with frequencies drawn uniformly on
+$[0.5, f]$ and random phases, where $f = 4.0$, rescaled to $[0, 1]$. The lower section supplies the
+region where the field is at least $t$ and the upper section supplies the remainder, so the expected
+area taken from the upper section is $t$ and composition is still interpolated correctly, while each
+generated cell's entire neighbourhood is drawn from a single real section. Positions are sampled
+without replacement whenever the pool is large enough, and perturbed by Gaussian jitter of scale
+$0.05 \, \tilde{d}$. The procedure returns both the position and the index of the real cell it was
+drawn from, which serves as that cell's inherited donor.
+
+Each generated position is then passed through the attention module and the flow: the ODE is
+integrated from noise by 12 Euler steps, repeated from 4 independent initial noises whose endpoints
+are averaged, and the resulting joint latent is decoded to $\hat{\textrm{\textbf{e}}}$, a code in the
+same 32-dimensional space as the real cells. Expression is not generated from this code. Instead, each
+cell is grounded in a real profile: with \texttt{ground\_blend\_flow} set to 1.0 every cell is
+reconsidered, and for each one the \texttt{ground\_k} spatially nearest real cells of the two flanking
+sections form its candidate set, from which the method selects
+$\arg\min_{c} \lVert \textrm{\textbf{e}}_{c} - \hat{\textrm{\textbf{e}}} \rVert$ under the default
+\texttt{selection="flow"} rule. The candidate set is therefore spatial and the latent only ranks
+within it; with \texttt{ground\_k} $= 2$ the flow contributes one binary choice per cell, and because
+v14 has no swap-margin parameter, the inherited donor is always overridden. The cell type is inherited
+from the selected donor (\texttt{type\_placement="exemplar"}). Composition matching then nudges the
+synthesised type mix toward the interpolated flanking composition $(1-t) \, \textrm{comp}(lo) + t \,
+\textrm{comp}(hi)$, by re-grounding cells currently in over-represented types to a nearby real cell of
+the needed type, again chosen by minimum latent distance among the same \texttt{ground\_k} candidates.
+
+Finally, v14 optionally blends the flow-decoded profile into the emitted expression with weight
+\texttt{edit\_weight}; when this weight is set to 0 the blend is skipped and every emitted profile is
+one real cell's measurement, copied in full. The result is clipped below at zero and, because the
+evaluator expects count-like values, exponentiated as $\textrm{expm1}\left(\textrm{clip}(\cdot, 0,
+20)\right)$. It should be noted that this exponentiation is not the inverse of the input
+normalisation on count data, because the per-cell library rescaling applied before $\log(1+x)$ is not
+undone; on assays where the input transform is $\log(1+x)$ alone, such as fluorescence intensities,
+the round trip is exact. v14 returns a virtual section consisting of: (i) the cell coordinates
+$(x, y, z)$, (ii) the cell-by-gene expression matrix, and (iii) the cell type label and index per
+cell.
+
+
+\subsection{SpatialCPA-v18} \label{subsec:spatialcpav18}
+
+SpatialCPA-v18 extends v14 with four modifications, each of which targets a specific deficiency
+observed in benchmarking, and is implemented as a single-file Python module. Its architecture,
+hyperparameters and training procedure are identical to those of v14 described in
+Section~\ref{subsec:spatialcpav14}: the same expression latent and morphology channels, the same joint
+encoder, the same three-dimensional attention and velocity field, and the same two-phase training
+schedule with the same regularisers. All four modifications act at generation time. The input is the
+same as v14's with one addition: v18 retains the pre-normalisation expression matrix alongside the
+log-normalised one, so that a copied profile can be emitted on its original measurement scale. The
+selection of flanking sections, the interpolation fraction $t$, the target cell count, and the
+coherent-patch layout are unchanged from v14.
+
+The first modification concerns how a donor is selected. Rather than taking the latent-nearest
+candidate unconditionally, v18 protects the inherited donor with a margin: a swap is performed only if
+$d_{\textrm{inherited}} - \min_{c} d_{c} \geq \tau$, where $d$ denotes distance in the latent space and
+$\tau$ is \texttt{ground\_keep\_margin}, so that a cell whose inherited profile is already close to the
+generated latent is left alone. When a swap does occur, the donor is not taken by $\arg\min$ but
+sampled, with probability proportional to the product of three terms,
+\[
+p_{c} \;\propto\; \exp\!\left(-\frac{d_{c} - \min_{c'} d_{c'}}{T}\right)
+\cdot \exp\!\left(-\frac{1}{2}\left(\frac{\delta_{c}}{2 \, \bar{s}}\right)^{2}\right)
+\cdot \frac{1}{1 + \lambda \, u_{c}},
+\]
+in which $T$ is the temperature \texttt{ground\_temp}, $\delta_{c}$ is the in-plane distance from the
+generated position to candidate $c$ and $\bar{s}$ the median nearest-neighbour spacing of the donor
+pool, and $u_{c}$ is the number of times candidate $c$ has already been used, with $\lambda = 0.5$.
+The three terms are, respectively, latent similarity, a spatial-locality prior that keeps the copy
+local as the candidate set widens, and a reuse penalty. The reuse penalty addresses a specific
+failure of the $\arg\min$ rule at small candidate counts, in which many generated cells collapse onto
+the same few source cells and the emitted distribution carries high-multiplicity duplicate profiles,
+which is precisely what an optimal-transport comparison against the held-out cells penalises. The
+usage counter is initialised from the inherited donors and shared by every subsequent re-grounding
+pass.
+
+The second modification replaces inherited cell types with a vote. Under
+\texttt{type\_mode="vote"}, each generated cell's type is assigned by a distance-weighted $k$-nearest
+neighbour vote, with weights $1/(d + 10^{-6})$, over the \texttt{type\_vote\_k} nearest real cells
+drawn from \textit{both} flanking sections. Cells whose voted type differs from the type of their
+inherited donor are re-grounded to a nearby real cell of the voted type, selected among the same
+spatial candidates by latent distance under the sampling rule above, so that the emitted profile
+remains consistent with the emitted label. The motivation is that pure inheritance copies each cell's
+type from a single source cell, so that along the seam between two coherent patches the local type
+mosaic is discontinuous, which the neighbourhood-enrichment metrics read as noise. Composition
+matching against the interpolated flanking composition is then applied as in v14.
+
+The third modification introduces partial gene resampling. For each generated cell, a second donor is
+drawn from the $\max(\texttt{ground\_k}, 4)$ nearest real cells that share the cell's voted type and
+are not its own exemplar; the partner is selected uniformly at random among those candidates, and
+cells for which no valid partner exists are left unmixed. A Bernoulli mask is then drawn independently
+for each (cell, gene) pair with success probability \texttt{gene\_mix\_frac}, and the masked entries
+take their value from the partner rather than the exemplar. The rationale is that whole-profile copies
+produce an expression cloud consisting of training atoms, whereas the held-out cells are novel points
+on the same manifold, so an optimal-transport comparison systematically favours a method that emits
+novel but realistic combinations; mixing a minority of genes from a same-type, same-niche neighbour
+creates such combinations while bounding the resulting chimerism. Because both donors are real cells
+of the same type in the same neighbourhood, every emitted value remains a real measurement.
+
+The fourth modification concerns the output scale. When the decode blend is disabled and the raw
+matrices are available, v18 discards the log-scale array entirely and emits the selected donor's
+\textit{raw} measurement, re-applying the gene-mix mask on the raw scale so that mixed entries take
+the partner's raw value. The exponentiation used by v14 is therefore never executed. This addresses
+the observation that $\textrm{expm1}$ is not the inverse of the input normalisation on count data, and
+that on assays with a wide dynamic range the resulting non-linear round trip inverts the ranking of
+genes by variance. Like v14, v18 returns a virtual section consisting of: (i) the cell coordinates
+$(x, y, z)$, (ii) the cell-by-gene expression matrix, and (iii) the cell type label and index per
+cell. The distinction between the two methods at the level of a single emitted cell is that v14
+returns one real cell's profile across all genes, transformed, whereas v18 returns a per-gene chimera
+of two real cells of the same type, untransformed.
