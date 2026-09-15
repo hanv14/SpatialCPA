@@ -1012,6 +1012,21 @@ def _v3_wrapper(name):
     return PROJECT_ROOT / "src" / "bench3" / "methods" / name
 
 
+# The seven learners each expression-ablation family runs. Defined once and
+# shared by the three families below, because a `v14_rf` row and a `v21_rf` row
+# are only comparable if they are the same learner — the wrappers enforce that
+# in code (they all import `methods/_ml_learners.py`), and this keeps the
+# registry from drifting away from it.
+_ML_LEARNERS = (
+    ("ridge", "multi-output ridge regression (the linear floor)"),
+    ("lasso", "L1 linear regression, penalty set as a fraction of alpha_max"),
+    ("knn", "distance-weighted kNN regression (a local average of donors)"),
+    ("rf", "multi-output random forest"),
+    ("gbm", "histogram gradient boosting, one booster per gene"),
+    ("xgb", "XGBoost, one booster per gene by default"),
+    ("mlp", "a two-layer multi-output MLP"),
+)
+
 METHODS = {
     "spatialcpav8_gen": {
         "wrapper": _v2_wrapper("run_spatialcpav8.py"),
@@ -1408,25 +1423,28 @@ METHODS = {
                                     "ERROR: scikit-learn is required",
                                     "no longer mirror V14Config"),
         }
-        for _lrn, _desc in (
-            ("ridge", "multi-output ridge regression (the linear floor)"),
-            ("knn", "distance-weighted kNN regression (a local average of donors)"),
-            ("rf", "multi-output random forest"),
-            ("gbm", "histogram gradient boosting, one booster per gene"),
-            ("mlp", "a two-layer multi-output MLP"),
-        )
+        for _lrn, _desc in _ML_LEARNERS
     },
-    # Deliberately absent, and recorded rather than omitted:
-    #   lasso — at F ~= 3 + 2*n_types + 1 dense geometric features, L1 selection
-    #           is a no-op; it lands within noise of `v21_ridge` and adds a row,
-    #           not a data point.
+    # `lasso` was argued against when this family was designed — at
+    # F ~= 3 + 2*n_types + 1 dense geometric features, L1 selection has little to
+    # select — and is included on request. The prediction stands: expect it near
+    # `ridge`. It is NOT free of judgement, though, and the wrapper takes the
+    # judgement seriously: at scikit-learn's conventional alpha=1.0 the fit
+    # collapses to zero coefficients (measured: 0/640, R^2 = 0.000), which still
+    # SCORES, as the per-gene training mean wearing a learner's name. So the
+    # penalty is set as a fraction of alpha_max = max|X'y|/n — scale-free, so it
+    # means the same thing on v14/v21's log targets and v18's raw EASI-FISH
+    # intensities — and an all-zero fit is reported at run time, not silently
+    # ranked. See `--lasso-alpha-frac` and `_ml_learners.FracAlphaLasso`.
+    #
+    # Still deliberately absent, recorded rather than omitted:
     #   SVR   — not multi-output, so one fit per gene, each O(n^2)-O(n^3) in the
     #           kernel. At n ~= 16.5k training cells the RBF Gram alone is ~2 GB
     #           per fit, and G reaches 960 (CosMx) and 3000 (ST/Visium).
     #           Infeasible at this interface; LinearSVR would be ridge with a
     #           different loss, which `v21_ridge` already covers.
     # ── the same ablation on v14 ─────────────────────────────────────────────
-    # Same framing, same five learners, same VirtualSlice swap point — so a
+    # Same framing, same seven learners, same VirtualSlice swap point — so a
     # `v14_*` row and a `v21_*` row are readable against each other.
     #
     # The v14 contrast is the CLEANER of the two, and the reason is the
@@ -1463,16 +1481,10 @@ METHODS = {
                                     "ERROR: scikit-learn is required",
                                     "has drifted from run_spatialcpav14.py"),
         }
-        for _lrn, _desc in (
-            ("ridge", "multi-output ridge regression (the linear floor)"),
-            ("knn", "distance-weighted kNN regression (a local average of donors)"),
-            ("rf", "multi-output random forest"),
-            ("gbm", "histogram gradient boosting, one booster per gene"),
-            ("mlp", "a two-layer multi-output MLP"),
-        )
+        for _lrn, _desc in _ML_LEARNERS
     },
     # ── and on v18 ───────────────────────────────────────────────────────────
-    # Third host method, same five learners and the same VirtualSlice swap point.
+    # Third host method, same seven learners and the same VirtualSlice swap point.
     # Two things make the v18 rows read differently from the other two, and both
     # are consequences of running v18 at `--edit-weight 0.0`:
     #
@@ -1514,13 +1526,7 @@ METHODS = {
                                     "ERROR: scikit-learn is required",
                                     "has drifted from run_spatialcpav18.py"),
         }
-        for _lrn, _desc in (
-            ("ridge", "multi-output ridge regression (the linear floor)"),
-            ("knn", "distance-weighted kNN regression (a local average of donors)"),
-            ("rf", "multi-output random forest"),
-            ("gbm", "histogram gradient boosting, one booster per gene"),
-            ("mlp", "a two-layer multi-output MLP"),
-        )
+        for _lrn, _desc in _ML_LEARNERS
     },
 }
 
@@ -1544,9 +1550,12 @@ METHOD_ORDER = [
     "spatialcpav24_gen",
     # v21 expression ablation (see METHODS): v21 in every respect but the step
     # that emits expression. Appended, so every existing row keeps its position.
-    "v21_ridge", "v21_knn", "v21_rf", "v21_gbm", "v21_mlp",
-    "v14_ridge", "v14_knn", "v14_rf", "v14_gbm", "v14_mlp",
-    "v18_ridge", "v18_knn", "v18_rf", "v18_gbm", "v18_mlp",
+    "v21_ridge", "v21_lasso", "v21_knn", "v21_rf",
+    "v21_gbm", "v21_xgb", "v21_mlp",
+    "v14_ridge", "v14_lasso", "v14_knn", "v14_rf",
+    "v14_gbm", "v14_xgb", "v14_mlp",
+    "v18_ridge", "v18_lasso", "v18_knn", "v18_rf",
+    "v18_gbm", "v18_xgb", "v18_mlp",
 ]
 
 

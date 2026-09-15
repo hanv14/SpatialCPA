@@ -1,6 +1,7 @@
 """SpatialCPA-v18 with the expression step replaced by a classical ML regressor.
 
-One wrapper, five methods (``--learner ridge|knn|rf|gbm|mlp``), registered in
+One wrapper, seven methods
+(``--learner ridge|lasso|knn|rf|gbm|xgb|mlp``), registered in
 ``METHODS`` as ``v18_ridge`` … ``v18_mlp``. Third of the family, after
 ``run_spatialcpav14_ml.py`` and ``run_spatialcpav21_ml.py``, for the v18
 configuration this project runs:
@@ -62,7 +63,7 @@ prediction is clipped at 0. That is a deliberate, minimal deviation, recorded in
 families emit a flat density of 1.000 — no zeros at all, which is the clean
 signal that a squared-loss regressor models no sparsity. Here the clip
 manufactures zeros wherever the prediction went negative: measured 0.86–1.00
-across the five learners on a fixture whose real zero fraction was 0.39. So a
+across the learners on a fixture whose real zero fraction was 0.39. So a
 ``v18_*`` row's ``paper_gene_detection_spearman`` is not as catastrophic as its
 siblings', and **the difference is the clip, not the learner.** Do not read it as
 the regressor recovering sparsity. ``--target-scale log`` emits through ``expm1``
@@ -95,13 +96,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[4]
                        / "benchmark-pbya-v2" / "src" / "benchmark" / "methods"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]
                        / "benchmark-pbya-v2" / "src" / "benchmark"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _ml_learners as ML        # noqa: E402
 import _v2_io                        # noqa: E402
 import leakage_guard                 # noqa: E402
 
 _V18 = _V18W._V18
 _V18_WRAPPER_PATH = Path(_V18W.__file__)
-
-LEARNERS = ("ridge", "knn", "rf", "gbm", "mlp")
 
 
 # ── v18 CLI parity ───────────────────────────────────────────────────────────
@@ -156,17 +157,13 @@ def _lit(s):
 def check_environment(learner):
     if not _V18W.check_environment():
         return False
-    try:
-        import sklearn
-    except Exception as e:
-        print(f"ERROR: scikit-learn is required by run_spatialcpav18_ml "
-              f"(--learner {learner}) and is not importable: {e}", file=sys.stderr)
-        print("  conda install -n bench_spatialcpa scikit-learn", file=sys.stderr)
+    versions = ML.require_learner_deps(learner)
+    if versions is None:
         return False
     n_flags = assert_v18_parity()
     print(f"v18 parity: {n_flags} flags match {_V18_WRAPPER_PATH.name}; "
           f"config built by its own _build_config")
-    print(f"expression learner: {learner} (scikit-learn {sklearn.__version__})")
+    print(f"expression learner: {learner} ({versions})")
     return True
 
 
@@ -188,38 +185,6 @@ def resolve_target_scale(cfg, X_raw, requested):
         raise SystemExit("ERROR: --target-scale raw, but the input carries no raw "
                          "expression to train on.")
     return requested
-
-
-def check_output_size(adata, n_targets, max_gb):
-    """Refuse before training if the dense prediction cannot be written.
-
-    A donor-copy method emits sparse real measurements; a squared-loss regressor
-    emits the conditional mean, which has NO zeros. The prediction is stored as
-    CSR, so every one of the Q x G entries costs its value plus its column index,
-    on top of a dense Q x G array that must be materialized first. Reported up
-    front rather than discovered after the flow has trained.
-    """
-    n_sections = int(adata.obs["section"].nunique())
-    est_q = (adata.n_obs / max(n_sections, 1)) * max(n_targets, 1)
-    dense_gb = est_q * adata.n_vars * 4 / 1e9
-    print(f"  dense-output estimate: ~{est_q:,.0f} cells x {adata.n_vars} genes "
-          f"= {dense_gb:.2f} GB dense (~{dense_gb * 2:.2f} GB as CSR)")
-    if dense_gb > max_gb:
-        raise SystemExit(
-            f"ERROR: this prediction would be ~{dense_gb:.1f} GB dense, over the "
-            f"--max-dense-gb limit of {max_gb}. A regressor emits no zeros, so an "
-            f"uncapped whole-transcriptome panel ({adata.n_vars} genes here) cannot "
-            f"be written as a prediction.\n"
-            f"  Options, in the order I would take them:\n"
-            f"    1. Leave this dataset out of the ablation and say so — the "
-            f"targeted panels answer the question.\n"
-            f"    2. Build a gene-capped copy of it (prepare_dataset --n-hvg 3000) "
-            f"and register it as a SEPARATE dataset; capping in place would change "
-            f"the panel that previously-reported rows were measured on.\n"
-            f"    3. Raise --max-dense-gb deliberately, if you really have the disk.\n"
-            f"  Do NOT threshold small predictions to zero: that contaminates "
-            f"paper_gene_detection_spearman, which is the column this ablation "
-            f"exists to read.")
 
 
 # ── features ─────────────────────────────────────────────────────────────────
@@ -277,75 +242,6 @@ def emit(pred, cfg, scale):
     return expr.astype(np.float32)
 
 
-# ── learners (identical to the v14 / v21 families, so all three compare) ─────
-def make_learner(name, args):
-    from sklearn.pipeline import Pipeline
-    from sklearn.preprocessing import StandardScaler
-    seed = int(args.seed)
-
-    if name == "ridge":
-        from sklearn.linear_model import Ridge
-        est = Ridge(alpha=args.ridge_alpha, random_state=seed)
-    elif name == "knn":
-        from sklearn.neighbors import KNeighborsRegressor
-        est = KNeighborsRegressor(n_neighbors=args.knn_k, weights="distance",
-                                  n_jobs=args.n_jobs)
-    elif name == "rf":
-        from sklearn.ensemble import RandomForestRegressor
-        est = RandomForestRegressor(
-            n_estimators=args.rf_trees, max_features="sqrt",
-            min_samples_leaf=args.rf_min_leaf, random_state=seed, n_jobs=args.n_jobs)
-    elif name == "gbm":
-        from sklearn.ensemble import HistGradientBoostingRegressor
-        from sklearn.multioutput import MultiOutputRegressor
-        est = MultiOutputRegressor(
-            HistGradientBoostingRegressor(
-                max_iter=args.gbm_iters, learning_rate=args.gbm_lr,
-                early_stopping=True, random_state=seed),
-            n_jobs=args.n_jobs)
-    elif name == "mlp":
-        from sklearn.compose import TransformedTargetRegressor
-        from sklearn.neural_network import MLPRegressor
-        est = TransformedTargetRegressor(
-            regressor=MLPRegressor(
-                hidden_layer_sizes=(args.mlp_hidden, args.mlp_hidden),
-                max_iter=args.mlp_iters, early_stopping=True, random_state=seed),
-            transformer=StandardScaler())
-    else:
-        raise ValueError(f"unknown learner {name!r}; choose from {LEARNERS}")
-    return Pipeline([("scale", StandardScaler()), ("est", est)])
-
-
-def freeze_for_determinism(model):
-    """Make prediction bitwise reproducible.
-
-    ``RandomForestRegressor`` fits deterministically given ``random_state`` but
-    does not predict deterministically: joblib threads accumulate each tree's
-    contribution into a shared array, so the summation order varies. Switched to
-    single-threaded prediction after the parallel fit. The other four already
-    predict identically at ``n_jobs=-1`` (measured).
-    """
-    est = model.named_steps["est"] if hasattr(model, "named_steps") else model
-    if hasattr(est, "estimators_") and hasattr(est, "n_jobs") and hasattr(est, "n_estimators"):
-        est.n_jobs = 1
-    return model
-
-
-def learner_params(name, args):
-    common = {"learner": name, "n_jobs": args.n_jobs}
-    per = {
-        "ridge": {"ridge_alpha": args.ridge_alpha},
-        "knn": {"knn_k": args.knn_k, "weights": "distance"},
-        "rf": {"rf_trees": args.rf_trees, "rf_min_leaf": args.rf_min_leaf,
-               "max_features": "sqrt"},
-        "gbm": {"gbm_iters": args.gbm_iters, "gbm_lr": args.gbm_lr,
-                "early_stopping": True, "per_gene_models": True},
-        "mlp": {"mlp_hidden": args.mlp_hidden, "mlp_iters": args.mlp_iters,
-                "early_stopping": True, "target_standardized": True},
-    }[name]
-    return {**common, **per}
-
-
 # ── run ──────────────────────────────────────────────────────────────────────
 def run_method(adata, targets, gene_names, X_log, X_raw, args):
     SpatialCPAv14 = _V18.SpatialCPAv14
@@ -384,12 +280,13 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
     Ftr, Ytr = training_matrix(stack, n_types, cfg, scale)
     print(f"  learner fit: {args.learner} on {Ftr.shape[0]} training cells x "
           f"{Ftr.shape[1]} features -> {Ytr.shape[1]} genes ({scale} target)")
-    model = make_learner(args.learner, args)
+    model = ML.make_learner(args.learner, args)
     t_fit = time.time()
     model.fit(Ftr, Ytr)
     fit_seconds = time.time() - t_fit
-    freeze_for_determinism(model)
+    ML.freeze_for_determinism(model)
     print(f"    fit_seconds={fit_seconds:.1f}")
+    ML.report_degeneracy(model, args.learner)
 
     results, predict_seconds = {}, 0.0
     for sec, z in targets:
@@ -436,24 +333,11 @@ def build_parser():
         description="SpatialCPA-v18 with a classical ML expression head "
                     "(layout, donor selection and every v18 flag unchanged)")
     _v2_io.add_v2_args(p)
-    p.add_argument("--learner", required=True, choices=list(LEARNERS),
-                   help="expression regressor replacing v18's donor-copy step")
-    p.add_argument("--n-jobs", type=int, default=-1)
+    ML.add_learner_args(p)
     p.add_argument("--target-scale", default="auto", choices=["auto", "log", "raw"],
                    help="scale the learner is trained on and emits. 'auto' mirrors "
                         "v18's own raw_ok predicate, which is what keeps the rows "
                         "comparable; override only to probe the choice")
-    p.add_argument("--max-dense-gb", type=float, default=8.0,
-                   help="refuse before training if the dense Q x G prediction would "
-                        "exceed this (a regressor emits no zeros)")
-    p.add_argument("--ridge-alpha", type=float, default=1.0)
-    p.add_argument("--knn-k", type=int, default=15)
-    p.add_argument("--rf-trees", type=int, default=100)
-    p.add_argument("--rf-min-leaf", type=int, default=5)
-    p.add_argument("--gbm-iters", type=int, default=100)
-    p.add_argument("--gbm-lr", type=float, default=0.1)
-    p.add_argument("--mlp-hidden", type=int, default=256)
-    p.add_argument("--mlp-iters", type=int, default=300)
     # ── v18's own flags, defaults identical to run_spatialcpav18.py ──────────
     p.add_argument("--epochs", type=int, default=160, help="Phase B flow epochs")
     p.add_argument("--pretrain-epochs", type=int, default=60, help="Phase A epochs")
@@ -506,7 +390,7 @@ def main():
     print(f"Loading training-only input {args.input} ...")
     adata = ad.read_h5ad(args.input)
     _v2_io.guard_no_holdout(adata, target_sections)
-    check_output_size(adata, len(targets), args.max_dense_gb)
+    ML.check_output_size(adata, len(targets), args.max_dense_gb)
     gene_names = list(adata.var_names)
     print(f"  input: {adata.n_obs} cells x {adata.n_vars} genes, "
           f"{adata.obs['section'].nunique()} sections")
@@ -548,7 +432,7 @@ def main():
         "dedup_ground": not args.no_dedup_ground,
         "coherent_source": not args.no_coherent_source,
         "flow_matching": True, "generation_only": True,
-        **learner_params(args.learner, args),
+        **ML.learner_params(args.learner, args),
         **info,
     }
     _v2_io.write_prediction_h5(

@@ -172,6 +172,46 @@ cross-check.
 Campaign is now three families of five over 17 datasets: 255 runs, ~6–18 CPU-hours marginal, ~45 GB
 of predictions, host training on top. Not run.
 
+### 2026-09-15 — two more learners, and the registry moves to one file
+
+`lasso` and `xgb` added to all three ablation families, on request. Seven learners x three hosts x
+17 datasets. `config.py` still has **0 deletions** against the pre-work baseline (`f637730^`);
+`evaluate_paper.py` unchanged.
+
+**The learner registry is now `benchmark-pbya-v3/src/bench3/methods/_ml_learners.py`**, imported by
+all three wrappers. Adding two learners to three copies was the moment to stop: the copies had
+*already* drifted (identical behaviour, divergent comments — checked by hashing each block), and a
+`v14_rf` row is only comparable to a `v21_rf` row if they are the same learner. That is now true by
+construction rather than by inspection. Each wrapper keeps what is genuinely its own: its parity
+guard, its feature builder, its target-scale decision, its output tail. v21 also gained a
+`build_parser()` so all three read alike.
+
+Three things the work turned up, all measured:
+
+* **Lasso's conventional `alpha=1.0` is a silent trap.** On standardized features with log-scale
+  targets it leaves **0 of 640 coefficients non-zero**, R² = 0.000 — every prediction becomes the
+  per-gene training mean, and the row still *scores*, indistinguishable from a fitted learner in the
+  results tree. Worse, v18 trains on the RAW scale where EASI-FISH intensities are ~10³ larger, so
+  one alpha cannot mean the same thing in both families. The penalty is therefore set as a fraction
+  of `alpha_max = max|X'y|/n` (`FracAlphaLasso`), which is scale-free, and an all-zero fit is
+  **reported at run time** (`report_degeneracy`) rather than quietly ranked. At the default
+  `--lasso-alpha-frac 0.01` the fit keeps 98.1 % of coefficients — so lasso lands near ridge, which
+  is what was predicted when it was argued against; raise the fraction for genuine sparsity. The
+  scale-free form is demonstrated, not just argued: the same fraction gives **98.1 %** non-zero on
+  log targets (alpha_max 0.747) and **97.5 %** on targets 4000× larger (alpha_max 2992). A fixed
+  alpha cannot do that, and the alarm was verified firing at `--lasso-alpha-frac 1.0`.
+* **XGBoost is deterministic** at `n_jobs=-1` under both `multi_strategy` settings (verified across
+  two fits), so it needs none of the single-threaded-prediction fix the random forest required.
+* **`multi_output_tree` is not the cheap option**, which was the guess. Measured at n = 4000:
+  G = 40 → 7.97 s vs 24.52 s; G = 300 → 64.18 s vs 238.90 s. `one_output_per_tree` is the default,
+  and the alternative stays a flag because they are different models, not two implementations of one.
+
+One real bug caught by testing rather than review: `FracAlphaLasso` as a plain class fits fine but
+raises inside `Pipeline.predict` on scikit-learn 1.9 — it needs `BaseEstimator`/`RegressorMixin` for
+the tag machinery. Fixed, and the hand-rolled `get_params`/`set_params` deleted as redundant.
+
+Campaign is now 357 runs. Not run.
+
 ### Three cells reported as returned rather than smoothed
 
 - FEAST and isoST return **exactly `0.0000`** on `celltype_localization`: the not-scorable value, not

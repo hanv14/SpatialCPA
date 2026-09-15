@@ -6,9 +6,10 @@ learner that dominates: it was built from a guessed constant, this is built from
 measured one.
 
 Covers **all three** ablation families. The learners, features and swap point are
-identical between them, so the measured table applies to each; only the host
-method and the target scale differ. Three families of five over 17 datasets is
-**255 runs**.
+identical between them — enforced in code, since all three wrappers import
+`methods/_ml_learners.py` — so the measured table applies to each; only the host
+method and the target scale differ. Three families of **seven** learners over 17
+datasets is **357 runs**.
 
 Nothing here covers the host method's own cost. Every variant runs a complete v21
 (or v14) —
@@ -32,6 +33,20 @@ campaign's shipped hyper-parameters (`rf_trees=100`, `gbm_iters=100`,
 | 16 500 | 500 | 0.08 | 0.01 | **91.80** | 10.46 | 9.98 |
 | 8 000 | 3 000 | 0.15 | 0.03 | **324.39** | — | 23.60 |
 
+**`lasso` and `xgb`, measured on the same box.** `lasso` is free — it is a
+coordinate-descent linear fit on 16 features, in the same class as `ridge`
+(< 1 s at every size in the benchmark). `xgb` is **the new dominant cost**, well
+above `rf`: at n = 4000 it takes **7.97 s at G = 40** and **64.18 s at G = 300**,
+which is linear in G (8.05× time for 7.5× genes) and several times what
+scikit-learn's `gbm` costs at comparable size. Budget for it accordingly — the
+projections below put it at roughly an hour per Allen atlas.
+
+`--xgb-multi-strategy` was measured, not guessed, and the guess was wrong:
+`multi_output_tree` (one ensemble of vector-leaf trees) is **slower**, not
+faster — 24.52 s vs 7.97 s at G = 40, and 238.90 s vs 64.18 s at G = 300. So
+`one_output_per_tree` is the default. The alternative stays available as a flag
+because the two are different models, not two implementations of one.
+
 ⚠️ **`gbm` and `mlp` are FLOORS, not estimates.** Both use `early_stopping=True`
 and the synthetic targets here are pure noise, so stopping fires almost
 immediately — visible in `gbm` going *down* from 1.82 s to 0.69 s as `n` rose
@@ -53,25 +68,45 @@ signal, so its numbers transfer.
   pure linearity predicts ~206 s, so **use the measured points, not the law**, at
   wide panels.
 
-`ridge` and `knn` are free at every size in the benchmark and need no budgeting.
+`ridge`, `lasso` and `knn` are free at every size in the benchmark and need no
+budgeting.
+
+**One thing to check on a `lasso` row before reading it.** The penalty is set as
+`--lasso-alpha-frac × alpha_max`, where `alpha_max = max|X'y|/n` is the smallest
+penalty that zeroes every coefficient. This is deliberate: a fixed `alpha` is not
+portable here, and fails silently — at scikit-learn's conventional `alpha=1.0`,
+**0 of 640 coefficients survive** (R² = 0.000), so the row becomes the per-gene
+training mean and still scores, looking like a fitted method. The fractional form
+also means one number works for v14/v21's log targets and v18's raw EASI-FISH
+intensities, which differ by ~10³. At the default `0.01` the fit keeps **98.1 %**
+of coefficients, so `lasso` will land close to `ridge` — that was the prediction
+when it was argued against, and it is now quantified rather than asserted. Raise
+the fraction if you want genuine sparsity. Every run prints its non-zero
+fraction, and an all-zero fit raises a run-time warning rather than being
+silently ranked.
 
 ## Projected per dataset, `rf` (the worst case)
 
 Interpolated from the two large measured points. Cell counts for anything but
 STARmap are estimates until `describe_datasets` runs.
 
-| dataset class | n, G | `rf` fit |
-|---|---|---|
-| STARmap (exact: 16 527 train, 28 genes) | 16.5 k × 28 | **~4 s** |
-| small-panel analogues (ExSeq, IMC, EASI-FISH, MERFISH-thick) | ≤ 50 k × ≤ 300 | seconds to ~2 min |
-| CosMx | ~50 k × 960 | ~10 min |
-| ST / Visium (`n_hvg` 3 000) | ~5–8 k × 3 000 | ~5 min (measured) |
-| Allen ×3 (`max_cells_per_section` 20 000) | ~160 k × 500 | ~17 min |
+| dataset class | n, G | `rf` fit | `xgb` fit |
+|---|---|---|---|
+| STARmap (exact: 16 527 train, 28 genes) | 16.5 k × 28 | **~4 s** | ~30 s |
+| small-panel analogues (ExSeq, IMC, EASI-FISH, MERFISH-thick) | ≤ 50 k × ≤ 300 | seconds to ~2 min | ~1–10 min |
+| CosMx | ~50 k × 960 | ~10 min | ~50 min |
+| ST / Visium (`n_hvg` 3 000) | ~5–8 k × 3 000 | ~5 min (measured) | ~25 min |
+| Allen ×3 (`max_cells_per_section` 20 000) | ~160 k × 500 | ~17 min | ~1.5 h |
 
-**Total marginal, five learners × 17 datasets: ~2–6 CPU-hours on 4 cores**,
-dominated by `rf` and `gbm`, with `gbm`'s share the uncertain half for the reason
-above. **Triple it for all three families: ~6–18 CPU-hours.** Proportionally less
-on a larger box. The earlier 40–60 hour figure is withdrawn.
+`xgb` is interpolated from the two measured points above (linear in G, ~n log n
+in n); `rf` from its own. Both are 4-core numbers.
+
+**Total marginal, seven learners × 17 datasets: ~8–15 CPU-hours on 4 cores**,
+now dominated by `xgb`, then `rf` and `gbm` — `gbm`'s share is the uncertain one,
+for the reason above. **Triple it for all three families: ~25–45 CPU-hours.**
+Proportionally less on a larger box. (The original 40–60 hour estimate, withdrawn
+as ~10× too high for five learners, lands near the right magnitude again once
+XGBoost is in — for a different reason, and this time from measurements.)
 
 `openst_lymph_node` is excluded — it is uncapped whole-transcriptome and already
 OOM-kills the v14 family (bench3 README, "Known gap: Open-ST is still uncapped"),
@@ -97,8 +132,8 @@ trained. Measured against the real dataset shapes:
 | `allen_*` (each) | 140 000 × 500 | 0.28 GB | 0.56 GB |
 | **`openst_lymph_node`** | **473 684 × 20 000** | **37.9 GB** | **75.8 GB** |
 
-So budget roughly **15 GB per family** of new `prediction.h5` — about 45 GB for
-all three — and treat
+So budget roughly **20 GB per family** of new `prediction.h5` at seven learners —
+about 60 GB for all three — and treat
 `openst_lymph_node` as **out of scope for these variants**. It is uncapped
 whole-transcriptome, and at ~20 000 genes a dense prediction is tens of gigabytes
 per learner per dataset. The three ways out, in the order I would take them:
