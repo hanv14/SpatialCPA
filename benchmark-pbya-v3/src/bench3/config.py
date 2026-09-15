@@ -1024,8 +1024,17 @@ _ML_LEARNERS = (
     ("rf", "multi-output random forest"),
     ("gbm", "histogram gradient boosting, one booster per gene"),
     ("xgb", "XGBoost, one booster per gene by default"),
+    ("lgbm", "LightGBM, one booster per gene"),
     ("mlp", "a two-layer multi-output MLP"),
+    ("tabm", "TabM (ICLR 2025), parameter-efficient ensembling, one model for all genes"),
 )
+
+# `mlp` and `tabm` are neural, not classical. They are here because the question
+# is whether a learned regressor can beat copying, and leaving out the model class
+# most likely to win would stack the answer. `tabm` additionally needs `torch` and
+# runs on CPU by default (`--tabm-device cuda` for wide panels); `xgb` and `lgbm`
+# need their own packages. Every one of them fails the run naming the missing
+# package rather than falling back to something else.
 
 METHODS = {
     "spatialcpav8_gen": {
@@ -1551,11 +1560,11 @@ METHOD_ORDER = [
     # v21 expression ablation (see METHODS): v21 in every respect but the step
     # that emits expression. Appended, so every existing row keeps its position.
     "v21_ridge", "v21_lasso", "v21_knn", "v21_rf",
-    "v21_gbm", "v21_xgb", "v21_mlp",
+    "v21_gbm", "v21_xgb", "v21_lgbm", "v21_mlp", "v21_tabm",
     "v14_ridge", "v14_lasso", "v14_knn", "v14_rf",
-    "v14_gbm", "v14_xgb", "v14_mlp",
+    "v14_gbm", "v14_xgb", "v14_lgbm", "v14_mlp", "v14_tabm",
     "v18_ridge", "v18_lasso", "v18_knn", "v18_rf",
-    "v18_gbm", "v18_xgb", "v18_mlp",
+    "v18_gbm", "v18_xgb", "v18_lgbm", "v18_mlp", "v18_tabm",
 ]
 
 

@@ -1,4 +1,4 @@
-# `v21_<learner>`, `v14_<learner>`, `v18_<learner>` — the marginal cost, measured
+# The expression ablations (`v14_*`, `v18_*`, `v21_*`) — the marginal cost, measured
 
 **2026-09-13.** The bill for the expression ablation, before it runs. Supersedes an
 earlier extrapolation that was **roughly an order of magnitude too high** on the
@@ -8,8 +8,12 @@ measured one.
 Covers **all three** ablation families. The learners, features and swap point are
 identical between them — enforced in code, since all three wrappers import
 `methods/_ml_learners.py` — so the measured table applies to each; only the host
-method and the target scale differ. Three families of **seven** learners over 17
-datasets is **357 runs**.
+method and the target scale differ. Three families of **nine** learners over 17
+datasets is **459 runs**.
+
+Two of the nine — `mlp` and `tabm` — are neural, not classical. They are in the set
+because the question is whether a learned regressor can beat copying, and leaving
+out the model class most likely to win would stack the answer.
 
 Nothing here covers the host method's own cost. Every variant runs a complete v21
 (or v14) —
@@ -71,6 +75,34 @@ signal, so its numbers transfer.
 `ridge`, `lasso` and `knn` are free at every size in the benchmark and need no
 budgeting.
 
+Measured at n = 3000, G = 24, F = 16 on 4 cores, **two** fits + predicts each
+(the determinism check), log-scale target:
+
+| ridge | lasso | knn | rf | gbm | xgb | lgbm | mlp | tabm |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.1 s | 0.0 s | 0.0 s | 0.7 s | 4.9 s | 9.4 s | 2.6 s | 5.7 s | **60.8 s** |
+
+`lgbm` is the cheapest of the three per-gene boosters. `tabm` is ~30 s per fit at
+this toy size **on CPU at 30 epochs** — its default is 100 — so it is the most
+expensive learner in the set by a wide margin and the one that most wants a GPU.
+All nine reproduce bitwise at a fixed seed, on both target scales.
+
+**`lgbm` and `tabm`.** `lgbm` is a third per-gene booster beside `gbm` and `xgb`,
+and sits between them in cost. `tabm` is the only neural learner with native
+multi-gene output (`d_out` is just the head width, so one model covers every gene
+— `rf` is the other): at G = 3000, k = 32 that head is ~24.9 M parameters, which
+is large but not prohibitive. It is a torch model, so `--tabm-device cuda` is
+worth using on the wide panels; the `cpu` default is the reproducible one.
+
+⚠️ **One thread-pinning trap, found by it hanging.** `lgbm` is wrapped in
+`MultiOutputRegressor`, which already parallelises across genes. Leaving the
+booster itself at `n_jobs=-1` inside that oversubscribes every core G times over:
+measured as a fit that had **not finished G = 24 after several minutes**, against
+**3.6 s for two fits** once the inner threads were pinned to one. The inner
+estimator is now `n_jobs=1` by construction. `gbm` is unaffected (its inner
+threads are OpenMP, which joblib's workers already pin) and `xgb` is not wrapped
+at all.
+
 **One thing to check on a `lasso` row before reading it.** The penalty is set as
 `--lasso-alpha-frac × alpha_max`, where `alpha_max = max|X'y|/n` is the smallest
 penalty that zeroes every coefficient. This is deliberate: a fixed `alpha` is not
@@ -101,9 +133,11 @@ STARmap are estimates until `describe_datasets` runs.
 `xgb` is interpolated from the two measured points above (linear in G, ~n log n
 in n); `rf` from its own. Both are 4-core numbers.
 
-**Total marginal, seven learners × 17 datasets: ~8–15 CPU-hours on 4 cores**,
-now dominated by `xgb`, then `rf` and `gbm` — `gbm`'s share is the uncertain one,
-for the reason above. **Triple it for all three families: ~25–45 CPU-hours.**
+**Total marginal, nine learners × 17 datasets: ~15–30 CPU-hours on 4 cores**,
+now dominated by `tabm` (unless it is given a GPU) and `xgb`, then `rf`, `gbm` and
+`lgbm` — `gbm`'s share is the uncertain one,
+for the reason above. **Triple it for all three families: ~45–90 CPU-hours**, and `--tabm-device cuda`
+is the single biggest lever on that number.
 Proportionally less on a larger box. (The original 40–60 hour estimate, withdrawn
 as ~10× too high for five learners, lands near the right magnitude again once
 XGBoost is in — for a different reason, and this time from measurements.)
@@ -132,8 +166,8 @@ trained. Measured against the real dataset shapes:
 | `allen_*` (each) | 140 000 × 500 | 0.28 GB | 0.56 GB |
 | **`openst_lymph_node`** | **473 684 × 20 000** | **37.9 GB** | **75.8 GB** |
 
-So budget roughly **20 GB per family** of new `prediction.h5` at seven learners —
-about 60 GB for all three — and treat
+So budget roughly **26 GB per family** of new `prediction.h5` at nine learners —
+about 78 GB for all three — and treat
 `openst_lymph_node` as **out of scope for these variants**. It is uncapped
 whole-transcriptome, and at ~20 000 genes a dense prediction is tens of gigabytes
 per learner per dataset. The three ways out, in the order I would take them:

@@ -236,6 +236,40 @@ No results were affected: the failure was before `write_prediction_h5`, so nothi
 `--skip-existing` will re-run the `v21_*` cells cleanly. All seven `v21_*` learners were blocked, not
 just `lasso`; `v14_*` and `v18_*` were never affected.
 
+### 2026-09-15 (3) — LightGBM and TabM
+
+Nine learners x three hosts x 17 datasets = **459 runs**. Added in `_ml_learners.py` only, so all
+three families got them at once — the point of having moved the registry there. `config.py` still
+**0 deletions** against the pre-work baseline; evaluator hash unchanged.
+
+`lgbm` is a third per-gene booster (`MultiOutputRegressor` over `LGBMRegressor`), with
+`deterministic=True, force_row_wise=True` — without those, LightGBM's histogram construction varies
+with thread scheduling and the fit is not reproducible.
+
+`tabm` is the published ICLR 2025 model (`tabm` 0.0.3, the yandex-research implementation). It ships
+a raw `nn.Module` with no estimator API, so the **training loop is ours** while the model is theirs
+untouched: AdamW, per-gene target standardization, a seeded shuffler, early stopping on a held-out
+split. Multi-gene output is native — `d_out` is the head width, so one model covers every gene, which
+among the nine only `rf` also does. The forward returns `(batch, k, d_out)`, TabM's parameter-
+efficient ensemble, and prediction is the mean over `k`. It is neural, not classical; so is `mlp`,
+and both are in the set because excluding the model class most likely to beat copying would stack the
+answer.
+
+**A thread-pinning bug, found by it hanging rather than by review.** `lgbm` inside
+`MultiOutputRegressor(n_jobs=-1)` with the booster *also* at `n_jobs=-1` oversubscribes every core G
+times over: the fit had not finished G = 24 after several minutes. Pinned the inner estimator to
+`n_jobs=1` — **3.6 s for two fits**. `gbm` is unaffected (inner threads are OpenMP, which joblib's
+workers already pin) and `xgb` is not wrapped. Parallelise on one axis only.
+
+Measured, n = 3000 / G = 24 / F = 16, two fits+predicts on 4 cores: ridge 0.1 s, lasso 0.0, knn 0.0,
+rf 0.7, gbm 4.9, xgb 9.4, lgbm 2.6, mlp 5.7, **tabm 60.8** — and that is tabm at 30 epochs on CPU
+against a default of 100. It is the most expensive learner in the set and the one that most wants
+`--tabm-device cuda`. All nine reproduce bitwise at a fixed seed on both the log and raw target
+scales; all three wrappers accept all nine, and the flag-parity and args-declared guards still pass
+(28+31 / 24 / 51 knobs, 33 / 26 / 6 args reads).
+
+Campaign now ~45-90 CPU-hours marginal and ~78 GB of predictions. Not run.
+
 ### Three cells reported as returned rather than smoothed
 
 - FEAST and isoST return **exactly `0.0000`** on `celltype_localization`: the not-scorable value, not

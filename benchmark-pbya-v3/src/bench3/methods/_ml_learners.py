@@ -21,7 +21,11 @@ from sklearn.base import BaseEstimator, RegressorMixin
 
 # Order is the order rows appear in tables. `lasso` sits beside `ridge` (both
 # linear) and `xgb` beside `gbm` (both boosted trees).
-LEARNERS = ("ridge", "lasso", "knn", "rf", "gbm", "xgb", "mlp")
+LEARNERS = ("ridge", "lasso", "knn", "rf", "gbm", "xgb", "lgbm", "mlp", "tabm")
+
+# `mlp` and `tabm` are neural, not classical. They are in the set because the
+# question is "can a learned regressor beat copying", and excluding the model
+# class most likely to win would stack the answer.
 
 
 class FracAlphaLasso(RegressorMixin, BaseEstimator):
@@ -69,6 +73,124 @@ class FracAlphaLasso(RegressorMixin, BaseEstimator):
 
     def predict(self, X):
         return self.estimator_.predict(X)
+
+
+class TabMRegressor(RegressorMixin, BaseEstimator):
+    """TabM (Gorishniy et al., ICLR 2025) with a scikit-learn surface.
+
+    The published package ships a raw ``nn.Module`` and no estimator API, so the
+    training loop is here. Nothing about the model is reimplemented — ``tabm.TabM``
+    is constructed and trained as published.
+
+    Multi-gene output is native: ``d_out`` is the head width, so one model covers
+    every gene, the same as ``rf`` and unlike ``gbm``/``xgb``/``lgbm`` which need
+    one booster each. The forward pass returns ``(batch, k, d_out)`` — TabM's
+    parameter-efficient ensemble of ``k`` members, all trained against the same
+    target — and prediction is their mean.
+
+    Determinism: the seed is set before construction and the shuffler carries its
+    own generator, so two runs at one seed agree bitwise. On CUDA that additionally
+    requires deterministic kernels, which ``--tabm-device`` leaves to the caller —
+    the ``cpu`` default is reproducible everywhere.
+    """
+
+    def __init__(self, n_blocks=3, d_block=256, dropout=0.1, k=32,
+                 arch_type="tabm", lr=2e-3, weight_decay=0.0, batch_size=256,
+                 max_epochs=100, patience=10, val_frac=0.2, device="cpu",
+                 predict_batch=1024, random_state=42):
+        self.n_blocks = n_blocks
+        self.d_block = d_block
+        self.dropout = dropout
+        self.k = k
+        self.arch_type = arch_type
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.batch_size = batch_size
+        self.max_epochs = max_epochs
+        self.patience = patience
+        self.val_frac = val_frac
+        self.device = device
+        self.predict_batch = predict_batch
+        self.random_state = random_state
+
+    def fit(self, X, y):
+        import torch
+        from tabm import TabM
+
+        X = np.asarray(X, dtype=np.float32)
+        y = np.asarray(y, dtype=np.float32)
+        y2 = y if y.ndim == 2 else y[:, None]
+        # Targets are standardized per gene: expression ranges over orders of
+        # magnitude between genes (and v18 trains on the raw intensity scale),
+        # and an unstandardized MSE would be a handful of loud genes.
+        self._y_mean = y2.mean(0)
+        self._y_std = y2.std(0) + 1e-8
+        yz = (y2 - self._y_mean) / self._y_std
+
+        dev = torch.device(self.device)
+        torch.manual_seed(int(self.random_state))
+        model = TabM(n_num_features=X.shape[1], cat_cardinalities=None,
+                     d_out=y2.shape[1], n_blocks=self.n_blocks,
+                     d_block=self.d_block, dropout=self.dropout, k=self.k,
+                     arch_type=self.arch_type,
+                     start_scaling_init=(None if self.arch_type == "tabm-packed"
+                                         else "random-signs")).to(dev)
+        opt = torch.optim.AdamW(model.parameters(), lr=self.lr,
+                                weight_decay=self.weight_decay)
+
+        rng = np.random.default_rng(int(self.random_state))
+        perm = rng.permutation(X.shape[0])
+        n_val = max(1, int(self.val_frac * X.shape[0])) if X.shape[0] > 10 else 0
+        val_idx, tr_idx = perm[:n_val], perm[n_val:]
+        Xtr = torch.as_tensor(X[tr_idx], device=dev)
+        ytr = torch.as_tensor(yz[tr_idx], device=dev)
+        Xva = torch.as_tensor(X[val_idx], device=dev) if n_val else None
+        yva = torch.as_tensor(yz[val_idx], device=dev) if n_val else None
+
+        gen = torch.Generator().manual_seed(int(self.random_state))
+        best, best_state, bad = float("inf"), None, 0
+        n = Xtr.shape[0]
+        for _ in range(int(self.max_epochs)):
+            model.train()
+            order = torch.randperm(n, generator=gen).to(dev)
+            for i in range(0, n, self.batch_size):
+                b = order[i:i + self.batch_size]
+                opt.zero_grad(set_to_none=True)
+                # (batch, k, d_out) against (batch, 1, d_out): every ensemble
+                # member is trained on the same target, which is the method.
+                loss = torch.nn.functional.mse_loss(model(Xtr[b]), ytr[b][:, None, :])
+                loss.backward()
+                opt.step()
+            if Xva is None:
+                continue
+            model.eval()
+            with torch.no_grad():
+                v = float(torch.nn.functional.mse_loss(model(Xva), yva[:, None, :]))
+            if v < best - 1e-6:
+                best, bad = v, 0
+                best_state = {kk: vv.detach().clone() for kk, vv in model.state_dict().items()}
+            else:
+                bad += 1
+                if bad >= int(self.patience):
+                    break
+        if best_state is not None:
+            model.load_state_dict(best_state)
+        model.eval()
+        self.model_ = model
+        self.val_mse_ = best if Xva is not None else None
+        return self
+
+    def predict(self, X):
+        import torch
+        X = np.asarray(X, dtype=np.float32)
+        dev = next(self.model_.parameters()).device
+        out = []
+        with torch.no_grad():
+            for i in range(0, X.shape[0], int(self.predict_batch)):
+                xb = torch.as_tensor(X[i:i + int(self.predict_batch)], device=dev)
+                out.append(self.model_(xb).mean(1).cpu().numpy())   # mean over k
+        p = np.vstack(out) * self._y_std + self._y_mean
+        return p
 
 
 def make_learner(name, args):
@@ -123,6 +245,33 @@ def make_learner(name, args):
             colsample_bytree=args.xgb_colsample, tree_method="hist",
             multi_strategy=args.xgb_multi_strategy,
             random_state=seed, n_jobs=args.n_jobs, verbosity=0)
+    elif name == "lgbm":
+        # LightGBM is single-output, like `gbm` and `xgb`: one booster per gene.
+        # `deterministic` + `force_row_wise` are required for a reproducible fit —
+        # without them the histogram construction varies with thread scheduling.
+        #
+        # `n_jobs=1` on the INNER estimator is not a typo. `MultiOutputRegressor`
+        # already parallelises across genes, and leaving the booster at n_jobs=-1
+        # inside it oversubscribes every core G times over: measured here as a fit
+        # that had not finished G=24 after several minutes, against seconds once
+        # the inner threads were pinned to one. Parallelise on one axis only.
+        from lightgbm import LGBMRegressor
+        from sklearn.multioutput import MultiOutputRegressor
+        est = MultiOutputRegressor(
+            LGBMRegressor(
+                n_estimators=args.lgbm_rounds, learning_rate=args.lgbm_lr,
+                num_leaves=args.lgbm_leaves, min_child_samples=args.lgbm_min_child,
+                subsample=1.0, colsample_bytree=1.0,
+                deterministic=True, force_row_wise=True,
+                random_state=seed, n_jobs=1, verbose=-1),
+            n_jobs=args.n_jobs)
+    elif name == "tabm":
+        est = TabMRegressor(
+            n_blocks=args.tabm_blocks, d_block=args.tabm_width,
+            dropout=args.tabm_dropout, k=args.tabm_k, arch_type=args.tabm_arch,
+            lr=args.tabm_lr, batch_size=args.tabm_batch,
+            max_epochs=args.tabm_epochs, patience=args.tabm_patience,
+            device=args.tabm_device, random_state=seed)
     elif name == "mlp":
         from sklearn.compose import TransformedTargetRegressor
         from sklearn.neural_network import MLPRegressor
@@ -200,6 +349,16 @@ def learner_params(name, args):
                 "xgb_colsample": args.xgb_colsample,
                 "xgb_multi_strategy": args.xgb_multi_strategy,
                 "tree_method": "hist"},
+        "lgbm": {"lgbm_rounds": args.lgbm_rounds, "lgbm_lr": args.lgbm_lr,
+                 "lgbm_leaves": args.lgbm_leaves,
+                 "lgbm_min_child": args.lgbm_min_child,
+                 "deterministic": True, "per_gene_models": True},
+        "tabm": {"tabm_blocks": args.tabm_blocks, "tabm_width": args.tabm_width,
+                 "tabm_k": args.tabm_k, "tabm_arch": args.tabm_arch,
+                 "tabm_lr": args.tabm_lr, "tabm_epochs": args.tabm_epochs,
+                 "tabm_patience": args.tabm_patience,
+                 "tabm_device": args.tabm_device,
+                 "early_stopping": True, "target_standardized": True},
         "mlp": {"mlp_hidden": args.mlp_hidden, "mlp_iters": args.mlp_iters,
                 "early_stopping": True, "target_standardized": True},
     }[name]
@@ -239,6 +398,25 @@ def add_learner_args(p):
                         "independent booster per gene (default), or one ensemble "
                         "of vector-leaf trees. Different models, not two "
                         "implementations of one")
+    p.add_argument("--lgbm-rounds", type=int, default=100)
+    p.add_argument("--lgbm-lr", type=float, default=0.1)
+    p.add_argument("--lgbm-leaves", type=int, default=31)
+    p.add_argument("--lgbm-min-child", type=int, default=20)
+    p.add_argument("--tabm-blocks", type=int, default=3)
+    p.add_argument("--tabm-width", type=int, default=256)
+    p.add_argument("--tabm-dropout", type=float, default=0.1)
+    p.add_argument("--tabm-k", type=int, default=32,
+                   help="TabM ensemble members (its parameter-efficient ensemble)")
+    p.add_argument("--tabm-arch", default="tabm",
+                   choices=["tabm", "tabm-mini", "tabm-packed"])
+    p.add_argument("--tabm-lr", type=float, default=2e-3)
+    p.add_argument("--tabm-batch", type=int, default=256)
+    p.add_argument("--tabm-epochs", type=int, default=100)
+    p.add_argument("--tabm-patience", type=int, default=10)
+    p.add_argument("--tabm-device", default="cpu", choices=["cpu", "cuda"],
+                   help="TabM is a torch model. 'cpu' is bitwise reproducible "
+                        "everywhere; 'cuda' is much faster on wide panels but "
+                        "its determinism depends on the kernels available")
     p.add_argument("--mlp-hidden", type=int, default=256)
     p.add_argument("--mlp-iters", type=int, default=300)
     return p
@@ -253,15 +431,22 @@ def require_learner_deps(learner):
         print("  conda install -n bench_spatialcpa scikit-learn")
         return None
     versions = f"scikit-learn {sklearn.__version__}"
-    if learner == "xgb":
+    extra = {"xgb": ("xgboost", "conda install -n bench_spatialcpa -c conda-forge xgboost"),
+             "lgbm": ("lightgbm", "conda install -n bench_spatialcpa -c conda-forge lightgbm"),
+             "tabm": ("tabm", "pip install tabm   (needs torch; see the TabM paper's package)")}
+    if learner in extra:
+        mod, how = extra[learner]
         try:
-            import xgboost
+            m = __import__(mod)
         except Exception as e:
-            print(f"ERROR: --learner xgb requires xgboost and it is not "
+            print(f"ERROR: --learner {learner} requires {mod} and it is not "
                   f"importable: {e}")
-            print("  conda install -n bench_spatialcpa -c conda-forge xgboost")
+            print(f"  {how}")
             return None
-        versions += f", xgboost {xgboost.__version__}"
+        versions += f", {mod} {getattr(m, '__version__', '?')}"
+        if learner == "tabm":
+            import torch
+            versions += f", torch {torch.__version__}"
     return versions
 
 
