@@ -280,21 +280,35 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
     Ftr, Ytr = training_matrix(stack, n_types, cfg, scale)
     print(f"  learner fit: {args.learner} on {Ftr.shape[0]} training cells x "
           f"{Ftr.shape[1]} features -> {Ytr.shape[1]} genes ({scale} target)")
+    tr_xy = tr_z = tr_type = tr_sec = None
+    tr_field = None
+    Yfit = Ytr
+    if args.emit == "donor":
+        tr_xy, tr_z, tr_type, tr_sec = ML.training_index(stack)
+        if args.field_mode == "residual":
+            # Leave-section-out, because a generated section has no
+            # neighbour in its own plane and the training analogue must
+            # not either (see ML.training_field).
+            tr_field = ML.training_field(stack, Ytr, tr_xy, tr_type,
+                                         tr_sec, args.field_k)
+            Yfit = Ytr - tr_field
+            print(f"    field-mode residual: learner fits the correction "
+                  f"to the interpolated flank field")
     model = ML.make_learner(args.learner, args)
     t_fit = time.time()
-    model.fit(Ftr, Ytr)
+    model.fit(Ftr, Yfit)
     fit_seconds = time.time() - t_fit
     ML.freeze_for_determinism(model)
     print(f"    fit_seconds={fit_seconds:.1f}")
     ML.report_degeneracy(model, args.learner)
 
-    tr_xy = tr_z = tr_type = tr_sec = None
     if args.emit == "donor":
-        # The field target is the SAME model the *_<learner> variants emit;
-        # only its use differs. The pool's own predicted field is cached once
-        # here because the noise floor is measured against it.
+        # The pool's own field, cached once: the noise floor and every
+        # per-gene repair band are measured against it.
         args._pool_pred = np.asarray(model.predict(Ftr), dtype=np.float64)
-        tr_xy, tr_z, tr_type, tr_sec = ML.training_index(stack)
+        if tr_field is not None:
+            args._pool_pred = args._pool_pred + tr_field
+        args._pool_resid = np.abs(Ytr - args._pool_pred)
         print(f"    --emit donor: predictions used as a field target; "
               f"every emitted value stays a real measurement")
 
@@ -322,16 +336,29 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
                              f"{(n, Ytr.shape[1])}")
         if args.emit == "donor":
             incumbent = ML.to_target_space(vs.expression, scale)
-            cand = ML.flanking_rows(stack, tr_sec, float(vs.coords[0, 2]))
+            q_type = (vs.cell_type_idx if vs.cell_type_idx is not None
+                      else np.zeros(n, np.int64))
+            cand0 = ML.flanking_rows(stack, tr_sec, float(vs.coords[0, 2]))
+            if args.field_mode == "residual":
+                pred = pred + ML.local_field(
+                    vs.coords[:, :2], q_type, tr_xy, tr_type, Ytr,
+                    np.where(cand0)[0], args.field_k)
+            field = pred
             pred, dstats = ML.select_donor_by_field(
-                pred, incumbent, Ytr, tr_xy, tr_type, cand,
-                vs.coords[:, :2], (vs.cell_type_idx
-                                   if vs.cell_type_idx is not None
-                                   else np.zeros(n, np.int64)), args)
+                field, incumbent, Ytr, tr_xy, tr_type, cand0,
+                vs.coords[:, :2], q_type, args)
             print(f"    field-guided: {dstats['n_swapped']}/{n} donors swapped "
                   f"({dstats['n_eligible']} eligible), median deviation "
                   f"{dstats['dev_before']:.4f} -> {dstats['dev_after']:.4f}, "
                   f"floor sigma0={dstats['sigma0']:.4f}")
+            if args.repair_frac > 0:
+                pred, rstats = ML.per_gene_repair(
+                    pred, field, Ytr, np.where(cand0)[0], tr_xy, tr_type,
+                    vs.coords[:, :2], q_type, args._pool_resid, args,
+                    seed=args.seed)
+                print(f"    per-gene repair: {rstats['n_repaired']:,}/"
+                      f"{rstats['n_entries']:,} entries across "
+                      f"{rstats['genes_touched']} genes")
         expr = emit(pred, cfg, scale)
         predict_seconds += time.time() - t_pred
 

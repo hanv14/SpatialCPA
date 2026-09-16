@@ -1506,6 +1506,45 @@ METHODS = {
     # intensities — and an all-zero fit is reported at run time, not silently
     # ranked. See `--lasso-alpha-frac` and `_ml_learners.FracAlphaLasso`.
     #
+    # ── second generation: residual field target + per-gene repair ───────────
+    # `*_gbmfield` swaps whole profiles against a field the learner predicts from
+    # position and type alone. `*_gbmrepair` takes the two things that leaves:
+    #
+    #   --repair-frac 0.10 : a bounded PER-GENE pass after the whole-profile swap.
+    #       One donor cannot match the field across every gene at once — v21's own
+    #       `_field_repair` names this whole-profile constraint as what depresses
+    #       the binned per-gene field metrics — so the surplus per-gene mismatch is
+    #       repaired from local same-type real cells, tail-rate matched so a gene's
+    #       output tail is never driven below the real data's own.
+    #
+    # Every emitted value is still a real measurement, so the autocorrelation and
+    # sparsity protection that made `*_gbmfield` work is unchanged by construction.
+    #
+    # `--field-mode residual` — having the learner predict the correction to the
+    # interpolated flank field rather than the field itself — was built and is
+    # available, but it is NOT the shipped configuration, because it lost when
+    # measured: on the development fixture the residual field's own median
+    # |Y_pool - field| was 0.3231 against the direct field's 0.2586, i.e. the
+    # anchor injected more of the flanks' cell noise than it removed. That fixture
+    # builds its field as a smooth function of coordinates, which is precisely the
+    # assumption `direct` makes, so it may flatter `direct`; on real tissue the
+    # ordering could reverse. Worth one probe run before it is dismissed, but it is
+    # not shipped on a hypothesis my own measurement contradicted.
+    **{
+        f"{_h}_gbmrepair": {
+            "wrapper": _v3_wrapper(_w),
+            "conda_env": "bench_spatialcpa",
+            "available": True,
+            "family": "spatialcpa",
+            "notes": f"{_h} layout + donor selection, donors re-chosen against a "
+                     f"gbm field and then per-gene repaired; "
+                     f"emitted values stay real",
+            "wrapper_args": ["--learner", "gbm", "--emit", "donor",
+                             "--repair-frac", "0.10"],
+            "invalid_log_markers": _m,
+        }
+        for _h, _w, _m in _GBMFIELD_HOSTS
+    },
     # ── gbm as a field target, one method per host (see _GBMFIELD_HOSTS) ─────
     **{
         f"{_h}_gbmfield": {
@@ -1641,6 +1680,7 @@ METHOD_ORDER = [
     "v18_ridge", "v18_lasso", "v18_knn", "v18_rf",
     "v18_gbm", "v18_xgb", "v18_lgbm", "v18_mlp", "v18_tabm",
     "v14_gbmfield", "v18_gbmfield", "v21_gbmfield",
+    "v14_gbmrepair", "v18_gbmrepair", "v21_gbmrepair",
 ]
 
 

@@ -474,12 +474,180 @@ def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
     return out, stats
 
 
+# ── second generation: a residual field target, and a per-gene repair ────────
+# `*_gbmfield` leaves two things on the table, and `*_gbmrepair` takes both.
+#
+# 1. THE WHOLE-PROFILE CONSTRAINT. A swap moves one cell to one donor, so a
+#    single real profile has to match the predicted field across every gene at
+#    once. It cannot: v21's own `_field_repair` docstring names this as the thing
+#    that depresses the binned per-gene field metrics. The repair below works per
+#    (cell, gene) instead, and still emits only real values.
+#
+# 2. THE FIELD TARGET IS LEARNED FROM SCRATCH. `*_gbmfield` asks gbm to predict
+#    expression from (x, y, z, type, morphology) alone — it must reconstruct the
+#    whole spatial field from four training sections. But a very good estimate is
+#    already available for free: the z-interpolated local mean of the two flanks.
+#    In `residual` mode gbm predicts the CORRECTION to that estimate instead, so
+#    the field is anchored on the strong baseline and the learner only has to
+#    supply what the baseline misses. It also degrades gracefully — a learner that
+#    finds nothing returns the interpolated field rather than noise.
+
+
+def local_field(q_xy, q_type, tr_xy, tr_type, Ytr, cand_idx, k, sec_w=None,
+                tr_sec=None):
+    """Distance-weighted local mean profile of a candidate pool, per query cell.
+
+    The estimate v21 calls the "local mean field": the k nearest candidates of the
+    same cell type, averaged with weights 1/(d + eps), optionally scaled per
+    section by ``sec_w`` so the nearer flank counts for more — which is what makes
+    it an interpolation in z rather than a plain average of both flanks.
+    """
+    from scipy.spatial import cKDTree
+    Q = int(np.asarray(q_xy).shape[0])
+    G = int(Ytr.shape[1])
+    out = np.zeros((Q, G), dtype=np.float64)
+    cand_idx = np.asarray(cand_idx)
+    if Q == 0 or cand_idx.size == 0:
+        return out
+    K = int(min(k, cand_idx.size))
+    tree = cKDTree(tr_xy[cand_idx])
+    d, nn = tree.query(np.asarray(q_xy, dtype=np.float64), k=K)
+    if nn.ndim == 1:
+        d, nn = d[:, None], nn[:, None]
+    for i in range(Q):
+        ci = cand_idx[nn[i]]
+        w = 1.0 / (d[i] + 1e-6)
+        same = tr_type[ci] == q_type[i]
+        if same.any():                      # prefer same-type, fall back to all
+            ci, w = ci[same], w[same]
+        if sec_w is not None and tr_sec is not None:
+            w = w * np.array([sec_w.get(int(sv), 1.0) for sv in tr_sec[ci]])
+        ws = w.sum()
+        out[i] = (Ytr[ci] * w[:, None]).sum(0) / ws if ws > 0 else Ytr[ci].mean(0)
+    return out
+
+
+def training_field(stack, Ytr, tr_xy, tr_type, tr_sec, k):
+    """The same estimate for TRAINING cells, computed leave-section-out.
+
+    A generated section never has a neighbour in its own plane — its field comes
+    entirely from the two sections either side. So the training analogue must be
+    built the same way: for a cell in stack section j, candidates come from
+    sections j-1 and j+1 and never from j. Using j itself would give the model a
+    feature it cannot have at generation time, and the residual it learned would
+    be the wrong quantity.
+    """
+    n_sec = len(stack.slices)
+    out = np.zeros_like(Ytr, dtype=np.float64)
+    for j in range(n_sec):
+        rows = np.where(tr_sec == j)[0]
+        if rows.size == 0:
+            continue
+        nb = [x for x in (j - 1, j + 1) if 0 <= x < n_sec]
+        if not nb:                                   # single-section stack
+            nb = [x for x in range(n_sec) if x != j][:2]
+        if not nb:
+            out[rows] = Ytr[rows]
+            continue
+        cand = np.where(np.isin(tr_sec, nb))[0]
+        out[rows] = local_field(tr_xy[rows], tr_type[rows], tr_xy, tr_type,
+                                Ytr, cand, k)
+    return out
+
+
+def per_gene_repair(expr, field, Ytr, cand_idx, tr_xy, tr_type, q_xy, q_type,
+                    pool_resid, args, seed):
+    """Repair the SURPLUS per-gene mismatch, tail-rate matched to the real data.
+
+    v21's ``_field_repair``, with the learned field as the target. Per gene:
+
+    * the real noise band is ``noise_mult`` times the ``repair_q`` quantile of the
+      real cells' own |residual| against the same field;
+    * the real TAIL RATE is the fraction of real entries beyond that band. Ground
+      truth is noisy and is entitled to its tail, so that share of the
+      prediction's beyond-band entries is LEFT IN PLACE, smallest first;
+    * only the surplus above the real tail rate is repaired, worst first, capped
+      at ``repair_frac`` of all entries;
+    * the replacement is the same gene's value from a random local same-type cell
+      lying INSIDE the band — random rather than nearest, so repaired entries keep
+      the in-band spread real data has instead of stacking at the field mean.
+
+    The pass is self-calibrating: where the donors already sit like real cells the
+    surplus is ~0 and almost nothing is touched. It never drives a gene's tail rate
+    below the real one, which is what stops the repair inflating Moran's I past the
+    ground truth.
+    """
+    from scipy.spatial import cKDTree
+    rng = np.random.default_rng(int(seed))
+    expr = np.asarray(expr, dtype=np.float64).copy()
+    Q, G = expr.shape
+    stats = {"n_entries": int(Q * G), "n_repaired": 0, "genes_touched": 0}
+    cand_idx = np.asarray(cand_idx)
+    if Q == 0 or G == 0 or cand_idx.size == 0 or args.repair_frac <= 0:
+        return expr, stats
+
+    resid = np.abs(expr - field)
+    budget_total = int(round(args.repair_frac * Q * G))
+    if budget_total <= 0:
+        return expr, stats
+
+    K = int(min(args.gbmfield_k, cand_idx.size))
+    tree = cKDTree(tr_xy[cand_idx])
+    _, nn = tree.query(np.asarray(q_xy, dtype=np.float64), k=K)
+    if nn.ndim == 1:
+        nn = nn[:, None]
+
+    spent = 0
+    for g in range(G):
+        pr = pool_resid[cand_idx, g]
+        if pr.size == 0:
+            continue
+        theta = float(args.repair_noise_mult * np.quantile(pr, args.repair_q))
+        if not np.isfinite(theta) or theta <= 0:
+            continue
+        tail_rate = float((pr > theta).mean())          # the real data's own tail
+        over = np.where(resid[:, g] > theta)[0]
+        if over.size == 0:
+            continue
+        # CEIL, not floor: rounding down would repair one entry past the real
+        # tail rate and drive the gene's output tail below the ground truth's,
+        # which is the exact over-smoothing this matching exists to prevent.
+        allowed_tail = int(np.ceil(tail_rate * Q))      # left in place, smallest first
+        surplus = over[np.argsort(-resid[over, g])][:max(over.size - allowed_tail, 0)]
+        if surplus.size == 0:
+            continue
+        surplus = surplus[:max(budget_total - spent, 0)]
+        if surplus.size == 0:
+            break
+        touched = 0
+        for i in surplus:
+            ci = cand_idx[nn[i]]
+            ok = ci[(tr_type[ci] == q_type[i]) & (np.abs(Ytr[ci, g] - field[i, g]) <= theta)]
+            if ok.size == 0:
+                ok = ci[np.abs(Ytr[ci, g] - field[i, g]) <= theta]
+            if ok.size == 0:
+                continue
+            expr[i, g] = Ytr[int(ok[rng.integers(ok.size)]), g]
+            touched += 1
+        spent += touched
+        if touched:
+            stats["genes_touched"] += 1
+        if spent >= budget_total:
+            break
+    stats["n_repaired"] = int(spent)
+    return expr, stats
+
+
 def learner_params(name, args):
     """What actually ran, for ``method_params`` — so a prediction is self-describing."""
     common = {"learner": name, "n_jobs": args.n_jobs,
               "emit": getattr(args, "emit", "learner")}
     if getattr(args, "emit", "learner") == "donor":
-        common.update({"gbmfield_k": args.gbmfield_k,
+        common.update({"field_mode": args.field_mode, "field_k": args.field_k,
+                       "repair_frac": args.repair_frac,
+                       "repair_q": args.repair_q,
+                       "repair_noise_mult": args.repair_noise_mult,
+                       "gbmfield_k": args.gbmfield_k,
                        "gbmfield_frac": args.gbmfield_frac,
                        "gbmfield_margin": args.gbmfield_margin,
                        "gbmfield_noise_mult": args.gbmfield_noise_mult})
@@ -581,6 +749,22 @@ def add_learner_args(p):
     p.add_argument("--gbmfield-noise-mult", type=float, default=1.25,
                    help="eligibility floor, as a multiple of the real cells' own "
                         "median deviation from the predicted field")
+    p.add_argument("--field-mode", default="direct", choices=["direct", "residual"],
+                   help="what the learner predicts for --emit donor. 'direct' "
+                        "(default) predicts expression from position and type; "
+                        "'residual' predicts the correction to the z-interpolated "
+                        "local flank field, which anchors the estimate on a strong "
+                        "baseline and degrades to it when the learner finds nothing")
+    p.add_argument("--field-k", type=int, default=12,
+                   help="neighbours in the interpolated local field (--field-mode residual)")
+    p.add_argument("--repair-frac", type=float, default=0.0,
+                   help="max fraction of (cell, gene) entries repaired per section. "
+                        "0 (default) disables the per-gene pass entirely")
+    p.add_argument("--repair-q", type=float, default=0.90,
+                   help="quantile of the real cells' own residual defining the band")
+    p.add_argument("--repair-noise-mult", type=float, default=1.25,
+                   help="an entry is a repair candidate only past this multiple of "
+                        "the per-gene real noise band")
     p.add_argument("--mlp-hidden", type=int, default=256)
     p.add_argument("--mlp-iters", type=int, default=300)
     return p
