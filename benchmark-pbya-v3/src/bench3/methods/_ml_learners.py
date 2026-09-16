@@ -394,7 +394,7 @@ def to_target_space(host_expr, scale):
 
 
 def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
-                          q_xy, q_type, args):
+                          q_xy, q_type, args, pool_pred):
     """Swap a bounded set of cells to the real donor that best matches ``pred``.
 
     All arrays are in the learner's target space. ``pred`` is the learner's
@@ -437,7 +437,7 @@ def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
     rms = lambda A: np.sqrt((A ** 2).mean(axis=1))          # noqa: E731
 
     # Real cells' own deviation from the predicted field -> the noise floor.
-    sigma0 = float(np.median(rms(Ytr[cand_idx] - args._pool_pred[cand_idx])))
+    sigma0 = float(np.median(rms(Ytr[cand_idx] - pool_pred[cand_idx])))
     dev = rms(incumbent - pred)
     stats["sigma0"] = sigma0
     stats["dev_before"] = float(np.median(dev))

@@ -318,6 +318,51 @@ Registered as `v14_gbmfield`, `v18_gbmfield`, `v21_gbmfield` (`--learner gbm --e
 unchanged; no host method, no benchmark-pbya-v2 file and no benchmark driver was touched, and
 `config.py` remains 0 deletions against the pre-work baseline. Not run.
 
+### 2026-09-16 (2) — `*_gbmrepair`, and two things the tests caught that review did not
+
+Campaign result on `*_gbmfield`: `paper_morans_pearson`, `paper_gearys_pearson` and
+`paper_umap_mixing` all improved. That is the half the design *guarantees* — every emitted value is
+a real measurement — so it is confirmation the protection works, not yet evidence on the three
+metrics the exercise is aiming at.
+
+`v14_gbmrepair` / `v18_gbmrepair` / `v21_gbmrepair` take the half `*_gbmfield` leaves. A whole-profile
+swap makes one real cell match the predicted field across **every gene at once**, and it cannot —
+v21's own `_field_repair` docstring names this whole-profile constraint as what depresses the binned
+per-gene field metrics. The new pass works per (cell, gene), tail-rate matched exactly as v21 does
+it: a gene's beyond-band entries stay in place up to the **real** tail rate, and only the surplus is
+repaired, worst first, from local same-type real cells inside the band. Emission stays real, so the
+autocorrelation protection is unchanged by construction.
+
+Fixture measurement, median deviation from the predicted field:
+**host donors 1.0542 → gbmfield 0.5619 → gbmrepair 0.4876**, 0 non-real values, deterministic.
+
+**A hypothesis my own test overturned.** I expected `--field-mode residual` — the learner predicting
+the correction to the z-interpolated flank field rather than the field itself — to be the bigger of
+the two levers. It lost: the residual field's own median `|Y_pool − field|` was **0.3231** against the
+direct field's **0.2586**; the anchor injected more of the flanks' cell noise than it removed. Built
+and available, **not shipped**. The fixture builds its field as a smooth function of coordinates,
+which is exactly `direct`'s assumption, so it may flatter `direct` and the ordering could reverse on
+tissue — a reason for one probe run, not a reason to ship on a contradicted hypothesis.
+
+**Two bugs, both caught by tests rather than by reading the code.**
+
+* The tail-rate matching used `floor()` for the allowed tail, which repairs one entry *past* the real
+  rate and drives a gene's output tail **below** the ground truth's — precisely the over-smoothing
+  the matching exists to prevent. Measured at **18 of 30 genes**; `ceil()` gives **0 of 30**. A
+  fraction of an entry per gene, in the wrong direction, on the metric the whole design protects.
+* `assert_args_declared` — added two commits earlier after it let v21's `--device` disappear —
+  **fired on my own new code**: the wrappers were stashing `_pool_pred` / `_pool_resid` on the parsed
+  arg namespace, which the guard runs before those attributes exist, so **every `gbmfield` and
+  `gbmrepair` run would have aborted at startup**. Fixed by passing the pool field explicitly rather
+  than smuggling arrays through a CLI object; the guard now passes on all three wrappers in all three
+  configurations. The guard has now caught one regression in someone else's flag and one in its
+  author's.
+
+Defaults preserved: `--emit` still defaults to `learner` and the new `--field-mode` / `--repair-*`
+flags default to inert, so every `v*_<learner>` and `v*_gbmfield` row is bit-for-bit unchanged. No
+host method, no benchmark-pbya-v2 file, no benchmark driver touched; `config.py` still 0 deletions
+against the pre-work baseline; `evaluate_paper.py` unchanged.
+
 ### Three cells reported as returned rather than smoothed
 
 - FEAST and isoST return **exactly `0.0000`** on `celltype_localization`: the not-scorable value, not

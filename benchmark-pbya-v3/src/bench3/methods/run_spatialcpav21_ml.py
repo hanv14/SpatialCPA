@@ -280,13 +280,17 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
     print(f"    fit_seconds={fit_seconds:.1f}")
     ML.report_degeneracy(model, args.learner)
 
+    pool_pred = pool_resid = None
     if args.emit == "donor":
         # The pool's own field, cached once: the noise floor and every
-        # per-gene repair band are measured against it.
-        args._pool_pred = np.asarray(model.predict(Ftr), dtype=np.float64)
+        # per-gene repair band are measured against it. Kept as locals and
+        # passed explicitly -- stashing arrays on the parsed arg namespace
+        # smuggles state through a CLI object and trips assert_args_declared,
+        # correctly, since the parser cannot declare them.
+        pool_pred = np.asarray(model.predict(Ftr), dtype=np.float64)
         if tr_field is not None:
-            args._pool_pred = args._pool_pred + tr_field
-        args._pool_resid = np.abs(Ytr - args._pool_pred)
+            pool_pred = pool_pred + tr_field
+        pool_resid = np.abs(Ytr - pool_pred)
         print(f"    --emit donor: predictions used as a field target; "
               f"every emitted value stays a real measurement")
 
@@ -325,7 +329,7 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
             field = pred
             pred, dstats = ML.select_donor_by_field(
                 field, incumbent, Ytr, tr_xy, tr_type, cand0,
-                vs.coords[:, :2], q_type, args)
+                vs.coords[:, :2], q_type, args, pool_pred)
             print(f"    field-guided: {dstats['n_swapped']}/{n} donors swapped "
                   f"({dstats['n_eligible']} eligible), median deviation "
                   f"{dstats['dev_before']:.4f} -> {dstats['dev_after']:.4f}, "
@@ -333,7 +337,7 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
             if args.repair_frac > 0:
                 pred, rstats = ML.per_gene_repair(
                     pred, field, Ytr, np.where(cand0)[0], tr_xy, tr_type,
-                    vs.coords[:, :2], q_type, args._pool_resid, args,
+                    vs.coords[:, :2], q_type, pool_resid, args,
                     seed=args.seed)
                 print(f"    per-gene repair: {rstats['n_repaired']:,}/"
                       f"{rstats['n_entries']:,} entries across "
