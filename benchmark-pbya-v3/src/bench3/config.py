@@ -1017,6 +1017,66 @@ def _v3_wrapper(name):
 # are only comparable if they are the same learner — the wrappers enforce that
 # in code (they all import `methods/_ml_learners.py`), and this keeps the
 # registry from drifting away from it.
+# ── field-guided donor selection: gbm as a TARGET, not as the emitter ────────
+# A separate method per host, because it answers a different question from the
+# `*_gbm` rows and must not be confused with them.
+#
+# Motivation. `gbm` wins paper_marker_field_r / _depth_r / celltype_localization
+# and loses paper_morans_pearson / _gearys_pearson / _umap_mixing. Those two sets
+# are separable, because a regressor's conditional mean is a good ESTIMATE of the
+# local expression field while EMITTING that mean is what flattens sparsity and
+# autocorrelation. `*_gbmfield` keeps the estimate and discards the emission: the
+# gbm prediction becomes a selection target, and each generated cell emits the
+# real local same-type profile that best matches it. Every emitted value is a
+# measurement, so the three metrics the host already wins are structurally
+# protected, while the donor-to-location mismatch the field metrics read is
+# reduced.
+#
+# It is the same model, the same features and the same target as `*_gbm` — only
+# its use differs — so the pair isolates emission from estimation.
+#
+# Bounded exactly as v21's own `_field_align`: a noise floor against the real
+# cells' own deviation, a relative improvement margin, and a worst-first budget.
+# See `_ml_learners.select_donor_by_field` for the caveat on the floor.
+#
+# ⚠️ One of the three target metrics cannot be improved this way for the reason
+# it appears to move. `paper_celltype_localization` reads
+# (pred_xy_ALIGNED, pred_cell_type), and these variants change neither
+# coordinates nor cell types — so any movement in it is entirely mediated by
+# `align_by_expression`, which picks its pose by binned marker-field agreement.
+# A smoother expression field finds a better pose; it does not place cell types
+# better. Read a localization gain here as a pose effect, not a biological one.
+#
+# NOT attempted, and not for lack of trying: a learned LAYOUT. R11 measured that
+# on this dataset and protocol (`reports/r11_starmap_layout_modes.md`):
+# `layout_mode=field` scores 0.6607 median celltype_localization against
+# `resample`'s 0.7546, and emits 267,567 cells for a 4,187-cell section
+# (cell_count_ratio 5.362 vs 0.988). Predicting positions loses the metric this
+# is aiming at, and breaks cell density doing it.
+_GBMFIELD_HOSTS = (
+    ("v14", "run_spatialcpav14_ml.py", ("flow-matching model trained: False",
+                                        "torch UNAVAILABLE",
+                                        "[spatialcpav14] PyTorch unavailable",
+                                        "[spatialcpav14] training failed",
+                                        "[spatialcpav14] generation failed",
+                                        "ERROR: scikit-learn is required",
+                                        "has drifted from run_spatialcpav14.py")),
+    ("v18", "run_spatialcpav18_ml.py", ("flow-matching model trained: False",
+                                        "torch UNAVAILABLE",
+                                        "[v14] torch unavailable",
+                                        "[v14] training failed",
+                                        "[v14] generation failed",
+                                        "ERROR: scikit-learn is required",
+                                        "has drifted from run_spatialcpav18.py")),
+    ("v21", "run_spatialcpav21_ml.py", ("flow-matching model trained: False",
+                                        "torch UNAVAILABLE",
+                                        "[v14] torch unavailable",
+                                        "[v14] training failed",
+                                        "[v14] generation failed",
+                                        "ERROR: scikit-learn is required",
+                                        "no longer mirror V14Config")),
+)
+
 _ML_LEARNERS = (
     ("ridge", "multi-output ridge regression (the linear floor)"),
     ("lasso", "L1 linear regression, penalty set as a fraction of alpha_max"),
@@ -1446,6 +1506,21 @@ METHODS = {
     # intensities — and an all-zero fit is reported at run time, not silently
     # ranked. See `--lasso-alpha-frac` and `_ml_learners.FracAlphaLasso`.
     #
+    # ── gbm as a field target, one method per host (see _GBMFIELD_HOSTS) ─────
+    **{
+        f"{_h}_gbmfield": {
+            "wrapper": _v3_wrapper(_w),
+            "conda_env": "bench_spatialcpa",
+            "available": True,
+            "family": "spatialcpa",
+            "notes": f"{_h} layout + donor selection, donors re-chosen to match a "
+                     f"gbm-predicted expression field; every emitted value stays "
+                     f"a real measurement",
+            "wrapper_args": ["--learner", "gbm", "--emit", "donor"],
+            "invalid_log_markers": _m,
+        }
+        for _h, _w, _m in _GBMFIELD_HOSTS
+    },
     # Still deliberately absent, recorded rather than omitted:
     #   SVR   — not multi-output, so one fit per gene, each O(n^2)-O(n^3) in the
     #           kernel. At n ~= 16.5k training cells the RBF Gram alone is ~2 GB
@@ -1565,6 +1640,7 @@ METHOD_ORDER = [
     "v14_gbm", "v14_xgb", "v14_lgbm", "v14_mlp", "v14_tabm",
     "v18_ridge", "v18_lasso", "v18_knn", "v18_rf",
     "v18_gbm", "v18_xgb", "v18_lgbm", "v18_mlp", "v18_tabm",
+    "v14_gbmfield", "v18_gbmfield", "v21_gbmfield",
 ]
 
 

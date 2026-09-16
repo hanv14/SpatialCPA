@@ -331,9 +331,158 @@ def report_degeneracy(model, name):
     return nz
 
 
+# ── field-guided donor selection ─────────────────────────────────────────────
+# The `*_gbm` variants EMIT the learner's prediction. These helpers use the same
+# prediction as a SELECTION TARGET instead, and emit a real donor profile. The
+# motivation is that the two halves of a regressor's behaviour are separable:
+# its conditional mean is a good estimate of the local expression field, but
+# emitting that mean is what destroys sparsity and spatial autocorrelation. Using
+# it to choose among real cells keeps the estimate and discards the emission.
+#
+# The bounded-swap design (noise floor, relative margin, worst-first budget) is
+# taken from v21's own `_field_align`, which solves the same problem with a
+# kNN-interpolated field target instead of a learned one.
+
+
+def training_index(stack):
+    """Row-aligned (xy, z, type, section) for the rows of ``training_matrix``.
+
+    Built by the same iteration order over ``stack.slices``, so row *i* here
+    describes the training cell whose profile is row *i* of ``Ytr``.
+    """
+    xy, z, t, sec = [], [], [], []
+    for j, s in enumerate(stack.slices):
+        n = int(np.asarray(s.coords_xy).shape[0])
+        xy.append(np.asarray(s.coords_xy, dtype=np.float64))
+        z.append(np.asarray(s.z_values, dtype=np.float64))
+        t.append(np.asarray(s.cell_type_indices, dtype=np.int64)
+                 if s.cell_type_indices is not None else np.zeros(n, np.int64))
+        sec.append(np.full(n, j, dtype=np.int64))
+    return (np.vstack(xy), np.concatenate(z), np.concatenate(t),
+            np.concatenate(sec))
+
+
+def flanking_rows(stack, sec_of, z):
+    """Boolean mask over training rows selecting the two sections bracketing z.
+
+    Mirrors ``pick_flanking_slices``: the nearest section at or below z and the
+    nearest above it, falling back to the two nearest overall when z sits outside
+    the stack. Restricting candidates to these two keeps the donor pool the same
+    one the host method grounds from, so the comparison stays like for like.
+    """
+    centres = np.array([float(np.median(np.asarray(s.z_values)))
+                        for s in stack.slices], dtype=np.float64)
+    below = np.where(centres <= z)[0]
+    above = np.where(centres > z)[0]
+    if below.size and above.size:
+        pair = [int(below[np.argmax(centres[below])]), int(above[np.argmin(centres[above])])]
+    else:
+        pair = [int(i) for i in np.argsort(np.abs(centres - z))[:2]]
+    return np.isin(sec_of, pair)
+
+
+def to_target_space(host_expr, scale):
+    """Map a host method's EMITTED profile back to the learner's target space.
+
+    Exact in both directions this benchmark uses. On the ``log`` path the host
+    emits ``expm1(clip(y, 0, 20))``, so ``log1p`` recovers ``y`` (up to the clip,
+    which real log-normalized values do not reach). On the ``raw`` path the host
+    emits the measurement itself, which already is the target space.
+    """
+    x = np.asarray(host_expr, dtype=np.float64)
+    return np.log1p(np.clip(x, 0.0, None)) if scale == "log" else x
+
+
+def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
+                          q_xy, q_type, args):
+    """Swap a bounded set of cells to the real donor that best matches ``pred``.
+
+    All arrays are in the learner's target space. ``pred`` is the learner's
+    predicted field at each generated cell; ``incumbent`` is what the host method
+    emitted there (its own donor's profile); ``Ytr`` holds the candidate real
+    profiles, row-aligned with ``tr_xy`` / ``tr_type``.
+
+    Three guards, all of them from v21's ``_field_align``:
+
+    * a **noise floor** — only cells whose deviation from the predicted field
+      exceeds ``noise_mult`` times the real cells' own median deviation are
+      eligible. Real cells are noisy too, and aligning a prediction closer to the
+      field than real cells sit would over-smooth and inflate Moran's I past the
+      ground truth, which is the failure this whole design exists to avoid;
+    * a **relative margin** — a swap must reduce the deviation by more than
+      ``margin`` times its current value, so marginal swaps are not taken;
+    * a **worst-first budget** — at most ``frac`` of cells are touched.
+
+    ⚠️ The floor is estimated from the model's residual on the training cells it
+    was fit on. For a flexible learner that residual is optimistically small, so
+    the floor admits more cells than a held-out estimate would. The budget and the
+    margin, not the floor, are therefore the binding safeguards; ``--gbmfield-frac``
+    is the knob to reach for first. Computing an out-of-fold floor would cost a
+    second fit of the most expensive learner in the set and is deliberately not
+    done here.
+
+    Returns ``(new_target_space_matrix, stats)``; nothing is emitted directly.
+    """
+    from scipy.spatial import cKDTree
+
+    pred = np.asarray(pred, dtype=np.float64)
+    incumbent = np.asarray(incumbent, dtype=np.float64)
+    Q, G = pred.shape
+    stats = {"n_cells": int(Q), "n_eligible": 0, "n_swapped": 0,
+             "dev_before": None, "dev_after": None, "sigma0": None}
+    cand_idx = np.where(np.asarray(cand_mask))[0]
+    if Q == 0 or cand_idx.size == 0:
+        return incumbent.copy(), stats
+
+    rms = lambda A: np.sqrt((A ** 2).mean(axis=1))          # noqa: E731
+
+    # Real cells' own deviation from the predicted field -> the noise floor.
+    sigma0 = float(np.median(rms(Ytr[cand_idx] - args._pool_pred[cand_idx])))
+    dev = rms(incumbent - pred)
+    stats["sigma0"] = sigma0
+    stats["dev_before"] = float(np.median(dev))
+
+    eligible = np.where(dev > args.gbmfield_noise_mult * sigma0)[0]
+    stats["n_eligible"] = int(eligible.size)
+    if eligible.size == 0:
+        return incumbent.copy(), stats
+    budget = int(round(args.gbmfield_frac * Q))
+    eligible = eligible[np.argsort(-dev[eligible])][:max(budget, 0)]
+    if eligible.size == 0:
+        return incumbent.copy(), stats
+
+    K = int(min(args.gbmfield_k, cand_idx.size))
+    tree = cKDTree(tr_xy[cand_idx])
+    _, nn = tree.query(q_xy[eligible], k=K)
+    if nn.ndim == 1:
+        nn = nn[:, None]
+
+    out = incumbent.copy()
+    n_swap = 0
+    for r, i in enumerate(eligible):
+        ci = cand_idx[nn[r]]
+        same = ci[tr_type[ci] == q_type[i]]
+        if same.size == 0:
+            same = ci
+        d = rms(Ytr[same] - pred[i][None, :])
+        b = int(np.argmin(d))
+        if d[b] < (1.0 - args.gbmfield_margin) * dev[i]:
+            out[i] = Ytr[same[b]]
+            n_swap += 1
+    stats["n_swapped"] = int(n_swap)
+    stats["dev_after"] = float(np.median(rms(out - pred)))
+    return out, stats
+
+
 def learner_params(name, args):
     """What actually ran, for ``method_params`` — so a prediction is self-describing."""
-    common = {"learner": name, "n_jobs": args.n_jobs}
+    common = {"learner": name, "n_jobs": args.n_jobs,
+              "emit": getattr(args, "emit", "learner")}
+    if getattr(args, "emit", "learner") == "donor":
+        common.update({"gbmfield_k": args.gbmfield_k,
+                       "gbmfield_frac": args.gbmfield_frac,
+                       "gbmfield_margin": args.gbmfield_margin,
+                       "gbmfield_noise_mult": args.gbmfield_noise_mult})
     per = {
         "ridge": {"ridge_alpha": args.ridge_alpha},
         "lasso": {"lasso_alpha_frac": args.lasso_alpha_frac,
@@ -417,6 +566,21 @@ def add_learner_args(p):
                    help="TabM is a torch model. 'cpu' is bitwise reproducible "
                         "everywhere; 'cuda' is much faster on wide panels but "
                         "its determinism depends on the kernels available")
+    p.add_argument("--emit", default="learner", choices=["learner", "donor"],
+                   help="what the generated cell emits. 'learner' (default, and "
+                        "the behaviour of every v*_<learner> method) emits the "
+                        "prediction itself. 'donor' uses the prediction only as a "
+                        "field target and emits the best-matching REAL local "
+                        "profile, so every emitted value stays a measurement")
+    p.add_argument("--gbmfield-k", type=int, default=12,
+                   help="local same-type real candidates per cell (--emit donor)")
+    p.add_argument("--gbmfield-frac", type=float, default=0.35,
+                   help="max fraction of cells re-grounded, worst mismatch first")
+    p.add_argument("--gbmfield-margin", type=float, default=0.10,
+                   help="relative deviation improvement a swap must beat")
+    p.add_argument("--gbmfield-noise-mult", type=float, default=1.25,
+                   help="eligibility floor, as a multiple of the real cells' own "
+                        "median deviation from the predicted field")
     p.add_argument("--mlp-hidden", type=int, default=256)
     p.add_argument("--mlp-iters", type=int, default=300)
     return p

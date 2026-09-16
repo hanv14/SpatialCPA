@@ -288,6 +288,16 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
     print(f"    fit_seconds={fit_seconds:.1f}")
     ML.report_degeneracy(model, args.learner)
 
+    tr_xy = tr_z = tr_type = tr_sec = None
+    if args.emit == "donor":
+        # The field target is the SAME model the *_<learner> variants emit;
+        # only its use differs. The pool's own predicted field is cached once
+        # here because the noise floor is measured against it.
+        args._pool_pred = np.asarray(model.predict(Ftr), dtype=np.float64)
+        tr_xy, tr_z, tr_type, tr_sec = ML.training_index(stack)
+        print(f"    --emit donor: predictions used as a field target; "
+              f"every emitted value stays a real measurement")
+
     results, predict_seconds = {}, 0.0
     for sec, z in targets:
         print(f"  {sec}: v18 layout/donor selection at z={z:.2f}, then "
@@ -310,6 +320,18 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
         if pred.shape != (n, Ytr.shape[1]):
             raise SystemExit(f"ERROR: learner returned {pred.shape}, expected "
                              f"{(n, Ytr.shape[1])}")
+        if args.emit == "donor":
+            incumbent = ML.to_target_space(vs.expression, scale)
+            cand = ML.flanking_rows(stack, tr_sec, float(vs.coords[0, 2]))
+            pred, dstats = ML.select_donor_by_field(
+                pred, incumbent, Ytr, tr_xy, tr_type, cand,
+                vs.coords[:, :2], (vs.cell_type_idx
+                                   if vs.cell_type_idx is not None
+                                   else np.zeros(n, np.int64)), args)
+            print(f"    field-guided: {dstats['n_swapped']}/{n} donors swapped "
+                  f"({dstats['n_eligible']} eligible), median deviation "
+                  f"{dstats['dev_before']:.4f} -> {dstats['dev_after']:.4f}, "
+                  f"floor sigma0={dstats['sigma0']:.4f}")
         expr = emit(pred, cfg, scale)
         predict_seconds += time.time() - t_pred
 

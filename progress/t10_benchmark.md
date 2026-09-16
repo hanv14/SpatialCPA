@@ -270,6 +270,54 @@ scales; all three wrappers accept all nine, and the flag-parity and args-declare
 
 Campaign now ~45-90 CPU-hours marginal and ~78 GB of predictions. Not run.
 
+### 2026-09-16 — `*_gbmfield`: gbm as a field TARGET, and two findings that shaped it
+
+Proposal on the table: `gbm` wins `paper_marker_field_r`, `paper_marker_depth_r` and
+`paper_celltype_localization` and loses `paper_morans_pearson`, `paper_gearys_pearson` and
+`paper_umap_mixing`; the hosts already win the second three; so use `gbm` somewhere *other* than
+expression — layout was suggested. Investigated before building, and the investigation moved the
+design twice.
+
+**Finding 1 — the split is exactly alignment.** Reading `evaluate_paper.evaluate_paper`: the three
+`gbm` wins are the three computed on `pred_xy_al` (`marker_metrics`, `celltype_localization`); the
+three it loses are computed on raw `pred_xy` (`spatial_autocorrelation_metrics`) or on expression
+alone (`embedding_continuity`). And `align_by_expression` chooses its pose by
+`_field_agreement` — binned marker-field agreement, which is essentially
+`paper_marker_field_r` itself.
+
+For localization this is not a hypothesis but a proof. The `*_<learner>` variants emit the host's
+coordinates and the host's cell types **unchanged** — only `X` differs. `celltype_localization`
+consumes `(pred_xy_aligned, pred_cell_type)`. Both of its inputs are therefore identical to the
+host's except through the pose, so **100 % of any localization movement is mediated by the
+alignment**. A `gbm` localization gain is a pose effect, not better cell-type placement, and must
+not be written up as one.
+
+**Finding 2 — a learned layout has already been measured, and it loses.** R11
+(`reports/r11_starmap_layout_modes.md`), same dataset, same protocol: `layout_mode=field` scores
+**0.6607** median `celltype_localization` against `resample`'s **0.7546**, and emits **267 567
+cells for a 4 187-cell section** (`cell_count_ratio` 5.362 vs 0.988). Predicting positions loses the
+metric the proposal is aiming at and breaks density doing it. So the layout is the wrong place,
+and the answer is already in this repository.
+
+**What was built instead.** The separable thing is *estimation* vs *emission*: a regressor's
+conditional mean is a good estimate of the local expression field, and emitting it is what flattens
+sparsity and autocorrelation. `*_gbmfield` keeps the estimate and discards the emission — the gbm
+prediction becomes a selection target, and each cell emits the real local same-type profile that
+best matches it. Same model, same features, same target as `*_gbm`; only the use differs, so the
+pair isolates emission from estimation. Bounded exactly as v21's `_field_align`: noise floor,
+relative margin, worst-first budget.
+
+Measured on a fixture with genuinely noisy real cells and deliberately poor incumbents: median
+deviation from the predicted field **0.917 → 0.526**, with the real cells' own floor at
+**σ₀ = 0.314** — so it closes most of the surplus mismatch and stops short of the ground truth's own
+noise, which is the property that protects Moran's I from being inflated past truth. 175/500 swapped
+against a 175 budget, every emitted row verbatim a real training profile (asserted), deterministic.
+
+Registered as `v14_gbmfield`, `v18_gbmfield`, `v21_gbmfield` (`--learner gbm --emit donor`). The
+`--emit` flag defaults to `learner`, so every existing `v*_<learner>` method is bit-for-bit
+unchanged; no host method, no benchmark-pbya-v2 file and no benchmark driver was touched, and
+`config.py` remains 0 deletions against the pre-work baseline. Not run.
+
 ### Three cells reported as returned rather than smoothed
 
 - FEAST and isoST return **exactly `0.0000`** on `celltype_localization`: the not-scorable value, not
