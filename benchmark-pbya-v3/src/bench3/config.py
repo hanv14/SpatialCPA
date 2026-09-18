@@ -1506,6 +1506,63 @@ METHODS = {
     # intensities — and an all-zero fit is reported at run time, not silently
     # ranked. See `--lasso-alpha-frac` and `_ml_learners.FracAlphaLasso`.
     #
+    # ── the same two stages driven by LightGBM ──────────────────────────────
+    # `lgbm` is worth its own pair, and it does NOT inherit its own emit-role
+    # defaults, because the role is different and that difference was measured.
+    #
+    # As an EMITTER a learner should fit tightly: lower error is the whole job.
+    # As a FIELD TARGET it should estimate the conditional mean, and fitting the
+    # training cells' noise actively hurts twice over — the selection target is
+    # noisier, and the in-sample residual that sets the eligibility floor shrinks,
+    # so more cells are admitted against a worse target.
+    #
+    # Measured on a fixture whose TRUE field is known, so estimator quality is
+    # scored against truth rather than against the estimator's own prediction
+    # (which is circular). |f_hat - TRUE|, lower is better, with the in-sample
+    # residual beside it:
+    #
+    #     gbm  (shipped)              0.1621   in-sample 0.2608
+    #     lgbm num_leaves=31 child=20 0.1801   in-sample 0.2334   <- emit defaults
+    #     lgbm num_leaves=15 child=50 0.1549   in-sample 0.2657
+    #     lgbm num_leaves=7  child=100 0.1372  in-sample 0.2823
+    #
+    # The two columns run in OPPOSITE directions: lgbm's emit defaults fit the
+    # training cells best of the four and estimate the field worst of the four —
+    # textbook overfitting, and worse than gbm at the job. The eligibility floor
+    # moves with it (sigma0 0.3388 at the emit defaults against 0.4051 at 7/100),
+    # so the defaults also admit the most cells against the weakest target.
+    #
+    # Shipped at num_leaves=15, min_child_samples=50. 7/100 measured better on
+    # both field quality and the downstream result, and is NOT shipped only
+    # because that fixture builds its field as a smooth analytic function, which
+    # flatters heavy regularization; real tissue has sharper boundaries and 7
+    # leaves risks underfitting them. The DIRECTION (regularize past the emit
+    # defaults) is established; the exact point is not, and
+    # `--lgbm-leaves 7 --lgbm-min-child 100` is one run away.
+    #
+    # Also measured, and the reason the `*_repair` half matters more here than the
+    # `*_field` half: the whole-profile swap SATURATES. Across three quite
+    # different field estimates only 18-26 of 500 cells were given a different
+    # donor, because the swap chooses among ~12 discrete local candidates, so the
+    # median outcome is insensitive to field quality. The per-gene repair is finer
+    # grained and its outcome does move monotonically with it.
+    **{
+        f"{_h}_lgbm{_stage}": {
+            "wrapper": _v3_wrapper(_w),
+            "conda_env": "bench_spatialcpa",
+            "available": True,
+            "family": "spatialcpa",
+            "notes": f"{_h} layout + donor selection, donors re-chosen against a "
+                     f"regularized LightGBM field"
+                     + (" and then per-gene repaired" if _stage == "repair" else "")
+                     + "; emitted values stay real",
+            "wrapper_args": ["--learner", "lgbm", "--emit", "donor",
+                             "--lgbm-leaves", "15", "--lgbm-min-child", "50"]
+                            + (["--repair-frac", "0.10"] if _stage == "repair" else []),
+            "invalid_log_markers": _m,
+        }
+        for _h, _w, _m in _GBMFIELD_HOSTS for _stage in ("field", "repair")
+    },
     # ── second generation: residual field target + per-gene repair ───────────
     # `*_gbmfield` swaps whole profiles against a field the learner predicts from
     # position and type alone. `*_gbmrepair` takes the two things that leaves:
@@ -1681,6 +1738,8 @@ METHOD_ORDER = [
     "v18_gbm", "v18_xgb", "v18_lgbm", "v18_mlp", "v18_tabm",
     "v14_gbmfield", "v18_gbmfield", "v21_gbmfield",
     "v14_gbmrepair", "v18_gbmrepair", "v21_gbmrepair",
+    "v14_lgbmfield", "v18_lgbmfield", "v21_lgbmfield",
+    "v14_lgbmrepair", "v18_lgbmrepair", "v21_lgbmrepair",
 ]
 
 

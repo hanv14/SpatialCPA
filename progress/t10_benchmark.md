@@ -363,6 +363,53 @@ flags default to inert, so every `v*_<learner>` and `v*_gbmfield` row is bit-for
 host method, no benchmark-pbya-v2 file, no benchmark driver touched; `config.py` still 0 deletions
 against the pre-work baseline; `evaluate_paper.py` unchanged.
 
+### 2026-09-18 — the LightGBM pair, and why it does not inherit its own defaults
+
+`v{14,18,21}_lgbmfield` and `v{14,18,21}_lgbmrepair`. **Zero code files changed** — the donor-selection
+and repair machinery was already learner-agnostic, so this is a pure `config.py` append. What took
+the work was deciding the hyperparameters, because the role a learner plays here is not the role its
+defaults were chosen for.
+
+As an **emitter** a learner should fit tightly; lower error is the whole job. As a **field target** it
+should estimate the conditional mean, and fitting the training cells' noise hurts twice: the selection
+target is noisier, *and* the in-sample residual that sets the eligibility floor shrinks, so more cells
+are admitted against a worse target.
+
+Measured on a fixture whose **true field is known**, so estimator quality is scored against truth
+rather than against the estimator's own prediction — which is circular, and which is what the earlier
+`*_gbmfield` / `*_gbmrepair` numbers were measured against. `|f̂ − TRUE|`, with the in-sample residual
+beside it:
+
+| field estimator | `|f̂ − TRUE|` ↓ | in-sample resid | after swap (vs TRUE) | + repair (vs TRUE) |
+|---|---:|---:|---:|---:|
+| `gbm` (shipped) | 0.1621 | 0.2608 | 0.7067 | 0.5973 |
+| `lgbm` **emit defaults** (31 leaves / child 20) | **0.1801** | **0.2334** | 0.7067 | 0.6034 |
+| `lgbm` 15 leaves / child 50 | 0.1549 | 0.2657 | 0.7067 | 0.5961 |
+| `lgbm` 7 leaves / child 100 | **0.1372** | 0.2823 | 0.7067 | **0.5917** |
+
+The two middle columns run in **opposite directions**. lgbm's emit defaults fit the training cells
+best of the four and estimate the field worst of the four — textbook overfitting, and worse than
+`gbm` at this job. σ₀ moves with it (0.3388 at the emit defaults against 0.4051 at 7/100), so the
+defaults also admit the most cells against the weakest target.
+
+Shipped at **15 leaves / child 50**. 7/100 measured better on both field quality and the downstream
+result and is deliberately *not* shipped: that fixture builds its field as a smooth analytic function,
+which flatters heavy regularization, while real tissue has sharper boundaries that 7 leaves risks
+underfitting. The **direction** is established, the exact point is not, and
+`--lgbm-leaves 7 --lgbm-min-child 100` is one run away.
+
+**A structural finding that outranks the hyperparameters: the whole-profile swap saturates.** Across
+three quite different field estimates only **18–26 of 500** cells were given a different donor, and
+the median outcome was identical to four decimals. The swap chooses among ~12 discrete local
+candidates, so field quality barely propagates through it. The per-gene repair is finer grained and
+its outcome *does* move monotonically with field quality. So `*_repair` is where a better field pays,
+`*_field` is where it mostly does not — which is worth knowing before spending more runs tuning
+estimators for the `*_field` arms.
+
+`v*_lgbm` emit defaults verified untouched (31 leaves / child 20). lgbm donor path verified end to
+end: 175 swapped, 1,500 entries repaired, deviation 1.0509 → 0.5620 → 0.4833, 0/30 genes with a tail
+below the real rate, 0 non-real values, deterministic.
+
 ### Three cells reported as returned rather than smoothed
 
 - FEAST and isoST return **exactly `0.0000`** on `celltype_localization`: the not-scorable value, not
