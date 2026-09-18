@@ -1506,6 +1506,64 @@ METHODS = {
     # intensities — and an all-zero fit is reported at run time, not silently
     # ranked. See `--lasso-alpha-frac` and `_ml_learners.FracAlphaLasso`.
     #
+    # ── lgbm, banded selection, NO per-gene repair ───────────────────────────
+    # Built after the campaign reported that `*_lgbmfield` and `*_lgbmrepair` sit
+    # below the unmodified host on paper_morans_pearson / _gearys_pearson /
+    # _umap_mixing. Two measurements explain it and neither was a tuning problem.
+    #
+    # 1. SELECTING REAL CELLS BY PROXIMITY TO A SMOOTH FIELD IS ITSELF A SMOOTHING
+    #    OPERATOR. "Every emitted value is a real measurement" protects value-level
+    #    realism -- sparsity, count-ness, dynamic range -- but not the emitted
+    #    population's DISPERSION, and dispersion is what the autocorrelation
+    #    metrics read. `argmin` prefers the least noisy, most typical donors.
+    #    `--select band` instead requires the replacement's own deviation from the
+    #    field to sit inside the real cells' typical band and draws from it at
+    #    random, so the emitted cell deviates from the field the way a real cell
+    #    does. This is the rule v21's `_field_repair` already gives its reason for.
+    #
+    # 2. THE PER-GENE REPAIR IS THE EXPENSIVE STAGE, AND IT IS DROPPED HERE.
+    #    Measured against a held-out ground-truth section with Moran's I computed
+    #    exactly as benchmark-pbya-v2's `_morans_i` does:
+    #
+    #      arm                                morans_r  morans_MAE  var/GT  |x-TRUE|
+    #      ground truth                         1.0000      0.0000   1.000    0.4247
+    #      host donors (coherent copy)          0.9846      0.0240   1.030    0.6367
+    #      band swap, NO repair                 0.9905      0.0214   1.016    0.5936
+    #      band swap + repair(random, .10)      0.9894      0.0554   0.942    0.4757
+    #      band swap + repair(nearest, .10)     0.9879      0.0563   0.946    0.4746
+    #      band swap + repair(random, .05)      0.9791      0.0434   0.980    0.5403
+    #
+    #    The repair buys field accuracy and pays for it in Moran's MAE and
+    #    dispersion, in EVERY configuration tried -- including a spatially
+    #    coherent variant (`--repair-pick nearest`) built specifically to rescue
+    #    it, which did not. So this method runs the swap alone.
+    #
+    # Band swap alone beats the unmodified host on all four columns at once:
+    # higher morans_r, LOWER morans_MAE, dispersion nearer 1, and a better field.
+    # That is the combination the campaign asked for.
+    #
+    # ⚠️ The fixture's host proxy copies each cell's nearest real neighbour, while
+    # the real hosts copy contiguous coherent PATCHES -- a stronger spatial
+    # coherence that a 35 % swap disturbs more than this fixture can show. If the
+    # regression persists on real data, `--gbmfield-frac` is the knob: lowering it
+    # protects dispersion monotonically (frac 0.15 gave var/GT 0.993 against 0.976
+    # at 0.35 under `nearest`).
+    **{
+        f"{_h}_lgbmband": {
+            "wrapper": _v3_wrapper(_w),
+            "conda_env": "bench_spatialcpa",
+            "available": True,
+            "family": "spatialcpa",
+            "notes": f"{_h} layout + donor selection, donors re-chosen from the "
+                     f"real cells' own typicality band around a regularized "
+                     f"LightGBM field; no per-gene repair, dispersion preserved",
+            "wrapper_args": ["--learner", "lgbm", "--emit", "donor",
+                             "--select", "band",
+                             "--lgbm-leaves", "15", "--lgbm-min-child", "50"],
+            "invalid_log_markers": _m,
+        }
+        for _h, _w, _m in _GBMFIELD_HOSTS
+    },
     # ── the same two stages driven by LightGBM ──────────────────────────────
     # `lgbm` is worth its own pair, and it does NOT inherit its own emit-role
     # defaults, because the role is different and that difference was measured.
@@ -1740,6 +1798,7 @@ METHOD_ORDER = [
     "v14_gbmrepair", "v18_gbmrepair", "v21_gbmrepair",
     "v14_lgbmfield", "v18_lgbmfield", "v21_lgbmfield",
     "v14_lgbmrepair", "v18_lgbmrepair", "v21_lgbmrepair",
+    "v14_lgbmband", "v18_lgbmband", "v21_lgbmband",
 ]
 
 

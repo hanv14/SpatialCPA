@@ -394,7 +394,7 @@ def to_target_space(host_expr, scale):
 
 
 def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
-                          q_xy, q_type, args, pool_pred):
+                          q_xy, q_type, args, pool_pred, seed=0):
     """Swap a bounded set of cells to the real donor that best matches ``pred``.
 
     All arrays are in the learner's target space. ``pred`` is the learner's
@@ -413,6 +413,23 @@ def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
       ``margin`` times its current value, so marginal swaps are not taken;
     * a **worst-first budget** — at most ``frac`` of cells are touched.
 
+    ``--select`` decides HOW the replacement is chosen among the candidates, and
+    the two answers are not interchangeable:
+
+    * ``nearest`` takes the candidate closest to the field. It minimises the
+      mismatch, and it is a SMOOTHING OPERATOR on the emitted population: the
+      donors it prefers are the least noisy, most typical real cells, so the
+      output's dispersion falls even though every value in it is real. Value-level
+      realism — sparsity, count-ness, dynamic range — survives; the spread does
+      not, and Moran's I, Geary's C and UMAP mixing read the spread.
+    * ``band`` requires the replacement's OWN deviation from the field to fall
+      inside the real cells' typical band (``band_lo``..``band_hi`` quantiles of
+      their deviation) and then draws from that band at random. The emitted cell
+      then deviates from the field the way a real cell does, while still being
+      moved to the right place. This is the rule v21's own ``_field_repair`` uses
+      and gives its reason for — "random, not closest, so repaired entries keep
+      the in-band spread real data has instead of stacking at the field mean".
+
     ⚠️ The floor is estimated from the model's residual on the training cells it
     was fit on. For a flexible learner that residual is optimistically small, so
     the floor admits more cells than a held-out estimate would. The budget and the
@@ -425,6 +442,7 @@ def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
     """
     from scipy.spatial import cKDTree
 
+    rng = np.random.default_rng(int(seed))
     pred = np.asarray(pred, dtype=np.float64)
     incumbent = np.asarray(incumbent, dtype=np.float64)
     Q, G = pred.shape
@@ -441,6 +459,11 @@ def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
     dev = rms(incumbent - pred)
     stats["sigma0"] = sigma0
     stats["dev_before"] = float(np.median(dev))
+    # The real cells' own deviation band, used only by --select band.
+    pool_dev = rms(Ytr[cand_idx] - pool_pred[cand_idx])
+    band_lo = float(np.quantile(pool_dev, args.band_lo))
+    band_hi = float(np.quantile(pool_dev, args.band_hi))
+    stats["band"] = (band_lo, band_hi)
 
     eligible = np.where(dev > args.gbmfield_noise_mult * sigma0)[0]
     stats["n_eligible"] = int(eligible.size)
@@ -465,7 +488,13 @@ def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
         if same.size == 0:
             same = ci
         d = rms(Ytr[same] - pred[i][None, :])
-        b = int(np.argmin(d))
+        if args.select == "band":
+            inband = np.where((d >= band_lo) & (d <= band_hi))[0]
+            if inband.size == 0:                 # nothing typical nearby: leave it
+                continue
+            b = int(inband[rng.integers(inband.size)])
+        else:
+            b = int(np.argmin(d))
         if d[b] < (1.0 - args.gbmfield_margin) * dev[i]:
             out[i] = Ytr[same[b]]
             n_swap += 1
@@ -603,6 +632,8 @@ def per_gene_repair(expr, field, Ytr, cand_idx, tr_xy, tr_type, q_xy, q_type,
         if pr.size == 0:
             continue
         theta = float(args.repair_noise_mult * np.quantile(pr, args.repair_q))
+        theta_lo = (float(np.quantile(pr, args.repair_band_lo))
+                    if args.repair_band_lo > 0 else 0.0)
         if not np.isfinite(theta) or theta <= 0:
             continue
         tail_rate = float((pr > theta).mean())          # the real data's own tail
@@ -622,12 +653,30 @@ def per_gene_repair(expr, field, Ytr, cand_idx, tr_xy, tr_type, q_xy, q_type,
         touched = 0
         for i in surplus:
             ci = cand_idx[nn[i]]
-            ok = ci[(tr_type[ci] == q_type[i]) & (np.abs(Ytr[ci, g] - field[i, g]) <= theta)]
+            dd = np.abs(Ytr[ci, g] - field[i, g])
+            # A floor as well as a ceiling. With an upper bound alone a candidate
+            # sitting ON the field is eligible and equally likely, so repeated
+            # repairs stack the gene's values at the conditional mean and the
+            # per-gene spread collapses — which is what Moran's I and Geary's C
+            # read. `repair_band_lo` keeps the replacement as far from the field
+            # as a typical real cell is.
+            ok = ci[(tr_type[ci] == q_type[i]) & (dd <= theta) & (dd >= theta_lo)]
             if ok.size == 0:
-                ok = ci[np.abs(Ytr[ci, g] - field[i, g]) <= theta]
+                ok = ci[(dd <= theta) & (dd >= theta_lo)]
+            if ok.size == 0:
+                ok = ci[dd <= theta]
             if ok.size == 0:
                 continue
-            expr[i, g] = Ytr[int(ok[rng.integers(ok.size)]), g]
+            if args.repair_pick == "nearest":
+                # Spatially nearest in-band candidate. `ci` comes back from the
+                # KD-tree distance-sorted, so index 0 of the surviving subset is
+                # the closest. Random draws inside the band preserve SPREAD but
+                # scramble each gene's spatial coherence, which is the quantity
+                # Moran's I and Geary's C actually measure.
+                pick = int(ok[0])
+            else:
+                pick = int(ok[rng.integers(ok.size)])
+            expr[i, g] = Ytr[pick, g]
             touched += 1
         spent += touched
         if touched:
@@ -643,7 +692,10 @@ def learner_params(name, args):
     common = {"learner": name, "n_jobs": args.n_jobs,
               "emit": getattr(args, "emit", "learner")}
     if getattr(args, "emit", "learner") == "donor":
-        common.update({"field_mode": args.field_mode, "field_k": args.field_k,
+        common.update({"select": args.select, "repair_pick": args.repair_pick, "band_lo": args.band_lo,
+                       "band_hi": args.band_hi,
+                       "repair_band_lo": args.repair_band_lo,
+                       "field_mode": args.field_mode, "field_k": args.field_k,
                        "repair_frac": args.repair_frac,
                        "repair_q": args.repair_q,
                        "repair_noise_mult": args.repair_noise_mult,
@@ -765,6 +817,25 @@ def add_learner_args(p):
     p.add_argument("--repair-noise-mult", type=float, default=1.25,
                    help="an entry is a repair candidate only past this multiple of "
                         "the per-gene real noise band")
+    p.add_argument("--repair-pick", default="random", choices=["random", "nearest"],
+                   help="which in-band candidate a per-gene repair draws. 'random' "
+                        "(default) keeps the in-band spread; 'nearest' takes the "
+                        "spatially closest, which also keeps the gene's spatial "
+                        "coherence -- the quantity Moran's I reads")
+    p.add_argument("--select", default="nearest", choices=["nearest", "band"],
+                   help="how --emit donor picks the replacement. 'nearest' "
+                        "(default) takes the candidate closest to the field, which "
+                        "minimises mismatch but smooths the emitted population; "
+                        "'band' draws at random from candidates whose own deviation "
+                        "is as typical as a real cell's, preserving dispersion")
+    p.add_argument("--band-lo", type=float, default=0.25,
+                   help="lower quantile of the real deviation band (--select band)")
+    p.add_argument("--band-hi", type=float, default=0.75,
+                   help="upper quantile of the real deviation band (--select band)")
+    p.add_argument("--repair-band-lo", type=float, default=0.0,
+                   help="lower quantile of the per-gene repair band. 0 (default) "
+                        "means no floor, which lets replacements stack at the field "
+                        "mean and shrinks the per-gene spread")
     p.add_argument("--mlp-hidden", type=int, default=256)
     p.add_argument("--mlp-iters", type=int, default=300)
     return p

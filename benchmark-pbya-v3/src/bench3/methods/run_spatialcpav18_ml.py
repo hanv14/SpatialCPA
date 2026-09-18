@@ -350,7 +350,8 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
             field = pred
             pred, dstats = ML.select_donor_by_field(
                 field, incumbent, Ytr, tr_xy, tr_type, cand0,
-                vs.coords[:, :2], q_type, args, pool_pred)
+                vs.coords[:, :2], q_type, args, pool_pred,
+                seed=args.seed)
             print(f"    field-guided: {dstats['n_swapped']}/{n} donors swapped "
                   f"({dstats['n_eligible']} eligible), median deviation "
                   f"{dstats['dev_before']:.4f} -> {dstats['dev_after']:.4f}, "
