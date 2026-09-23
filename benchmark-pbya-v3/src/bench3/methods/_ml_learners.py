@@ -422,6 +422,16 @@ def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
       output's dispersion falls even though every value in it is real. Value-level
       realism — sparsity, count-ness, dynamic range — survives; the spread does
       not, and Moran's I, Geary's C and UMAP mixing read the spread.
+    * ``balanced`` keeps the band's constraint on each residual's SIZE but also
+      chooses its SIGN, so that residuals CANCEL within a local neighbourhood.
+      The binned field metrics read a per-bin mean of each gene; the
+      autocorrelation metrics read cell-level structure. Those are different
+      quantities, so both can be had at once: drive each bin's mean residual to
+      zero — which puts the bin means on the predicted field, where the dense
+      emitter already is — while every individual residual stays as large as a
+      real cell's, which is what the autocorrelation metrics need. The swapped
+      minority is used to correct the drift left by the untouched majority, so
+      the intervention stays bounded.
     * ``band`` requires the replacement's OWN deviation from the field to fall
       inside the real cells' typical band (``band_lo``..``band_hi`` quantiles of
       their deviation) and then draws from that band at random. The emitted cell
@@ -465,6 +475,20 @@ def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
     band_hi = float(np.quantile(pool_dev, args.band_hi))
     stats["band"] = (band_lo, band_hi)
 
+    # Local bins for --select balanced. Sized from the cell count, NOT from the
+    # evaluator's FIELD_GRID: balancing at a finer scale than a metric reads also
+    # fixes its coarser bins, so the gain transfers rather than being locked to
+    # one instrument's lattice. Tuning this to the evaluator's grid would be
+    # measuring the ruler.
+    bin_of = np.zeros(Q, dtype=np.int64)
+    if args.select == "balanced" and Q > 0:
+        nb = max(int(np.sqrt(Q / max(args.balance_cells, 1))), 1)
+        lo, hi = q_xy.min(0), q_xy.max(0)
+        span = np.where((hi - lo) > 0, hi - lo, 1.0)
+        gxy = np.clip(((q_xy - lo) / span * nb).astype(np.int64), 0, nb - 1)
+        bin_of = gxy[:, 1] * nb + gxy[:, 0]
+        stats["bins"] = int(nb * nb)
+
     eligible = np.where(dev > args.gbmfield_noise_mult * sigma0)[0]
     stats["n_eligible"] = int(eligible.size)
     if eligible.size == 0:
@@ -482,12 +506,42 @@ def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
 
     out = incumbent.copy()
     n_swap = 0
+    # Per-bin accumulated residual, seeded from the cells this pass will NOT
+    # touch: the swapped minority then corrects the drift the majority leaves.
+    acc = {}
+    if args.select == "balanced":
+        untouched = np.setdiff1d(np.arange(Q), eligible, assume_unique=False)
+        for b in np.unique(bin_of):
+            rows = untouched[bin_of[untouched] == b]
+            acc[int(b)] = ((incumbent[rows] - pred[rows]).sum(0) if rows.size
+                           else np.zeros(G))
     for r, i in enumerate(eligible):
         ci = cand_idx[nn[r]]
         same = ci[tr_type[ci] == q_type[i]]
         if same.size == 0:
             same = ci
         d = rms(Ytr[same] - pred[i][None, :])
+        if args.select == "balanced":
+            inband = np.where((d >= band_lo) & (d <= band_hi))[0]
+            if inband.size == 0:
+                # Not swapped, so this cell's own drift stays in the bin and the
+                # later passes have to absorb it. Book it.
+                b = int(bin_of[i])
+                acc[b] = acc[b] + (incumbent[i] - pred[i])
+                continue
+            b = int(bin_of[i])
+            # Pick the in-band candidate whose residual best cancels the bin's
+            # accumulated drift. No per-cell improvement margin here: the
+            # objective is the BIN's mean, not this cell's own deviation, and a
+            # per-cell margin would reject exactly the compensating swaps.
+            rows = same[inband]
+            cand_res = Ytr[rows] - pred[i][None, :]
+            score = np.sqrt((((acc[b][None, :] + cand_res)) ** 2).mean(1))
+            j = int(rows[int(np.argmin(score))])
+            out[i] = Ytr[j]
+            acc[b] = acc[b] + (Ytr[j] - pred[i])
+            n_swap += 1
+            continue
         if args.select == "band":
             inband = np.where((d >= band_lo) & (d <= band_hi))[0]
             if inband.size == 0:                 # nothing typical nearby: leave it
@@ -692,7 +746,8 @@ def learner_params(name, args):
     common = {"learner": name, "n_jobs": args.n_jobs,
               "emit": getattr(args, "emit", "learner")}
     if getattr(args, "emit", "learner") == "donor":
-        common.update({"select": args.select, "repair_pick": args.repair_pick, "band_lo": args.band_lo,
+        common.update({"select": args.select, "repair_pick": args.repair_pick,
+                       "balance_cells": args.balance_cells, "band_lo": args.band_lo,
                        "band_hi": args.band_hi,
                        "repair_band_lo": args.repair_band_lo,
                        "field_mode": args.field_mode, "field_k": args.field_k,
@@ -822,7 +877,12 @@ def add_learner_args(p):
                         "(default) keeps the in-band spread; 'nearest' takes the "
                         "spatially closest, which also keeps the gene's spatial "
                         "coherence -- the quantity Moran's I reads")
-    p.add_argument("--select", default="nearest", choices=["nearest", "band"],
+    p.add_argument("--balance-cells", type=int, default=24,
+                   help="target cells per local bin for --select balanced. Derived "
+                        "from the cell count, deliberately not from the evaluator's "
+                        "FIELD_GRID")
+    p.add_argument("--select", default="nearest",
+                   choices=["nearest", "band", "balanced"],
                    help="how --emit donor picks the replacement. 'nearest' "
                         "(default) takes the candidate closest to the field, which "
                         "minimises mismatch but smooths the emitted population; "
