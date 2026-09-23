@@ -393,6 +393,30 @@ def to_target_space(host_expr, scale):
     return np.log1p(np.clip(x, 0.0, None)) if scale == "log" else x
 
 
+def rank01(A):
+    """Per-gene rank normalisation to (0, 1) -> ``(N, G)``, columns independent.
+
+    Byte-for-byte the evaluator's own transform: ``scipy.stats.rankdata`` with
+    average ties, then ``(rank - 0.5) / n``. See
+    ``benchmark-pbya-v2/src/benchmark/evaluate_generation.py:69`` — that function
+    is what ``evaluate_paper`` applies to BOTH the prediction and the ground
+    truth before it computes anything, so this is the space every ranked metric
+    actually reads. Reimplemented rather than imported so this module keeps no
+    import-time dependency on the frozen v2 tree; `tests` assert the two agree.
+    """
+    from scipy.stats import rankdata
+    X = np.asarray(A, dtype=np.float64)
+    n = X.shape[0]
+    if n == 0:
+        return X
+    try:
+        R = rankdata(X, method="average", axis=0)
+    except TypeError:                      # scipy < 1.10 has no axis=
+        R = np.column_stack([rankdata(X[:, g], method="average")
+                             for g in range(X.shape[1])])
+    return (R - 0.5) / n
+
+
 def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
                           q_xy, q_type, args, pool_pred, seed=0):
     """Swap a bounded set of cells to the real donor that best matches ``pred``.
@@ -464,13 +488,57 @@ def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
 
     rms = lambda A: np.sqrt((A ** 2).mean(axis=1))          # noqa: E731
 
+    # ── the space the objective is measured in ──────────────────────────────
+    # `raw` compares donors to the field in the learner's own target space. That
+    # is the obvious choice and it is the WRONG ONE for every metric this method
+    # is judged by, which is why `rank` exists.
+    #
+    # `evaluate_paper` computes `pR = _rank_normalize(pred_X)` ONCE
+    # (evaluate_paper.py:670) and every ranked metric reads that matrix and
+    # nothing else: spatial_autocorrelation_metrics, embedding_continuity and
+    # marker_metrics are all handed `pR`, and `align_by_expression` — which fixes
+    # the pose that paper_marker_field_r, paper_marker_depth_r AND
+    # paper_celltype_localization are then computed at — scores poses on
+    # `pR[:, cols]`. The transform is per-gene `rankdata` with average ties,
+    # rescaled to (0, 1).
+    #
+    # Two consequences, and both of them invalidate a raw-space objective:
+    #
+    # 1. EVERY GENE IS RESCALED TO THE SAME SPAN. A squared-residual objective in
+    #    raw space is dominated by whichever genes have the largest counts — on a
+    #    real panel a handful of them — while the metric averages a per-gene
+    #    Pearson r with every gene weighted equally. So the raw objective spends
+    #    the whole donor budget on genes whose contribution the evaluator has
+    #    already normalised away.
+    # 2. PER-GENE MEAN AND VARIANCE ARE DESTROYED. After ranking, every gene has
+    #    mean 0.5 and identical spread by construction. The emitted population's
+    #    dispersion — the quantity the typicality band was introduced to protect —
+    #    cannot be read by any of these six metrics at all.
+    #
+    # In `rank` the whole objective (the noise floor, the typicality band, the
+    # per-bin cancellation) is evaluated on `rank01` of each population, so it is
+    # measured in the instrument's units. EMISSION IS UNCHANGED: `out` is still
+    # assembled from raw `Ytr` rows, so every emitted value remains a real
+    # measurement and the unranked metrics (gene detection, expression
+    # similarity) see exactly what they saw before.
+    if getattr(args, "select_space", "raw") == "rank":
+        P = rank01(pred)
+        I0 = rank01(incumbent)
+        Ysel = np.zeros_like(Ytr, dtype=np.float64)
+        Psel = np.zeros_like(Ytr, dtype=np.float64)
+        Ysel[cand_idx] = rank01(Ytr[cand_idx])
+        Psel[cand_idx] = rank01(pool_pred[cand_idx])
+    else:
+        P, I0, Ysel, Psel = pred, incumbent, Ytr, pool_pred
+    stats["space"] = getattr(args, "select_space", "raw")
+
     # Real cells' own deviation from the predicted field -> the noise floor.
-    sigma0 = float(np.median(rms(Ytr[cand_idx] - pool_pred[cand_idx])))
-    dev = rms(incumbent - pred)
+    sigma0 = float(np.median(rms(Ysel[cand_idx] - Psel[cand_idx])))
+    dev = rms(I0 - P)
     stats["sigma0"] = sigma0
     stats["dev_before"] = float(np.median(dev))
     # The real cells' own deviation band, used only by --select band.
-    pool_dev = rms(Ytr[cand_idx] - pool_pred[cand_idx])
+    pool_dev = rms(Ysel[cand_idx] - Psel[cand_idx])
     band_lo = float(np.quantile(pool_dev, args.band_lo))
     band_hi = float(np.quantile(pool_dev, args.band_hi))
     stats["band"] = (band_lo, band_hi)
@@ -513,21 +581,21 @@ def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
         untouched = np.setdiff1d(np.arange(Q), eligible, assume_unique=False)
         for b in np.unique(bin_of):
             rows = untouched[bin_of[untouched] == b]
-            acc[int(b)] = ((incumbent[rows] - pred[rows]).sum(0) if rows.size
+            acc[int(b)] = ((I0[rows] - P[rows]).sum(0) if rows.size
                            else np.zeros(G))
     for r, i in enumerate(eligible):
         ci = cand_idx[nn[r]]
         same = ci[tr_type[ci] == q_type[i]]
         if same.size == 0:
             same = ci
-        d = rms(Ytr[same] - pred[i][None, :])
+        d = rms(Ysel[same] - P[i][None, :])
         if args.select == "balanced":
             inband = np.where((d >= band_lo) & (d <= band_hi))[0]
             if inband.size == 0:
                 # Not swapped, so this cell's own drift stays in the bin and the
                 # later passes have to absorb it. Book it.
                 b = int(bin_of[i])
-                acc[b] = acc[b] + (incumbent[i] - pred[i])
+                acc[b] = acc[b] + (I0[i] - P[i])
                 continue
             b = int(bin_of[i])
             # Pick the in-band candidate whose residual best cancels the bin's
@@ -535,11 +603,11 @@ def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
             # objective is the BIN's mean, not this cell's own deviation, and a
             # per-cell margin would reject exactly the compensating swaps.
             rows = same[inband]
-            cand_res = Ytr[rows] - pred[i][None, :]
+            cand_res = Ysel[rows] - P[i][None, :]
             score = np.sqrt((((acc[b][None, :] + cand_res)) ** 2).mean(1))
             j = int(rows[int(np.argmin(score))])
-            out[i] = Ytr[j]
-            acc[b] = acc[b] + (Ytr[j] - pred[i])
+            out[i] = Ytr[j]                     # emission stays RAW and real
+            acc[b] = acc[b] + (Ysel[j] - P[i])
             n_swap += 1
             continue
         if args.select == "band":
@@ -553,7 +621,8 @@ def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
             out[i] = Ytr[same[b]]
             n_swap += 1
     stats["n_swapped"] = int(n_swap)
-    stats["dev_after"] = float(np.median(rms(out - pred)))
+    dev_after = (rank01(out) if stats["space"] == "rank" else out) - P
+    stats["dev_after"] = float(np.median(rms(dev_after)))
     return out, stats
 
 
@@ -747,7 +816,8 @@ def learner_params(name, args):
               "emit": getattr(args, "emit", "learner")}
     if getattr(args, "emit", "learner") == "donor":
         common.update({"select": args.select, "repair_pick": args.repair_pick,
-                       "balance_cells": args.balance_cells, "band_lo": args.band_lo,
+                       "balance_cells": args.balance_cells,
+                       "select_space": args.select_space, "band_lo": args.band_lo,
                        "band_hi": args.band_hi,
                        "repair_band_lo": args.repair_band_lo,
                        "field_mode": args.field_mode, "field_k": args.field_k,
@@ -881,6 +951,12 @@ def add_learner_args(p):
                    help="target cells per local bin for --select balanced. Derived "
                         "from the cell count, deliberately not from the evaluator's "
                         "FIELD_GRID")
+    p.add_argument("--select-space", default="raw", choices=["raw", "rank"],
+                   help="space the donor objective is measured in. 'raw' (default) "
+                        "uses the learner's target space; 'rank' uses the "
+                        "evaluator's own per-gene rank transform, which is what "
+                        "every ranked metric and the pose search actually read. "
+                        "Emission is raw real measurements either way")
     p.add_argument("--select", default="nearest",
                    choices=["nearest", "band", "balanced"],
                    help="how --emit donor picks the replacement. 'nearest' "

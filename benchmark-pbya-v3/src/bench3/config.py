@@ -1587,22 +1587,33 @@ METHODS = {
     # instrument's coarser bins, whereas tuning to the lattice would be measuring
     # the ruler.
     #
-    # Measured on a fixture with a KNOWN true field and a SPATIALLY COHERENT,
-    # smoothly mis-registered incumbent -- the host's real failure mode, a warped
-    # copy rather than per-cell jitter -- Moran's I and Geary's C computed as
-    # benchmark-pbya-v2's `_morans_i` does, field_r on the evaluator's own 20x20
-    # lattice, mean of three worlds:
+    # ⚠️ THE TABLE THAT WAS HERE IS WITHDRAWN. It was produced by a fixture that
+    # built the learner's field from the HELD-OUT section's own ground truth
+    # (`learner_pred(w["gt_field"], ...)`), i.e. it handed the regressor an
+    # oracle the real method never gets, and then measured how much that oracle
+    # could correct the donors. See `reports/ml_ablation_field_cap.md` §1. The
+    # same flaw sits behind the `*_lgbmband` table above; read that one with the
+    # same suspicion.
     #
-    #   arm                      morans_r  morans_MAE  gearys_r  field_r  var/GT
-    #   ground truth               1.0000      0.0000    1.0000   1.0000   1.000
-    #   host v14/v18               0.9644      0.0292    0.9651   0.7807   0.916
-    #   *_lgbm  (dense emit)       0.5747      0.2565    0.6591   0.9735   0.805
-    #   *_lgbmband                 0.9698      0.0370    0.9708   0.9362   0.941
-    #   *_lgbmbalance              0.9974      0.0083    0.9976   0.9815   0.965
+    # Re-measured on `methods/_field_fixture.py`, where the field varies with z,
+    # the donor pool is the flanking sections and the learner may predict only
+    # what a model fit on those flanks can predict -- so the z-drift is a SHARED
+    # error, present in the prediction and in the donors alike, as on real
+    # tissue. Ranked as evaluate_paper.py:670 ranks, mean of 4 worlds, at a
+    # section spacing of dz=0.25 / 0.5:
     #
-    # Both targets at once: above the unmodified host on Moran's/Geary's (and at
-    # a third of its Moran's MAE), and above the dense `*_lgbm` emitter on the
-    # binned field that the three marker/localization metrics are computed from.
+    #   arm                      morans_r  morans_MAE  gearys_r  field_r
+    #   host v14/v18          0.9685/0.8839  .099/.139  .967/.889  0.5665/0.4759
+    #   *_lgbm  (dense emit)  0.0670/0.0418  .784/.784  .048/.041  0.6248/0.5569
+    #   *_lgbmband            0.9781/0.8941  .084/.129  .976/.895  0.6613/0.5541
+    #   *_lgbmbalance         0.9829/0.9127  .049/.103  .973/.911  0.7220/0.6215
+    #
+    # `*_lgbmbalance` still beats the host on every column at both spacings. But
+    # note the third row: the ENTIRE gap between copying donors and emitting the
+    # regressor's field is 0.06 of field_r, because the regressor and the donors
+    # are fed by the same flanking sections and so carry nearly the same
+    # information about the query plane. That bound, not the tuning, is what
+    # limits this whole line of methods. `reports/ml_ablation_field_cap.md` §2.
     #
     # WHAT DID NOT WORK, so it is not here. One greedy sweep in cell order is
     # already a fixed point in everything but name: re-visiting each cell with its
