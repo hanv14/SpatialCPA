@@ -26,7 +26,7 @@ This repo pins them (`config.V18_ARGS`), but the question for the published rows
 remains: **were all of them run with the extras?** The prediction records it.
 Every published `prediction.h5` should carry `uns/method_params` with
 `"edit_weight": 0.0` and `"ground_blend_flow": 1.0`. That is the first thing to
-check in the lab `results/` tree (§7).
+check in the lab `results/` tree (§6).
 
 `--ground-temp` is **not** written to `method_params`, and neither is `--device`.
 A published row's temperature can only be read from its logged command line
@@ -79,11 +79,12 @@ look.
 - **The STARmap row runs from a fresh clone with no environment variables**:
   `make starmap-row`, 2 min 48 s on 4 CPU cores. v18 itself takes 36 s and
   986 MB peak RSS; the rest is scoring.
-- **Deterministic.** Two independent runs gave bitwise-identical `prediction.h5`
+- **Deterministic.** Every independent run gave a bitwise-identical `prediction.h5`
   (all of X, obs, method_params; only `uns/wall_time_seconds` differs), and all
-  50 scalar metrics were identical at tolerance 0, UMAP included.
+  50 scalar metrics were identical at tolerance 0, UMAP included. That holds across
+  runs before and after each restructuring of this tree (§5).
 - **Not yet compared with the published row.** `expected/published/` is empty
-  until the lab files arrive (§7). Two things can legitimately make them differ:
+  until the lab files arrive (§6). Two things can legitimately make them differ:
   - `--device auto` picks CUDA when present, and GPU flow training isn't bitwise
     equal to CPU;
   - UMAP (`paper_umap_*`) moves with umap-learn/numba versions.
@@ -95,8 +96,10 @@ look.
 ## 4. The scorer — where a number could move without the method changing
 
 - **`evaluate_paper.py` is pinned** (sha256 `7362669200bb…9538992`, README). Its
-  dependencies are pinned in `MANIFEST.sha256`. Two config files were edited
-  (registry only), and their constants are asserted in `tests/test_pins.py`.
+  dependencies are pinned in `MANIFEST.sha256`, and every file's relation to its
+  parent-project original is recorded in `MANIFEST.original.sha256` (§5). The
+  two config files were edited (registry and paths only), and their constants are
+  asserted in `tests/test_pins.py`.
 - **Pose.** `paper_marker_field_r` and `paper_celltype_localization` are computed
   after `align.align_by_expression` (`align.py`), which picks the rotation by
   binned-marker-field agreement. Anything that smooths the marker field can
@@ -104,118 +107,109 @@ look.
   `metrics.json` records `align_rotation_deg`, `align_score` and
   `align_runner_up` per section; a marginal pose is visible there.
 - **Scale fairness is rank-normalization.** All primary metrics use per-gene
-  rank-normalized expression, imported from v2's `evaluate_generation.py`. So
+  rank-normalized expression, from `src/benchmark/evaluate_generation.py`. So
   v18's raw-output fix cannot help them directly. It shows only in
   `paper_gene_var_spearman`, and in `paper_gene_detection_spearman`, which is
   computed on raw emitted values.
 - **Not ranked:** `paper_cell_count_ratio` (by construction ≈ 1 here, §2) and
   `paper_rare_celltype_recall`.
-- **The v2 `matched`/`gen_*` blocks** are in `metrics.json` for continuity with the
-  v2 sweep. The cell-matched ones (`pearson_median`, `celltype_accuracy`, …) are
+- **The `gen_*` and cell-matched blocks** are in `metrics.json` as well. The
+  cell-matched ones (`pearson_median`, `celltype_accuracy`, …) are
   reference only: generation has no cell correspondence.
 - The harness's own discrimination check (`make selftest`: oracle / flanking copy
   / spatial scramble / random) passes on this tree (measured, 4 min 20 s).
   `flanking_copy` is the natural baseline for a method that copies flanking
-  cells; see `results/summary/selftest_metrics.json` after running it.
+  cells; see `benchmark/results/summary/selftest_metrics.json` after running it.
 
-## 5. The expression ablation (`v18_*`)
+## 5. What was changed from the published tree
 
-`run_spatialcpav18_ml.py` calls v18's own `generate_virtual_slice` and replaces
-only the returned `expression` array with a learner's prediction. v18's layout,
-donor selection, type vote and composition matching are untouched, and
-`learn_spatialcpav18.py` is not edited. Each row answers: *what does emitting
-copied real measurements buy over emitting a regressed conditional mean from the
-same cells' features* (x, y, z, cell type, local morphology)?
-
-Read these before reading the rows:
-
-- **The baseline is already a two-donor per-gene chimera** (§2). The ablation
-  replaces the gene-mix too, so a `v18_*` row compares against "two-donor
-  recombination", not "one copied cell".
-- **The target scale mirrors v18's `raw_ok`.** With raw data present the learner
-  trains on raw values, and its negative predictions are **clipped to 0**. That
-  clip *manufactures zeros*, so a `v18_*` `paper_gene_detection_spearman` is not a
-  learner recovering sparsity. `--target-scale log` is the cross-check.
-  `method_params` records which scale ran.
-- **`lasso`'s penalty is a fraction of `alpha_max`** (`_ml_learners.FracAlphaLasso`),
-  because scikit-learn's default collapses the fit to the per-gene mean. An
-  all-zero fit is reported at run time.
-- **`*_gbmfield` / `*_lgbm{field,repair,band,balance}` are donor variants.** The
-  learner's prediction is a *target*, and each cell emits the real local same-type
-  profile closest to it. They change neither coordinates nor cell types. So any
-  movement in `paper_celltype_localization` is a pose effect via the aligner
-  (§4), not better placement (`config.py`, comment above `_GBMFIELD_HOSTS`).
-- The registry comments in `config.py` are the design record for each variant,
-  including measured trade-offs (e.g. the per-gene repair costs Moran's MAE in
-  every configuration tried).
-
-### Ablation run times (measured, STARmap, 4-core CPU)
-
-Method step only (`resources.json`); scoring adds ~2 min per row.
-
-ABLATION_TABLE_PLACEHOLDER
-
-## 6. What was changed from the published tree
-
-Cut from the parent project at `08c385ce` (2026-09-23), trimmed by deletion, then
-edited in two ways: the harness changes this review needed, and a rename that
-makes SpatialCPA-v18 a standalone method with no trace of the versions it
-descends from. **Neither changes a single emitted number**, and both are proven,
+Cut from the parent project at `08c385ce` (2026-09-23) and then reorganised in
+three ways. **None of them changes a single emitted number**, and each is proven,
 not asserted.
 
-### Harness changes
+1. **Scope.** Only SpatialCPA-v18 and the three comparators remain: other
+   SpatialCPA versions and v18's `ml` expression ablation are gone, along with
+   their wrappers, registry entries, learners, fixtures and environment
+   packages.
+2. **One folder.** The parent project's three benchmark folders were merged into
+   `benchmark/`, following the v3 layout:
 
-| file | change | affects numbers? |
-|---|---|---|
-| `benchmark-pbya-v3/src/bench3/config.py` | METHODS / METHOD_ORDER / `_GBMFIELD_HOSTS` cut to v18 + the three comparators; `V18_ARGS` added and applied to every v18-hosted entry | no: scorer constants unchanged (tested); the evaluated METHODS equal the published ones plus `V18_ARGS`, apart from `notes` and the log-marker prefix. It changes *what runs by default*, which is the point |
-| `benchmark-pbya-v2/src/benchmark/config.py` | METHODS cut to spatialz/feast/isost | no (constants tested) |
-| `benchmark-pbya-v3/src/bench3/methods/run_spatialcpav18.py` | v18 lookup stops at the repo root; loaded file's sha256 and `temp`/`device` logged | no — resolution and log text only |
-| `benchmark-pbya-v3/src/bench3/run_benchmark.py` | optional `$BENCH_V3_PYTHON` launcher | no: unset = published behaviour |
-| `run_all.py`, `plot_*.py` | usage examples | no |
+   | was | is |
+   |---|---|
+   | `benchmark-pbya-v3/src/bench3/` (harness, scorer) | `benchmark/src/bench3/` |
+   | `benchmark-pbya-v2/src/benchmark/` (evaluators, leakage guard) | `benchmark/src/benchmark/` |
+   | `benchmark-pbya-v2/src/benchmark/methods/` (comparator wrappers, `_v2_io`) | `benchmark/src/bench3/methods/`, beside v18's wrapper |
+   | `benchmark-pbya/src/data/` (download/process scripts) | `benchmark/src/data/` |
+   | `benchmark-pbya/tools/` | `benchmark/tools/` |
+   | `benchmark-pbya/data/{raw,processed}/` | `benchmark/data/{raw,processed}/` |
+   | `benchmark-pbya-v3/data/processed/` (the built paper-protocol datasets) | `benchmark/data/sections/`, so a build never shares a path with its source |
+   | `data/starmap/…h5ad` | `benchmark/data/raw/starmap_visual_cortex/…h5ad` |
 
-### The standalone rename
+   Run commands are unchanged apart from `cd benchmark`:
+   `python -m src.bench3.<module>`.
+3. **Standalone naming.** Every reference to other SpatialCPA versions, and to the
+   old folder names, was removed from code, comments, docstrings and messages.
+   v18's classes are now `SpatialCPAv18` / `V18Config`, and its log prefix is
+   `[v18]`.
 
-| was | is | where |
-|---|---|---|
-| class `SpatialCPAv14` | `SpatialCPAv18` | `learn_spatialcpav18.py`, both wrappers, the probe |
-| class `V14Config` | `V18Config` | same |
-| log prefix `[v14] …` | `[v18] …` | `learn_spatialcpav18.py`; the matching `invalid_log_markers` in `config.py` |
-| docstrings and comments describing v18 as "v14 + fixes", citing a `spatialcpav14/` package, or pointing at sibling versions' code | v18 described on its own terms | `learn_spatialcpav18.py`, both wrappers, `_ml_learners.py`, `config.py`, and comments in `design.py`, `assets.py`, v2's `evaluate_generation.py` and `leakage_guard.py` |
+   Two files were deliberately left **byte-identical**, docstrings included:
+   - `evaluate_paper.py`, so its published sha256 still identifies it;
+   - `align.py`.
 
-**Proof 1, mechanical.** `scripts/verify_rename.py ORIGINAL RENAMED` parses both
-files, drops docstrings and comments, maps the two class names and the `[v14]`
-literal in the original, and masks only `print(...)` text and `help=`/
-`description=` strings. Then it requires the two ASTs to be **identical**. Every
-constant, default, choice string, call, argument and branch must match. All seven
-renamed files pass against the parent project's originals: `learn_spatialcpav18.py`,
-`run_spatialcpav18_ml.py`, `_ml_learners.py`, `design.py`, `assets.py`,
-`evaluate_generation.py`, `leakage_guard.py`. `run_spatialcpav18.py` passes against
-its post-path-fix version; against the parent's copy, it differs by exactly that
-fix. `config.py` is checked by evaluating `METHODS`, since its `notes` text
-changed. The original hashes are
-in `MANIFEST.original.sha256`, and the check re-runs against any original, including
-the lab's (§7).
+   Their docstrings still say `benchmark-pbya-v3`. Two names were kept for the
+   same reason:
+   - the evaluators' package is still imported as `benchmark`;
+   - the bridge module is still `_v2bridge`.
 
-**Proof 2, empirical.** The STARmap row re-run on the renamed code produces a
-`prediction.h5` **bitwise identical** to the one committed before the rename
-(`expected/cpu-verified/…/prediction.h5`, unchanged), and all 50 metrics are
-equal at tolerance 0. Only `method_log.txt` was re-committed: its text now reads
-`[v18]` and prints `temp`/`device`.
+   `evaluate_paper.py` imports both.
 
-Byte-identical to the parent, untouched: `evaluate_paper.py`, `align.py`,
-`_v2bridge.py`, `prepare_dataset.py`, `sources.py`, `evaluate_all.py`,
-`aggregate_results.py`, `rank_methods.py`, `_field_fixture.py` (the synthetic
-fixture the ablation's registry comments were measured on), v2's `evaluate.py` /
-`_v2_io.py` / `resource_monitor.py` and the comparator wrappers.
+### How "no number moved" is proven
 
-**What stripping the other versions broke: nothing that v18 or the comparators
-use.** `_ml_learners.py` was shared with other versions' ablations and is kept
-whole. `_GBMFIELD_HOSTS` holds v18 alone. The upstream v3 README is replaced by
-`docs/`. Some ablation comments in `config.py` cite `reports/ml_ablation_*.md`
-from the parent project; those reports are not carried, because they analyse
-several versions together.
+**Per file.** `MANIFEST.original.sha256` lists all 70 files that came from the
+parent project, with the original's path and sha256:
 
-## 7. Open provenance items (need the lab machine)
+- **40 `identical`**: byte-for-byte the original. This includes
+  `evaluate_paper.py`, `align.py`, `resource_monitor.py`, `sanitize_checkpoint.py`
+  and every dataset script.
+- **21 `equivalent`**: `scripts/verify_rename.py` parses both files and shows the
+  ASTs are identical once docstrings, comments, message text (`print`, `raise`,
+  `warnings.warn`, `parser.error`, `help=`/`description=`/`epilog=`) and v18's two
+  class names are set aside. Every constant, default, choice string, call,
+  argument and branch must match. This includes `learn_spatialcpav18.py`,
+  `evaluate.py`, `evaluate_generation.py`, `leakage_guard.py`, `sources.py`,
+  `prepare_dataset.py`, `design.py`, `rank_methods.py` and `aggregate_results.py`.
+- **9 `changed`**, each an executable change outside the computation:
+
+| file | change |
+|---|---|
+| `src/bench3/config.py` | paths for the one-folder layout (`DATA_ROOT`, `data/sections/`); METHODS cut to the four methods; `V18_ARGS` pinned on `spatialcpav18_gen`; `[v18]` fallback markers. Scorer constants unchanged (tested); the evaluated METHODS equal the published ones plus `V18_ARGS`, apart from `notes` |
+| `src/benchmark/config.py` | cut to the four constants `evaluate.py` imports, with values unchanged (tested against the original) |
+| `src/bench3/_v2bridge.py` | finds `src/benchmark` at its new place |
+| `src/bench3/methods/run_spatialcpav18.py` | v18 lookup stops at the repo root; sha256, `temp` and `device` logged; finds `_v2_io`/`leakage_guard` at their new place |
+| `src/bench3/methods/run_spatialz.py`, `run_isost.py` | `TOOLS_DIR` → `benchmark/tools/` |
+| `src/bench3/run_benchmark.py` | optional `$BENCH_V3_PYTHON` launcher (unset = published behaviour); one error string |
+| `src/bench3/selftest.py` | finds `_v2_io` at its new place |
+| `src/bench3/survey_datasets.py` | `--root` default → `benchmark/` |
+
+`tests/test_rename.py` re-checks every `identical` and `equivalent` row against
+the originals whenever they sit beside this tree. It also fails if the set of
+`changed` files ever differs from these nine.
+
+**End to end.** After each restructuring, the STARmap row was re-run in this
+tree:
+- after the standalone rename;
+- after the merge into `benchmark/` together with the `ml` removal, in the
+  environment with the ablation packages uninstalled.
+
+Each `prediction.h5` was **bitwise identical** to the committed
+`expected/cpu-verified/…/prediction.h5`, which has not been re-committed since it
+was first produced, and all 50 metrics matched at tolerance 0. The harness
+selftest (oracle / flanking copy / spatial scramble / random) gave metrics
+identical to its run before the merge; see the numbers below.
+
+_(Selftest before/after comparison: in progress; filled in by the next commit.)_
+
+## 6. Open provenance items (need the lab machine)
 
 `scripts/export_lab_envs.sh` collects all of these in one run:
 
@@ -227,13 +221,14 @@ several versions together.
 2. **Is this the v18 that ran?** The published runs used
    `/data/han/projects/Spatial3D/src/learn_spatialcpav18.py`. This repo's file is
    the parent project's root copy (sha256 `cf89792a…`, in
-   `MANIFEST.original.sha256`), renamed (§6). If `provenance.txt` shows the same
+   `MANIFEST.original.sha256`), renamed (§5). If `provenance.txt` shows the same
    hash, it is the same file. If it doesn't, run
    `python scripts/verify_rename.py <lab file> learn_spatialcpav18.py`. EQUIVALENT
    means this repo computes exactly what the lab file did. Anything else means the
    lab file is the one to ship.
-3. The same for `evaluate_paper.py` (hash must match exactly: it is not renamed),
-   `align.py`, and the two v18 wrappers (via `verify_rename.py`).
+3. The same for `evaluate_paper.py` and `align.py` (hashes must match exactly:
+   neither was touched) and for the v18 wrapper (via `verify_rename.py`; it differs
+   from the published wrapper only by the lookup fix).
 4. **Exact environments** (`envs/lock/*.lab.*`). The `.yml` files here are ranges.
 5. **The comparators' code**: the isoST commit (`fetch_tools.sh` defaults to HEAD
    as of 2026-09-24, `805981c3`), and whether the Zenodo SpatialZ code equals the

@@ -1,22 +1,22 @@
-# benchmark-pbya-v3 — datasets
+# Datasets
 
-_Carried over from the parent project's `benchmark-pbya-v3/README.md` ("Datasets" through "Section count and hold-out pattern"). Paths like `benchmark-pbya/data/raw/...` are relative to this repository root. For the build commands, sizes and times in this repository, see README.md, "Full benchmark"._
+_Carried over from the parent project's benchmark README ("Datasets" through "Section count and hold-out pattern"), with paths updated to this tree. Paths like `data/raw/...` are relative to `benchmark/`. For the build commands, sizes and times in this repository, see README.md, "Full benchmark"._
 
 ## Datasets
 
 Eighteen volumes. The first seven build from `data/raw/`; the rest are read from
-`benchmark-pbya`'s **processed** `data.h5ad` (see [Where each source comes
+a **processed** `data.h5ad` in `data/processed/` (see [Where each source comes
 from](#where-each-source-comes-from)).
 
 | dataset | `kind` | partition | source | status |
 |---|---|---|---|---|
 | `starmap_visual_cortex` | `paper` | `planes` — trim z 6–13 / 91–94, split 77 planes into 7 × 11 | the paper's own volume | the reproduction |
-| `exseq_visual_cortex` | `analogue` | `z_width` — cut the z range into 7 equal-width slabs (0.2 % outlier clip, not a noise trim) | `benchmark-pbya/data/raw/exseq_visual_cortex` (or v1's processed h5ad) | the same protocol, a second volume |
-| `imc_breast_cancer` | `analogue` | `sections` — all 15 real serial sections at 10 µm, used as-is | `benchmark-pbya/data/raw/imc_breast_cancer` (15 h5ads, or v1's processed) | protein panel, human tumour |
-| `cosmx_nsclc_3d` | `analogue` | `sections` — all 6 real cryosections, **30 µm** apart | `benchmark-pbya/data/raw/cosmx_nsclc_3d` (2 zips, or v1's processed) | widest *uniform* gaps |
-| `deep_starmap` | `analogue` | `planes` — 0.70 µm optical planes grouped into 7 slabs, no trim | `benchmark-pbya/data/raw/deep_starmap` (3 CSVs, or v1's processed) | dense volume, mouse brain |
-| `merfish_hypothalamus` | `analogue` | `sections` — 12 coronal sections, **50 µm** apart (animal 1) | `benchmark-pbya/data/raw/merfish_hypothalamus` (one CSV, all animals) | new tissue, wide gaps |
-| `openst_lymph_node` | `analogue` | `sections` — 19 cryosections | `benchmark-pbya/data/raw/openst_lymph_node` (19 h5ad.gz) | human lymphoid tissue |
+| `exseq_visual_cortex` | `analogue` | `z_width` — cut the z range into 7 equal-width slabs (0.2 % outlier clip, not a noise trim) | `data/raw/exseq_visual_cortex` (or the processed h5ad) | the same protocol, a second volume |
+| `imc_breast_cancer` | `analogue` | `sections` — all 15 real serial sections at 10 µm, used as-is | `data/raw/imc_breast_cancer` (15 h5ads, or the processed h5ad) | protein panel, human tumour |
+| `cosmx_nsclc_3d` | `analogue` | `sections` — all 6 real cryosections, **30 µm** apart | `data/raw/cosmx_nsclc_3d` (2 zips, or the processed h5ad) | widest *uniform* gaps |
+| `deep_starmap` | `analogue` | `planes` — 0.70 µm optical planes grouped into 7 slabs, no trim | `data/raw/deep_starmap` (3 CSVs, or the processed h5ad) | dense volume, mouse brain |
+| `merfish_hypothalamus` | `analogue` | `sections` — 12 coronal sections, **50 µm** apart (animal 1) | `data/raw/merfish_hypothalamus` (one CSV, all animals) | new tissue, wide gaps |
+| `openst_lymph_node` | `analogue` | `sections` — 19 cryosections | `data/raw/openst_lymph_node` (19 h5ad.gz) | human lymphoid tissue |
 | `allen_merfish_brain` | `analogue` | `sections` — 59 sections, centred window | Allen ABC `MERFISH-C57BL6J-638850` | whole mouse brain, most sections |
 | `allen_zhuang_abca1` | `analogue` | `sections` — centred window of 15 | Allen ABC `Zhuang-ABCA-1` | whole mouse brain |
 | `allen_zhuang_abca2` | `analogue` | `sections` — centred window of 15 | Allen ABC `Zhuang-ABCA-2` | whole mouse brain, 2nd parcellation |
@@ -38,7 +38,7 @@ python -m src.bench3.run_all --dataset exseq_visual_cortex
 are spot arrays, not single cells. Everything mechanical works, but a spot pools
 tens of cells, so `paper_celltype_localization` scores *deconvolved composition*
 rather than cells and the binned marker field is already binned by the array
-geometry before v3 bins it. `rank_methods` prints the flag and says so. Read the
+geometry before it is binned here. `rank_methods` prints the flag and says so. Read the
 two spot rows against each other, never against a single-cell row — the same
 discipline `kind` imposes between the paper dataset and the analogues.
 
@@ -61,12 +61,12 @@ Both are recorded in `uns['paper_protocol']['gene_selection']` /
 `--max-cells-per-section`. `openst_lymph_node` is whole-transcriptome too and is
 **not** capped here — see [Known gap](#known-gap-openst-is-still-uncapped).
 
-Both write to `benchmark-pbya-v3/data/processed/<dataset>/data.h5ad` (override with
+Both write to `data/sections/<dataset>/data.h5ad` (override with
 `$BENCH_V3_DATA`; the build prints the destination). ExSeq needs no arguments: it
-resolves `benchmark-pbya/data/raw/exseq_visual_cortex` first, then v1's processed
+resolves `data/raw/exseq_visual_cortex` first, then the processed
 h5ad — `$BENCH_V3_RAW_EXSEQ` or `--raw` override. The raw form is the spacejam2
-cell-by-gene CSV, read directly by `sources.read_exseq_csv`, so v1's processing
-pipeline does not have to have been run. Cell types come from `results_adata.h5ad`
+cell-by-gene CSV, read directly by `sources.read_exseq_csv`, so its processing
+script does not have to have been run. Cell types come from `results_adata.h5ad`
 beside the CSV when it is present and row-aligned; without it they stay `unknown`
 and the `paper_celltype_*` group is unavailable, which the build says out loud.
 
@@ -88,29 +88,29 @@ two different races. Restrict any stage to one dataset with `--dataset-name`.
 
 ### Where each source comes from
 
-**The original seven build from `data/raw/`.** v1's processed files are accepted
+**The original seven build from `data/raw/`.** Processed files are accepted
 as an alternative, but none is required: `sources.py` reads each raw distribution
 in its own form — ExSeq's cell-by-gene CSV, IMC's per-section h5ads,
 Deep-STARmap's expression/spatial CSVs, and CosMx's two zips (the shipped h5ad
 carries STIM coordinates in arbitrary units, so it is joined to the per-section
-flat files for physical micrometres). Those readers mirror v1's processors rather
-than calling them, so v3 stays self-contained.
+flat files for physical micrometres). Those readers mirror the processors in
+`src/data/process/` rather than calling them, so the build needs no processing step.
 
 **The Allen atlases build from either.** `sources.read_allen_ccf` reads the raw
 distribution directly — an expression `.h5ad` beside the cell-metadata CSV that
 carries the reconstructed CCF position and the cluster annotation — including the
 mm → µm conversion, which is the step that is silently wrong if skipped, since
-every other v3 dataset is micrometres. `reader_region` selects which Zhuang
+every other dataset here is micrometres. `reader_region` selects which Zhuang
 parcellation.
 
-**The remaining six read v1's *processed* `data.h5ad`.** `merfish_thick_*`,
+**The remaining six read a *processed* `data.h5ad`.** `merfish_thick_*`,
 `easi_fish_lha*`, `exseq_breast_cancer`, `st_mouse_brain_ortiz` and
-`visium_mouse_brain_c2l` have no raw reader in v3, because their raw forms are a
+`visium_mouse_brain_c2l` have no raw reader in `sources.py`, because their raw forms are a
 Dryad archive with an R/Seurat fallback path, a MATLAB `.mat` of transcript
 positions, and a per-slide Visium ZIP respectively — re-implementing those
 faithfully is a much larger job than the CSV and h5ad readers above, and getting
 one subtly wrong is the failure mode this benchmark is least able to detect. So
-they require v1's processing pipeline to have been run, and the build says so if
+they require their `src/data/process/` script to have been run, and the build says so if
 the file is missing. Adding a raw reader later changes nothing else: it is one
 entry in `sources.READERS` plus a `reader` key.
 
@@ -142,7 +142,7 @@ it did before.
 
 `openst_lymph_node` is whole-transcriptome like the two spot datasets, and it is
 **not** given an `n_hvg` cap here. v18's wrapper densifies the training matrix
-(`run_spatialcpav18.py:352`, `X_raw = _to_dense_f32(adata.X)`), which at ~10⁶ cells ×
+(`run_spatialcpav18.py:348`, `X_raw = _to_dense_f32(adata.X)`), which at ~10⁶ cells ×
 ~2×10⁴ genes is order 80 GB; a run with a wrapper that densifies the same way was
 killed by the OOM killer on this dataset. The v18_* ablations densify too, so every
 v18-hosted row on this dataset is expected to fail the same way. Capping it is the same one-line spec change the ST
@@ -152,7 +152,7 @@ into this change. Until then, expect that run to fail.
 
 **Why ExSeq.** Same tissue as STARmap — mouse visual cortex — so the marker genes
 and the laminar-axis composite carry over unchanged, and it is the only candidate
-in `benchmark-pbya` for which none of the metric definitions have to be
+in the source collection for which none of the metric definitions have to be
 reinterpreted. It is an independent technology on independent tissue, which is
 what a second dataset is *for*.
 
@@ -202,7 +202,7 @@ names the offending sections and suggests concrete `--z-trim-quantile` /
 
 Only STARmap's trim is protocol. Dropping `z = 6–13` and `91–94` comes from the
 SpatialZ paper's own analysis of that volume, so it is always applied and
-`--no-trim` is refused for it. The analogue datasets have no published trim and v3
+`--no-trim` is refused for it. The analogue datasets have no published trim and the benchmark
 does not invent one:
 
 * `exseq_visual_cortex` clips 0.2 % of cells at each end of z — not to remove
@@ -237,6 +237,6 @@ explicit tuple in `config.DATASET_SPECS` to pin a different split, and
 `--n-sections` to change the count.
 
 **One more caveat.** `kind=analogue` is not decoration: the SpatialZ paper validated
-this protocol on STARmap, so an ExSeq row is v3's extension of it. Report the two
+this protocol on STARmap, so an ExSeq row is this benchmark's extension of it. Report the two
 separately and never pool their ranks.
 

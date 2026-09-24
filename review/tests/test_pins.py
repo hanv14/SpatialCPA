@@ -36,7 +36,7 @@ def test_evaluate_paper_is_the_pinned_file():
 
 def test_evaluate_paper_pin_matches_manifest_and_readme():
     m = dict((p, d) for d, p in _manifest())
-    assert m["benchmark-pbya-v3/src/bench3/evaluate_paper.py"] == EVALUATE_PAPER_SHA256
+    assert m["benchmark/src/bench3/evaluate_paper.py"] == EVALUATE_PAPER_SHA256
     assert EVALUATE_PAPER_SHA256 in (REVIEW_ROOT / "README.md").read_text()
 
 
@@ -50,28 +50,28 @@ def test_every_manifest_entry_matches():
 def test_manifest_covers_the_scoring_chain():
     pinned = {p for _, p in _manifest()}
     required = {
-        "benchmark-pbya-v3/src/bench3/evaluate_paper.py",
-        "benchmark-pbya-v3/src/bench3/align.py",
-        "benchmark-pbya-v3/src/bench3/_v2bridge.py",
-        "benchmark-pbya-v3/src/bench3/config.py",
-        "benchmark-pbya-v3/src/bench3/design.py",
-        "benchmark-pbya-v3/src/bench3/prepare_dataset.py",
-        "benchmark-pbya-v3/src/bench3/run_benchmark.py",
-        "benchmark-pbya-v2/src/benchmark/evaluate.py",
-        "benchmark-pbya-v2/src/benchmark/evaluate_generation.py",
-        "benchmark-pbya-v2/src/benchmark/leakage_guard.py",
-        "benchmark-pbya-v2/src/benchmark/config.py",
-        "benchmark-pbya-v2/src/benchmark/methods/_v2_io.py",
+        "benchmark/src/bench3/evaluate_paper.py",
+        "benchmark/src/bench3/align.py",
+        "benchmark/src/bench3/_v2bridge.py",
+        "benchmark/src/bench3/config.py",
+        "benchmark/src/bench3/design.py",
+        "benchmark/src/bench3/prepare_dataset.py",
+        "benchmark/src/bench3/run_benchmark.py",
+        "benchmark/src/benchmark/evaluate.py",
+        "benchmark/src/benchmark/evaluate_generation.py",
+        "benchmark/src/benchmark/leakage_guard.py",
+        "benchmark/src/benchmark/config.py",
+        "benchmark/src/bench3/methods/_v2_io.py",
         "learn_spatialcpav18.py",
-        "benchmark-pbya-v3/src/bench3/methods/run_spatialcpav18.py",
-        "data/starmap/STARmap_Wang2018three_data_3D_data.h5ad",
+        "benchmark/src/bench3/methods/run_spatialcpav18.py",
+        "benchmark/data/raw/starmap_visual_cortex/STARmap_Wang2018three_data_3D_data.h5ad",
     }
     assert required <= pinned, sorted(required - pinned)
 
 
 def test_scoring_constants_unchanged():
-    """config.py was edited for the review (METHODS trimmed), so its hash differs
-    from the published tree. These are the constants evaluate_paper/align read;
+    """config.py was edited for the review (METHODS trimmed, paths moved), so its
+    hash differs from the published tree. These are the constants evaluate_paper/align read;
     they must equal the published values."""
     from conftest import load_bench3_config
     c = load_bench3_config()
@@ -86,11 +86,13 @@ def test_scoring_constants_unchanged():
 
 
 def test_v2_scoring_constants_unchanged():
-    """Same reasoning for benchmark-pbya-v2/src/benchmark/config.py (METHODS trimmed)."""
+    """Same reasoning for src/benchmark/config.py (cut to the evaluators' constants)."""
     import sys
     from conftest import REVIEW_ROOT
-    sys.path.insert(0, str(REVIEW_ROOT / "benchmark-pbya-v2" / "src"))
-    from benchmark import config as v2
-    assert (v2.NN_MATCH_THRESHOLD_UM, v2.SSIM_GRID_SIZE, v2.SSIM_TOP_GENES) == (50.0, 50, 100)
-    assert v2.RANDOM_SEED == 42
-    assert set(v2.METHODS) == {"spatialz", "feast", "isost"}
+    sys.path.insert(0, str(REVIEW_ROOT / "benchmark" / "src"))
+    from benchmark import config as shared
+    assert (shared.NN_MATCH_THRESHOLD_UM, shared.SSIM_GRID_SIZE, shared.SSIM_TOP_GENES) == (50.0, 50, 100)
+    assert shared.RANDOM_SEED == 42
+    assert shared.METRIC_NAMES[:3] == ["gen_coexpression_agreement", "gen_morans_agreement",
+                                       "gen_sinkhorn"]
+    assert len(shared.METRIC_NAMES) == 27

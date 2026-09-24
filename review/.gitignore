@@ -1,6 +1,12 @@
+# built / fetched — regenerate, never commit
 reproduced/
-benchmark-pbya/tools/
-benchmark-pbya/data/
+benchmark/results/
+benchmark/tools/
+# benchmark/data/: only the committed STARmap source volume is tracked
+benchmark/data/*
+!benchmark/data/raw/
+benchmark/data/raw/*
+!benchmark/data/raw/starmap_visual_cortex/
 .venv/
 __pycache__/
 *.pyc

@@ -18,14 +18,12 @@ done
 {
   echo "# host: $(hostname)  date: $(date -u +%FT%TZ)"
   echo "# The files the published rows actually ran. Paths are the lab layout;"
-  echo "# override with V18=... V3=... TOOLS=... if yours differ."
+  echo "# override with V18=... V3=... TOOLS=... if yours differ (V3 = the lab's benchmark-pbya-v3)."
   V18=${V18:-/data/han/projects/Spatial3D/src/learn_spatialcpav18.py}
   V3=${V3:-$HOME/benchmark-pbya-v3}
   TOOLS=${TOOLS:-$V3/../benchmark-pbya/tools}
   sha256sum "$V18" "$V3/src/bench3/evaluate_paper.py" "$V3/src/bench3/align.py" \
-            "$V3/src/bench3/methods/run_spatialcpav18.py" \
-            "$V3/src/bench3/methods/run_spatialcpav18_ml.py" \
-            "$V3/src/bench3/methods/_ml_learners.py" 2>&1 || true
+            "$V3/src/bench3/methods/run_spatialcpav18.py" 2>&1 || true
   sha256sum "$TOOLS"/spatialz/SpatialZ_code/*.py 2>&1 || true
   echo "isost_commit $(git -C "$TOOLS/isost" rev-parse HEAD 2>&1 || true)"
 } > envs/lock/provenance.txt

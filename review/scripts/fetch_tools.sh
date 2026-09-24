@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Fetch the comparator method code that is not pip-installable into the paths
-# the v2 wrappers expect (run_spatialz.py / run_isost.py: parents[4]/benchmark-pbya/tools).
+# the wrappers expect (run_spatialz.py / run_isost.py: benchmark/tools).
 #
-#   benchmark-pbya/tools/spatialz/SpatialZ_code/   <- Zenodo 10.5281/zenodo.17416727
-#   benchmark-pbya/tools/isost/                    <- github.com/deng-ai-lab/isoST @ ISOST_COMMIT
+#   benchmark/tools/spatialz/SpatialZ_code/   <- Zenodo 10.5281/zenodo.17416727
+#   benchmark/tools/isost/                    <- github.com/deng-ai-lab/isoST @ ISOST_COMMIT
 #
 # FEAST needs nothing here (pip: FEAST-py, paste2 — see envs/bench_feast.yml).
 # SpatialCPA-v18 needs nothing here (learn_spatialcpav18.py is committed at the repo root).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-TOOLS=benchmark-pbya/tools
+TOOLS=benchmark/tools
 
 # isoST: HEAD of deng-ai-lab/isoST as of 2026-09-24. REPLACE with the commit the
 # published isost rows ran on (`git -C benchmark-pbya/tools/isost rev-parse HEAD`

@@ -16,7 +16,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PY="${PYTHON:-python}"
-V3="$ROOT/benchmark-pbya-v3"
+BENCH="$ROOT/benchmark"
 OUT="$ROOT/reproduced"
 ROW="spatialcpav18_gen/starmap_visual_cortex/paper_2_4_6"
 
@@ -33,13 +33,13 @@ t0=$(date +%s)
 step "1/6  pinned files (MANIFEST.sha256, evaluate_paper.py)"
 ( cd "$ROOT" && "$PY" -m pytest -q tests/test_pins.py )
 
-step "2/6  build the paper-protocol STARmap dataset from data/starmap/ (~5 s)"
-( cd "$V3" && "$PY" -m src.bench3.prepare_dataset --dataset starmap_visual_cortex )
+step "2/6  build the paper-protocol STARmap dataset from benchmark/data/raw/ (~5 s)"
+( cd "$BENCH" && "$PY" -m src.bench3.prepare_dataset --dataset starmap_visual_cortex )
 
 step "3/6  run spatialcpav18_gen under the pinned flags, then score (~3 min on 4 CPU cores)"
 rm -rf "$OUT/spatialcpav18_gen/starmap_visual_cortex" "$OUT/_inputs/starmap_visual_cortex"
 mkdir -p "$OUT"
-( cd "$V3" && env -u SPATIALCPAV18_FILE -u SPATIALCPAV18_ROOT BENCH_V3_RESULTS="$OUT" \
+( cd "$BENCH" && env -u SPATIALCPAV18_FILE -u SPATIALCPAV18_ROOT BENCH_V3_RESULTS="$OUT" \
     "$PY" -m src.bench3.run_all --methods spatialcpav18_gen --dataset starmap_visual_cortex ) \
   2>&1 | tee "$OUT/run_all.log"
 [ -f "$OUT/$ROW/metrics.json" ] || { echo "FAIL: no metrics.json — see $OUT/$ROW/method_log.txt" >&2; exit 1; }

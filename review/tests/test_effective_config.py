@@ -12,7 +12,7 @@ from __future__ import annotations
 import ast
 import re
 
-from conftest import REVIEW_ROOT, V18_ML_WRAPPER, V18_WRAPPER, load_bench3_config
+from conftest import REVIEW_ROOT, V18_WRAPPER, load_bench3_config
 
 PUBLISHED_FLAGS = {
     "--edit-weight": "0.0", "--ground-blend-flow": "1.0", "--ground-k": "8",
@@ -64,17 +64,9 @@ def test_v18_args_are_the_published_flags():
     assert pairs(load_bench3_config().V18_ARGS) == PUBLISHED_FLAGS
 
 
-def test_every_v18_hosted_method_runs_under_v18_args():
+def test_v18_runs_under_v18_args():
     c = load_bench3_config()
-    hosted = {n: m for n, m in c.METHODS.items()
-              if str(m["wrapper"]).endswith(("run_spatialcpav18.py", "run_spatialcpav18_ml.py"))}
-    assert "spatialcpav18_gen" in hosted and len(hosted) == 16
-    for name, m in hosted.items():
-        wa = list(m["wrapper_args"])
-        assert wa[:len(c.V18_ARGS)] == list(c.V18_ARGS), name
-        # nothing after V18_ARGS may silently re-set one of the published flags
-        later = set(wa[len(c.V18_ARGS)::2])
-        assert not later & set(PUBLISHED_FLAGS), (name, later & set(PUBLISHED_FLAGS))
+    assert list(c.METHODS["spatialcpav18_gen"]["wrapper_args"]) == list(c.V18_ARGS)
 
 
 def test_comparators_get_no_v18_flags():
@@ -97,12 +89,3 @@ def test_readme_table_is_the_effective_configuration():
             continue
         assert default == defaults[flag], (flag, default, defaults[flag])
         assert value == eff[flag], (flag, value, eff[flag])
-
-
-def test_ml_wrapper_declares_every_v18_flag_with_the_same_default():
-    """run_spatialcpav18_ml.py re-declares v18's CLI; its own startup guard checks
-    this too, but a reviewer should not need a torch env to see it."""
-    v18, ml = argparse_defaults(V18_WRAPPER), argparse_defaults(V18_ML_WRAPPER)
-    for flag, d in v18.items():
-        assert flag in ml, flag
-        assert ml[flag] == d, (flag, ml[flag], d)

@@ -35,8 +35,8 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-WRAPPER = ROOT / "benchmark-pbya-v3" / "src" / "bench3" / "methods" / "run_spatialcpav18.py"
-sys.path.insert(0, str(ROOT / "benchmark-pbya-v3"))
+WRAPPER = ROOT / "benchmark" / "src" / "bench3" / "methods" / "run_spatialcpav18.py"
+sys.path.insert(0, str(ROOT / "benchmark"))
 from src.bench3.config import V18_ARGS  # noqa: E402
 
 spec = importlib.util.spec_from_file_location("run_spatialcpav18", WRAPPER)

@@ -1,10 +1,9 @@
-# SpatialCPA-v18 (learn_spatialcpav18.py via run_spatialcpav18.py) and the v18_*
-# expression ablations (run_spatialcpav18_ml.py). Python version is load-bearing:
-# the published rows ran on 3.10.
+# SpatialCPA-v18 (learn_spatialcpav18.py via run_spatialcpav18.py). Python version
+# is load-bearing: the published rows ran on 3.10.
 #
 # Version ranges, not pins. The exact set this repo was verified with is
-# envs/lock/bench_spatialcpa.cpu-verified.txt (CPU, 2026-09-24). The lab-machine
-# set that produced the published rows goes in envs/lock/bench_spatialcpa.lab.txt
+# envs/lock/cpu-verified.txt (CPU, 2026-09-24). The lab-machine set that produced
+# the published rows goes in envs/lock/bench_spatialcpa.lab.{yml,pip.txt}
 # (scripts/export_lab_envs.sh writes it); prefer it when present.
 name: bench_spatialcpa
 channels:
@@ -23,8 +22,3 @@ dependencies:
     - anndata>=0.10
     - scanpy>=1.10
     - tqdm
-    # expression ablations only (v18_xgb / v18_lgbm* / v18_tabm). Not needed for
-    # spatialcpav18_gen; each wrapper fails naming the missing package.
-    - xgboost
-    - lightgbm
-    - tabm

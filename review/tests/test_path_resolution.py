@@ -57,7 +57,8 @@ def test_root_override(tmp_path):
     assert path == str(tmp_path / "learn_spatialcpav18.py")
 
 
-def test_v2_sibling_is_inside_the_repo():
-    src = V18_WRAPPER.read_text()
-    assert 'parents[4]\n             / "benchmark-pbya-v2"' in src
-    assert (REVIEW_ROOT / "benchmark-pbya-v2" / "src" / "benchmark" / "methods" / "_v2_io.py").exists()
+def test_shared_modules_are_inside_the_repo():
+    """_v2_io sits beside the wrapper; leakage_guard in src/benchmark/."""
+    assert (V18_WRAPPER.parent / "_v2_io.py").exists()
+    assert (V18_WRAPPER.parents[2] / "benchmark" / "leakage_guard.py").exists()
+    assert V18_WRAPPER.parents[4] == REVIEW_ROOT

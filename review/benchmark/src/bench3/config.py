@@ -1,0 +1,1175 @@
+"""Registry, paths and protocol constants for the benchmark.
+
+A **paper-faithful reproduction benchmark**: it reproduces the STARmap
+visual-cortex evaluation described in the SpatialZ paper (Lin et al., 2025,
+Nat Methods) and runs *every* method through that exact protocol, so a published
+method's numbers are reproducible and SpatialCPA-v18 is measured against them on
+identical terms.
+
+* **The protocol.** Partition a volume into consecutive 2-D sections, hold out
+  every other one *simultaneously* (STARmap: 7 sections, hold out 2/4/6), and
+  reconstruct them from the rest. Applied unchanged to 17 analogue datasets.
+* **Paper validation strategy.** The quantities the paper validated on: UMAP
+  continuity between real and reconstructed cells, marker-gene spatial patterns
+  (Flt1 / Pcp4 / Cux2), Moran's I *and* Geary's C, and preservation of per-cell-
+  type spatial localization — plus correspondence-free generation metrics.
+  See ``evaluate_paper.py``.
+* **Leakage policy** (``_v2bridge`` → ``src/benchmark/leakage_guard.py``): the
+  held-out sections are physically absent from the method input, methods receive
+  only a scalar target z per held-out section, and label vocabularies are
+  training-only.
+"""
+
+from pathlib import Path
+import os
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+# Everything lives under one folder, ``benchmark/`` (PROJECT_ROOT):
+#
+#   src/bench3/        this package: protocol, runner, scorer, ranking, figures
+#   src/bench3/methods the method wrappers (v18, SpatialZ, FEAST, isoST) + _v2_io
+#   src/benchmark/     the shared evaluators and leakage guard, kept under their
+#                      original import name so the pinned evaluate_paper.py
+#                      imports them unchanged
+#   src/data/          per-source download/ and process/ scripts
+#   data/raw/          downloaded source data (the STARmap volume is committed)
+#   data/processed/    source volumes after src/data/process/
+#   data/sections/     the paper-protocol datasets this package builds
+#   results/           predictions, metrics, summaries
+#   tools/             comparator code that is not pip-installable (make tools)
+PROJECT_ROOT = Path(__file__).resolve().parents[2]        # benchmark/
+REPO_ROOT = PROJECT_ROOT.parent                           # the repository root
+DATA_ROOT = PROJECT_ROOT / "data"
+SHARED_SRC = PROJECT_ROOT / "src"                         # importable `benchmark` pkg
+
+# Raw STARmap volume (Wang et al. 2018). Resolve against the known locations;
+# $BENCH_V3_RAW_STARMAP wins outright, and --raw overrides per invocation.
+#
+# A processed data.h5ad of the same volume is an accepted input too: it is the
+# same cells and the same 89 z-planes, just with coordinates already converted
+# to micrometres — ``prepare_starmap`` detects that and skips the voxel conversion.
+_RAW_STARMAP_NAME = "STARmap_Wang2018three_data_3D_data.h5ad"
+RAW_STARMAP_CANDIDATES = (
+    DATA_ROOT / "raw" / "starmap_visual_cortex" / _RAW_STARMAP_NAME,
+    DATA_ROOT / "processed" / "starmap_visual_cortex" / "data.h5ad",
+    DATA_ROOT / "processed" / "starmap_visual_cortex.h5ad",
+)
+
+
+def resolve_raw_starmap():
+    """First existing candidate, else the preferred path (for the error message)."""
+    env = os.environ.get("BENCH_V3_RAW_STARMAP")
+    if env:
+        return Path(env)
+    for cand in RAW_STARMAP_CANDIDATES:
+        if cand.exists():
+            return cand
+    return RAW_STARMAP_CANDIDATES[0]
+
+
+RAW_STARMAP = resolve_raw_starmap()
+
+# The paper-protocol datasets this package builds (``prepare_dataset``), laid out
+# as ``data/sections/<dataset>/data.h5ad`` — kept apart from ``data/processed/``,
+# which holds the *source* volumes they are cut from. Which protocol produced a
+# given result stays visible in the holdout id (``paper_2_4_6``) and in
+# ``uns['paper_protocol']``.
+DATA_DIR = Path(os.environ.get("BENCH_V3_DATA", DATA_ROOT / "sections"))
+DATASET_NAME = "starmap_visual_cortex"
+DATASET_PATH = DATA_DIR / DATASET_NAME / "data.h5ad"
+
+RESULTS_DIR = Path(os.environ.get("BENCH_V3_RESULTS", PROJECT_ROOT / "results"))
+SUMMARY_DIR = RESULTS_DIR / "summary"
+FIGURES_DIR = SUMMARY_DIR / "figures"
+INPUTS_CACHE = RESULTS_DIR / "_inputs"   # training-only inputs, one per holdout
+ASSETS_CACHE = RESULTS_DIR / "_assets"   # method assets prepared here (see assets.py)
+
+
+# ── The SpatialZ-paper STARmap protocol ───────────────────────────────────────
+# "The original 3D volume was partitioned into consecutive 2D sections. Uppermost
+#  layers (z = 6-13) and lowermost layers (z = 91-94) were removed to reduce
+#  technical noise. The remaining tissue was divided into seven consecutive
+#  sections. Sections 2, 4 and 6 were held out to simulate missing slices, while
+#  sections 1, 3, 5 and 7 were used as input."
+#
+# The raw volume carries 89 z-planes (z = 6..94). Dropping 6-13 and 91-94 leaves
+# 77 planes (z = 14..90), which divides into 7 sections of exactly 11 planes.
+DROP_Z_LOW = (6, 13)        # inclusive
+DROP_Z_HIGH = (91, 94)      # inclusive
+N_SECTIONS = 7
+HELD_OUT_SECTION_INDICES = (2, 4, 6)
+INPUT_SECTION_INDICES = (1, 3, 5, 7)
+
+def section_label(index):
+    """Canonical section label for a 1-based paper section index."""
+    return f"section_{int(index)}"
+
+HELD_OUT_SECTIONS = tuple(section_label(i) for i in HELD_OUT_SECTION_INDICES)
+INPUT_SECTIONS = tuple(section_label(i) for i in INPUT_SECTION_INDICES)
+
+# Voxel calibration — identical to src/data/process/process_starmap_visual_cortex.py
+# so coordinates are directly comparable with its processed ``starmap_visual_cortex``.
+# Leica TCS SP5, HC FLUOTAR L 25x/0.95 W at 1024x1024 (Wang et al. 2018);
+# lateral confirmed via He et al. 2021 (tissue extent 1545 um = 1800 x 0.859).
+VOXEL_XY_UM = 0.859
+VOXEL_Z_UM = 1.0
+
+# Marker genes the paper compares spatial expression patterns for (Fig. 2).
+MARKER_GENES = ("Flt1", "Pcp4", "Cux2")
+
+# Layer-marker composite used to derive the cortical laminar (depth) axis from
+# the ground-truth slice; see ``evaluate_paper.laminar_axis``. Only the genes
+# actually present in the panel are used.
+LAYER_SUPERFICIAL = ("Cux2", "Rasgrf2", "Nov")
+LAYER_DEEP = ("Pcp4", "Ctgf", "Sema3e")
+
+# ── Marker panels for the non-cortex datasets ────────────────────────────────
+# ``MARKER_GENES`` and the LAYER_* composites above are mouse *visual cortex*:
+# they name the genes the paper compares, and the superficial/deep pair defines
+# the laminar axis. Neither transfers to a tissue without cortical layers, and
+# the README is explicit that a new dataset needs its own chosen before
+# ``paper_marker_*`` means anything. These are those choices, one per tissue.
+#
+# The rule each pair follows is the one the IMC entry established: pick two
+# compartments the tissue genuinely separates in space, put them at opposite
+# poles, and let ``evaluate_paper.laminar_axis`` derive the axis from the ground
+# truth as the in-plane gradient of z(superficial) - z(deep). What the axis
+# *means* changes per tissue; how it is computed does not.
+
+# Whole mouse brain (Allen MERFISH / Zhuang ABCA panels). The axis that survives
+# at whole-brain scale is grey vs. white matter: Slc17a7 marks excitatory
+# neurons (grey), Mbp/Plp1 the myelinated tracts. So paper_marker_depth_r reads
+# as "profile across the grey-white axis".
+# Chosen against the *panels*, not from a textbook. The Zhuang ABCA panel carries
+# Gad2 but not Gad1, and no Mbp at all, so the original pick (Slc17a7/Gad1/Mbp)
+# resolved to a single marker there and the metric group was measuring one gene:
+#     WARNING: no channel matched 'Gad1' — closest panel names: Gja1, Gad2, ...
+#     WARNING: no channel matched 'Mbp'  — closest panel names: Pmfbp1, Mybpc1
+# These three are present in the ABCA panel and in the whole-transcriptome
+# datasets, so every brain dataset resolves the same three and their rows stay
+# comparable. Extra fallbacks follow the primary in each layer list;
+# ``resolve_markers`` keeps whichever the panel actually has.
+BRAIN_MARKER_GENES = ("Slc17a7", "Gad2", "Sox10")
+BRAIN_LAYER_SUPERFICIAL = ("Slc17a7", "Gad2", "Gad1")   # neuronal / grey pole
+BRAIN_LAYER_DEEP = ("Sox10", "Plp1", "Mbp", "Mog")      # myelin / white pole
+
+# Mouse hypothalamus (3-D MERFISH thick tissue, EASI-FISH LHA). Neuropeptidergic
+# nuclei are the spatial structure here; the axis contrasts the two best-separated
+# populations rather than a laminar depth.
+HYPOTHALAMUS_MARKER_GENES = ("Gad1", "Slc17a6", "Nts")
+HYPOTHALAMUS_LAYER_SUPERFICIAL = ("Slc17a6", "Nts")   # glutamatergic pole
+HYPOTHALAMUS_LAYER_DEEP = ("Gad1", "Gad2", "Slc32a1")  # GABAergic pole
+
+# Human tumour panels (ExSeq breast cancer). Same tumour/immune contrast the
+# IMC, CosMx and Open-ST entries use, so the four tumour datasets read alike.
+TUMOUR_MARKER_GENES = ("EPCAM", "PTPRC", "COL1A1")
+TUMOUR_LAYER_SUPERFICIAL = ("PTPRC",)             # immune pole
+TUMOUR_LAYER_DEEP = ("EPCAM", "KRT8", "KRT18")    # epithelial / tumour pole
+
+# STARmap is a single 3-D imaging block: the z-planes are inherently
+# co-registered, so the training-only re-registration is the identity. (The same
+# call holds for every volumetric dataset — re-registering would only
+# introduce distortion.)
+REGISTRATION = "none"
+
+RANDOM_SEED = 42
+
+
+# ── Datasets ──────────────────────────────────────────────────────────────────
+# STARmap is the paper's dataset and the reference implementation of the
+# protocol. Anything else is the *same protocol applied to another volume* — a
+# protocol analogue, not part of the published result — and says so in
+# ``kind``. Report the two accordingly.
+#
+# Two partition modes, because volumes come in two shapes:
+#   "planes"  discrete optical planes (STARmap: integer z = 6..94). The trim is
+#             stated in plane indices and the planes are split into equal blocks,
+#             so section boundaries land exactly where the paper puts them.
+#   "z_width" continuous z in um (ExSeq: every cell has its own float z, so
+#             "unique planes" is meaningless). The z range is cut into equal-width
+#             slabs — the same idea, expressed in the only unit available.
+#   "sections" real serial sections, already sections; a consecutive window is kept.
+#
+# Four optional keys carry the differences the later datasets introduced:
+#
+#   "coords"        which coordinate array to believe. Default "auto" is
+#                   ``prepare_dataset.extract_xyz``'s own priority, which prefers
+#                   obs['x','y','z']. That is right for STARmap and wrong for the
+#                   Allen atlases, whose metadata carries *both* section-local
+#                   obs x/y and the reconstructed CCF in obsm['spatial'] — and
+#                   picking the former would silently score a stack of unrelated
+#                   in-section frames. Those specs say "obsm".
+#   "resolution"    "single_cell" (default) or "spot". Spot arrays are not the
+#                   resolution this protocol was designed on: a Visium or ST spot
+#                   pools tens of cells, so paper_celltype_localization measures
+#                   deconvolved composition rather than cells, and the binned
+#                   marker field is already spot-binned before it is binned here. They
+#                   are registered because they are usable and comparable *among
+#                   themselves*, and flagged so their rows are read separately —
+#                   exactly as ``kind`` separates the paper dataset from analogues.
+#   "n_hvg"         cap the gene panel at build time (highly variable genes, with
+#                   the dataset's markers force-included). None = keep the panel.
+#                   Needed for the whole-transcriptome datasets: at ~20-30k genes
+#                   the per-gene Moran's/Geary's families average mostly zeros,
+#                   and a method that densifies the matrix cannot run at all.
+#   "max_cells_per_section"
+#                   cap cells per section by stratified spatial subsample.
+#                   None = keep them all. Needed for the Allen atlases, which run
+#                   to millions of cells per volume.
+#
+# Both caps are applied when the dataset is *built*, so the ground truth and
+# every method's input are the same cells and the same genes. Capping only the
+# method input would bias the evaluation.
+DATASET_SPECS = {
+    "starmap_visual_cortex": {
+        "kind": "paper",
+        "technology": "STARmap",
+        "species": "mouse",
+        "tissue": "visual cortex",
+        "source": "Wang et al. 2018 Science; starmapresources.org",
+        "env_var": "BENCH_V3_RAW_STARMAP",
+        "raw_candidates": RAW_STARMAP_CANDIDATES,
+        "partition": "planes",
+        "source_units": "auto",     # obs x/y/z are voxel indices; obsm may be um
+        "drop_z_low": DROP_Z_LOW,
+        "drop_z_high": DROP_Z_HIGH,
+        "voxel_xy_um": VOXEL_XY_UM,
+        "voxel_z_um": VOXEL_Z_UM,
+        # Both pinned: 7 sections and the 2/4/6 split are the published design,
+        # not a preference of this benchmark. Only this dataset is constrained that way.
+        "n_sections": N_SECTIONS,
+        "held_out": HELD_OUT_SECTION_INDICES,
+        "registration": "none",
+        "marker_genes": MARKER_GENES,
+        "layer_superficial": LAYER_SUPERFICIAL,
+        "layer_deep": LAYER_DEEP,
+        "protocol": "SpatialZ paper (7 consecutive sections, hold out 2/4/6)",
+    },
+    "exseq_visual_cortex": {
+        "kind": "analogue",
+        "technology": "ExSeq",
+        "species": "mouse",
+        "tissue": "visual cortex",
+        "source": "Alon et al. 2021 Science (spacejam2); via src/data",
+        "env_var": "BENCH_V3_RAW_EXSEQ",
+        # Either source works. The raw spacejam2 distribution is read directly by
+        # ``sources.read_exseq_csv`` (a cell-by-gene CSV in micrometres plus the
+        # SpaceTx EDV annotations), so src/data/process/ does not have to have been
+        # run; its processed h5ad is the same content and is accepted too.
+        "reader": "exseq_csv",
+        "raw_candidates": (
+            DATA_ROOT / "raw" / "exseq_visual_cortex",
+            DATA_ROOT / "raw" / "exseq_visual_cortex" / "spacejam2_cellxgene.csv",
+            DATA_ROOT / "processed" / "exseq_visual_cortex" / "data.h5ad",
+            DATA_ROOT / "processed" / "exseq_visual_cortex.h5ad",
+        ),
+        "partition": "z_width",
+        # The ExSeq processor writes micrometres into obsm['spatial'] but records
+        # no coordinate_units, so state it here rather than let detection guess.
+        "source_units": "um",
+        # NOT the paper's trim. The paper drops STARmap's noisiest planes from its
+        # own analysis of that volume; nothing equivalent has been established for
+        # ExSeq, so no noise trim is applied here. What remains is a much smaller
+        # thing with a different job: equal-width binning takes its edges from
+        # min(z) and max(z), so a handful of segmentation outliers at the extremes
+        # would stretch the range and skew all seven slab boundaries. Clipping
+        # 0.2 % of cells at each end makes the binning robust to that while
+        # keeping essentially the whole volume. Set 0, or pass --no-trim, to use
+        # the raw min/max.
+        "z_trim_quantile": 0.002,
+        "voxel_xy_um": 1.0,          # already micrometres
+        "voxel_z_um": 1.0,
+        # A continuous volume, so the slab count is a free choice rather than a
+        # given. 7 over this ~76 um extent puts each slab near 11 um — the
+        # thickness of a real cryosection, and close to STARmap's 11-plane
+        # sections, which keeps the two cortex datasets comparable. It is a
+        # judgement call, not a requirement: --n-sections changes it.
+        "n_sections": 7,
+        "held_out": "alternate",
+        # Same tissue as STARmap, so the cortical markers and the laminar-axis
+        # composite carry over unchanged — whichever of them the ExSeq panel
+        # actually contains. ``prepare_dataset`` records the intersection in
+        # uns['paper_protocol'] and the evaluator uses that, so a gene the panel
+        # lacks is never silently scored.
+        "marker_genes": MARKER_GENES,
+        "layer_superficial": LAYER_SUPERFICIAL,
+        "layer_deep": LAYER_DEEP,
+        # One 3-D imaging volume, like STARmap: the z-planes are inherently
+        # co-registered and re-registering would only distort.
+        "registration": "none",
+        "protocol": "SpatialZ protocol applied to ExSeq (analogue, not the paper)",
+    },
+    "imc_breast_cancer": {
+        "kind": "analogue",
+        "technology": "3D IMC",
+        "species": "human",
+        "tissue": "breast cancer (HER2+)",
+        "source": "Kuett et al. 2022, Zenodo 10.5281/zenodo.4752030",
+        "env_var": "BENCH_V3_RAW_IMC",
+        # Raw = one h5ad per serial section (MainHer2BreastCancerModel_zstep10_*),
+        # read by ``sources.read_imc_zstack``; the processed file also works.
+        "reader": "imc_zstack",
+        "raw_candidates": (
+            DATA_ROOT / "raw" / "imc_breast_cancer",
+            DATA_ROOT / "processed" / "imc_breast_cancer" / "data.h5ad",
+            DATA_ROOT / "processed" / "imc_breast_cancer.h5ad",
+        ),
+        "source_units": "um",
+        # The source block is a known size; the build checks it (see
+        # prepare_dataset) so a reader that silently drops sections cannot
+        # turn this into a smaller, differently-split experiment.
+        "expected_sections": 15,
+        # 15 physically cut sections at 10 um, and each one already *is* a
+        # section, so all of them are used: ``n_sections: None`` means "however
+        # many the data has". There is no reason to discard two thirds of a
+        # serial block to match STARmap's count — the design that matters is the
+        # alternating hold-out, which scales to any number of sections. Set
+        # --n-sections to take a smaller window (then --section-trim picks which).
+        "partition": "sections",
+        "n_sections": None,
+        "section_trim": "center",
+        "held_out": "alternate",
+        # NOT a single imaging volume: serial sections are cut, mounted and imaged
+        # independently, so they are not co-registered and interpolation is
+        # ill-posed without aligning them. Training-only rigid ICP — the first
+        # dataset here where registration is not the identity.
+        "registration": "rigid",
+        # A protein panel, so the cortex genes do not apply. panCK (tumour /
+        # epithelial compartment) and CD3 (T-cell infiltrate) follow the published
+        # analysis of this volume. Name matching ignores case and punctuation
+        # (``prepare_dataset.resolve_markers``) so panCK / PanCK / pan-CK all
+        # resolve to the panel's own spelling — but it is an exact match after
+        # canonicalization, never a prefix, so CD3 cannot capture CD31.
+        "marker_genes": ("panCK", "CD3"),
+        # A tumour has no laminar axis, but it does have a *compartment* axis, and
+        # these two markers define it: the signed score is z(CD3) - z(panCK), so
+        # its in-plane gradient points from tumour toward immune infiltrate. That
+        # makes paper_marker_depth_r "profile across the tumour-immune axis" —
+        # meaningful, and derived from the ground truth like the cortical version.
+        # Emptying both lists reverts to the generic fallback (the gradient of
+        # whichever channel is most spatially structured).
+        "layer_superficial": ("CD3",),      # immune pole
+        "layer_deep": ("panCK",),           # tumour pole
+        "protocol": "SpatialZ protocol applied to 3D IMC (analogue, not the paper)",
+    },
+    "cosmx_nsclc_3d": {
+        "kind": "analogue",
+        "technology": "CosMx SMI",
+        "species": "human",
+        "tissue": "NSCLC tumour",
+        "source": "Pentimalli et al. 2025 Cell Systems; Zenodo 15240431",
+        "env_var": "BENCH_V3_RAW_COSMX",
+        # The raw distribution is read directly: the shipped h5ad has expression
+        # and cell types but STIM coordinates in arbitrary units, so
+        # ``sources.read_cosmx_raw`` joins it to the per-section flat files for
+        # physical positions. The processed h5ad is accepted too.
+        "reader": "cosmx_raw",
+        "raw_candidates": (
+            DATA_ROOT / "raw" / "cosmx_nsclc_3d",
+            DATA_ROOT / "processed" / "cosmx_nsclc_3d" / "data.h5ad",
+            DATA_ROOT / "processed" / "cosmx_nsclc_3d.h5ad",
+        ),
+        "source_units": "um",
+        # The source block is a known size; the build checks it (see
+        # prepare_dataset) so a reader that silently drops sections cannot
+        # turn this into a smaller, differently-split experiment.
+        "expected_sections": 6,
+        # Six real cryosections, 30 um apart (every 6th 5-um section). All of them
+        # are used; "alternate" then holds out 2 and 4, leaving 1/3/5/6 as input.
+        # That 30 um gap is the widest in the benchmark and the reason this dataset
+        # is worth having: it is a genuinely hard interpolation, where STARmap's
+        # 11 um spacing leaves a copy baseline near ceiling.
+        "partition": "sections",
+        "n_sections": None,
+        "section_trim": "center",
+        "held_out": "alternate",
+        # Serial cryosections, imaged independently and not cross-registered —
+        # It counts as "not-aligned" for exactly that reason.
+        "registration": "rigid",
+        # A 960-plex panel on tumour tissue: the same tumour/immune contrast the
+        # IMC dataset uses, in RNA. EPCAM marks the epithelial tumour compartment,
+        # PTPRC (CD45) the immune infiltrate, and their signed difference gives a
+        # tumour-immune axis for paper_marker_depth_r.
+        "marker_genes": ("EPCAM", "PTPRC"),
+        "layer_superficial": ("PTPRC",),     # immune pole
+        "layer_deep": ("EPCAM",),            # tumour pole
+        "protocol": "SpatialZ protocol applied to CosMx serial sections (analogue)",
+    },
+    "deep_starmap": {
+        "kind": "analogue",
+        "technology": "Deep-STARmap",
+        "species": "mouse",
+        "tissue": "brain (thick blocks)",
+        "source": "Sui et al. 2025 Nat Methods; Zenodo 10.5281/zenodo.16783354",
+        "env_var": "BENCH_V3_RAW_DEEP_STARMAP",
+        "reader": "deep_starmap_csv",
+        "raw_candidates": (
+            DATA_ROOT / "raw" / "deep_starmap",
+            DATA_ROOT / "processed" / "deep_starmap" / "data.h5ad",
+            DATA_ROOT / "processed" / "deep_starmap.h5ad",
+        ),
+        "source_units": "um",
+        # A dense optical volume like STARmap, not serial sections: 0.70 um
+        # z-steps, so the planes must be grouped into slabs. No published trim
+        # exists for it, so none is applied (drop ranges are None) — the section
+        # count is the only choice, and 7 is a starting point the cells/section
+        # guard will reject if the block is too shallow to support it.
+        "partition": "planes",
+        "drop_z_low": None,
+        "drop_z_high": None,
+        "voxel_xy_um": 0.32,
+        "voxel_z_um": 0.70,
+        "n_sections": 7,
+        "held_out": "alternate",
+        # One 3-D imaging block, inherently co-registered.
+        "registration": "none",
+        # Mouse brain, so the cortex panel is the right family to try; whichever
+        # of these the FUSEmap panel carries is used, and the build warns about
+        # the rest rather than scoring an empty set.
+        "marker_genes": MARKER_GENES,
+        "layer_superficial": LAYER_SUPERFICIAL,
+        "layer_deep": LAYER_DEEP,
+        "protocol": "SpatialZ protocol applied to Deep-STARmap (analogue)",
+    },
+    "merfish_hypothalamus": {
+        "kind": "analogue",
+        "technology": "MERFISH",
+        "species": "mouse",
+        "tissue": "hypothalamus (preoptic region)",
+        "source": "Moffitt et al. 2018 Science; Dryad",
+        "env_var": "BENCH_V3_RAW_MERFISH_HYPO",
+        "reader": "merfish_hypothalamus_csv",
+        "raw_candidates": (
+            DATA_ROOT / "raw" / "merfish_hypothalamus",
+            DATA_ROOT / "processed" / "merfish_hypothalamus" / "animal_1" / "data.h5ad",
+        ),
+        "source_units": "um",
+        # The source block is a known size; the build checks it (see
+        # prepare_dataset) so a reader that silently drops sections cannot
+        # turn this into a smaller, differently-split experiment.
+        "expected_sections": 12,
+        # 12 real sections spanning Bregma -0.29..+0.26 mm, 50 um apart — five
+        # times STARmap's spacing, so a copy baseline has much further to fall.
+        # One animal only: sections from different animals are different tissue.
+        "partition": "sections",
+        "n_sections": None,
+        "section_trim": "center",
+        "held_out": "alternate",
+        # Independently cut and imaged coronal sections, not one imaging block.
+        "registration": "rigid",
+        # Hypothalamic preoptic region. Gad1/Slc17a6 separate the inhibitory and
+        # excitatory populations, which is this tissue's dominant spatial
+        # contrast, and their difference gives the depth axis. Mbp marks the
+        # fibre tracts. All are in the 155-gene panel.
+        "marker_genes": ("Gad1", "Slc17a6", "Mbp"),
+        "layer_superficial": ("Slc17a6",),    # excitatory pole
+        "layer_deep": ("Gad1",),              # inhibitory pole
+        "protocol": "SpatialZ protocol applied to MERFISH hypothalamus (analogue)",
+    },
+    "openst_lymph_node": {
+        "kind": "analogue",
+        "technology": "Open-ST",
+        "species": "human",
+        "tissue": "metastatic lymph node",
+        "source": "Schott et al. 2024 Cell; GEO GSE251926",
+        "env_var": "BENCH_V3_RAW_OPENST",
+        "reader": "openst_lymph_node",
+        "raw_candidates": (
+            DATA_ROOT / "raw" / "openst_lymph_node",
+            DATA_ROOT / "processed" / "openst_lymph_node" / "data.h5ad",
+            DATA_ROOT / "processed" / "openst_lymph_node.h5ad",
+        ),
+        "source_units": "um",
+        # The source block is a known size; the build checks it (see
+        # prepare_dataset) so a reader that silently drops sections cannot
+        # turn this into a smaller, differently-split experiment.
+        "expected_sections": 19,
+        # 19 consecutive 10 um cryosections through one metastatic lymph node.
+        "partition": "sections",
+        "n_sections": None,
+        "section_trim": "center",
+        "held_out": "alternate",
+        "registration": "rigid",
+        # Tumour metastasis in lymphoid tissue: EPCAM marks the metastatic
+        # epithelial deposit, PTPRC the lymphocyte background — the same
+        # tumour/immune contrast used for CosMx and IMC, so the three tumour
+        # datasets are read the same way.
+        "marker_genes": ("EPCAM", "PTPRC"),
+        "layer_superficial": ("PTPRC",),
+        "layer_deep": ("EPCAM",),
+        "protocol": "SpatialZ protocol applied to Open-ST serial sections (analogue)",
+    },
+
+    # ── Allen whole-brain MERFISH atlases ────────────────────────────────────
+    # Three registered volumes from the Allen Brain Cell atlas. All three share a
+    # shape the earlier datasets did not have: dozens of serial sections, order
+    # 10^6 cells, and coordinates the *provider* reconstructed into the Allen CCF
+    # using every section — including the ones held out here.
+    #
+    # That last point is leakage vector 2 of ``leakage_guard``, and it is why the
+    # policy here is "rigid" rather than "none": the training slices are put into
+    # a common frame using training slices only, replacing the upstream
+    # reconstruction. It costs alignment quality (the CCF fit is better than
+    # anything training-only ICP will find) and it is the only correct choice —
+    # keeping the provider's frame would hand every method a registration that
+    # saw the answer.
+    "allen_merfish_brain": {
+        "kind": "analogue",
+        "technology": "MERFISH",
+        "species": "mouse",
+        "tissue": "whole brain",
+        "source": "Allen Brain Cell Atlas, MERFISH-C57BL6J-638850; via src/data",
+        "env_var": "BENCH_V3_RAW_ALLEN_MERFISH",
+        "reader": "allen_ccf",
+        "raw_candidates": (
+            DATA_ROOT / "processed" / "allen_merfish_brain" / "data.h5ad",
+            DATA_ROOT / "processed" / "allen_merfish_brain.h5ad",
+            DATA_ROOT / "raw" / "allen_merfish_brain",
+        ),
+        # The processor converts the CCF mm to um and writes obsm['spatial']; it records no
+        # coordinate_units, so state it rather than let detection guess.
+        "source_units": "um",
+        # The metadata CSV carries section-local obs x/y alongside the CCF — see
+        # the "coords" note above. Believe obsm.
+        "coords": "obsm",
+        "partition": "sections",
+        "n_sections": None,
+        "expected_sections": 59,
+        "section_trim": "center",
+        "held_out": "alternate",
+        "registration": "rigid",
+        "n_hvg": None,              # ~500-gene panel; nothing to cap
+        "max_cells_per_section": 20000,
+        "marker_genes": BRAIN_MARKER_GENES,
+        "layer_superficial": BRAIN_LAYER_SUPERFICIAL,
+        "layer_deep": BRAIN_LAYER_DEEP,
+        "protocol": "SpatialZ protocol applied to Allen MERFISH whole brain (analogue)",
+    },
+    "allen_zhuang_abca1": {
+        "kind": "analogue",
+        "technology": "MERFISH",
+        "species": "mouse",
+        "tissue": "whole brain",
+        "source": "Allen Brain Cell Atlas, Zhuang-ABCA-1; via src/data",
+        "env_var": "BENCH_V3_RAW_ZHUANG1",
+        "reader": "allen_ccf",
+        "raw_candidates": (
+            DATA_ROOT / "processed" / "allen_zhuang_merfish" / "Zhuang-ABCA-1" / "data.h5ad",
+            DATA_ROOT / "processed" / "allen_zhuang_merfish" / "Zhuang-ABCA-1.h5ad",
+            DATA_ROOT / "raw" / "allen_zhuang_merfish",
+        ),
+        "reader_region": "Zhuang-ABCA-1",
+        "source_units": "um",
+        "coords": "obsm",
+        "partition": "sections",
+        # Unlike the Allen 638850 block this one has no single documented section
+        # count in the form checked here (the parcellation is delivered per region),
+        # so the count comes from the data and there is no expected_sections net.
+        "n_sections": 15,
+        "section_trim": "center",
+        "held_out": "alternate",
+        "registration": "rigid",
+        "n_hvg": None,              # ~1100-gene panel
+        "max_cells_per_section": 20000,
+        "marker_genes": BRAIN_MARKER_GENES,
+        "layer_superficial": BRAIN_LAYER_SUPERFICIAL,
+        "layer_deep": BRAIN_LAYER_DEEP,
+        "protocol": "SpatialZ protocol applied to Zhuang-ABCA-1 (analogue)",
+    },
+    "allen_zhuang_abca2": {
+        "kind": "analogue",
+        "technology": "MERFISH",
+        "species": "mouse",
+        "tissue": "whole brain",
+        "source": "Allen Brain Cell Atlas, Zhuang-ABCA-2; via src/data",
+        "env_var": "BENCH_V3_RAW_ZHUANG2",
+        "reader": "allen_ccf",
+        "raw_candidates": (
+            DATA_ROOT / "processed" / "allen_zhuang_merfish" / "Zhuang-ABCA-2" / "data.h5ad",
+            DATA_ROOT / "processed" / "allen_zhuang_merfish" / "Zhuang-ABCA-2.h5ad",
+            DATA_ROOT / "raw" / "allen_zhuang_merfish",
+        ),
+        "reader_region": "Zhuang-ABCA-2",
+        "source_units": "um",
+        "coords": "obsm",
+        "partition": "sections",
+        "n_sections": 15,
+        "section_trim": "center",
+        "held_out": "alternate",
+        "registration": "rigid",
+        "n_hvg": None,
+        "max_cells_per_section": 20000,
+        "marker_genes": BRAIN_MARKER_GENES,
+        "layer_superficial": BRAIN_LAYER_SUPERFICIAL,
+        "layer_deep": BRAIN_LAYER_DEEP,
+        "protocol": "SpatialZ protocol applied to Zhuang-ABCA-2 (analogue)",
+    },
+
+    # ── 3-D MERFISH thick tissue (Fang et al. 2023 eLife) ────────────────────
+    # Two independent thick-tissue blocks imaged as consecutive optical planes —
+    # the same shape as STARmap, so partition by z and register with "none".
+    # The processor writes one h5ad per region under data/processed/merfish_thick_tissue/.
+    "merfish_thick_cortex": {
+        "kind": "analogue",
+        "technology": "3D MERFISH",
+        "species": "mouse",
+        "tissue": "cortex (100 um thick block)",
+        "source": "Fang et al. 2023 eLife; Dryad 10.5061/dryad.w0vt4b922",
+        "env_var": "BENCH_V3_RAW_MERFISH_THICK_CORTEX",
+        "raw_candidates": (
+            DATA_ROOT / "processed" / "merfish_thick_tissue" / "cortex" / "data.h5ad",
+            DATA_ROOT / "processed" / "merfish_thick_tissue" / "cortex.h5ad",
+        ),
+        "source_units": "um",
+        "coords": "obsm",
+        "partition": "z_width",
+        # Same outlier guard as ExSeq, and for the same reason: equal-width bins
+        # take their edges from min/max z, so a few segmentation outliers would
+        # skew all the slab boundaries. Not a noise trim.
+        "z_trim_quantile": 0.002,
+        "voxel_xy_um": 1.0,
+        "voxel_z_um": 1.0,
+        # A ~100 um block into 7 slabs is ~14 um each — a cryosection's thickness,
+        # and the same choice made for ExSeq and Deep-STARmap.
+        "n_sections": 7,
+        "held_out": "alternate",
+        "registration": "none",
+        "n_hvg": None,              # 242-gene panel
+        "max_cells_per_section": None,
+        "marker_genes": BRAIN_MARKER_GENES,
+        "layer_superficial": BRAIN_LAYER_SUPERFICIAL,
+        "layer_deep": BRAIN_LAYER_DEEP,
+        "protocol": "SpatialZ protocol applied to 3D MERFISH cortex (analogue)",
+    },
+    "merfish_thick_hypothalamus": {
+        "kind": "analogue",
+        "technology": "3D MERFISH",
+        "species": "mouse",
+        "tissue": "hypothalamus (200 um thick block)",
+        "source": "Fang et al. 2023 eLife; Dryad 10.5061/dryad.w0vt4b922",
+        "env_var": "BENCH_V3_RAW_MERFISH_THICK_HYPO",
+        "raw_candidates": (
+            DATA_ROOT / "processed" / "merfish_thick_tissue" / "hypothalamus" / "data.h5ad",
+            DATA_ROOT / "processed" / "merfish_thick_tissue" / "hypothalamus.h5ad",
+        ),
+        "source_units": "um",
+        "coords": "obsm",
+        "partition": "z_width",
+        "z_trim_quantile": 0.002,
+        "voxel_xy_um": 1.0,
+        "voxel_z_um": 1.0,
+        # 200 um into 7 slabs is ~29 um each — thicker than the others, which is
+        # the point: it widens the gap range the benchmark covers.
+        "n_sections": 7,
+        "held_out": "alternate",
+        "registration": "none",
+        "n_hvg": None,              # 156-gene panel
+        "max_cells_per_section": None,
+        "marker_genes": HYPOTHALAMUS_MARKER_GENES,
+        "layer_superficial": HYPOTHALAMUS_LAYER_SUPERFICIAL,
+        "layer_deep": HYPOTHALAMUS_LAYER_DEEP,
+        "protocol": "SpatialZ protocol applied to 3D MERFISH hypothalamus (analogue)",
+    },
+
+    # ── EASI-FISH lateral hypothalamus ───────────────────────────────────────
+    # Three *independent* tissue samples with overlapping z ranges, so each is its
+    # own volume and they must never be concatenated. The processor collapses each
+    # sample to a single obs['section'] but keeps the real per-cell z, so this partitions by
+    # z_width and ignores that column.
+    #
+    # The panel is small (a handful of genes). That is a real limitation rather
+    # than a detail: the autocorrelation families correlate Moran's I *across
+    # genes*, so with under ~10 genes those correlations rest on very few points
+    # and should be read as indicative. The distributional and localization
+    # families are unaffected.
+    "easi_fish_lha1": {
+        "kind": "analogue",
+        "technology": "EASI-FISH",
+        "species": "mouse",
+        "tissue": "lateral hypothalamus (LHA1)",
+        "source": "Wang et al. 2021 Cell; Figshare 13749154; via src/data",
+        "env_var": "BENCH_V3_RAW_EASIFISH_LHA1",
+        "raw_candidates": (
+            DATA_ROOT / "processed" / "easi_fish_hypothalamus" / "LHA1" / "data.h5ad",
+            DATA_ROOT / "processed" / "easi_fish_hypothalamus" / "LHA1.h5ad",
+        ),
+        "source_units": "um",
+        "coords": "obsm",
+        "partition": "z_width",
+        "z_trim_quantile": 0.002,
+        "voxel_xy_um": 1.0,
+        "voxel_z_um": 1.0,
+        "n_sections": 7,
+        "held_out": "alternate",
+        "registration": "none",
+        "n_hvg": None,
+        "max_cells_per_section": None,
+        "marker_genes": HYPOTHALAMUS_MARKER_GENES,
+        "layer_superficial": HYPOTHALAMUS_LAYER_SUPERFICIAL,
+        "layer_deep": HYPOTHALAMUS_LAYER_DEEP,
+        "protocol": "SpatialZ protocol applied to EASI-FISH LHA1 (analogue)",
+    },
+    "easi_fish_lha2": {
+        "kind": "analogue",
+        "technology": "EASI-FISH",
+        "species": "mouse",
+        "tissue": "lateral hypothalamus (LHA2)",
+        "source": "Wang et al. 2021 Cell; Figshare 13749154; via src/data",
+        "env_var": "BENCH_V3_RAW_EASIFISH_LHA2",
+        "raw_candidates": (
+            DATA_ROOT / "processed" / "easi_fish_hypothalamus" / "LHA2" / "data.h5ad",
+            DATA_ROOT / "processed" / "easi_fish_hypothalamus" / "LHA2.h5ad",
+        ),
+        "source_units": "um",
+        "coords": "obsm",
+        "partition": "z_width",
+        "z_trim_quantile": 0.002,
+        "voxel_xy_um": 1.0,
+        "voxel_z_um": 1.0,
+        "n_sections": 7,
+        "held_out": "alternate",
+        "registration": "none",
+        "n_hvg": None,
+        "max_cells_per_section": None,
+        "marker_genes": HYPOTHALAMUS_MARKER_GENES,
+        "layer_superficial": HYPOTHALAMUS_LAYER_SUPERFICIAL,
+        "layer_deep": HYPOTHALAMUS_LAYER_DEEP,
+        "protocol": "SpatialZ protocol applied to EASI-FISH LHA2 (analogue)",
+    },
+    "easi_fish_lha3": {
+        "kind": "analogue",
+        "technology": "EASI-FISH",
+        "species": "mouse",
+        "tissue": "lateral hypothalamus (LHA3)",
+        "source": "Wang et al. 2021 Cell; Figshare 13749154; via src/data",
+        "env_var": "BENCH_V3_RAW_EASIFISH_LHA3",
+        "raw_candidates": (
+            DATA_ROOT / "processed" / "easi_fish_hypothalamus" / "LHA3" / "data.h5ad",
+            DATA_ROOT / "processed" / "easi_fish_hypothalamus" / "LHA3.h5ad",
+        ),
+        "source_units": "um",
+        "coords": "obsm",
+        "partition": "z_width",
+        "z_trim_quantile": 0.002,
+        "voxel_xy_um": 1.0,
+        "voxel_z_um": 1.0,
+        "n_sections": 7,
+        "held_out": "alternate",
+        "registration": "none",
+        "n_hvg": None,
+        "max_cells_per_section": None,
+        "marker_genes": HYPOTHALAMUS_MARKER_GENES,
+        "layer_superficial": HYPOTHALAMUS_LAYER_SUPERFICIAL,
+        "layer_deep": HYPOTHALAMUS_LAYER_DEEP,
+        "protocol": "SpatialZ protocol applied to EASI-FISH LHA3 (analogue)",
+    },
+
+    # ── ExSeq breast cancer ──────────────────────────────────────────────────
+    # A true 3-D volume (transcript-level globalpos, 297 genes) but a *small* one:
+    # ~3100 cells total, so 7 sections leave a few hundred each. That clears the
+    # 50-cell floor the build enforces but sits under the 500/section the survey
+    # calls comfortable, so its alignment-dependent metrics will be the noisiest
+    # in the benchmark. Registered because a small human tumour volume is exactly
+    # the breadth the panel lacks; read its rows with that caveat.
+    "exseq_breast_cancer": {
+        "kind": "analogue",
+        "technology": "ExSeq",
+        "species": "human",
+        "tissue": "breast cancer",
+        "source": "Alon et al. 2021 Science; Zenodo; via src/data",
+        "env_var": "BENCH_V3_RAW_EXSEQ_BC",
+        "raw_candidates": (
+            DATA_ROOT / "processed" / "exseq_breast_cancer" / "data.h5ad",
+            DATA_ROOT / "processed" / "exseq_breast_cancer.h5ad",
+        ),
+        "source_units": "um",
+        "coords": "obsm",
+        "partition": "z_width",
+        "z_trim_quantile": 0.002,
+        "voxel_xy_um": 1.0,
+        "voxel_z_um": 1.0,
+        # 5, not 7. The volume is small enough that seven sections would leave
+        # ~440 cells each; five keeps them ~620 and the alternating hold-out still
+        # brackets every held-out section (2 and 4 held out, 1/3/5 input).
+        "n_sections": 5,
+        "held_out": "alternate",
+        "registration": "none",
+        "n_hvg": None,              # 297-gene panel
+        "max_cells_per_section": None,
+        "marker_genes": TUMOUR_MARKER_GENES,
+        "layer_superficial": TUMOUR_LAYER_SUPERFICIAL,
+        "layer_deep": TUMOUR_LAYER_DEEP,
+        "protocol": "SpatialZ protocol applied to ExSeq breast cancer (analogue)",
+    },
+
+    # ── Spot-resolution arrays ───────────────────────────────────────────────
+    # Registered with resolution="spot". See the "resolution" note at the top of
+    # this table for why they are separated rather than pooled: a spot is not a
+    # cell, so paper_celltype_localization scores deconvolved composition and the
+    # marker field is pre-binned by the array geometry. Everything mechanical
+    # works; the metrics simply mean something adjacent.
+    "st_mouse_brain_ortiz": {
+        "kind": "analogue",
+        "resolution": "spot",
+        "technology": "ST",
+        "species": "mouse",
+        "tissue": "whole brain",
+        "source": "Ortiz et al. 2020 Sci Adv; GEO GSE147747; via src/data",
+        "env_var": "BENCH_V3_RAW_ORTIZ",
+        "raw_candidates": (
+            DATA_ROOT / "processed" / "st_mouse_brain_ortiz" / "data.h5ad",
+            DATA_ROOT / "processed" / "st_mouse_brain_ortiz.h5ad",
+        ),
+        "source_units": "um",
+        "coords": "obsm",
+        "partition": "sections",
+        # The labels are '01A'/'01B' ... '40A'/'40B': A and B are replicate
+        # sections at ONE anterior-posterior coordinate, so after registration
+        # into the Allen frame each pair sits at the same z. Two sections at the
+        # same depth are not a stack, and the build stops on it. They are
+        # physically one plane sampled twice, so they are merged rather than
+        # dropped — nothing is lost and the depth axis becomes strictly
+        # increasing, which the protocol requires.
+        "section_z_tolerance": 1.0,        # um
+        # 75 source sections from 3 animals interleaved into one
+        # anterior-posterior atlas, ~38 distinct depths after merging. A centred
+        # window of 15 keeps the design comparable with the Allen entries instead
+        # of producing a hold-out nothing else can be read against.
+        "n_sections": 15,
+        "section_trim": "center",
+        "held_out": "alternate",
+        # Authors registered every section to the Allen atlas using all sections,
+        # so the same argument as the Allen atlases applies: re-register
+        # training-only.
+        "registration": "rigid",
+        # Whole transcriptome — this is the cap that matters. Without it the
+        # built file is ~30k genes and the densifying wrappers cannot load it.
+        "n_hvg": 3000,
+        "max_cells_per_section": None,
+        "marker_genes": BRAIN_MARKER_GENES,
+        "layer_superficial": BRAIN_LAYER_SUPERFICIAL,
+        "layer_deep": BRAIN_LAYER_DEEP,
+        "protocol": "SpatialZ protocol applied to ST mouse brain, spot resolution (analogue)",
+    },
+    "visium_mouse_brain_c2l": {
+        "kind": "analogue",
+        "resolution": "spot",
+        "technology": "Visium",
+        "species": "mouse",
+        "tissue": "brain (coronal)",
+        "source": "Kleshchevnikov et al. 2022 Nat Biotech; E-MTAB-11114; via src/data",
+        "env_var": "BENCH_V3_RAW_VISIUM_C2L",
+        "raw_candidates": (
+            DATA_ROOT / "processed" / "visium_mouse_brain_cell2location" / "mouse_1" / "data.h5ad",
+            DATA_ROOT / "processed" / "visium_mouse_brain_cell2location" / "mouse_1.h5ad",
+        ),
+        "source_units": "um",
+        "coords": "obsm",
+        "partition": "sections",
+        # Mouse 1 contributes 3 serial coronal sections at 210 um. Three is the
+        # minimum the alternating design can express: hold out section 2, keep 1
+        # and 3 as input. It is one held-out section per run, so its numbers carry
+        # no within-dataset spread — the thinnest experiment in the benchmark, and
+        # included for the technology rather than for its discriminating power.
+        "n_sections": 3,
+        "section_trim": "center",
+        "held_out": "alternate",
+        "registration": "rigid",
+        "n_hvg": 3000,              # whole transcriptome
+        "max_cells_per_section": None,
+        "marker_genes": BRAIN_MARKER_GENES,
+        "layer_superficial": BRAIN_LAYER_SUPERFICIAL,
+        "layer_deep": BRAIN_LAYER_DEEP,
+        "protocol": "SpatialZ protocol applied to Visium mouse brain, spot resolution (analogue)",
+    },
+}
+
+
+def held_out_indices(dataset_spec, n_sections):
+    """1-based indices of the held-out sections for a dataset of ``n_sections``.
+
+    ``held_out`` is either an explicit tuple — STARmap pins (2, 4, 6) because that
+    is the published split — or the rule ``"alternate"``: hold out every even
+    section, keeping the first and last as input. At n = 7 the rule reproduces the
+    paper exactly (2, 4, 6); at n = 15 it gives 2, 4, ..., 14. Either way every
+    held-out section is bracketed by two input sections, which is what makes the
+    task well-posed for an interpolation method, and roughly half the volume is
+    missing, which is what makes it hard.
+    """
+    rule = dataset_spec.get("held_out", "alternate")
+    if isinstance(rule, str):
+        if rule != "alternate":
+            raise ValueError(f"unknown held_out rule {rule!r}")
+        return tuple(range(2, int(n_sections), 2))
+    return tuple(int(i) for i in rule)
+
+
+def spec(dataset_name=DATASET_NAME):
+    """Protocol spec for a dataset."""
+    try:
+        return DATASET_SPECS[dataset_name]
+    except KeyError:
+        raise ValueError(f"unknown dataset {dataset_name!r}; known: "
+                         f"{sorted(DATASET_SPECS)}") from None
+
+
+def dataset_path(dataset_name=DATASET_NAME):
+    """Where ``prepare_dataset`` writes (and everything else reads) a dataset."""
+    return DATA_DIR / dataset_name / "data.h5ad"
+
+
+def resolve_raw(dataset_name=DATASET_NAME):
+    """First existing source for a dataset, else the preferred path."""
+    s = spec(dataset_name)
+    env = os.environ.get(s["env_var"])
+    if env:
+        return Path(env)
+    for cand in s["raw_candidates"]:
+        if Path(cand).exists():
+            return Path(cand)
+    return Path(s["raw_candidates"][0])
+
+
+DATASETS = {name: {**s, "path": dataset_path(name)}
+            for name, s in DATASET_SPECS.items()}
+
+
+def resolve_dataset_arg(value, default=None):
+    """Accept either a registered dataset NAME or a path to a built ``data.h5ad``.
+
+    ``prepare_dataset --dataset`` takes a name while the run/evaluate/plot stages
+    historically took a path, so passing the name to the latter is the obvious
+    mistake — and it used to fail with a "not found" that pointed at building a
+    dataset that may well already exist. Both spellings now work.
+    """
+    if value is None:
+        return Path(default) if default is not None else DATASET_PATH
+    text = str(value)
+    if text in DATASET_SPECS:
+        return dataset_path(text)
+    return Path(text)
+
+
+def dataset_not_found_message(value, resolved):
+    """Actionable text for a --dataset that does not resolve to an existing file."""
+    lines = [f"dataset not found: {resolved}"]
+    name = str(value) if value is not None else DATASET_NAME
+    if name in DATASET_SPECS:
+        lines.append(f"  read {name!r} as a registered dataset name")
+        lines.append(f"  build it:  python -m src.bench3.prepare_dataset "
+                     f"--dataset {name}")
+    elif value is not None:
+        lines.append(f"  {name!r} is neither a registered dataset name nor an "
+                     f"existing file")
+    lines.append("")
+    lines.append("  registered datasets:")
+    for n in DATASET_SPECS:
+        p = dataset_path(n)
+        lines.append(f"    {n:<24s} {'built' if p.exists() else 'NOT built'}  {p}")
+    return "\n".join(lines)
+
+
+# ── Methods ───────────────────────────────────────────────────────────────────
+# Generation-only: each method receives a training-only, re-registered input plus
+# a scalar target z per held-out section, and synthesizes the slice de novo.
+#
+# Every wrapper is a plain CLI script in ``src/bench3/methods/`` over the shared
+# ``methods/_v2_io.py`` contract (``--input``, ``--target-section``,
+# ``--target-z``, ``--output``, ``--seed``; one ``prediction.h5`` format; one
+# leakage guard), so ``run_benchmark`` invokes them all identically.
+# ``wrapper_args`` pins a method's own configuration, so a run is reproducible
+# from this file; ``run_benchmark`` appends them after the shared arguments and
+# before any user-supplied extras, so an explicit extra on the command line still
+# wins.
+#
+# Two more per-method fields:
+#   ``sanitize_weight_args``  — CLI flags whose value is a torch checkpoint;
+#       each is checked to load under this torch and replaced by a tensors-only
+#       copy when it does not (``assets.py``).
+#   ``invalid_log_markers``   — strings whose presence in the method log means the
+#       run silently degraded to a fallback. The run is failed instead of scored.
+#       Log matching is a blunt instrument, but it is the only signal a method
+#       that "succeeds" by design exposes across the subprocess boundary.
+def _wrapper(name):
+    """Path of a method wrapper in ``src/bench3/methods/``."""
+    return PROJECT_ROOT / "src" / "bench3" / "methods" / name
+
+
+# ── The v18 configuration the published rows ran under ────────────────────────
+# Exactly the flags passed as run_all extras for every published v18 row:
+#
+#   python -m src.bench3.run_all --methods spatialcpav18_gen --dataset <name> \
+#     -- --edit-weight 0.0 --ground-blend-flow 1.0 --ground-k 8 --ground-temp 0.25 \
+#        --ground-keep-margin 1.0 --type-mode vote --type-vote-k 12 --gene-mix-frac 0.15
+#
+# Two of these differ from the wrapper's argparse defaults and change which code
+# runs: ``--edit-weight 0.0`` (default 0.25) is the gate for v18's gene-mix
+# (learn_spatialcpav18.py:1229) and raw-output path (:1244); ``--ground-blend-flow
+# 1.0`` (default 0.20). The other six restate their defaults. Every flag not listed
+# keeps its argparse default — README.md, "Effective configuration", has the table,
+# and tests/test_effective_config.py fails if this tuple, the wrapper's defaults
+# and that table disagree.
+V18_ARGS = (
+    "--edit-weight", "0.0",
+    "--ground-blend-flow", "1.0",
+    "--ground-k", "8",
+    "--ground-temp", "0.25",
+    "--ground-keep-margin", "1.0",
+    "--type-mode", "vote",
+    "--type-vote-k", "12",
+    "--gene-mix-frac", "0.15",
+)
+METHODS = {
+    "spatialcpav18_gen": {
+        # v18 is the single file ``learn_spatialcpav18.py`` at the repository
+        # root, not an installed package, so its wrapper lives here and loads that
+        # file directly. It speaks the identical _v2_io contract.
+        "wrapper": _wrapper("run_spatialcpav18.py"),
+        "wrapper_args": list(V18_ARGS),
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "flow-matching latent atlas with grounded generation — raw output, "
+                 "gene-mix novelty, kNN type vote, and stable/diverse grounding",
+        # ``wrapper_args`` pins the configuration the published v18 rows ran
+        # under (``V18_ARGS`` above). The original registry had no
+        # ``wrapper_args`` here and the flags arrived as ``run_all ... -- <flags>``
+        # extras. Pinning them makes a bare ``run_all --methods spatialcpav18_gen``
+        # reproduce the published configuration, and stops run_all forwarding
+        # v18-only flags to spatialz/feast/isost when they run in the same
+        # invocation.
+        #
+        # v18 degrades to the numpy latent-grounded fallback when torch is
+        # missing or the flow fails to train/generate. That is a sensible library
+        # default and an invalid benchmark row — the fallback is not the method
+        # under test — so the harness fails the run rather than scoring it. The first two
+        # markers are the wrapper's own; the last three are printed by
+        # learn_spatialcpav18.py itself when it drops to the fallback.
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
+    "spatialz": {
+        "wrapper": _wrapper("run_spatialz.py"),
+        "conda_env": "bench_spatialz",
+        "available": True,
+        "family": "published",
+        "notes": "Lin et al. 2025, Nat Methods — the method this protocol comes from",
+    },
+    "feast": {
+        "wrapper": _wrapper("run_feast.py"),
+        "conda_env": "bench_feast",
+        "available": True,
+        "family": "published",
+        "notes": "Chen et al. 2025 — parameter-cloud interpolation over a PASTE2 alignment",
+    },
+    "isost": {
+        "wrapper": _wrapper("run_isost.py"),
+        "conda_env": "bench_isost",
+        "available": True,
+        "family": "published",
+        "notes": "Li et al. 2025 — biaxial SDE generation",
+    },
+}
+
+# Order used in tables and figures: published baselines first, then
+# SpatialCPA-v18. This list is also ``run_all``'s default campaign.
+METHOD_ORDER = [
+    "spatialz", "feast", "isost",
+    "spatialcpav18_gen",
+]
+
+
+# ── Metric names (canonical column order) ─────────────────────────────────────
+# Tier A — the paper's own validation strategy (``paper_*``).
+PAPER_METRIC_NAMES = [
+    # UMAP continuity between real and reconstructed cells
+    "paper_umap_mixing",
+    "paper_umap_centroid_dist",
+    "paper_embedding_mixing_pca",
+    # spatial autocorrelation: Moran's I and Geary's C
+    "paper_morans_pearson",
+    "paper_morans_spearman",
+    "paper_morans_mae",
+    "paper_morans_median_pred",
+    "paper_morans_median_gt",
+    "paper_gearys_pearson",
+    "paper_gearys_spearman",
+    "paper_gearys_mae",
+    "paper_gearys_median_pred",
+    "paper_gearys_median_gt",
+    # marker-gene spatial patterns (Flt1 / Pcp4 / Cux2)
+    "paper_marker_field_r",
+    "paper_marker_field_ssim",
+    "paper_marker_depth_r",
+    "paper_marker_morans_mae",
+    # gene expression similarity
+    "paper_gene_mean_spearman",
+    "paper_gene_var_spearman",
+    # gene detection frequency (sparsity structure; the rank-invariant metrics
+    # cannot see this, so it is reported on its own)
+    "paper_gene_detection_spearman",
+    "paper_gene_detection_median_pred",
+    "paper_gene_detection_median_gt",
+    # preservation of cell spatial localization (+ rare-cell-type preservation)
+    "paper_celltype_localization",
+    "paper_celltype_ot",
+    "paper_rare_celltype_localization",
+    "paper_rare_celltype_recall",
+    # bookkeeping
+    "paper_cell_count_ratio",
+]
+
+# Per-marker breakdowns (populated per gene in MARKER_GENES).
+PAPER_MARKER_METRIC_NAMES = [
+    f"paper_marker_{g}_{suffix}"
+    for g in MARKER_GENES
+    for suffix in ("field_r", "field_ssim", "depth_r", "morans_delta")
+]
+
+# Tier B — the correspondence-free generation metrics (``gen_*``) of
+# ``src/benchmark/evaluate_generation.py``.
+GEN_METRIC_NAMES = [
+    "gen_coexpression_agreement",
+    "gen_morans_agreement",
+    "gen_sinkhorn",
+    "gen_celltype_composition",
+    "gen_celltype_nhood_agreement",
+    "gen_gene_mean_pearson",
+    "gen_gene_var_pearson",
+    "gen_field_pearson",
+    "gen_field_ssim",
+    "gen_density_pearson",
+    "gen_morans_i_pred_median",
+]
+
+# Tier C — the cell-matched metrics of ``src/benchmark/evaluate.py``. Kept for
+# reference only: de-novo generation produces no cell-to-cell correspondence, so
+# these are NOT a valid score here.
+MATCHED_METRIC_NAMES = [
+    "pearson_median", "spearman_median", "celltype_accuracy",
+    "celltype_f1_macro", "ssim_median", "density_pearson", "matching_rate",
+]
+
+METRIC_NAMES = (PAPER_METRIC_NAMES + PAPER_MARKER_METRIC_NAMES
+                + GEN_METRIC_NAMES + MATCHED_METRIC_NAMES)
+
+
+# ── Evaluation defaults ───────────────────────────────────────────────────────
+SPATIAL_K = 10          # kNN degree for Moran's I / Geary's C spatial weights
+FIELD_GRID = 20         # bins per axis for binned spatial fields
+DEPTH_BINS = 20         # bins along the cortical laminar axis
+EMBED_NEIGHBORS = 15    # kNN degree for the UMAP/PCA mixing score
+RARE_CELLTYPE_FRAC = 0.05   # a GT type below this frequency is "rare" for the
+                            # rare-cell-type preservation metric (evaluate_paper)
+
+# ── Pose selection for the alignment-dependent metrics (align.py) ─────────────
+# Candidate rotations tried when bringing a prediction into the GT frame. Poses
+# are scored by marker-field agreement rather than by cell overlap, because a
+# symmetric outline covers itself equally well under a flip; reflections are not
+# candidates at all, since physical tissue cannot be mirrored.
+ALIGN_ANGLES = 24        # candidate rotations, evenly spaced over 360 degrees
+ALIGN_ICP_ITERS = 12     # refinement iterations per candidate (0 disables)
+ALIGN_MAX_POINTS = 3000  # cells subsampled per side for the pose search

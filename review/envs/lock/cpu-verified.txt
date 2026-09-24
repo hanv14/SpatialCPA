@@ -1,6 +1,6 @@
 # bench_spatialcpa + bench_eval, as ONE environment, verified on CPU (4 cores, Linux x86_64)
-# on 2026-09-24: python 3.10.20. Reproduces expected/cpu-verified/ exactly.
-# torch was the PyPI wheel (2.4.1+cu121) run on CPU; tabm/xgboost/lightgbm are ablation-only.
+# on 2026-09-24: python 3.10.20. Reproduces expected/cpu-verified/ bitwise.
+# torch is the PyPI wheel (2.4.1+cu121) run on CPU.
 # Install: python3.10 -m venv .venv && .venv/bin/pip install -r envs/lock/cpu-verified.txt
 anndata==0.11.4
 array-api-compat==1.15.0
@@ -21,7 +21,6 @@ joblib==1.6.0
 kiwisolver==1.5.1
 lazy-loader==0.6
 legacy-api-wrap==1.5
-lightgbm==4.7.0
 llvmlite==0.49.0
 markupsafe==3.0.3
 matplotlib==3.10.9
@@ -54,7 +53,6 @@ pyparsing==3.3.3
 pytest==9.1.1
 python-dateutil==2.9.0.post0
 pytz==2026.4
-rtdl-num-embeddings==0.0.12
 scanpy==1.11.5
 scikit-image==0.25.2
 scikit-learn==1.7.2
@@ -64,7 +62,6 @@ session-info2==0.4.1
 six==1.17.0
 statsmodels==0.15.0
 sympy==1.14.0
-tabm==0.0.3
 threadpoolctl==3.7.0
 tifffile==2025.5.10
 tomli==2.4.1
@@ -75,4 +72,3 @@ typing-extensions==4.16.0
 tzdata==2026.4
 umap-learn==0.5.12
 wrapt==2.4.1
-xgboost==3.2.0

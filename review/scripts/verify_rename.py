@@ -13,8 +13,10 @@ Both files are parsed to ASTs and normalised:
 * docstrings (the leading string of a module, class or function) are dropped,
   and comments never reach the AST;
 * identifiers are mapped through ``NAME_MAP`` in the ORIGINAL;
-* the text of ``print(...)`` arguments and of ``help=`` / ``description=``
-  keywords is replaced by a placeholder, since it is output wording only;
+* message text is replaced by a placeholder, since it is output wording only:
+  the arguments of ``print(...)``, ``warnings.warn(...)`` and ``parser.error(...)``,
+  the arguments of a raised exception (its type is kept), and ``help=`` /
+  ``description=`` / ``epilog=`` keywords;
 * every other string literal in the ORIGINAL is mapped through ``STRING_MAP``
   and must then equal the renamed file's literal **exactly**. That covers
   defaults, choices, dict keys and the log markers the harness matches on.
@@ -39,7 +41,7 @@ NAME_MAP = {
 STRING_MAP = {
     "[v14]": "[v18]",
 }
-TEXT_KEYWORDS = {"help", "description"}
+TEXT_KEYWORDS = {"help", "description", "epilog"}
 PLACEHOLDER = "<TEXT>"
 
 
@@ -83,8 +85,21 @@ class Normalise(ast.NodeTransformer):
         return self.generic_visit(node)
 
     # -- output wording -------------------------------------------------------------
+    @staticmethod
+    def _is_message_call(func):
+        """print(...), warnings.warn(...), <parser>.error(...)."""
+        if isinstance(func, ast.Name):
+            return func.id == "print"
+        return isinstance(func, ast.Attribute) and func.attr in ("warn", "error")
+
+    def visit_Raise(self, node):
+        # The exception TYPE is kept; its message text is wording.
+        if isinstance(node.exc, ast.Call):
+            node.exc.args = [ast.Constant(PLACEHOLDER) for _ in node.exc.args]
+        return self.generic_visit(node)
+
     def visit_Call(self, node):
-        if isinstance(node.func, ast.Name) and node.func.id == "print":
+        if self._is_message_call(node.func):
             node.args = [ast.Constant(PLACEHOLDER) for _ in node.args]
         for kw in node.keywords:
             if kw.arg in TEXT_KEYWORDS:

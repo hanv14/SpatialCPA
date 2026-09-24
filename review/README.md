@@ -2,13 +2,12 @@
 
 A self-contained copy of what it takes to re-run and re-score **SpatialCPA-v18**
 (`learn_spatialcpav18.py`) on the SpatialZ STARmap paper protocol, next to the
-three published comparators it was benchmarked against, **SpatialZ**, **FEAST**
-and **isoST**. It also carries v18's **expression ablation**: the `v18_*` rows,
-which keep v18's layout and donor selection and replace only the step that emits
-expression.
+three published comparators it was benchmarked against: **SpatialZ**, **FEAST**
+and **isoST**. The benchmark harness, the scorer, the method wrappers and the
+dataset scripts all live in one folder, [`benchmark/`](#layout).
 
-No other SpatialCPA version is in this tree: no wrapper, registry entry, method file
-or result. `tests/test_scope.py` enforces that.
+No other SpatialCPA version is in this tree: no wrapper, registry entry, method
+file or result. `tests/test_scope.py` and `tests/test_rename.py` enforce that.
 
 Start with [`REVIEW_NOTES.md`](REVIEW_NOTES.md) for what deserves attention. This
 file is the how-to.
@@ -20,7 +19,7 @@ file is the how-to.
 1. [What "reproduced" means here](#what-reproduced-means-here)
 2. [Quick start: clone → STARmap v18 row](#quick-start-clone--starmap-v18-row)
 3. [Effective configuration of the v18 rows](#effective-configuration-of-the-v18-rows)
-4. [Pinned files](#pinned-files)
+4. [Pinned files and provenance](#pinned-files-and-provenance)
 5. [Environments](#environments)
 6. [How v18 is located](#how-v18-is-located)
 7. [Data](#data)
@@ -37,8 +36,8 @@ compares against whichever is present:
 
 | row | what it is | status |
 |---|---|---|
-| `expected/published/…/metrics.json` | the metrics.json behind the published v18 STARmap row, copied from the lab machine | **not yet committed.** `make starmap-row` uses it automatically once it is. |
-| `expected/cpu-verified/…/{prediction.h5,metrics.json,method_log.txt,resources.json}` | this repository's own run, on CPU, in the environment pinned by `envs/lock/cpu-verified.txt` | committed; reproduced **bitwise** in a second independent run (all 50 scalar metrics identical at tolerance 0, UMAP included) |
+| `expected/published/…/metrics.json` | the metrics.json behind the published v18 STARmap row, copied from the lab machine | **not yet committed.** `make starmap-row` uses it automatically once it is |
+| `expected/cpu-verified/…/{prediction.h5,metrics.json,method_log.txt,resources.json}` | this repository's own run, on CPU, in the environment pinned by `envs/lock/cpu-verified.txt` | committed; reproduced **bitwise** in every independent run since, before and after each restructuring of this tree (all 50 scalar metrics identical at tolerance 0, UMAP included) |
 
 So today `make starmap-row` proves three things:
 
@@ -65,7 +64,7 @@ git clone <this repo> && cd <repo>/review
 make envs                                  # 5 envs; only bench_eval + bench_spatialcpa are
                                            # needed for this row (~10 min on a warm conda cache)
 conda activate bench_eval
-make verify                                # ~10 s
+make verify                                # ~15 s
 make starmap-row                           # ~3 min on 4 CPU cores; faster on a GPU
 ```
 
@@ -111,11 +110,10 @@ python -m src.bench3.run_all --methods spatialcpav18_gen --dataset <name> \
 ```
 
 In this repo they are **pinned in the registry** as `V18_ARGS`
-(`benchmark-pbya-v3/src/bench3/config.py`). Every v18-hosted method gets them:
-`spatialcpav18_gen` and all fifteen `v18_*` ablations. So a bare
-`run_all --methods spatialcpav18_gen` runs the published configuration. The command
-above still works and produces the same argv; an extra repeats a pinned value and
-argparse keeps the last.
+(`benchmark/src/bench3/config.py`), set as `spatialcpav18_gen`'s `wrapper_args`.
+So a bare `run_all --methods spatialcpav18_gen` runs the published configuration.
+The command above still works and produces the same argv; an extra repeats a
+pinned value and argparse keeps the last.
 
 Pinning also fixes a trap. `run_all` forwards `--` extras to **every** method in the
 invocation, so the command above with `--methods spatialz spatialcpav18_gen` would
@@ -168,65 +166,64 @@ every prediction as `uns/method_params`. For the committed CPU row:
  "generation_only": true}
 ```
 
-The `v18_*` ablations add their own flags **after** `V18_ARGS`: `--learner`, and
-for the donor variants `--emit`/`--select`/`--lgbm-*`. None of them re-sets a
-published flag (tested). Their full argv is `config.METHODS[name]["wrapper_args"]`;
-`python -m src.bench3.run_all --methods <name> --dry-run` prints it.
+`python -m src.bench3.run_all --methods spatialcpav18_gen --dry-run` (from
+`benchmark/`) prints the full command line.
 
 ---
 
-## Pinned files
+## Pinned files and provenance
 
-**`evaluate_paper.py`** — `benchmark-pbya-v3/src/bench3/evaluate_paper.py`
+**`evaluate_paper.py`** — `benchmark/src/bench3/evaluate_paper.py`
 
 ```
 sha256  7362669200bbd2be905adf1715c4c6d44842ef1652edb2f4aba697c039538992
 ```
 
-It is byte-identical to the parent project's copy at the commit this repo was cut
-from. `tests/test_pins.py::test_evaluate_paper_is_the_pinned_file` asserts that
-literal, and another test asserts that this README, the test and the manifest all
-carry the same value.
+It is byte-identical to the file in the parent project (commit `08c385ce`), and so
+is `align.py`. Both were left untouched on purpose, docstrings included, so their
+hashes can be compared directly with the lab copies. That is why they still
+mention the old folder name `benchmark-pbya-v3`.
+`tests/test_pins.py::test_evaluate_paper_is_the_pinned_file` asserts the literal,
+and another test asserts that this README, the test and the manifest all carry
+the same value.
 
 Pinning `evaluate_paper.py` alone would not pin the numbers. It imports the pose
-search (`align.py`), the constants in `bench3/config.py`, the rank normalizer and
-Moran's I from v2's `evaluate_generation.py`, `load_prediction`/`load_ground_truth`
-from v2's `evaluate.py`, and the leakage guard. So **`MANIFEST.sha256`** pins:
+search (`align.py`), the constants in `src/bench3/config.py`, the rank normalizer
+and Moran's I from `src/benchmark/evaluate_generation.py`,
+`load_prediction`/`load_ground_truth` from `src/benchmark/evaluate.py`, and the
+leakage guard. So **`MANIFEST.sha256`** pins:
 
-- every `.py` under `benchmark-pbya-v2/src` and `benchmark-pbya-v3/src`, plus
-  `learn_spatialcpav18.py`;
+- every `.py` under `benchmark/src/`, plus `learn_spatialcpav18.py`;
 - the STARmap source volume;
 - the committed `expected/` rows.
 
 `make verify` checks all of them.
 
-Two scoring-chain files had to be edited for the review, because their method
-registries listed other versions: `bench3/config.py` and v2's
-`benchmark/config.py`. Their hashes therefore differ from the published tree. In
-exchange, `test_scoring_constants_unchanged` and
-`test_v2_scoring_constants_unchanged` assert every constant the scorer reads
-(`SPATIAL_K=10`, `FIELD_GRID=20`, `DEPTH_BINS=20`, `EMBED_NEIGHBORS=15`,
-`RARE_CELLTYPE_FRAC=0.05`, `ALIGN_*=(24, 12, 3000)`, the STARmap trim/partition,
-the markers, `SSIM_*`, `NN_MATCH_THRESHOLD_UM`, seed 42) against its published
-value.
+**Provenance of every file: `MANIFEST.original.sha256`.** For each of the 70
+files that came from the parent project, it records the original's path and
+sha256, the file's path here, and one of three statuses:
 
-Separately, v18 was made a **standalone method**. Every reference to the SpatialCPA
-versions it descends from was removed from its code, its wrappers and the harness:
-class names (now `SpatialCPAv18` / `V18Config`), log prefixes (`[v18]`), docstrings
-and comments. That touched `learn_spatialcpav18.py` and a few comments and
-docstrings in the scoring chain (`design.py`, v2's `evaluate_generation.py` and
-`leakage_guard.py`), so those hashes differ from the published tree too. Two
-proofs that no number moved:
+| status | count | meaning | how it's checked |
+|---|---|---|---|
+| `identical` | 40 | byte-for-byte the original (the scorer, the dataset scripts, …) | `tests/test_rename.py` compares bytes |
+| `equivalent` | 21 | only docstrings, comments, message text or v18's two class names differ | `scripts/verify_rename.py`: identical AST once those are set aside |
+| `changed` | 9 | an executable change: paths for the one-folder layout, the v18 lookup fix, the optional launcher, the method registry | listed with its reason in REVIEW_NOTES §5; all 9 are outside the computation |
 
-- `scripts/verify_rename.py` shows each renamed file has an **identical AST** to
-  its original once docstrings, comments, output wording and the two class names
-  are set aside. The originals' hashes are in `MANIFEST.original.sha256`, and
-  `tests/test_rename.py` runs the check whenever the originals sit beside this
-  tree.
-- The STARmap prediction from the renamed code is **bitwise identical** to the one
-  committed before the rename.
+The rename and equivalence checks run whenever the parent project's originals sit
+beside this tree (a clone of the full project). Against the lab's copies, run
+`python scripts/verify_rename.py <lab file> <file here>` by hand.
 
-REVIEW_NOTES §6 lists every edited file.
+On top of the per-file checks, every restructuring of this tree was followed by a
+re-run of the STARmap row. Each run's `prediction.h5` was **bitwise identical** to
+the committed one and all 50 metrics matched at tolerance 0. The same
+restructurings were checked with the harness selftest; see REVIEW_NOTES §5.
+
+The two config files are `changed`, so the scorer's constants are also asserted
+directly (`test_scoring_constants_unchanged`,
+`test_v2_scoring_constants_unchanged`): `SPATIAL_K=10`, `FIELD_GRID=20`,
+`DEPTH_BINS=20`, `EMBED_NEIGHBORS=15`, `RARE_CELLTYPE_FRAC=0.05`,
+`ALIGN_*=(24, 12, 3000)`, the STARmap trim/partition, the markers, `SSIM_*`,
+`NN_MATCH_THRESHOLD_UM`, the 27 evaluator metric names, seed 42.
 
 ---
 
@@ -239,37 +236,36 @@ everywhere.**
 | env | file | runs | verified here |
 |---|---|---|---|
 | `bench_eval` | `envs/bench_eval.yml` | prepare / run_all / evaluate_all / aggregate / rank / plots / tests | yes (merged into the CPU lock) |
-| `bench_spatialcpa` | `envs/bench_spatialcpa.yml` | `spatialcpav18_gen`, `v18_*` | yes (merged into the CPU lock) |
+| `bench_spatialcpa` | `envs/bench_spatialcpa.yml` | `spatialcpav18_gen` | yes (merged into the CPU lock) |
 | `bench_spatialz` | `envs/bench_spatialz.yml` | `spatialz` (+ SpatialZ code from Zenodo, `make tools`) | no: Zenodo unreachable from the build environment |
 | `bench_feast` | `envs/bench_feast.yml` | `feast` | no |
 | `bench_isost` | `envs/bench_isost.yml` | `isost` (+ isoST from GitHub at a pinned commit, `make tools`); **needs a CUDA GPU** for practical run times | no |
 
 Locks in `envs/lock/`:
 
-- `cpu-verified.txt`: the exact package set (78 packages) that produced
+- `cpu-verified.txt`: the exact package set (70 packages) that reproduces
   `expected/cpu-verified/`, as one venv. Key versions: numpy 1.26.4,
   scipy 1.15.3, scikit-learn 1.7.2, scanpy 1.11.5, anndata 0.11.4,
   umap-learn 0.5.12, numba 0.67.0, torch 2.4.1 (PyPI wheel, run on CPU),
-  h5py 3.16.0. Ablation-only: lightgbm 4.7.0, xgboost 3.2.0, tabm 0.0.3.
+  h5py 3.16.0.
 - `*.lab.yml` / `*.lab.pip.txt` / `provenance.txt`: **not yet present.**
   `scripts/export_lab_envs.sh`, run once on the lab machine, writes them.
 
-The `.yml` files are version *ranges*. The v1 originals they descend from could
-not have built a working env from scratch, and the fixes are marked `REVIEW COPY`
-in each file:
+The `.yml` files are version *ranges*. The originals they descend from could not
+have built a working env from scratch, and the fixes are marked `REVIEW COPY` in
+each file:
 
 - `bench_spatialz`: SpatialZ.py imports torch, POT, plotly, MENDER and tqdm, and
   none of them was listed.
 - `bench_isost`: the PyG extension wheels were pinned but torch, which they are
   ABI-bound to, was not.
 - `bench_feast`: paste2 was implicit.
-- `bench_spatialcpa`: the ablation's xgboost/lightgbm/tabm were missing.
 
 ---
 
 ## How v18 is located
 
-`benchmark-pbya-v3/src/bench3/methods/run_spatialcpav18.py` resolves, in order:
+`benchmark/src/bench3/methods/run_spatialcpav18.py` resolves, in order:
 
 1. `$SPATIALCPAV18_FILE`, the file itself;
 2. `$SPATIALCPAV18_ROOT`, a directory containing it;
@@ -278,30 +274,31 @@ in each file:
 A fresh clone needs **no environment variable**: the file is committed at the
 repository root. The published wrapper instead walked every parent directory, so
 with the file missing it would silently load whatever `learn_spatialcpav18.py` an
-enclosing directory held — and a file kept outside the repository (the lab
-layout keeps it in `Spatial3D/src/`) is not on that walk at all. The walk now stops at the repository root, and an explicit
-override never falls through to it. The method log prints the resolved path and
-the file's sha256 (`learn_spatialcpav18.py sha256 …`), and `make starmap-row`
-checks both. `tests/test_path_resolution.py` covers: no env vars, any cwd, a bad
-`FILE` override not falling through, and the `ROOT` override.
+enclosing directory held. A file kept outside the repository (the lab layout
+keeps it in `Spatial3D/src/`) is not on that walk at all. The walk now stops at
+the repository root, and an explicit override never falls through to it. The
+method log prints the resolved path and the file's sha256
+(`learn_spatialcpav18.py sha256 …`), and `make starmap-row` checks both.
+`tests/test_path_resolution.py` covers: no env vars, any cwd, a bad `FILE`
+override not falling through, and the `ROOT` override.
 
-The ablation wrapper imports this module, so it resolves identically. The v2
-helpers (`_v2_io`, `leakage_guard`) are found at `parents[4]/benchmark-pbya-v2`,
-also inside the repo. SpatialZ and isoST are found at
-`parents[4]/benchmark-pbya/tools/`, where `make tools` puts them.
+Everything else a wrapper needs is inside `benchmark/`:
+- the shared wrapper I/O `_v2_io.py` sits beside the wrappers;
+- the leakage guard is in `src/benchmark/`;
+- SpatialZ and isoST are expected in `benchmark/tools/`, where `make tools` puts them.
 
 ---
 
 ## Data
 
-| what | size | in git? | how to get it |
-|---|---|---|---|
-| STARmap raw volume `data/starmap/STARmap_Wang2018three_data_3D_data.h5ad` (Wang et al. 2018; 32 845 cells × 28 genes, 89 z-planes) | 30 MB | **yes** (sha256 in manifest) | — |
-| STARmap paper-protocol dataset `benchmark-pbya-v3/data/processed/starmap_visual_cortex/data.h5ad` | 9.9 MB | no (built) | `prepare_dataset --dataset starmap_visual_cortex`, **4 s** |
-| training-only input per holdout `benchmark-pbya-v3/results/_inputs/…` | 5.7 MB (STARmap) | no (built on first run, cached, mtime-invalidated) | automatic |
-| SpatialZ code | small | no | `make tools` (Zenodo 10.5281/zenodo.17416727) |
-| isoST code | small | no | `make tools` (GitHub, pinned commit) |
-| the 17 analogue volumes | 50 MB – 15 GB each, ~50 GB raw in total | no, too large | [below](#0-datasets) |
+| what | where | size | in git? | how to get it |
+|---|---|---|---|---|
+| STARmap raw volume (Wang et al. 2018; 32 845 cells × 28 genes, 89 z-planes) | `benchmark/data/raw/starmap_visual_cortex/STARmap_Wang2018three_data_3D_data.h5ad` | 30 MB | **yes** (sha256 in manifest) | — |
+| STARmap paper-protocol dataset | `benchmark/data/sections/starmap_visual_cortex/data.h5ad` | 9.9 MB | no (built) | `prepare_dataset --dataset starmap_visual_cortex`, **4 s** |
+| training-only input per holdout | `benchmark/results/_inputs/…` | 5.7 MB (STARmap) | no (built on first run, cached, mtime-invalidated) | automatic |
+| SpatialZ code | `benchmark/tools/spatialz/` | small | no | `make tools` (Zenodo 10.5281/zenodo.17416727) |
+| isoST code | `benchmark/tools/isost/` | small | no | `make tools` (GitHub, pinned commit) |
+| the 17 analogue volumes | `benchmark/data/raw/`, `benchmark/data/processed/` | 50 MB – 15 GB each, ~50 GB raw in total | no, too large | [below](#0-datasets) |
 
 Everything the STARmap row needs is committed or built in seconds. The analogue
 datasets are not committed: several are GB-scale, and all are redistributable
@@ -312,46 +309,43 @@ only from their original sources.
 ## Full benchmark: all four methods, all datasets
 
 The complete campaign is **4 methods × 18 datasets** under `--design paper` (one
-holdout per dataset), plus optionally the **15 `v18_*` ablations × 18**. Stages:
+holdout per dataset). Stages:
 
 ```
 0 datasets ──► 1 inputs ──► 2 method runs (4 envs, parallel) ──► 3 evaluate_all ──► 4 aggregate ──► 5 rank ──► 6 figures
 ```
 
-All commands run from `benchmark-pbya-v3/` in `bench_eval`, unless stated
-otherwise.
+All commands run from `benchmark/` in `bench_eval`, unless stated otherwise.
 
-Wall times below are **measured** only where they say so: STARmap v18 and the v18
-ablations on a 4-core CPU. Everything else is marked *not measured*. The
-comparator envs and the analogue datasets could not be built where this repo was
-assembled. `results/<method>/<dataset>/<holdout>/resources.json` records wall
-time, peak RSS and GPU memory for every run you do make, and
-`aggregate_results` collects them.
+Wall times below are **measured** only where they say so (STARmap v18 on a 4-core
+CPU). Everything else is marked *not measured*. The comparator envs and the
+analogue datasets could not be built where this repo was assembled.
+`results/<method>/<dataset>/<holdout>/resources.json` records wall time, peak RSS
+and GPU memory for every run you do make, and `aggregate_results` collects them.
 
 ### 0. Datasets
 
 STARmap is committed. For the analogues:
 
-1. Download the raw data with v1's scripts: `benchmark-pbya/src/data/download/`,
-   one self-contained script per source, resumable. Each script's own header is the
-   authority on the source; v1's README table is stale in places.
-2. Six of them also need v1's processor, which writes
-   `benchmark-pbya/data/processed/<name>/data.h5ad`:
-   `merfish_thick_*`, `easi_fish_lha*`, `exseq_breast_cancer`,
-   `st_mouse_brain_ortiz`, `visium_mouse_brain_c2l`. The rest are read raw by
-   `bench3.sources`.
-3. Cut each one into its v3 sections.
+1. Download each source with its script in `src/data/download/`: one
+   self-contained script per source, resumable, writing to `data/raw/<source>/`.
+   Each script's own header is the authority on the source; the table in
+   `src/data/download/README.md` is stale in places.
+2. Six sources also need their processor in `src/data/process/`, which writes
+   `data/processed/<source>/…`: `merfish_thick_*`, `easi_fish_lha*`,
+   `exseq_breast_cancer`, `st_mouse_brain_ortiz`, `visium_mouse_brain_c2l`. The
+   rest are read raw by `src/bench3/sources.py`.
+3. Cut each one into its paper-protocol sections (`data/sections/<dataset>/`).
 
 ```bash
-# from the repo root
-python benchmark-pbya/src/data/download/download_<source>.py     # or download_all.py
-python benchmark-pbya/src/data/process/process_<source>.py       # only the six above
-# from benchmark-pbya-v3/
-python -m src.bench3.prepare_dataset --dataset <name>            # all: loop over the names below
-python -m src.bench3.describe_datasets                           # one-line check of every built dataset
+cd benchmark
+python src/data/download/download_<source>.py             # or download_all.py
+python src/data/process/process_<source>.py               # only the six above
+python -m src.bench3.prepare_dataset --dataset <name>     # all: loop over the names below
+python -m src.bench3.describe_datasets                    # one-line check of every built dataset
 ```
 
-| dataset | download script | raw size (v1's estimate) | held out |
+| dataset | download script | raw size (script README's estimate) | held out |
 |---|---|---|---|
 | `starmap_visual_cortex` | committed | 30 MB | 2, 4, 6 |
 | `exseq_visual_cortex` | `download_exseq_visual_cortex.py` | ~1 GB | 2, 4, 6 |
@@ -379,7 +373,7 @@ protocol (partition, trims, caps, hold-out pattern) is in
 
 ```bash
 for d in $(python -c "from src.bench3.config import DATASET_SPECS; print(*DATASET_SPECS)"); do
-  python -m src.bench3.run_all --dataset $d --methods spatialz feast isost spatialcpav18_gen --dry-run
+  python -m src.bench3.run_all --dataset $d --dry-run
 done
 ```
 
@@ -421,8 +415,6 @@ wait
   durable record.
 - Run `isost` (GPU) and `spatialcpav18_gen` (GPU if present) on different devices
   with `CUDA_VISIBLE_DEVICES`. SpatialZ and FEAST are CPU.
-- The ablations are the same loop with `--methods v18_ridge v18_lasso …` (full list:
-  `config.METHOD_ORDER`), in `bench_spatialcpa`.
 
 A run that exits 0 but whose log shows the method fell back to something that isn't
 the method (v18's numpy fallback when torch is missing or the flow fails to train)
@@ -432,7 +424,6 @@ The markers are in `METHODS[...]["invalid_log_markers"]`.
 | per run | wall time | peak RSS | disk |
 |---|---|---|---|
 | `spatialcpav18_gen`, STARmap, 4-core CPU | **24–36 s** (measured, 3 uncontended runs) | 0.9–1.0 GB | 3.4 MB prediction |
-| `v18_*`, STARmap, 4-core CPU | see REVIEW_NOTES, "Ablation run times" (measured) | | ~3.4 MB each |
 | `spatialz` / `feast` / `isost`, STARmap | *not measured* | | similar (same cell count) |
 | any method, million-cell datasets | *not measured*; scales with cells × genes | | tens–hundreds of MB |
 
@@ -470,7 +461,7 @@ Methods are ranked **within** each of five groups (continuity, autocorrelation,
 markers, localization, expression), and the composite is the mean of the group
 ranks. Ranks are per dataset and never pooled across datasets.
 `paper_cell_count_ratio` and `paper_rare_celltype_recall` are reported but not
-ranked. Spot datasets are flagged. `--include-gen` adds v2's `gen_*` metrics as a
+ranked. Spot datasets are flagged. `--include-gen` adds the `gen_*` metrics as a
 sixth group. Seconds.
 
 ### 6. Figures (optional)
@@ -484,7 +475,7 @@ python -m src.bench3.plot_cross_dataset --method-order spatialz feast isost spat
 
 | dataset | methods | why |
 |---|---|---|
-| `openst_lymph_node` | `spatialcpav18_gen` and every `v18_*` | **OOM.** Whole-transcriptome (~10⁶ cells × ~2×10⁴ genes) with no `n_hvg` cap, and the wrapper densifies the training matrix (`run_spatialcpav18.py:352`), which is order 80 GB; a run with a wrapper that densifies the same way was OOM-killed on this dataset. Adding `"n_hvg": 3000` to its spec would fix it, but that changes the panel a reported dataset was measured on, so it is left as it was |
+| `openst_lymph_node` | `spatialcpav18_gen` | **OOM.** Whole-transcriptome (~10⁶ cells × ~2×10⁴ genes) with no `n_hvg` cap, and the wrapper densifies the training matrix (`run_spatialcpav18.py:348`), which is order 80 GB; a run with a wrapper that densifies the same way was OOM-killed on this dataset. Adding `"n_hvg": 3000` to its spec would fix it, but that changes the panel a reported dataset was measured on, so it is left as it was |
 | `visium_mouse_brain_c2l` | all | not a failure, but degenerate: 3 sections, 1 held out, spot resolution. Its localization group scores deconvolved composition; read only against `st_mouse_brain_ortiz` |
 | `st_mouse_brain_ortiz` | all | spot resolution, same caveat |
 
@@ -497,17 +488,17 @@ authority.
 ## Tests
 
 ```bash
-make verify            # = pytest -q tests      (~10 s; needs numpy/h5py only for the path test)
+make verify            # = pytest -q tests      (~15 s; needs numpy/h5py only for the path test)
 make selftest          # the harness's own check: oracle / flanking copy / scramble / random (~4-5 min CPU)
 ```
 
 | test file | asserts |
 |---|---|
 | `test_pins.py` | `evaluate_paper.py` sha256 = the literal above; every `MANIFEST.sha256` entry matches; the manifest covers the whole scoring chain; the scorer's constants equal their published values |
-| `test_effective_config.py` | `V18_ARGS` = the published flags; every v18-hosted method (16) gets them and nothing re-sets them; comparators get none; the table above = argparse defaults ⊕ `V18_ARGS`; the ablation wrapper declares every v18 flag with the same default |
+| `test_effective_config.py` | `V18_ARGS` = the published flags and is what `spatialcpav18_gen` runs with; comparators get none; the table above = argparse defaults ⊕ `V18_ARGS` |
 | `test_path_resolution.py` | v18 resolves to `review/learn_spatialcpav18.py` with no env vars from any cwd, looks nowhere else, and the overrides don't fall through |
-| `test_rename.py` | nothing in the tree names another SpatialCPA version; the `[v18]` fallback markers match strings v18 prints; each renamed file is AST-equivalent to its original (when present); the checker rejects a one-constant change |
-| `test_scope.py` | the registry is {spatialz, feast, isost, spatialcpav18_gen, v18_*}; no other version's wrapper, method file or result is present |
+| `test_rename.py` | nothing in the tree names another SpatialCPA version; the `[v18]` fallback markers match strings v18 prints; every file carried from the parent project is identical or AST-equivalent to its original, except the 9 documented `changed` files; the checker rejects a one-constant change |
+| `test_scope.py` | the registry is exactly {spatialz, feast, isost, spatialcpav18_gen}; the only wrappers are those four; one `benchmark/` folder, no `benchmark-pbya*` |
 
 ---
 
@@ -515,47 +506,52 @@ make selftest          # the harness's own check: oracle / flanking copy / scram
 
 ```
 review/
-  README.md, REVIEW_NOTES.md, Makefile
-  MANIFEST.sha256              sha256 of every scoring/method file, the STARmap volume, expected/
+  README.md, REVIEW_NOTES.md, Makefile, pytest.ini
+  MANIFEST.sha256              sha256 of every source file, the STARmap volume, expected/
+  MANIFEST.original.sha256     provenance: each file's parent-project original + identical/equivalent/changed
   MANIFEST.tools.sha256        SpatialZ.py / Synthesize.py as kept in the parent project's reference/
-  learn_spatialcpav18.py       THE METHOD (single file; pinned)
-  data/starmap/                the STARmap raw volume (30 MB, committed)
+  learn_spatialcpav18.py       THE METHOD (single file)
+  benchmark/                   everything benchmark-related — run commands from here
+    src/bench3/                the harness package (python -m src.bench3.<module>)
+      config.py                  protocol constants, dataset specs, METHODS (+ V18_ARGS)
+      prepare_dataset.py, sources.py, prepare_starmap.py, design.py
+      run_all.py, run_benchmark.py, _v2bridge.py, assets.py, sanitize_checkpoint.py
+      evaluate_paper.py, align.py, evaluate_all.py        ← the scorer (pinned)
+      aggregate_results.py, rank_methods.py, describe_datasets.py, survey_datasets.py
+      selftest.py, selftest_datasets.py, plot_*.py, nature_theme.py
+      methods/                 the four method wrappers + their shared I/O
+        run_spatialcpav18.py, run_spatialz.py, run_feast.py, run_isost.py, _v2_io.py
+    src/benchmark/             shared evaluators + leakage guard, imported as `benchmark`
+      evaluate.py, evaluate_generation.py, leakage_guard.py, resource_monitor.py, config.py
+    src/data/download/, src/data/process/   one script per dataset source
+    data/raw/                  downloaded sources (only STARmap is committed)
+    data/processed/            (built) processed sources
+    data/sections/             (built) paper-protocol datasets
+    results/                   (built) predictions, metrics, summaries, figures
+    tools/                     (fetched) SpatialZ + isoST code — make tools
   expected/
     cpu-verified/spatialcpav18_gen/starmap_visual_cortex/paper_2_4_6/
                                prediction.h5, metrics.json, method_log.txt, resources.json
     published/                 (slot) the lab's files for the same row — see REVIEW_NOTES
   envs/                        bench_{eval,spatialcpa,spatialz,feast,isost}.yml
-    lock/cpu-verified.txt      exact set that produced expected/cpu-verified
+    lock/cpu-verified.txt      exact set that reproduces expected/cpu-verified
   scripts/
     reproduce_starmap_v18.sh   make starmap-row
     compare_metrics.py         metrics.json vs metrics.json, per metric, two tolerances
     compare_predictions.py     prediction.h5 vs prediction.h5, every array, bitwise
+    verify_rename.py           AST equivalence of a file against its original
+    probe_flow_contribution.py how much v18's flow changes what is emitted (REVIEW_NOTES §2)
     fetch_tools.sh             SpatialZ (Zenodo) + isoST (GitHub @ pinned commit)
     export_lab_envs.sh         run on the lab machine: envs + provenance hashes → envs/lock/
     write_manifest.sh          regenerate MANIFEST.sha256
   tests/                       see above
   docs/PROTOCOL.md             the protocol, metrics, pose search and leakage policy
   docs/DATASETS.md             the 18 datasets: partitions, caps, sources, hold-outs
-  benchmark-pbya/              (v1) only what v3 still reaches into:
-    src/data/download|process/ per-source download + processing scripts for the 18 datasets
-    tools/                     (git-ignored) filled by make tools
-  benchmark-pbya-v2/src/benchmark/
-    leakage_guard, evaluate, evaluate_generation, resource_monitor, config, _v2_io
-    methods/run_{spatialz,feast,isost}.py      the comparator wrappers
-  benchmark-pbya-v3/src/bench3/
-    config.py                  protocol constants, dataset specs, METHODS (+ V18_ARGS)
-    prepare_dataset.py, sources.py, prepare_starmap.py, design.py
-    run_all.py, run_benchmark.py, _v2bridge.py, assets.py, sanitize_checkpoint.py
-    evaluate_paper.py, align.py, evaluate_all.py        ← the scorer
-    aggregate_results.py, rank_methods.py, describe_datasets.py, survey_datasets.py
-    selftest.py, selftest_datasets.py, plot_*.py, nature_theme.py
-    methods/run_spatialcpav18.py        v18 wrapper
-    methods/run_spatialcpav18_ml.py     v18 expression-ablation wrapper (v18_*)
-    methods/_ml_learners.py             the learners + donor-selection helpers it uses
-    methods/_field_fixture.py           synthetic fixture the ablation's config comments were measured on
 ```
 
-Why the directory names: v3 finds v2 and v1 as **siblings**
-(`config.V2_ROOT`, `_v2bridge`, the wrappers' `parents[4]`), and the scorer is
-kept byte-identical. So the tree keeps the parent project's shape, trimmed by
-deletion, instead of being flattened.
+Two names keep their history because the pinned scorer depends on them:
+- `src/benchmark/` is imported as `benchmark`: `evaluate_paper.py` does
+  `from benchmark.evaluate_generation import …`.
+- `_v2bridge.py` is imported by that name.
+
+`_v2_io.py`, the wrapper I/O contract, keeps its name to match.

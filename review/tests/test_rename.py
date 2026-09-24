@@ -23,23 +23,14 @@ OTHER_VERSION = re.compile(
 # and this test (plus test_scope's guard pattern).
 ALLOWED = {"scripts/verify_rename.py", "tests/test_rename.py", "tests/test_scope.py"}
 
-RENAMED = [  # (renamed file, original in the parent project)
-    "learn_spatialcpav18.py",
-    "benchmark-pbya-v3/src/bench3/methods/run_spatialcpav18_ml.py",
-    "benchmark-pbya-v3/src/bench3/methods/_ml_learners.py",
-    "benchmark-pbya-v3/src/bench3/design.py",
-    "benchmark-pbya-v3/src/bench3/assets.py",
-    "benchmark-pbya-v2/src/benchmark/evaluate_generation.py",
-    "benchmark-pbya-v2/src/benchmark/leakage_guard.py",
-]
 
 
 def _code_and_docs():
     for p in sorted(REVIEW_ROOT.rglob("*")):
         rel = p.relative_to(REVIEW_ROOT).as_posix()
         if (p.is_file() and p.suffix in (".py", ".md", ".sh", ".yml")
-                and not rel.startswith(("reproduced/", "benchmark-pbya-v3/results/",
-                                        "benchmark-pbya/tools/"))
+                and not rel.startswith(("reproduced/", "benchmark/results/",
+                                        "benchmark/tools/", "benchmark/src/data/"))
                 and rel not in ALLOWED and rel != "REVIEW_NOTES.md"):
             yield rel, p
 
@@ -52,10 +43,10 @@ def test_no_other_version_named_anywhere():
     assert not hits, "\n".join(hits)
 
 
-def test_review_notes_names_old_identifiers_only_in_the_rename_record():
+def test_review_notes_names_old_identifiers_only_in_the_change_record():
     text = (REVIEW_ROOT / "REVIEW_NOTES.md").read_text()
-    start = text.index("### The standalone rename")
-    end = text.index("Byte-identical to the parent")
+    start = text.index("## 5. What was changed from the published tree")
+    end = text.index("## 6. Open provenance items")
     outside = text[:start] + text[end:]
     hits = [line for line in outside.splitlines() if OTHER_VERSION.search(line)]
     assert not hits, hits
@@ -79,26 +70,58 @@ def test_fallback_markers_can_match():
         assert needed in src, needed
 
 
-def _originals():
-    rows = {}
+def _provenance():
+    """Rows of MANIFEST.original.sha256: (sha, original path, path here, status)."""
+    rows = []
     for line in (REVIEW_ROOT / "MANIFEST.original.sha256").read_text().splitlines():
         if line and not line.startswith("#"):
-            d, rel = line.split(None, 1)
-            rows[rel.strip()] = d
+            rows.append(tuple(line.split()))
     return rows
 
 
-@pytest.mark.parametrize("rel", RENAMED)
-def test_renamed_file_is_equivalent_to_original(rel):
-    """Runs where the parent project's originals are present (a clone of the full
-    project); skipped in a review-only checkout — run verify_rename.py by hand
-    against the lab's copies there."""
-    original = REVIEW_ROOT.parent / rel
-    want = _originals()[rel]
+CHANGED = {  # the only executable changes from the parent project (REVIEW_NOTES §5)
+    "benchmark/src/bench3/_v2bridge.py",
+    "benchmark/src/bench3/config.py",
+    "benchmark/src/bench3/methods/run_isost.py",
+    "benchmark/src/bench3/methods/run_spatialcpav18.py",
+    "benchmark/src/bench3/methods/run_spatialz.py",
+    "benchmark/src/bench3/run_benchmark.py",
+    "benchmark/src/bench3/selftest.py",
+    "benchmark/src/bench3/survey_datasets.py",
+    "benchmark/src/benchmark/config.py",
+}
+
+
+def test_provenance_covers_every_source_file():
+    listed = {here for _, _, here, _ in _provenance()}
+    on_disk = {p.relative_to(REVIEW_ROOT).as_posix()
+               for p in (REVIEW_ROOT / "benchmark" / "src").rglob("*.py")
+               if "__pycache__" not in p.parts}
+    assert on_disk <= listed, sorted(on_disk - listed)
+    assert "learn_spatialcpav18.py" in listed
+
+
+def test_changed_files_are_exactly_the_documented_ones():
+    changed = {here for _, _, here, st in _provenance() if st == "changed"}
+    assert changed == CHANGED
+
+
+@pytest.mark.parametrize("row", [r for r in _provenance() if r[3] != "changed"],
+                         ids=lambda r: r[2])
+def test_file_matches_its_original(row):
+    """identical: same bytes. equivalent: same AST (verify_rename.py). Checked
+    against the parent project's original when it sits beside this tree (a clone
+    of the full project); skipped in a review-only checkout — run
+    verify_rename.py by hand against the lab's copies there."""
+    want, orig_rel, here, status = row
+    original = REVIEW_ROOT.parent / orig_rel
     if not original.exists() or hashlib.sha256(original.read_bytes()).hexdigest() != want:
-        pytest.skip(f"original {rel} (sha256 {want[:12]}…) not available beside the review tree")
+        pytest.skip(f"original {orig_rel} (sha256 {want[:12]}…) not available")
+    if status == "identical":
+        assert original.read_bytes() == (REVIEW_ROOT / here).read_bytes()
+        return
     out = subprocess.run([sys.executable, str(REVIEW_ROOT / "scripts" / "verify_rename.py"),
-                          str(original), str(REVIEW_ROOT / rel)],
+                          str(original), str(REVIEW_ROOT / here)],
                          capture_output=True, text=True)
     assert out.returncode == 0, out.stdout
 

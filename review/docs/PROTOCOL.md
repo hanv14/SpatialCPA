@@ -1,14 +1,14 @@
-# benchmark-pbya-v3 — protocol, metrics, pose and leakage
+# Protocol, metrics, pose and leakage
 
-_Carried over verbatim from the parent project's `benchmark-pbya-v3/README.md` (sections "The protocol" through "Leakage policy"); only method lists were edited to this review's scope. The code these sections describe is the pinned code in this repository._
+_Carried over from the parent project's benchmark README (sections "The protocol" through "Leakage policy"), with paths and method lists updated to this tree. The code these sections describe is the pinned code in `benchmark/src/`._
 
 ## The protocol
 
 Straight from the paper's description of the dataset:
 
-| Step | What the paper says | What v3 does |
+| Step | What the paper says | What the benchmark does |
 |---|---|---|
-| Source | STARmap mouse visual cortex, 3-D, single-cell resolution | `data/starmap/STARmap_Wang2018three_data_3D_data.h5ad` (32 845 cells × 28 genes, 89 z-planes) |
+| Source | STARmap mouse visual cortex, 3-D, single-cell resolution | `benchmark/data/raw/starmap_visual_cortex/STARmap_Wang2018three_data_3D_data.h5ad` (32 845 cells × 28 genes, 89 z-planes) |
 | Trim | remove uppermost `z = 6–13` and lowermost `z = 91–94` | drops 3 867 cells (11.8 %); 77 planes remain (`z = 14–90`) |
 | Partition | divide the remainder into **seven consecutive 2-D sections** | 77 / 7 = **exactly 11 planes per section** — the partition is even, no fudging |
 | Split | hold out sections **2, 4, 6**; input sections **1, 3, 5, 7** | one holdout config, `paper_2_4_6` |
@@ -56,9 +56,9 @@ contribute more individual numbers.
 | **Preservation of cell spatial localization** (incl. rare types) | `paper_celltype_localization` ↑, `paper_celltype_ot` ↓, `paper_rare_celltype_localization` ↑, `paper_rare_celltype_recall` ↑ | Per cell type, a debiased Sinkhorn (OT) divergence between the predicted and true spatial distributions, calibrated against a within-tissue null: scattering that type anywhere in the tissue. 1 = localization reproduced, 0 = no better than random placement. The main score is GT-frequency-weighted, so it also reports the **rare-cell-type** counterpart (types below `RARE_CELLTYPE_FRAC` = 5%): `rare_celltype_localization` is the *unweighted* localization over rare types (the ranked score — are the rare niches in the right place), and `rare_celltype_recall` is the fraction of rare types produced at all (a pose-independent presence diagnostic, not ranked). |
 | **Gene expression similarity** | `paper_gene_mean_spearman` ↑, `paper_gene_var_spearman` ↑, `paper_gene_detection_spearman` ↑ (+ pred/GT median detection) | Per-gene mean/variance agreement on log-normalized expression, plus **detection frequency** — the fraction of cells expressing each gene, i.e. the panel's *sparsity structure*. Detection is computed on the raw emitted expression, not the rank-normalized matrix the spatial metrics use: rank-normalization maps every gene's zeros to the same low rank and so erases exactly this quantity, which is why it is reported separately (and why the SpatialZ audit lists it). It is invariant to any zero-preserving transform (log1p, library-normalization) but correctly penalises a method that emits a *dense* field with no zeros. This is its own ranked group, so gene variance and detection actually count toward the composite. |
 
-Also written, for continuity with the rest of the repo: v2's correspondence-free
-`gen_*` metrics (identical code, so v3 rows read alongside the v2 sweep) and v2's
-cell-matched metrics as **reference only** — de-novo generation produces no
+Also written: the correspondence-free `gen_*` metrics
+(`src/benchmark/evaluate_generation.py`) and the cell-matched metrics
+(`src/benchmark/evaluate.py`) as **reference only** — de-novo generation produces no
 cell-to-cell correspondence, so those are not a valid score here.
 
 `paper_cell_count_ratio` is reported but deliberately **not** ranked: the number
@@ -71,8 +71,9 @@ method produce a plausible amount of tissue?"), not a quality score.
 log1p, arbitrary). Every primary metric is computed on **per-gene
 rank-normalized** expression — invariant to any monotonic per-gene transform — so
 two methods differing only in output scale get identical scores. The
-rank-normalizer is imported from v2's evaluator rather than re-implemented, so
-the two benchmarks cannot silently drift apart.
+rank-normalizer is imported from `src/benchmark/evaluate_generation.py` rather
+than re-implemented, so the paper metrics and the `gen_*` metrics cannot silently
+drift apart.
 
 **Correspondence freedom.** Nothing here correlates prediction against ground
 truth cell-by-cell. Generation synthesizes cells; it does not place them on GT
@@ -119,7 +120,7 @@ against 0.44–0.48 before.
 
 ## Leakage policy
 
-Inherited wholesale from v2 (`_v2bridge.py` re-exports `leakage_guard`), and it
+`src/benchmark/leakage_guard.py` (re-exported by `_v2bridge.py`), and it
 matters more here, not less, because three sections are missing at once:
 
 1. **Membership** — the held-out cells are physically absent from the file a
@@ -130,7 +131,7 @@ matters more here, not less, because three sections are missing at once:
 3. **Registration** — the training slices are re-registered into a common frame
    using training slices only. For STARmap the policy is `none`: it is a single
    3-D imaging block whose z-planes are inherently co-registered, so
-   re-registering would only introduce distortion. (Same call v2 makes for every
+   re-registering would only introduce distortion. (The same call holds for every
    volumetric dataset.)
 4. **Global statistics** — label vocabularies are built from the training input
    only; expression normalization is per-cell.
