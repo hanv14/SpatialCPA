@@ -204,10 +204,13 @@ tree:
 Each `prediction.h5` was **bitwise identical** to the committed
 `expected/cpu-verified/…/prediction.h5`, which has not been re-committed since it
 was first produced, and all 50 metrics matched at tolerance 0. The harness
-selftest (oracle / flanking copy / spatial scramble / random) gave metrics
-identical to its run before the merge; see the numbers below.
+selftest exercises the scorer on four synthetic reconstructions of known
+quality.
 
-_(Selftest before/after comparison: in progress; filled in by the next commit.)_
+Selftest, measured (4-core CPU, 4 min): **all checks passed**, and all 172
+numeric values in `selftest_metrics.json` (oracle / flanking_copy /
+spatial_scramble / random × every metric) are **identical** to the run made
+before the merge, in the parent layout.
 
 ## 6. Open provenance items (need the lab machine)
 
