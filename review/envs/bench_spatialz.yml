@@ -1,0 +1,29 @@
+# SpatialZ (Lin et al. 2025). The method code is NOT a pip package: it is the
+# Zenodo 10.5281/zenodo.17416727 archive, unpacked to
+# benchmark-pbya/tools/spatialz/SpatialZ_code/ by scripts/fetch_tools.sh.
+#
+# REVIEW COPY: v1's spatialz.yml listed only the scanpy stack, but SpatialZ.py /
+# Synthesize.py import torch, ot (POT), plotly, matplotlib, tqdm and MENDER, and
+# run_spatialz.check_environment() refuses to run without MENDER. Those are added
+# here, unpinned, because the versions that ran are not recorded in this repo.
+name: bench_spatialz
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+  - python=3.10
+  - numpy>=1.24,<2
+  - scipy>=1.10
+  - pandas>=2.0
+  - scikit-learn>=1.3
+  - h5py>=3.9
+  - pytorch>=2.0
+  - matplotlib
+  - plotly
+  - tqdm
+  - pip
+  - pip:
+    - anndata>=0.10
+    - scanpy>=1.10
+    - POT
+    - MENDER

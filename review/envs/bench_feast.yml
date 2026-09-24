@@ -1,0 +1,19 @@
+# FEAST (Chen et al. 2025) over a PASTE2 alignment. run_feast.check_environment()
+# imports FEAST and paste2.PASTE2.partial_pairwise_align.
+# REVIEW COPY: paste2 added (v1's feast.yml relied on FEAST-py pulling it in).
+name: bench_feast
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - numpy>=1.24,<2
+  - scipy>=1.10
+  - pandas>=2.0
+  - scikit-learn>=1.3
+  - h5py>=3.9
+  - pip
+  - pip:
+    - anndata>=0.10
+    - scanpy>=1.10
+    - FEAST-py
+    - paste2

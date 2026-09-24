@@ -1,0 +1,27 @@
+# The harness: prepare_dataset, run_all/run_benchmark (the orchestrator, which
+# shells out to the per-method envs with `conda run`), evaluate_all,
+# aggregate_results, rank_methods, plots and the tests.
+#
+# umap-learn is NOT optional for reproducing published numbers: without it
+# paper_umap_mixing / paper_umap_centroid_dist are None. UMAP is also the one
+# stochastic metric family — its values depend on the umap-learn/numba versions,
+# so compare those columns with the looser tolerance in scripts/compare_metrics.py.
+name: bench_eval
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - numpy>=1.24,<2
+  - scipy>=1.10
+  - pandas>=2.0
+  - scikit-learn>=1.3
+  - scikit-image>=0.21
+  - matplotlib>=3.7
+  - seaborn>=0.13
+  - h5py>=3.9
+  - pip
+  - pip:
+    - anndata>=0.10
+    - scanpy>=1.10
+    - umap-learn
+    - pytest

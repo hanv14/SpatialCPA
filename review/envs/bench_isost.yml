@@ -1,0 +1,38 @@
+# isoST (Li et al. 2025). Method code: github.com/deng-ai-lab/isoST, cloned to
+# benchmark-pbya/tools/isost/ at the commit pinned in scripts/fetch_tools.sh.
+#
+# GPU env: faiss-gpu + cudatoolkit 11.3, and the torch-geometric extension wheels
+# below are built against torch 1.13 / cu117. REVIEW COPY: v1's isost.yml pinned
+# the PyG extensions but not torch itself, which they are ABI-bound to; torch is
+# pinned here to the version those wheels were built for. joblib is imported by
+# run_isost.py directly.
+name: bench_isost
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - pyg
+dependencies:
+  - python=3.10
+  - numpy>=1.24,<2
+  - scipy>=1.10
+  - pandas>=2.0
+  - scikit-learn>=1.3
+  - h5py>=3.9
+  - joblib
+  - faiss-gpu=1.7.3
+  - cudatoolkit=11.3
+  - pyyaml
+  - pip
+  - pip:
+    - --find-links https://data.pyg.org/whl/torch-1.13.0+cu117.html
+    - torch==1.13.1
+    - anndata>=0.10
+    - scanpy>=1.10
+    - torch-geometric==2.3.1
+    - torch-cluster==1.6.0
+    - torch-scatter==2.1.0
+    - torch-sparse==0.6.16
+    - torch-spline-conv==1.2.1
+    - geomloss
+    - torchdiffeq
