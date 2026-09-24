@@ -2,13 +2,14 @@
 # -*- coding: utf-8 -*-
 r"""
 ================================================================================
- learn_spatialcpav18.py   (v14 + benchmark-driven fixes; see V18 CHANGES below)
- A single-file, from-scratch, heavily annotated re-implementation of the
- **SpatialCPA-v14 / H3D-FLA** virtual-slice generator, driven end-to-end by the
- **benchmark-pbya-v3** experiment (the SpatialZ STARmap protocol).
+ learn_spatialcpav18.py — SpatialCPA-v18
+ A single-file, heavily annotated implementation of the SpatialCPA-v18
+ virtual-slice generator: a flow-matching latent atlas whose generated cells are
+ grounded in real training profiles.  Evaluated end-to-end on benchmark-pbya-v3
+ (the SpatialZ STARmap protocol).
 ================================================================================
 
-V18 CHANGES (each targets a specific finding from the 18-dataset benchmark)
+FOUR COMPONENTS ON TOP OF THE CORE HYBRID (each targets a benchmark finding)
 ---------------------------------------------------------------------------
  1. RAW OUTPUT (fixes negative gene_var_spearman on EASI-FISH):
     Slices optionally carry raw_expression; grounded (copied) cells emit the
@@ -31,33 +32,28 @@ V18 CHANGES (each targets a specific finding from the 18-dataset benchmark)
     cfg.ground_keep_margin keeps the inherited source unless the flow latent
     clearly prefers another candidate (protects Moran's I / marker locality).
  Synthetic head-to-head at the benchmark config (edit_weight=0,
- ground_blend_flow=1.0): mixing +0.17, gene_var +0.00->+0.01, dup atoms
- 0.23->0.00, Moran/marker within 0.01 of v14, raw-copy fidelity exact.
+ ground_blend_flow=1.0) against the core hybrid without these four: mixing
+ +0.17, gene_var +0.00->+0.01, dup atoms 0.23->0.00, Moran/marker within 0.01,
+ raw-copy fidelity exact.
 
-WHY THIS FILE EXISTS
---------------------
-The production code for v14 is spread across six modules
-(`config / data / latents / nets / trainer / model`) plus a benchmark harness.
-That is the right way to *ship* it, but a poor way to *learn* it, because the
-control flow jumps between files.  This single script re-derives the whole
-method in reading order — data in at the top, a generated virtual slice out at
-the bottom — with the "why" written next to every "what".  Read it top to
-bottom once; after that you should be able to re-implement v14 from a blank file.
+HOW TO READ THIS FILE
+---------------------
+The whole method is in this one file, in reading order — data in at the top, a
+generated virtual slice out at the bottom — with the "why" written next to every
+"what".  The benchmark wrapper (benchmark-pbya-v3/src/bench3/methods/
+run_spatialcpav18.py) loads this file directly; nothing else is imported.  It
+depends only on numpy, scipy and scikit-learn, plus torch for the learned path,
+and its own main() runs on a synthetic STARmap-like volume so you can execute it
+with no data download.
 
-It is faithful to the real pipeline (same stage decomposition, same losses, same
-generation logic, deliberately the same function/variable names where it helps
-you map back), but it is *self-contained*: it imports nothing from the
-`spatialcpav14` package, and it runs on a synthetic STARmap-like volume so you
-can execute it with no data download.
-
-    $ python learn_spatialcpav14.py            # full torch pipeline + eval
-    $ python learn_spatialcpav14.py --fast     # tiny + quick (smoke test)
-    $ python learn_spatialcpav14.py --h5ad data/starmap/STARmap_...3D_data.h5ad
+    $ python learn_spatialcpav18.py            # full torch pipeline + eval
+    $ python learn_spatialcpav18.py --fast     # tiny + quick (smoke test)
+    $ python learn_spatialcpav18.py --h5ad data/starmap/STARmap_...3D_data.h5ad
 
 Dependencies: numpy, scipy, scikit-learn, and (for the real method) torch.
 Without torch the script still runs — it falls back to the dependency-free
-"latent-grounded recombination" path, exactly as the real method does — but the
-*learning* is in the torch path, so install torch if you can.
+"latent-grounded recombination" path — but the *learning* is in the torch path,
+so install torch if you can.  (The benchmark refuses to score that fallback.)
 
 
 THE PROBLEM (what a "virtual slice" even is)
@@ -75,7 +71,7 @@ so every metric is a field/distribution comparison — Moran's I, marker depth
 profiles, cell-type localization, ...).
 
 
-THE KEY INSIGHT v14 IS BUILT AROUND
+THE KEY INSIGHT v18 IS BUILT AROUND
 -----------------------------------
 The scoring metrics pull in two directions at once:
 
@@ -87,7 +83,7 @@ The scoring metrics pull in two directions at once:
       neighbourhood enrichment) reward *real* local gene-gene covariance and
       spatial autocorrelation — the thing a raw copy of a real slice is good at.
 
-v14's answer is a HYBRID:
+v18's answer is a HYBRID:
 
   * a GENERATIVE FLOW-MATCHING field in a learned joint latent space supplies the
     smooth z-interpolated molecular structure  -> wins (A);
@@ -101,22 +97,22 @@ v14's answer is a HYBRID:
 Everything below is machinery in service of those three ideas.
 
 
-THE PIPELINE, ONE LINE PER STAGE (matches the real README's table)
-------------------------------------------------------------------
-  Stage 1  latents.py   per-cell expression latent e (PCA) + pseudo-image m
-  Stage 2  nets.py      JointEncoder: fuse (e, m) -> joint latent h  (+ decoders)
-  Stage 3.1 nets.py     ContextAttention: Fourier(x,y,z) query attends over the
+THE PIPELINE, ONE LINE PER STAGE (each stage is a PART below)
+-------------------------------------------------------------
+  Stage 1               per-cell expression latent e (PCA) + pseudo-image m
+  Stage 2               JointEncoder: fuse (e, m) -> joint latent h  (+ decoders)
+  Stage 3.1             ContextAttention: Fourier(x,y,z) query attends over the
                         real slices' {h, pos} -> context C(z)
-  Stage 3.2 nets.py     VectorField: conditional flow-matching velocity
+  Stage 3.2             VectorField: conditional flow-matching velocity
                         v_t(h_t | t, C(z), z)
-  Stage 3.3 trainer.py  gap-aware (drop whole context slices) + z-marginalized
-  Stage 4  trainer.py   biology regularizers (consistency, adaptive smoothness,
+  Stage 3.3             gap-aware (drop whole context slices) + z-marginalized
+  Stage 4               biology regularizers (consistency, adaptive smoothness,
                         hypoxia-gradient)
-  Stage 5  trainer.py   inference: integrate the ODE from noise, decode, ground,
+  Stage 5               inference: integrate the ODE from noise, decode, ground,
                         lay out coherent patches, match composition
-  Stage 6  trainer.py   two-phase training: A = encoder recon, B = flow+attention
+  Stage 6               two-phase training: A = encoder recon, B = flow+attention
 
-A SCHEMATIC (same as the package README):
+A SCHEMATIC:
 
   per-cell expression --PCA--> e --+
                                    |
@@ -159,7 +155,7 @@ except Exception:                                                   # pragma: no
 
 
 # ==============================================================================
-# PART 1 — DATA CONTAINERS  (real file: spatialcpav14/data.py)
+# PART 1 — DATA CONTAINERS
 # ==============================================================================
 # Nothing clever here, but the *contract* matters: a Slice is one aligned 2-D
 # section with physical coordinates; a SliceStack is those sections ordered by z.
@@ -182,7 +178,7 @@ class Slice:
 
     def __init__(self, expression, coords_xy, z_values,
                  cell_type_indices=None, section_id="", raw_expression=None):
-        # v18: optionally keep the ORIGINAL (raw-count / raw-intensity) profiles.
+        # optionally keep the ORIGINAL (raw-count / raw-intensity) profiles.
         # Grounded cells are copies of real cells; when the caller wants count
         # output, the exact raw measurement is the right thing to emit, not
         # expm1(log-normalized) — that round trip rescales per-cell totals and
@@ -253,7 +249,7 @@ class SliceStack:
 
 # ==============================================================================
 # PART 2 — STAGE 1: EXPRESSION LATENT + PSEUDO-IMAGE (MORPHOLOGY) CHANNELS
-# (real file: spatialcpav14/latents.py) — pure numpy/scipy, no torch.
+# Pure numpy/scipy, no torch.
 # ==============================================================================
 # Two products are computed *per cell* from the training slices only:
 #
@@ -563,7 +559,7 @@ class VirtualSlice:
 
 
 @dataclass
-class V14Config:
+class V18Config:
     """Every hyper-parameter, grouped by pipeline stage.  The DEFAULTS below are
     the intended production settings (so running with no flags reproduces the
     method).  `--fast` in main() shrinks a handful of them for a quick demo."""
@@ -610,15 +606,15 @@ class V14Config:
     ground_blend_flow: float = 0.20       # frac. of cells re-grounded to flow pick
     ground_k: int = 8
     ground_temp: float = 0.25
-    # --- v18 additions -------------------------------------------------------
+    # --- grounding / type / output components --------------------------------
     ground_sample: bool = True            # softmax-sample the exemplar by latent
-                                          # distance (False = v14 argmin; argmin
+                                          # distance (False = plain argmin; argmin
                                           # at small k collapses onto few source
                                           # cells -> duplicated-profile atoms ->
                                           # the systematic Sinkhorn loss)
     dedup_ground: bool = True             # penalize re-using an exemplar
     dedup_strength: float = 0.5           # p /= (1 + strength * times_used)
-    type_mode: str = "vote"               # "inherit" (v14) | "vote": distance-
+    type_mode: str = "vote"               # "inherit" | "vote": distance-
                                           # weighted kNN vote over BOTH flanks;
                                           # cells whose vote disagrees with the
                                           # inherited label are re-grounded to a
@@ -651,16 +647,16 @@ class V14Config:
     verbose: bool = True
 
 
-class SpatialCPAv14:
+class SpatialCPAv18:
     """Fit one flow-matching latent atlas to a SliceStack; query it at any z."""
 
     def __init__(self, stack: SliceStack, gene_names: Sequence[str],
                  cell_type_names: Optional[Sequence[str]] = None,
-                 cfg: Optional[V14Config] = None):
+                 cfg: Optional[V18Config] = None):
         self.stack = stack
         self.gene_names = list(gene_names)
         self.cell_type_names = list(cell_type_names) if cell_type_names is not None else None
-        self.cfg = cfg or V14Config()
+        self.cfg = cfg or V18Config()
         self.n_types = max(stack.n_cell_types() or 1, 1)
         self.n_genes = stack.n_genes
         self.n_morph = max(self.n_types, 1) + 1     # morphology channels = types + density
@@ -719,14 +715,14 @@ class SpatialCPAv14:
     def _fit(self):
         if not _HAS_TORCH:
             if self.cfg.verbose:
-                print("[v14] torch unavailable -> latent-grounded numpy fallback only.")
+                print("[v18] torch unavailable -> latent-grounded numpy fallback only.")
             return
         try:
             self._train_model()
             self.trained = True
         except Exception as e:                          # keep the method usable
             import traceback
-            print(f"[v14] training failed ({e}); using numpy fallback.")
+            print(f"[v18] training failed ({e}); using numpy fallback.")
             traceback.print_exc()
             self.trained = False
 
@@ -860,7 +856,7 @@ class SpatialCPAv14:
         torch.manual_seed(cfg.seed); np.random.seed(cfg.seed)
         dev = self._device()
         if cfg.verbose:
-            print(f"[v14] training device: {dev}")
+            print(f"[v18] training device: {dev}")
 
         self.encoder = JointEncoder(self.expr_latent.dim, self.n_morph, cfg.joint_dim,
                                     self.n_types, cfg.enc_hidden, cfg.dropout).to(dev)
@@ -1063,7 +1059,7 @@ class SpatialCPAv14:
             try:
                 return self._generate(z)
             except Exception as e:
-                print(f"[v14] generation failed ({e}); numpy fallback.")
+                print(f"[v18] generation failed ({e}); numpy fallback.")
                 import traceback; traceback.print_exc()
         return self._fallback(z)
 
@@ -1224,7 +1220,7 @@ class SpatialCPAv14:
             dec = self.expr_latent.decode(e_hat_np * self._e_std + self._e_mean)
             expr = (1 - cfg.edit_weight) * expr + cfg.edit_weight * dec
 
-        # ---- v18: partial gene resampling for distributional novelty ----
+        # ---- partial gene resampling for distributional novelty ----
         partner = None
         if cfg.gene_mix_frac > 0.0 and cfg.edit_weight == 0.0:
             partner, gmask = self._gene_mix(anchor, pick, ct_idx, pool_expr,
@@ -1233,10 +1229,10 @@ class SpatialCPAv14:
             expr = np.where(gmask, pool_expr[partner], expr)
 
         expr = np.clip(expr, 0.0, None)
-        # ---- v18 output path -------------------------------------------------
+        # ---- output path ------------------------------------------------------
         # When every emitted profile is a verbatim copy (edit_weight == 0) and
         # the raw measurements are available, emit the RAW profile of the picked
-        # source cell.  v14 instead emitted expm1(log-lib-normalized), which is
+        # source cell.  The alternative, expm1(log-lib-normalized), is
         # NOT the inverse of the wrapper normalization (per-cell totals were
         # rescaled to the median library size before log1p): on wide-dynamic-
         # range data this nonlinear round trip inverts the per-gene VARIANCE
@@ -1278,7 +1274,7 @@ class SpatialCPAv14:
             K = min(cfg.ground_k, pool_nxy.shape[0])
             sel = rng.choice(n, size=n_flow, replace=False)
             cand = self._knn(anchor[sel], pool_nxy, K)           # local real candidates
-            # v18: usage counter for exemplar de-duplication.  v14's argmin at
+            # usage counter for exemplar de-duplication.  A plain argmin at
             # small K funnels many generated cells onto the same few source
             # cells; the output distribution then carries high-multiplicity
             # atoms (identical profiles), which is exactly what an OT/Sinkhorn
@@ -1310,7 +1306,7 @@ class SpatialCPAv14:
                     else:
                         pk = ci[int(rng.choice(len(ci), p=p / ps))]
                 else:
-                    pk = ci[int(np.argmin(d))]                    # v14 behaviour
+                    pk = ci[int(np.argmin(d))]                    # plain argmin
                 used[pick[i]] -= 1.0
                 pick[i] = pk
                 used[pk] += 1.0
@@ -1324,9 +1320,9 @@ class SpatialCPAv14:
 
     def _vote_types(self, anchor, pick, ct_idx, expr, pool_nxy, pool_type,
                     pool_expr, pool_e, e_hat, rng):
-        r"""v18: distance-weighted kNN cell-type vote over BOTH flanking slices.
+        r"""Distance-weighted kNN cell-type vote over BOTH flanking slices.
 
-        Pure inheritance (v14) copies each cell's type from its single source
+        Pure inheritance (type_mode='inherit') copies each cell's type from its single source
         cell, so along a coherent-patch seam the two sides carry types from two
         different real sections and the local type mosaic is discontinuous —
         the niche/neighbourhood-enrichment metrics read that as noise.  Voting
@@ -1368,7 +1364,7 @@ class SpatialCPAv14:
 
     def _gene_mix(self, anchor, pick, ct_idx, expr_pool, pool_nxy, pool_type,
                   n_genes, rng):
-        r"""v18: per-cell partial gene resampling from a SECOND local real cell
+        r"""Per-cell partial gene resampling from a SECOND local real cell
         of the SAME type.  Returns (mix_partner, gene_mask) so the caller can
         apply it on whichever scale it emits (log pool or raw pool).
 
@@ -1506,7 +1502,7 @@ class SpatialCPAv14:
             expr[i] = pool_expr[pk]; ct[i] = pool_type[pk]
         raw_ok = (self.cfg.raw_output and lower.raw_expression is not None
                   and upper.raw_expression is not None)
-        if raw_ok:                                    # v18: emit raw copies verbatim
+        if raw_ok:                                    # emit raw copies verbatim
             pool_raw = np.vstack([lower.raw_expression, upper.raw_expression])
             expr = pool_raw[picks].astype(np.float32)
         elif self.cfg.output_counts:
@@ -1569,7 +1565,7 @@ def partition_into_sections(vol: Volume, n_sections: int = 7, flatten_z: bool = 
 def build_stack_from_sections(X, xyz, section_of, section_labels, type_idx, n_types,
                               X_raw=None):
     """Assemble a SliceStack (training input) from a subset of section labels.
-    v18: optionally carries the RAW expression alongside the method input."""
+    Optionally carries the RAW expression alongside the method input."""
     slices = []
     for sec in section_labels:
         m = section_of == sec
@@ -1839,7 +1835,7 @@ def load_real_volume(path) -> Volume:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Learn SpatialCPA-v14 end to end.")
+    ap = argparse.ArgumentParser(description="Learn SpatialCPA-v18 end to end.")
     ap.add_argument("--fast", action="store_true",
                     help="tiny model + few epochs for a quick smoke test")
     ap.add_argument("--h5ad", default=None,
@@ -1849,7 +1845,7 @@ def main():
     args = ap.parse_args()
 
     print("=" * 78)
-    print("SpatialCPA-v14 (H3D-FLA) — end-to-end learning run over the v3 protocol")
+    print("SpatialCPA-v18 — end-to-end learning run over the benchmark-pbya-v3 protocol")
     print("=" * 78)
     print(f"torch available: {_HAS_TORCH}"
           + ("" if _HAS_TORCH else "  -> running the numpy fallback (install torch "
@@ -1902,19 +1898,19 @@ def main():
         X_method, xyz, section_of, train_labels, type_idx_all, n_types,
         X_raw=vol.X.astype(np.float32))
 
-    cfg = V14Config(seed=args.seed, verbose=True)
+    cfg = V18Config(seed=args.seed, verbose=True)
     if args.fast:
         cfg.pretrain_epochs, cfg.epochs = 8, 20
         cfg.joint_dim, cfg.d_model, cfg.flow_hidden = 24, 48, 96
         cfg.n_ensemble, cfg.n_ode_steps = 2, 8
     else:
         # modest defaults so the demo finishes in a couple of minutes on CPU;
-        # the true production defaults are pretrain=60 / epochs=160 (see V14Config).
+        # the true production defaults are pretrain=60 / epochs=160 (see V18Config).
         cfg.pretrain_epochs, cfg.epochs = 25, 60
 
     print(f"\n[fit] training on {stack.n_slices} sections "
           f"({sum(s.n_spots for s in stack.slices)} cells) ...")
-    model = SpatialCPAv14(stack, gene_names=vol.gene_names,
+    model = SpatialCPAv18(stack, gene_names=vol.gene_names,
                           cell_type_names=type_vocab, cfg=cfg)
     print(f"[fit] trained flow-matching model: {model.trained}")
 

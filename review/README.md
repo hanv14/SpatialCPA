@@ -90,7 +90,7 @@ environment variable is needed to find v18 (see [How v18 is located](#how-v18-is
 |---|---|---|
 | 1 | `pytest tests/test_pins.py`: every file in `MANIFEST.sha256`, and `evaluate_paper.py` by literal hash | ~2 s |
 | 2 | `prepare_dataset --dataset starmap_visual_cortex`: committed raw volume → 7 paper sections (4073/4187/4169/4102/4110/4162/4175 cells) | ~4 s |
-| 3 | `run_all --methods spatialcpav18_gen --dataset starmap_visual_cortex` into `reproduced/`: v18 train + generate, then `evaluate_paper` | 36 s method (986 MB peak RSS) + ~2 min scoring |
+| 3 | `run_all --methods spatialcpav18_gen --dataset starmap_visual_cortex` into `reproduced/`: v18 train + generate, then `evaluate_paper` | 24–36 s method (~0.9–1.0 GB peak RSS) + ~2 min scoring |
 | 4 | method log shows `review/learn_spatialcpav18.py` with the manifest's sha256, and the logged command carries the pinned flags | <1 s |
 | 5 | `compare_predictions.py` against the committed `prediction.h5` (every array, bitwise) | <1 s |
 | 6 | `compare_metrics.py` against the committed `metrics.json` (`--atol 1e-6`; UMAP pair `--umap-atol 0.02`) | <1 s |
@@ -129,7 +129,7 @@ checked against the wrapper's argparse and against `V18_ARGS` by
 | flag | ran with | wrapper default | note |
 |---|---|---|---|
 | `--seed` | `42` | `42` | `_v2_io`; run_benchmark passes `config.RANDOM_SEED` |
-| `--edit-weight` | `0.0` | `0.25` | **pinned, differs from default.** 0 = emit the grounded exemplar verbatim. It is also the gate for v18's gene-mix (`learn_spatialcpav18.py:1229`) and raw-output path (`:1244`), so both are live in the published rows |
+| `--edit-weight` | `0.0` | `0.25` | **pinned, differs from default.** 0 = emit the grounded exemplar verbatim. It is also the gate for v18's gene-mix (`learn_spatialcpav18.py:1225`) and raw-output path (`:1240`), so both are live in the published rows |
 | `--ground-blend-flow` | `1.0` | `0.2` | **pinned, differs from default.** every cell is re-grounded to the flow-latent pick |
 | `--ground-k` | `8` | `8` | pinned (restates default) |
 | `--ground-temp` | `0.25` | `0.25` | pinned (restates default). Not recorded in `method_params`; see REVIEW_NOTES |
@@ -144,7 +144,7 @@ checked against the wrapper's argparse and against `V18_ARGS` by
 | `--joint-dim` | `48` | `48` | default |
 | `--ode-steps` | `12` | `12` | default |
 | `--ensemble` | `4` | `4` | default |
-| `--context-slices` | `None` | `None` | default → `V14Config.context_slices_each_side`, which resolves to 1 (method log: `ctx_slices=1`) |
+| `--context-slices` | `None` | `None` | default → `V18Config.context_slices_each_side`, which resolves to 1 (method log: `ctx_slices=1`) |
 | `--position-mode` | `flanking` | `flanking` | default |
 | `--no-coherent-source` | `False` | `False` | default (coherent source on) |
 | `--no-output-counts` | `False` | `False` | default (count-like output) |
@@ -155,7 +155,7 @@ checked against the wrapper's argparse and against `V18_ARGS` by
 | `--no-dedup-ground` | `False` | `False` | default (exemplar-reuse penalty on) |
 <!-- effective-config:end -->
 
-Everything v18 does that is not a CLI flag is a `V14Config` default inside
+Everything v18 does that is not a CLI flag is a `V18Config` default inside
 `learn_spatialcpav18.py`, which is pinned by sha256. What ran is also written into
 every prediction as `uns/method_params`. For the committed CPU row:
 
@@ -208,8 +208,25 @@ exchange, `test_scoring_constants_unchanged` and
 (`SPATIAL_K=10`, `FIELD_GRID=20`, `DEPTH_BINS=20`, `EMBED_NEIGHBORS=15`,
 `RARE_CELLTYPE_FRAC=0.05`, `ALIGN_*=(24, 12, 3000)`, the STARmap trim/partition,
 the markers, `SSIM_*`, `NN_MATCH_THRESHOLD_UM`, seed 42) against its published
-value. REVIEW_NOTES, "What was changed from the published tree", lists every
-edited file.
+value.
+
+Separately, v18 was made a **standalone method**. Every reference to the SpatialCPA
+versions it descends from was removed from its code, its wrappers and the harness:
+class names (now `SpatialCPAv18` / `V18Config`), log prefixes (`[v18]`), docstrings
+and comments. That touched `learn_spatialcpav18.py` and a few comments and
+docstrings in the scoring chain (`design.py`, v2's `evaluate_generation.py` and
+`leakage_guard.py`), so those hashes differ from the published tree too. Two
+proofs that no number moved:
+
+- `scripts/verify_rename.py` shows each renamed file has an **identical AST** to
+  its original once docstrings, comments, output wording and the two class names
+  are set aside. The originals' hashes are in `MANIFEST.original.sha256`, and
+  `tests/test_rename.py` runs the check whenever the originals sit beside this
+  tree.
+- The STARmap prediction from the renamed code is **bitwise identical** to the one
+  committed before the rename.
+
+REVIEW_NOTES §6 lists every edited file.
 
 ---
 
@@ -261,9 +278,8 @@ in each file:
 A fresh clone needs **no environment variable**: the file is committed at the
 repository root. The published wrapper instead walked every parent directory, so
 with the file missing it would silently load whatever `learn_spatialcpav18.py` an
-enclosing directory held. That is the same failure the v25 wrapper hit from the
-other side: a file that lives in `Spatial3D/src/` is not on the walk from
-`benchmark-pbya-v3`. The walk now stops at the repository root, and an explicit
+enclosing directory held — and a file kept outside the repository (the lab
+layout keeps it in `Spatial3D/src/`) is not on that walk at all. The walk now stops at the repository root, and an explicit
 override never falls through to it. The method log prints the resolved path and
 the file's sha256 (`learn_spatialcpav18.py sha256 …`), and `make starmap-row`
 checks both. `tests/test_path_resolution.py` covers: no env vars, any cwd, a bad
@@ -415,7 +431,7 @@ The markers are in `METHODS[...]["invalid_log_markers"]`.
 
 | per run | wall time | peak RSS | disk |
 |---|---|---|---|
-| `spatialcpav18_gen`, STARmap, 4-core CPU | **36 s** (measured) | 986 MB | 3.4 MB prediction |
+| `spatialcpav18_gen`, STARmap, 4-core CPU | **24–36 s** (measured, 3 uncontended runs) | 0.9–1.0 GB | 3.4 MB prediction |
 | `v18_*`, STARmap, 4-core CPU | see REVIEW_NOTES, "Ablation run times" (measured) | | ~3.4 MB each |
 | `spatialz` / `feast` / `isost`, STARmap | *not measured* | | similar (same cell count) |
 | any method, million-cell datasets | *not measured*; scales with cells × genes | | tens–hundreds of MB |
@@ -468,7 +484,7 @@ python -m src.bench3.plot_cross_dataset --method-order spatialz feast isost spat
 
 | dataset | methods | why |
 |---|---|---|
-| `openst_lymph_node` | `spatialcpav18_gen` and every `v18_*` (the v14 family) | **OOM.** Whole-transcriptome (~10⁶ cells × ~2×10⁴ genes) with no `n_hvg` cap, and the wrapper densifies the training matrix (`run_spatialcpav18.py:354`), which is order 80 GB. A v14 run was OOM-killed in the parent project; v18 densifies identically. Adding `"n_hvg": 3000` to its spec would fix it, but that changes the panel a reported dataset was measured on, so it is left as it was |
+| `openst_lymph_node` | `spatialcpav18_gen` and every `v18_*` | **OOM.** Whole-transcriptome (~10⁶ cells × ~2×10⁴ genes) with no `n_hvg` cap, and the wrapper densifies the training matrix (`run_spatialcpav18.py:352`), which is order 80 GB; a run with a wrapper that densifies the same way was OOM-killed on this dataset. Adding `"n_hvg": 3000` to its spec would fix it, but that changes the panel a reported dataset was measured on, so it is left as it was |
 | `visium_mouse_brain_c2l` | all | not a failure, but degenerate: 3 sections, 1 held out, spot resolution. Its localization group scores deconvolved composition; read only against `st_mouse_brain_ortiz` |
 | `st_mouse_brain_ortiz` | all | spot resolution, same caveat |
 
@@ -490,6 +506,7 @@ make selftest          # the harness's own check: oracle / flanking copy / scram
 | `test_pins.py` | `evaluate_paper.py` sha256 = the literal above; every `MANIFEST.sha256` entry matches; the manifest covers the whole scoring chain; the scorer's constants equal their published values |
 | `test_effective_config.py` | `V18_ARGS` = the published flags; every v18-hosted method (16) gets them and nothing re-sets them; comparators get none; the table above = argparse defaults ⊕ `V18_ARGS`; the ablation wrapper declares every v18 flag with the same default |
 | `test_path_resolution.py` | v18 resolves to `review/learn_spatialcpav18.py` with no env vars from any cwd, looks nowhere else, and the overrides don't fall through |
+| `test_rename.py` | nothing in the tree names another SpatialCPA version; the `[v18]` fallback markers match strings v18 prints; each renamed file is AST-equivalent to its original (when present); the checker rejects a one-constant change |
 | `test_scope.py` | the registry is {spatialz, feast, isost, spatialcpav18_gen, v18_*}; no other version's wrapper, method file or result is present |
 
 ---

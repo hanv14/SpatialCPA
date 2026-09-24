@@ -303,8 +303,7 @@ def _try_paste(adata, order, verbose=False):
 def build_labels_train_only(adata, key, train_mask, seed=42, leiden_fallback=True):
     """Leakage-safe categorical label indices (vocabulary from training cells).
 
-    Mirrors the fix used in the spatialcpav4 wrapper but reusable by any v2
-    wrapper. The vocabulary — and any clustering — is derived from ``train_mask``
+    Reusable by any wrapper. The vocabulary — and any clustering — is derived from ``train_mask``
     cells only; held-out cells map to -1 when their label is unseen and are never
     consumed in training.
 

@@ -42,7 +42,7 @@ from src.bench3.config import V18_ARGS  # noqa: E402
 spec = importlib.util.spec_from_file_location("run_spatialcpav18", WRAPPER)
 W = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(W)
-M = W._V18.SpatialCPAv14
+M = W._V18.SpatialCPAv18
 
 stats: list[dict] = []
 _orig = {n: getattr(M, n) for n in ("_ground", "_vote_types", "_match_composition", "_gene_mix")}

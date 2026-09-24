@@ -3,8 +3,8 @@
 Right now that means one thing: a pretrained-weights file a method loads with
 ``torch.load``. torch >= 2.6 defaults to ``weights_only=True`` and refuses the
 numpy scalars in a *training* checkpoint (OmiCLIP's ``checkpoint.pt`` is one), so
-the method's teacher fails to build. That failure is silent in the worst way — v11
-catches it and degrades to its OT-morph fallback, which still writes a plausible
+the method's teacher fails to build. That failure is silent in the worst way — a
+method can catch it and degrade to a fallback that still writes a plausible
 prediction the harness would happily score.
 
 v3 fixes it on its own side of the boundary: before the wrapper runs, the

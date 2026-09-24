@@ -1,15 +1,9 @@
-"""The learner registry shared by the v14, v18 and v21 expression ablations.
+"""The learners and donor-selection helpers for v18's expression ablation.
 
-The three wrappers (``run_spatialcpav14_ml.py``, ``run_spatialcpav18_ml.py``,
-``run_spatialcpav21_ml.py``) replace their host method's expression step with the
-same set of regressors. Those regressors live here, in one file, so that
-"identical learners across the three families" is true **by construction** rather
-than by three copies staying in step — they had already drifted in comments by the
-time the fourth and fifth learners were added, which is how this module came to
-exist.
+``run_spatialcpav18_ml.py`` replaces v18's expression step with one of these
+regressors (or uses its prediction as a target for choosing a real donor).
 
-What stays in each wrapper: its parity guard, its feature builder (each host
-method has its own ``morphology_features`` and its own config field names), its
+What stays in the wrapper: its parity guard, its feature builder, its
 target-scale decision and its output tail. What lives here: the learners, the
 determinism fix, the parameter record and the dense-output pre-flight check.
 """
@@ -340,7 +334,7 @@ def report_degeneracy(model, name):
 # it to choose among real cells keeps the estimate and discards the emission.
 #
 # The bounded-swap design (noise floor, relative margin, worst-first budget) is
-# taken from v21's own `_field_align`, which solves the same problem with a
+# the standard field-alignment recipe: the same problem is solvable with a
 # kNN-interpolated field target instead of a learned one.
 
 
@@ -426,7 +420,7 @@ def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
     emitted there (its own donor's profile); ``Ytr`` holds the candidate real
     profiles, row-aligned with ``tr_xy`` / ``tr_type``.
 
-    Three guards, all of them from v21's ``_field_align``:
+    Three guards:
 
     * a **noise floor** — only cells whose deviation from the predicted field
       exceeds ``noise_mult`` times the real cells' own median deviation are
@@ -460,9 +454,8 @@ def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
       inside the real cells' typical band (``band_lo``..``band_hi`` quantiles of
       their deviation) and then draws from that band at random. The emitted cell
       then deviates from the field the way a real cell does, while still being
-      moved to the right place. This is the rule v21's own ``_field_repair`` uses
-      and gives its reason for — "random, not closest, so repaired entries keep
-      the in-band spread real data has instead of stacking at the field mean".
+      moved to the right place — random, not closest, so repaired entries keep
+      the in-band spread real data has instead of stacking at the field mean.
 
     ⚠️ The floor is estimated from the model's residual on the training cells it
     was fit on. For a flexible learner that residual is optimistically small, so
@@ -631,8 +624,8 @@ def select_donor_by_field(pred, incumbent, Ytr, tr_xy, tr_type, cand_mask,
 #
 # 1. THE WHOLE-PROFILE CONSTRAINT. A swap moves one cell to one donor, so a
 #    single real profile has to match the predicted field across every gene at
-#    once. It cannot: v21's own `_field_repair` docstring names this as the thing
-#    that depresses the binned per-gene field metrics. The repair below works per
+#    once. It cannot, and that is what depresses the binned per-gene field
+#    metrics. The repair below works per
 #    (cell, gene) instead, and still emits only real values.
 #
 # 2. THE FIELD TARGET IS LEARNED FROM SCRATCH. `*_gbmfield` asks gbm to predict
@@ -649,7 +642,7 @@ def local_field(q_xy, q_type, tr_xy, tr_type, Ytr, cand_idx, k, sec_w=None,
                 tr_sec=None):
     """Distance-weighted local mean profile of a candidate pool, per query cell.
 
-    The estimate v21 calls the "local mean field": the k nearest candidates of the
+    The "local mean field": the k nearest candidates of the
     same cell type, averaged with weights 1/(d + eps), optionally scaled per
     section by ``sec_w`` so the nearer flank counts for more — which is what makes
     it an interpolation in z rather than a plain average of both flanks.
@@ -711,7 +704,7 @@ def per_gene_repair(expr, field, Ytr, cand_idx, tr_xy, tr_type, q_xy, q_type,
                     pool_resid, args, seed):
     """Repair the SURPLUS per-gene mismatch, tail-rate matched to the real data.
 
-    v21's ``_field_repair``, with the learned field as the target. Per gene:
+    Field repair with the learned field as the target. Per gene:
 
     * the real noise band is ``noise_mult`` times the ``repair_q`` quantile of the
       real cells' own |residual| against the same field;
@@ -1008,14 +1001,10 @@ def require_learner_deps(learner):
 def assert_args_declared(args, wrapper_file):
     """Every ``args.<name>`` the wrapper reads must exist on the parsed namespace.
 
-    This exists because it was needed. Refactoring the learner flags into this
-    module sliced v21's ``--device`` out of its parser along with them — the flag
-    sat between two learner flags — and nothing noticed until the run reached
-    ``cfg.device = args.device`` and died *after* loading the input and building
-    the cell-type vocabulary. v14 and v18 were untouched because their flag-parity
-    guards compare against their host wrapper's whole flag table; v21_ml declares
-    no host flags at all (it builds ``V14Config()`` directly), so it had no
-    equivalent check.
+    This exists because it was needed: a refactor once sliced a host flag
+    (``--device``) out of a parser along with the learner flags beside it, and
+    nothing noticed until the run reached ``cfg.device = args.device`` and died
+    *after* loading the input and building the cell-type vocabulary.
 
     Walks the wrapper's own AST for attribute reads on the name ``args`` — exact,
     so a mention in a docstring or comment cannot produce a false failure — and

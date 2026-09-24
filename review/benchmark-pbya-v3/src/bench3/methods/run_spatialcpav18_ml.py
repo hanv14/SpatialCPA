@@ -2,9 +2,9 @@
 
 One wrapper, seven methods
 (``--learner ridge|lasso|knn|rf|gbm|xgb|mlp``), registered in
-``METHODS`` as ``v18_ridge`` … ``v18_mlp``. Third of the family, after
-``run_spatialcpav14_ml.py`` and ``run_spatialcpav21_ml.py``, for the v18
-configuration this project runs:
+``METHODS`` as ``v18_ridge`` … ``v18_mlp`` (plus the donor variants), for the
+v18 configuration this project runs — the flags below are pinned in
+``config.V18_ARGS``, so they need not be passed:
 
     python -m src.bench3.run_all --methods v18_ridge --dataset easi_fish_lha2 \
         -- --edit-weight 0.0 --ground-blend-flow 1.0 --ground-k 8 \
@@ -23,13 +23,11 @@ TWO THINGS ARE DIFFERENT HERE, AND BOTH MATTER
 ``learn_spatialcpav18.py:1231`` is LIVE: ~15 % of each cell's genes are redrawn
 from a second local same-type real cell, and the emitted profile is a blend of
 two donors chosen per gene. That is v18's answer to the duplicate-atom / Sinkhorn
-problem, and it means this family's baseline is the closest of the three to a
-per-gene synthesis method. The ablation replaces the whole emitted matrix, so the
+problem, and it means the baseline is already close to a per-gene synthesis
+method. The ablation replaces the whole emitted matrix, so the
 gene-mix is inside the replaced region — it is a per-gene *value* choice, not a
 cell-level assignment, so it counts as expression rather than donor selection.
-Read the v18 rows as "two-donor per-gene chimera vs learned regression". v14's
-(``--edit-weight 0.0``, no gene-mix) is the single-copy contrast; v21's is
-muddied by a 0.25 PCA-decode blend (``reports/inert_mechanisms.md``).
+Read the v18 rows as "two-donor per-gene chimera vs learned regression".
 
 **2. v18 emits RAW measurements at these flags, not ``expm1`` of log.** The
 raw-output path at ``:1240`` fires when ``raw_output and edit_weight == 0.0`` and
@@ -87,8 +85,8 @@ import numpy as np
 import scipy.sparse as sp
 
 # v18's own wrapper: imported, never modified. It gives us its module loader, its
-# normalization policy, its `build_stack` AND its `_build_config` — so unlike the
-# v14 family this one duplicates no config mapping at all, only the flag table.
+# normalization policy, its `build_stack` AND its `_build_config` — so this
+# wrapper duplicates no config mapping at all, only the flag table.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_spatialcpav18 as _V18W    # noqa: E402
 
@@ -244,7 +242,7 @@ def emit(pred, cfg, scale):
 
 # ── run ──────────────────────────────────────────────────────────────────────
 def run_method(adata, targets, gene_names, X_log, X_raw, args):
-    SpatialCPAv14 = _V18.SpatialCPAv14
+    SpatialCPAv18 = _V18.SpatialCPAv18
 
     train_mask = np.ones(adata.n_obs, dtype=bool)
     ct_all, cell_type_names = leakage_guard.build_labels_train_only(
@@ -271,7 +269,7 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
               f"({cfg.gene_mix_frac:.0%} of genes redrawn), not a single copy; "
               f"the learner replaces all of it")
 
-    gen = SpatialCPAv14(stack, gene_names=gene_names,
+    gen = SpatialCPAv18(stack, gene_names=gene_names,
                         cell_type_names=cell_type_names, cfg=cfg)
     # Matched by config.invalid_log_markers, exactly as for spatialcpav18_gen.
     print(f"  flow-matching model trained: {gen.trained}")

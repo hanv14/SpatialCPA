@@ -141,11 +141,11 @@ it did before.
 ### Known gap: Open-ST is still uncapped
 
 `openst_lymph_node` is whole-transcriptome like the two spot datasets, and it is
-**not** given an `n_hvg` cap here. A run of SpatialCPA-v14 (v18's parent method)
-on it was killed by the OOM killer: the wrapper densifies the training matrix, which
-at ~10⁶ cells × ~2×10⁴ genes is order 80 GB. v18's wrapper densifies the same way
-(`run_spatialcpav18.py:354`, `X_raw = _to_dense_f32(adata.X)`), and so do the v18_*
-ablations, so every v18-hosted row on this dataset is expected to fail the same way. Capping it is the same one-line spec change the ST
+**not** given an `n_hvg` cap here. v18's wrapper densifies the training matrix
+(`run_spatialcpav18.py:352`, `X_raw = _to_dense_f32(adata.X)`), which at ~10⁶ cells ×
+~2×10⁴ genes is order 80 GB; a run with a wrapper that densifies the same way was
+killed by the OOM killer on this dataset. The v18_* ablations densify too, so every
+v18-hosted row on this dataset is expected to fail the same way. Capping it is the same one-line spec change the ST
 and Visium entries already carry, but it changes the panel a *previously reported*
 dataset was measured on, so it is left as a deliberate decision rather than folded
 into this change. Until then, expect that run to fail.

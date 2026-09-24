@@ -1,0 +1,14 @@
+# sha256 of the parent project's files (commit 08c385ce) that were renamed/edited for this
+# review. scripts/verify_rename.py proves each renamed file equivalent to these originals;
+# run_spatialcpav18.py additionally carries the path fix (REVIEW_NOTES §6), so it is
+# checked against its post-path-fix version instead.
+cf89792afadc697c1626008c82e4c0cf1a031b146471c90e62bb9815c6b2fbac  learn_spatialcpav18.py
+b8855633e70491618ebf2627e41cf1c75924496a52f33e4c2a203988df4413e6  benchmark-pbya-v3/src/bench3/methods/run_spatialcpav18.py
+3c42a8fc2ee8ffc4bfda45ecc7fcff2c3101a2a092fef44fdcf71a98f5730179  benchmark-pbya-v3/src/bench3/methods/run_spatialcpav18_ml.py
+7e49e2b8b57d96d53873e747de48268520cca36d5c8fba59720eb0f8f6e90bd7  benchmark-pbya-v3/src/bench3/methods/_ml_learners.py
+41878ad2bce72acdb5d5a08c6081e5679b59616e778ce52211869bf05b1347aa  benchmark-pbya-v3/src/bench3/config.py
+00760b8d13ae53d4892dab634d37fabc75fe1707fb7a1206446fca798d8974ba  benchmark-pbya-v3/src/bench3/design.py
+395f4ac768aeaf401bd9ae56ce23670c9ca47a0a2af54fe225153cf9712c016c  benchmark-pbya-v3/src/bench3/assets.py
+07d5c81efc307e4014d1fc7401b3e10eabcb5ce83f79001fc2750ab9064c250e  benchmark-pbya-v2/src/benchmark/evaluate_generation.py
+e30dd6f9c691b8ed50691f90c4ac76a2225b7f20d3b2b8d1e39009bf31886ec0  benchmark-pbya-v2/src/benchmark/leakage_guard.py
+705b8b36e9e8d321135dddfa67646bda73dd41f3e02d28e4b33e7569aac2b1a9  benchmark-pbya-v2/src/benchmark/config.py

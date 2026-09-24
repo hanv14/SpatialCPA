@@ -1,12 +1,12 @@
 spatialcpav18 (learn_spatialcpav18.py) from /home/user/SpatialCPA/review/learn_spatialcpav18.py; torch 2.4.1+cu121 (cpu)
-learn_spatialcpav18.py sha256 cf89792afadc697c1626008c82e4c0cf1a031b146471c90e62bb9815c6b2fbac
+learn_spatialcpav18.py sha256 53d207e88280254a1d2642584814b337bd91a9269a4ed35e6d010dd01fc4196f
 Loading training-only input <results>/_inputs/starmap_visual_cortex/paper_2_4_6/train_registered.h5ad ...
   input: 16527 cells x 28 genes, 4 sections
   expression_type=raw_counts
 Running SpatialCPA-v18 for targets [('section_2', 30.0), ('section_4', 52.0), ('section_6', 74.0)] ...
   cell types: 19
-  epochs(A=60,B=160), latent(d_e=32,h=48), flow(steps=12,ens=4), pos=flanking, ctx_slices=1, coherent_src=True, type_mode=vote, gene_mix=0.15, raw_output=True, ground_sample=True, keep_margin=1.0, edit_w=0.0, blend=1.0, k=8
-[v14] training device: cpu
+  epochs(A=60,B=160), latent(d_e=32,h=48), flow(steps=12,ens=4), pos=flanking, ctx_slices=1, coherent_src=True, type_mode=vote, gene_mix=0.15, raw_output=True, ground_sample=True, keep_margin=1.0, edit_w=0.0, blend=1.0, k=8, temp=0.25, device=auto
+[v18] training device: cpu
     [A] epoch   0  recon=4.8806
     [A] epoch  20  recon=3.9952
     [A] epoch  40  recon=2.9273

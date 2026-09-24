@@ -57,7 +57,7 @@ def _normalize_counts(X, target_sum=1e4):
 
     Used only for the scale-sensitive secondary metrics (gene mean/variance).
     Negative values are clipped to 0 first: expression is non-negative, but a
-    regression head (e.g. spatialcpav4's linear expression decoder) can emit
+    regression head (e.g. a linear expression decoder) can emit
     negatives, which would otherwise make ``log1p`` return NaN.
     """
     X = np.clip(np.asarray(X, dtype=np.float64), 0.0, None)

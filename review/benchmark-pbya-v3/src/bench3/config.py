@@ -1012,11 +1012,9 @@ def _v3_wrapper(name):
     return PROJECT_ROOT / "src" / "bench3" / "methods" / name
 
 
-# The seven learners each expression-ablation family runs. Defined once and
-# shared by the three families below, because a `v14_rf` row and a `v21_rf` row
-# are only comparable if they are the same learner — the wrappers enforce that
-# in code (they all import `methods/_ml_learners.py`), and this keeps the
-# registry from drifting away from it.
+# The learners v18's expression ablation runs. Defined once, next to the code
+# that implements them (`methods/_ml_learners.py`), so the registry cannot drift
+# away from it.
 # ── field-guided donor selection: gbm as a TARGET, not as the emitter ────────
 # A separate method per host, because it answers a different question from the
 # `*_gbm` rows and must not be confused with them.
@@ -1035,7 +1033,7 @@ def _v3_wrapper(name):
 # It is the same model, the same features and the same target as `*_gbm` — only
 # its use differs — so the pair isolates emission from estimation.
 #
-# Bounded exactly as v21's own `_field_align`: a noise floor against the real
+# Bounded like a standard field alignment: a noise floor against the real
 # cells' own deviation, a relative improvement margin, and a worst-first budget.
 # See `_ml_learners.select_donor_by_field` for the caveat on the floor.
 #
@@ -1056,9 +1054,9 @@ def _v3_wrapper(name):
 _GBMFIELD_HOSTS = (
     ("v18", "run_spatialcpav18_ml.py", ("flow-matching model trained: False",
                                         "torch UNAVAILABLE",
-                                        "[v14] torch unavailable",
-                                        "[v14] training failed",
-                                        "[v14] generation failed",
+                                        "[v18] torch unavailable",
+                                        "[v18] training failed",
+                                        "[v18] generation failed",
                                         "ERROR: scikit-learn is required",
                                         "has drifted from run_spatialcpav18.py")),
 )
@@ -1110,15 +1108,15 @@ _V18_WRAPPERS = ("run_spatialcpav18.py", "run_spatialcpav18_ml.py")
 
 METHODS = {
     "spatialcpav18_gen": {
-        # v18 is the single-file ``learn_spatialcpav18.py`` at the repository
-        # root, not a package v2 ever ran, so its wrapper lives here (like v16's)
-        # and loads that file directly. It speaks the identical _v2_io contract.
+        # v18 is the single file ``learn_spatialcpav18.py`` at the repository
+        # root, not an installed package, so its wrapper lives here and loads that
+        # file directly. It speaks the identical _v2_io contract.
         "wrapper": _v3_wrapper("run_spatialcpav18.py"),
         "conda_env": "bench_spatialcpa",
         "available": True,
         "family": "spatialcpa",
-        "notes": "H3D-FLA (v14) + benchmark-driven fixes — raw output, gene-mix "
-                 "novelty, kNN type vote, and stable/diverse grounding",
+        "notes": "flow-matching latent atlas with grounded generation — raw output, "
+                 "gene-mix novelty, kNN type vote, and stable/diverse grounding",
         # ``wrapper_args`` pins the configuration the published v18 rows ran
         # under (``V18_ARGS`` below; appended to every v18-hosted entry after this
         # dict). REVIEW COPY: the original registry had no ``wrapper_args`` here
@@ -1135,9 +1133,9 @@ METHODS = {
         # learn_spatialcpav18.py itself when it drops to the fallback.
         "invalid_log_markers": ("flow-matching model trained: False",
                                 "torch UNAVAILABLE",
-                                "[v14] torch unavailable",
-                                "[v14] training failed",
-                                "[v14] generation failed"),
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
     },
     "spatialz": {
         "wrapper": _v2_wrapper("run_spatialz.py"),
@@ -1168,7 +1166,7 @@ METHODS = {
     # collapses to zero coefficients (measured: 0/640, R^2 = 0.000), which still
     # SCORES, as the per-gene training mean wearing a learner's name. So the
     # penalty is set as a fraction of alpha_max = max|X'y|/n — scale-free, so it
-    # means the same thing on v14/v21's log targets and v18's raw EASI-FISH
+    # means the same thing on log targets and on v18's raw EASI-FISH
     # intensities — and an all-zero fit is reported at run time, not silently
     # ranked. See `--lasso-alpha-frac` and `_ml_learners.FracAlphaLasso`.
     #
@@ -1185,7 +1183,7 @@ METHODS = {
     #    `--select band` instead requires the replacement's own deviation from the
     #    field to sit inside the real cells' typical band and draws from it at
     #    random, so the emitted cell deviates from the field the way a real cell
-    #    does. This is the rule v21's `_field_repair` already gives its reason for.
+    #    does.
     #
     # 2. THE PER-GENE REPAIR IS THE EXPENSIVE STAGE, AND IT IS DROPPED HERE.
     #    Measured against a held-out ground-truth section with Moran's I computed
@@ -1230,7 +1228,7 @@ METHODS = {
         }
         for _h, _w, _m in _GBMFIELD_HOSTS
     },
-    # ── lgbm, RESIDUAL-CANCELLING selection (v14 / v18 only) ─────────────────
+    # ── lgbm, RESIDUAL-CANCELLING selection ───────────────────────────────────
     # `*_lgbmband` fixed the dispersion problem and left the field gain short of
     # what the dense `*_lgbm` emitter reaches. This method closes that gap, and
     # the reason it can is a property of the evaluator, not a tuning trick.
@@ -1269,7 +1267,7 @@ METHODS = {
     # section spacing of dz=0.25 / 0.5:
     #
     #   arm                      morans_r  morans_MAE  gearys_r  field_r
-    #   host v14/v18          0.9685/0.8839  .099/.139  .967/.889  0.5665/0.4759
+    #   host (donor copy)     0.9685/0.8839  .099/.139  .967/.889  0.5665/0.4759
     #   *_lgbm  (dense emit)  0.0670/0.0418  .784/.784  .048/.041  0.6248/0.5569
     #   *_lgbmband            0.9781/0.8941  .084/.129  .976/.895  0.6613/0.5541
     #   *_lgbmbalance         0.9829/0.9127  .049/.103  .973/.911  0.7220/0.6215
@@ -1290,8 +1288,6 @@ METHODS = {
     # nearly independent of the others' and there is nothing for a second pass to
     # recover. A `--balance-passes` knob was built, measured, and deleted.
     #
-    # v21 is deliberately NOT given this variant: the campaign that asked for it
-    # asked for v14 and v18. Adding a v21 row would be an untested claim.
     **{
         f"{_h}_lgbmbalance": {
             "wrapper": _v3_wrapper(_w),
@@ -1312,7 +1308,7 @@ METHODS = {
                              "--lgbm-leaves", "15", "--lgbm-min-child", "50"],
             "invalid_log_markers": _m,
         }
-        for _h, _w, _m in _GBMFIELD_HOSTS if _h in ("v14", "v18")
+        for _h, _w, _m in _GBMFIELD_HOSTS
     },
     # ── the same two stages driven by LightGBM ──────────────────────────────
     # `lgbm` is worth its own pair, and it does NOT inherit its own emit-role
@@ -1376,9 +1372,9 @@ METHODS = {
     # position and type alone. `*_gbmrepair` takes the two things that leaves:
     #
     #   --repair-frac 0.10 : a bounded PER-GENE pass after the whole-profile swap.
-    #       One donor cannot match the field across every gene at once — v21's own
-    #       `_field_repair` names this whole-profile constraint as what depresses
-    #       the binned per-gene field metrics — so the surplus per-gene mismatch is
+    #       One donor cannot match the field across every gene at once — this
+    #       whole-profile constraint is what depresses the binned per-gene field
+    #       metrics — so the surplus per-gene mismatch is
     #       repaired from local same-type real cells, tail-rate matched so a gene's
     #       output tail is never driven below the real data's own.
     #
@@ -1430,32 +1426,32 @@ METHODS = {
     #           kernel. At n ~= 16.5k training cells the RBF Gram alone is ~2 GB
     #           per fit, and G reaches 960 (CosMx) and 3000 (ST/Visium).
     #           Infeasible at this interface; LinearSVR would be ridge with a
-    #           different loss, which `v21_ridge` already covers.
-    # ── and on v18 ───────────────────────────────────────────────────────────
-    # Third host method, same seven learners and the same VirtualSlice swap point.
-    # Two things make the v18 rows read differently from the other two, and both
-    # are consequences of running v18 at `--edit-weight 0.0`:
+    #           different loss, which `v18_ridge` already covers.
+    # ── the learned-regressor rows ───────────────────────────────────────────
+    # Same VirtualSlice swap point as the donor variants above. Two things shape
+    # how these rows read, and both are consequences of running v18 at
+    # `--edit-weight 0.0`:
     #
     #   1. v18's BASELINE IS ALREADY A PER-GENE CHIMERA. The gene-mix
-    #      (`learn_spatialcpav18.py:1231`) is live at edit_weight 0, so ~15% of
+    #      (`SpatialCPAv18._gene_mix`) is live at edit_weight 0, so ~15% of
     #      each cell's genes come from a second local same-type donor. That is a
     #      per-gene value choice, so it is expression, so the ablation replaces
     #      it. Read v18 rows as "two-donor per-gene chimera vs learned
-    #      regression" — the closest of the three baselines to per-gene synthesis.
-    #      v14 (no gene-mix) is the single-copy contrast.
+    #      regression".
     #
-    #   2. v18 EMITS RAW MEASUREMENTS, not expm1 of log (`:1240`). The wrapper
+    #   2. v18 EMITS RAW MEASUREMENTS, not expm1 of log (`raw_ok` in
+    #      `SpatialCPAv18._generate`). The wrapper
     #      mirrors v18's own `raw_ok` predicate and trains the learner on
     #      whichever scale v18 would emit, so the two are compared on one scale.
     #      `--target-scale` can override the mirror; `auto` is the default.
     #      Consequence to watch: the raw path clips negative predictions to zero,
-    #      which MANUFACTURES zeros (measured density 0.86-1.00 vs a flat 1.000
-    #      for the log-scale families). A v18_* detection score is therefore not
-    #      comparable to a v14_*/v21_* one, and the difference is the clip, not
-    #      the learner.
+    #      which MANUFACTURES zeros (measured density 0.86-1.00, where a log-scale
+    #      regressor emits a flat 1.000). A v18_* detection score is therefore not
+    #      a learner recovering sparsity: the difference is the clip, not the
+    #      learner.
     #
-    # Like the v14 family this one is flag-driven, so it declares v18's whole CLI;
-    # unlike it, no config mapping is duplicated at all — v18's own
+    # The wrapper declares v18's whole CLI; no config mapping is duplicated at
+    # all — v18's own
     # `_build_config` is imported and called. The startup guard therefore checks
     # the 24 flags only.
     **{
@@ -1468,9 +1464,9 @@ METHODS = {
             "wrapper_args": ["--learner", _lrn],
             "invalid_log_markers": ("flow-matching model trained: False",
                                     "torch UNAVAILABLE",
-                                    "[v14] torch unavailable",
-                                    "[v14] training failed",
-                                    "[v14] generation failed",
+                                    "[v18] torch unavailable",
+                                    "[v18] training failed",
+                                    "[v18] generation failed",
                                     "ERROR: scikit-learn is required",
                                     "has drifted from run_spatialcpav18.py"),
         }
@@ -1485,13 +1481,12 @@ for _m in METHODS.values():
     if Path(_m["wrapper"]).name in _V18_WRAPPERS:
         _m["wrapper_args"] = [*V18_ARGS, *_m.get("wrapper_args", ())]
 
-# Order used in tables and figures: published baselines first, then SpatialCPA,
-# oldest variant first. This list is also ``run_all``'s default campaign, so a
+# Order used in tables and figures: published baselines first, then SpatialCPA-v18,
+# then its ablation. This list is also ``run_all``'s default campaign, so a
 # method registered above but missing here is never run unless it is named
-# explicitly — which is why v16 and v17 are both here rather than only in
-# METHODS.
+# explicitly.
 #
-# It is now longer than ``nature_theme.PALETTE`` (seven validated hues, never
+# It is longer than ``nature_theme.PALETTE`` (seven validated hues, never
 # cycled). Tables, rankings and the per-dataset figures are unaffected — they
 # order by this list but do not colour by it. ``plot_cross_dataset`` does colour
 # by it, and refuses to draw more than seven series; pass ``--method-order`` to

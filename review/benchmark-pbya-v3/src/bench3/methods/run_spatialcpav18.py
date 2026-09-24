@@ -1,21 +1,18 @@
-"""SpatialCPA-v18 (H3D-FLA, benchmark-driven fixes) — benchmark-pbya-v3 wrapper.
+"""SpatialCPA-v18 — benchmark-pbya-v3 wrapper.
 
-Like the v16 wrapper, this lives in ``benchmark-pbya-v3`` rather than beside the
-others in ``benchmark-pbya-v2/src/benchmark/methods/``, because v2 is frozen and
-never ran v18. It speaks the identical ``_v2_io`` contract as every other wrapper
-— same CLI, same ``prediction.h5`` format, same leakage guard — so
-``run_benchmark`` invokes it exactly as it invokes the rest and the evaluator
-reads its output unchanged.
+This wrapper lives in ``benchmark-pbya-v3`` rather than beside the comparators'
+wrappers in ``benchmark-pbya-v2/src/benchmark/methods/``, because v2 is frozen.
+It speaks the identical ``_v2_io`` contract as every other wrapper — same CLI,
+same ``prediction.h5`` format, same leakage guard — so ``run_benchmark`` invokes
+it exactly as it invokes the rest and the evaluator reads its output unchanged.
 
-v18 is the single-file re-implementation ``learn_spatialcpav18.py`` (v14 +
-benchmark-driven fixes: raw output, gene-mix novelty, kNN type vote, stable/
-diverse grounding). It is a *module file at the repository root*, not an
-installed package, so unlike ``spatialcpav16`` there is nothing to ``import`` by
-name — this wrapper loads the file directly. The public API is v14's
-(``Slice`` / ``SliceStack`` / ``SpatialCPAv14`` / ``V14Config`` / ``VirtualSlice``),
-with two v18 extensions this wrapper uses: ``Slice`` carries an optional
-``raw_expression`` (so grounded cells can emit the real raw measurement verbatim),
-and ``V14Config`` gains the v18 generation knobs.
+SpatialCPA-v18 is the single file ``learn_spatialcpav18.py`` at the repository
+root (flow-matching latent atlas with grounded generation, plus raw output,
+gene-mix novelty, kNN type vote and stable/diverse grounding). It is not an
+installed package, so this wrapper loads the file directly and uses its API:
+``Slice`` / ``SliceStack`` / ``SpatialCPAv18`` / ``V18Config`` / ``VirtualSlice``.
+``Slice`` carries an optional ``raw_expression`` so grounded cells can emit the
+real raw measurement verbatim.
 
 Generation-only: the input file physically excludes the held-out sections and the
 method receives one scalar target z per section. Nothing else.
@@ -34,8 +31,8 @@ import scipy.sparse as sp
 
 # v2's shared I/O helpers. Imported, never modified — the contract is v2's and
 # reusing it is what keeps v3's rows comparable with the rest of the benchmark.
-# (Same wiring as the v16 wrapper: this file sits four parents below the repo
-# root, so parents[4] is SpatialCPA/ and benchmark-pbya-v2 is beside v3.)
+# This file sits four parents below the repository root, so parents[4] is the
+# root and benchmark-pbya-v2 is beside benchmark-pbya-v3.
 _V2_BENCH = (Path(__file__).resolve().parents[4]
              / "benchmark-pbya-v2" / "src" / "benchmark")
 sys.path.insert(0, str(_V2_BENCH / "methods"))   # _v2_io
@@ -144,8 +141,8 @@ def _to_dense_f32(X):
 def _normalize_expression(adata):
     """Log-normalize the METHOD INPUT, respecting the dataset's expression_type.
 
-    Identical policy to the v14/v16 wrappers, so every method receives the same
-    apples-to-apples input. Returns the resolved expression_type.
+    The same policy the comparators' wrappers apply, so every method receives
+    the same apples-to-apples input. Returns the resolved expression_type.
     """
     import scanpy as sc
     et = str(adata.uns.get("expression_type", "raw_counts"))
@@ -186,13 +183,13 @@ def build_stack(adata, X_log, X_raw, ct_all):
 
 
 def _build_config(args):
-    """A ``V14Config`` whose defaults reproduce v18; flags only override knobs.
+    """A ``V18Config`` built from the command line.
 
-    The argparse defaults below mirror ``V14Config``'s own defaults, so running
+    The argparse defaults below mirror ``V18Config``'s own defaults, so running
     the wrapper with just the shared generation-only arguments runs v18 as
     intended and cannot silently drift from this file.
     """
-    cfg = _V18.V14Config()
+    cfg = _V18.V18Config()
     cfg.seed = args.seed
     cfg.verbose = True
     cfg.device = args.device
@@ -215,7 +212,7 @@ def _build_config(args):
     cfg.coherent_source = not args.no_coherent_source
     cfg.output_counts = not args.no_output_counts
     cfg.composition_match = not args.no_composition_match
-    # ── v18 additions ──
+    # grounding / type / output components
     cfg.type_mode = args.type_mode
     cfg.type_vote_k = args.type_vote_k
     cfg.gene_mix_frac = 0.0 if args.no_gene_mix else args.gene_mix_frac
@@ -227,11 +224,11 @@ def _build_config(args):
 
 
 def run_method(adata, targets, gene_names, X_log, X_raw, args):
-    SpatialCPAv14 = _V18.SpatialCPAv14
+    SpatialCPAv18 = _V18.SpatialCPAv18
 
     # The input is training-only, so the whole matrix is training data: the
     # leakage-safe vocabulary is built over all of it (train_mask all-ones),
-    # exactly as the v14/v16 wrappers do.
+    # exactly as the comparators' wrappers do.
     train_mask = np.ones(adata.n_obs, dtype=bool)
     ct_all, cell_type_names = leakage_guard.build_labels_train_only(
         adata, "cell_type", train_mask, seed=args.seed)
@@ -250,9 +247,10 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
           f"coherent_src={cfg.coherent_source}, type_mode={cfg.type_mode}, "
           f"gene_mix={cfg.gene_mix_frac}, raw_output={cfg.raw_output}, "
           f"ground_sample={cfg.ground_sample}, keep_margin={cfg.ground_keep_margin}, "
-          f"edit_w={cfg.edit_weight}, blend={cfg.ground_blend_flow}, k={cfg.ground_k}")
+          f"edit_w={cfg.edit_weight}, blend={cfg.ground_blend_flow}, k={cfg.ground_k}, "
+          f"temp={cfg.ground_temp}, device={cfg.device}")
 
-    gen = SpatialCPAv14(stack, gene_names=gene_names,
+    gen = SpatialCPAv18(stack, gene_names=gene_names,
                         cell_type_names=cell_type_names, cfg=cfg)
     # Matched by config.invalid_log_markers: a False here means v18 fell back to
     # the numpy path and is not the method under test.
@@ -282,14 +280,14 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
 
 def main():
     p = argparse.ArgumentParser(
-        description="SpatialCPA-v18 wrapper (H3D-FLA + benchmark-driven fixes)")
+        description="SpatialCPA-v18 wrapper")
     _v2_io.add_v2_args(p)
-    # Training / architecture (defaults = V14Config production defaults).
+    # Training / architecture (defaults = V18Config production defaults).
     p.add_argument("--epochs", type=int, default=160, help="Phase B flow epochs")
     p.add_argument("--pretrain-epochs", type=int, default=60, help="Phase A epochs")
     p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     p.add_argument("--latent-dim", type=int, default=32,
-                   help="expression PCA latent dim (V14Config.expr_latent_dim)")
+                   help="expression PCA latent dim (V18Config.expr_latent_dim)")
     p.add_argument("--joint-dim", type=int, default=48)
     p.add_argument("--ode-steps", type=int, default=12,
                    help="Euler steps when sampling the flow ODE")
@@ -297,7 +295,7 @@ def main():
                    help="initial noises marginalized per query")
     p.add_argument("--context-slices", type=int, default=None,
                    help="real slices per side feeding the 3D context "
-                        "(default: V14Config.context_slices_each_side)")
+                        "(default: V18Config.context_slices_each_side)")
     # Generation
     p.add_argument("--position-mode", default="flanking",
                    choices=["flanking", "morph", "nearest"])
@@ -315,10 +313,10 @@ def main():
                    help="emit log1p-normalized (not count-like) expression")
     p.add_argument("--no-composition-match", action="store_true",
                    help="disable cell-type composition matching")
-    # ── v18-specific knobs ──
+    # ── grounding / type / output knobs ──
     p.add_argument("--type-mode", default="vote", choices=["inherit", "vote"],
                    help="'vote': distance-weighted kNN type vote over both flanks "
-                        "(v18 default); 'inherit': v14 behaviour")
+                        "(default); 'inherit': each cell keeps its source cell's type")
     p.add_argument("--type-vote-k", type=int, default=12)
     p.add_argument("--gene-mix-frac", type=float, default=0.15,
                    help="fraction of each cell's genes resampled from a second "
@@ -329,7 +327,7 @@ def main():
                    help="ablate v18 raw output: emit expm1(log-normalized) instead "
                         "of grounded cells' verbatim raw measurement")
     p.add_argument("--no-ground-sample", action="store_true",
-                   help="ablate temperature sampling: use the v14 argmin exemplar")
+                   help="ablate temperature sampling: use the argmin exemplar")
     p.add_argument("--no-dedup-ground", action="store_true",
                    help="ablate the exemplar-reuse penalty")
     p.add_argument("--ground-keep-margin", type=float, default=1.0,

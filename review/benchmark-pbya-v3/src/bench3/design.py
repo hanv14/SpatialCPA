@@ -22,7 +22,7 @@ at once (default three), keeping the first and last as input. Where the paper's
 alternating hold-out keeps every held-out slice adjacent to a real one, a
 consecutive block leaves its middle slices far from any input — the wide-gap
 regime where flank-level copies carry an irreducible error and interpolation
-quality actually separates methods (this is what SpatialCPA-v19 targets). The
+quality actually separates methods. The
 block is centred and the two boundary sections are always kept as input, so every
 held-out slice stays bracketed on both sides (well-posed interpolation, never
 extrapolation). Its numbers are not comparable with the paper design either — a
@@ -126,7 +126,7 @@ def loo_design(adata, exclude_boundary=True):
 
 
 # Default width of the consecutive hold-out block in the ``wide`` design. Three
-# matches SpatialCPA-v19's wide-gap validation and the paper design's own count
+# matches the paper design's own count
 # of held-out sections, so ``paper`` and ``wide`` remove the same number of slices
 # and differ only in whether they are adjacent — isolating the gap width itself.
 DEFAULT_WIDE_BLOCK = 3
