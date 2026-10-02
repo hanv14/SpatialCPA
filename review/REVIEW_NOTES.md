@@ -82,9 +82,18 @@ look.
   `make starmap-row`, 2 min 48 s on 4 CPU cores. v18 itself takes 36 s and
   986 MB peak RSS; the rest is scoring.
 - **Deterministic.** Every independent run gave a bitwise-identical `prediction.h5`
-  (all of X, obs, method_params; only `uns/wall_time_seconds` differs), and all
-  50 scalar metrics were identical at tolerance 0, UMAP included. That holds across
-  runs before and after each restructuring of this tree (§5).
+  (all of X, obs, method_params; only `uns/wall_time_seconds` differs). That
+  holds across runs before and after each restructuring of this tree (§5), and
+  across two different machines.
+- **The scorer is deterministic up to floating-point rounding.** On one machine
+  with one thread count, all 50 scalar metrics were identical at tolerance 0,
+  UMAP included. Re-scoring the *same* prediction on another CPU, or with 1
+  instead of 4 BLAS threads, moved exactly two metrics:
+  `paper_rare_celltype_localization` (≤ 2.2 × 10⁻¹⁶) and `paper_celltype_ot`
+  (1.4 × 10⁻¹⁷). Both come from the Sinkhorn optimal-transport computation, whose
+  summation order follows the BLAS kernel and thread count. That is why
+  `compare_metrics.py` defaults to `--atol 1e-6`; any real difference is many
+  orders of magnitude larger.
 - **Not yet compared with the published row.** `expected/published/` is empty
   until the lab files arrive (§6). Two things can legitimately make them differ:
   - `--device auto` picks CUDA when present, and GPU flow training isn't bitwise
@@ -205,7 +214,9 @@ tree:
 
 Each `prediction.h5` was **bitwise identical** to the committed
 `expected/cpu-verified/…/prediction.h5`, which has not been re-committed since it
-was first produced, and all 50 metrics matched at tolerance 0. The harness
+was first produced, and all 50 metrics matched within `1e-6` (bitwise, except
+for the last-bit Sinkhorn rounding described in §3 once this session moved to a
+different machine). The harness
 selftest exercises the scorer on four synthetic reconstructions of known
 quality.
 

@@ -46,7 +46,7 @@ compares against whichever is present:
 | row | what it is | status |
 |---|---|---|
 | `expected/published/…/metrics.json` | the metrics.json behind the published v18 STARmap row, copied from the lab machine | **not yet committed.** `make starmap-row` uses it automatically once it is |
-| `expected/cpu-verified/…/{prediction.h5,metrics.json,method_log.txt,resources.json}` | this repository's own run, on CPU, in the environment pinned by `envs/lock/cpu-verified.txt` | committed; reproduced **bitwise** in every independent run since, before and after each restructuring of this tree (all 50 scalar metrics identical at tolerance 0, UMAP included) |
+| `expected/cpu-verified/…/{prediction.h5,metrics.json,method_log.txt,resources.json}` | this repository's own run, on CPU, in the environment pinned by `envs/lock/cpu-verified.txt` | committed; `prediction.h5` reproduced **bitwise** in every independent run since, before and after each restructuring of this tree. Metrics: identical at tolerance 0 on the same machine and thread count; across CPUs or BLAS thread counts the two Sinkhorn-based localization metrics move by ≤ 2.2 × 10⁻¹⁶ (floating-point rounding), so the check uses `--atol 1e-6` |
 
 So today `make starmap-row` proves three things:
 
@@ -224,8 +224,10 @@ beside this tree (a clone of the full project). Against the lab's copies, run
 
 On top of the per-file checks, every restructuring of this tree was followed by a
 re-run of the STARmap row. Each run's `prediction.h5` was **bitwise identical** to
-the committed one and all 50 metrics matched at tolerance 0. The same
-restructurings were checked with the harness selftest; see REVIEW_NOTES §5.
+the committed one, and all 50 metrics matched within `1e-6` (at tolerance 0 on
+the same machine; see REVIEW_NOTES §3 for the one source of last-bit
+variation). The same restructurings were checked with the harness selftest; see
+REVIEW_NOTES §5.
 
 The two config files are `changed`, so the scorer's constants are also asserted
 directly (`test_scoring_constants_unchanged`,
