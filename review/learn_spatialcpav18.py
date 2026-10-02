@@ -3,11 +3,40 @@
 r"""
 ================================================================================
  learn_spatialcpav18.py — SpatialCPA-v18
- A single-file, heavily annotated implementation of the SpatialCPA-v18
- virtual-slice generator: a flow-matching latent atlas whose generated cells are
- grounded in real training profiles.  Evaluated end-to-end on benchmark-pbya-v3
- (the SpatialZ STARmap protocol).
+ A single-file, heavily annotated implementation of SpatialCPA-v18:
+ RETRIEVAL-BASED VIRTUAL-SLICE SYNTHESIS.  Every synthesized cell is a real
+ cell retrieved from the flanking training sections; a learned, depth-conditioned
+ query (a flow-matching model) ranks the retrieved candidates.  Evaluated
+ end-to-end on the benchmark (the SpatialZ STARmap protocol).
 ================================================================================
+
+WHAT THE METHOD IS, AT THE BENCHMARK CONFIGURATION
+--------------------------------------------------
+(--edit-weight 0 --ground-blend-flow 1.0 --ground-k 8 --ground-temp 0.25
+ --ground-keep-margin 1.0 --type-mode vote --type-vote-k 12 --gene-mix-frac 0.15)
+
+  STORE     the real cells of the two training sections that flank the target
+            depth z* — their positions, raw expression and cell types.
+  LAYOUT    output positions are real positions drawn from the store in
+            spatially-coherent patches of one section each (`_resample_layout`);
+            each output cell starts as a copy of the real cell it was drawn from.
+  QUERY     a learned model predicts, for each output position and depth z*, the
+            latent of the cell that should be there: a flow-matching field
+            integrated from noise (`_generate`, stages 3–5 below).
+  RERANK    each output cell may switch to one of its 8 spatially nearest real
+            cells if that cell matches the query clearly better (margin 1.0),
+            sampled with temperature 0.25 and a reuse penalty (`_ground`).
+  VOTE      cell types are re-voted over both flanks; re-typed cells and the
+            composition correction retrieve the real cell of the voted type that
+            best matches the query (`_vote_types`, `_match_composition`).
+  SPLICE    ~15% of each cell's genes are taken from a second retrieved
+            same-type local cell (`_gene_mix`).
+  EMIT      the retrieved raw measurements, verbatim.  No decoded or interpolated
+            expression reaches the output: every emitted value was measured.
+
+So the model's output never becomes data; it only decides WHICH real cell is
+retrieved.  The parts of the design documented below that synthesize expression
+(the decoded-expression blend of `edit_weight > 0`) are off in this configuration.
 
 FOUR COMPONENTS ON TOP OF THE CORE HYBRID (each targets a benchmark finding)
 ---------------------------------------------------------------------------
@@ -83,12 +112,13 @@ The scoring metrics pull in two directions at once:
       neighbourhood enrichment) reward *real* local gene-gene covariance and
       spatial autocorrelation — the thing a raw copy of a real slice is good at.
 
-v18's answer is a HYBRID:
+v18's answer is RETRIEVAL with a learned query:
 
-  * a GENERATIVE FLOW-MATCHING field in a learned joint latent space supplies the
-    smooth z-interpolated molecular structure  -> wins (A);
-  * GROUNDING every generated cell in a spatially-local *real* training profile
-    keeps the real covariance / autocorrelation                 -> wins (B);
+  * a FLOW-MATCHING model in a learned joint latent space predicts the
+    z-interpolated molecular state at each output position — used as the QUERY
+    that ranks candidate real cells, aiming at (A);
+  * every output cell IS a spatially-local *real* training cell (retrieved, not
+    generated), which keeps the real covariance / autocorrelation -> wins (B);
   * laying the sheet out as spatially-coherent single-slice PATCHES (not an
     interleaving of both neighbours) preserves each real slice's niche
     organisation                                                 -> wins the
@@ -122,9 +152,10 @@ A SCHEMATIC:
                                                                           |
   noise h0 ~ N(0,I) --> integral v_t(h_t | t, C(z*), z*) dt  (flow ODE) --+
                                                                           v
-        generated latent h*(z*) --> decode --> expression / type / displacement
+        predicted latent h*(z*) --> decode --> query latent e_hat
                                                                           |
-                          ground each cell in a real local profile  <-----+
+       retrieve: each output cell copies the real local cell that best    |
+       matches the query (ground / vote / composition)  <-----------------+
 
 Now let's build it.
 ================================================================================
@@ -648,7 +679,11 @@ class V18Config:
 
 
 class SpatialCPAv18:
-    """Fit one flow-matching latent atlas to a SliceStack; query it at any z."""
+    """Retrieval-based virtual-slice synthesis over a SliceStack.
+
+    Fits the learned query (a flow-matching latent atlas) to the training
+    sections; ``generate_virtual_slice(z)`` then retrieves real cells for depth z.
+    """
 
     def __init__(self, stack: SliceStack, gene_names: Sequence[str],
                  cell_type_names: Optional[Sequence[str]] = None,

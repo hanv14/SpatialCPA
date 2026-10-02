@@ -14,8 +14,8 @@ both change **which code runs**, not just a number:
 
 | flag | ran | default | consequence |
 |---|---|---|---|
-| `--edit-weight` | `0.0` | `0.25` | At 0 the decoded-flow blend (`learn_spatialcpav18.py:1219-1221`) is skipped, **and** it is the gate for v18's two headline mechanisms: gene-mix (`:1225`, `gene_mix_frac > 0 and edit_weight == 0`) and the raw-output path (`:1240`, `raw_output and edit_weight == 0`). At the default 0.25 neither runs, and v18 emits `expm1` of a 75/25 blend of a real profile and a PCA decode. |
-| `--ground-blend-flow` | `1.0` | `0.2` | Every generated cell is offered for flow re-grounding in `_ground` (`:1256`), not a random 20 %. |
+| `--edit-weight` | `0.0` | `0.25` | At 0 the decoded-flow blend (`learn_spatialcpav18.py:1254-1256`) is skipped, **and** it is the gate for v18's two headline mechanisms: gene-mix (`:1260`, `gene_mix_frac > 0 and edit_weight == 0`) and the raw-output path (`:1275`, `raw_output and edit_weight == 0`). At the default 0.25 neither runs, and v18 emits `expm1` of a 75/25 blend of a real profile and a PCA decode. |
+| `--ground-blend-flow` | `1.0` | `0.2` | Every generated cell is offered for flow re-grounding in `_ground` (`:1291`), not a random 20 %. |
 
 In the parent project the `spatialcpav18_gen` registry entry carried **no
 `wrapper_args`**, so these flags existed only on the command line of each run.
@@ -35,9 +35,9 @@ either.
 
 ## 2. What v18 actually emits under these flags
 
-Read `_generate` (`learn_spatialcpav18.py:1122-1254`) with the flags above in mind:
+Read `_generate` (`learn_spatialcpav18.py:1157-1289`) with the flags above in mind:
 
-- **Positions are resampled real positions.** `_resample_layout` (`:1100`) draws
+- **Positions are resampled real positions.** `_resample_layout` (`:1135`) draws
   `n_target` coordinates from the two flanking training sections, in coherent
   patches, plus 5 %-of-spacing jitter. `n_target` interpolates the flanks' cell
   counts, so `paper_cell_count_ratio ≈ 1` (0.996 measured) follows from the
@@ -46,7 +46,7 @@ Read `_generate` (`learn_spatialcpav18.py:1122-1254`) with the flags above in mi
   `edit_weight == 0` no decoded expression reaches the output. With raw
   measurements present (STARmap: `expression_type=raw_counts`), `raw_ok` holds and
   the output is `pool_raw[pick]` with the gene-mix re-applied on the raw scale
-  (`:1240-1246`).
+  (`:1275-1281`).
 - **The trained flow acts only through `pick`**: which real flanking cell each
   generated cell copies. `_ground` offers each cell the `ground_k = 8` nearest
   real cells. It moves the cell off its inherited source only if the flow latent
@@ -67,11 +67,13 @@ identical to the committed one). STARmap `paper_2_4_6`:
 
 So about two thirds of emitted cells are the profile of the flanking cell the
 layout drew, and the rest are a different real cell from the same 8-cell
-neighbourhood. A fair one-line description of v18 at the published flags is
-**learned local donor selection plus per-gene two-donor recombination**. It is
-not generative expression synthesis, and the paper's wording should be checked
-against that. The nominal `gene_mix_frac = 0.15` yields ~12 % mixed genes, which
-suggests some cells find no same-type partner (`_gene_mix`, `:1365`). Worth a
+neighbourhood. The accurate description of v18 at the published flags, now used
+throughout this repository, is **retrieval-based virtual-slice synthesis with a
+learned query**: real cells are retrieved, and the flow-matching model only ranks
+them. It is not generative expression synthesis, and the paper's wording should
+match. Whether the learned query improves on keeping the layout's cell (a
+"no-flow" ablation) is the open question for the paper's claims. The nominal `gene_mix_frac = 0.15` yields ~12 % mixed genes, which
+suggests some cells find no same-type partner (`_gene_mix`, `:1400`). Worth a
 look.
 
 ## 3. Reproducibility — measured

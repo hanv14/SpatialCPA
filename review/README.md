@@ -3,7 +3,16 @@
 A self-contained copy of what it takes to re-run and re-score **SpatialCPA-v18**
 (`learn_spatialcpav18.py`) on the SpatialZ STARmap paper protocol, next to the
 three published comparators it was benchmarked against: **SpatialZ**, **FEAST**
-and **isoST**. The benchmark harness, the scorer, the method wrappers and the
+and **isoST**.
+
+SpatialCPA-v18 is **retrieval-based virtual-slice synthesis**. Every cell of a
+synthesized section is a real cell retrieved from the two flanking training
+sections. A learned, depth-conditioned query (a flow-matching model) ranks the
+candidates, cell types are re-voted over both flanks, ~15 % of each cell's genes
+are spliced in from a second retrieved cell, and the raw measurements are
+emitted verbatim. No model output becomes data; the model only decides which
+real cell is retrieved. REVIEW_NOTES §2 measures how often that decision differs
+from simply keeping the cell the layout drew. The benchmark harness, the scorer, the method wrappers and the
 dataset scripts all live in one folder, [`benchmark/`](#layout).
 
 No other SpatialCPA version is in this tree: no wrapper, registry entry, method
@@ -127,7 +136,7 @@ checked against the wrapper's argparse and against `V18_ARGS` by
 | flag | ran with | wrapper default | note |
 |---|---|---|---|
 | `--seed` | `42` | `42` | `_v2_io`; run_benchmark passes `config.RANDOM_SEED` |
-| `--edit-weight` | `0.0` | `0.25` | **pinned, differs from default.** 0 = emit the grounded exemplar verbatim. It is also the gate for v18's gene-mix (`learn_spatialcpav18.py:1225`) and raw-output path (`:1240`), so both are live in the published rows |
+| `--edit-weight` | `0.0` | `0.25` | **pinned, differs from default.** 0 = emit the grounded exemplar verbatim. It is also the gate for v18's gene-mix (`learn_spatialcpav18.py:1260`) and raw-output path (`:1275`), so both are live in the published rows |
 | `--ground-blend-flow` | `1.0` | `0.2` | **pinned, differs from default.** every cell is re-grounded to the flow-latent pick |
 | `--ground-k` | `8` | `8` | pinned (restates default) |
 | `--ground-temp` | `0.25` | `0.25` | pinned (restates default). Not recorded in `method_params`; see REVIEW_NOTES |
@@ -475,7 +484,7 @@ python -m src.bench3.plot_cross_dataset --method-order spatialz feast isost spat
 
 | dataset | methods | why |
 |---|---|---|
-| `openst_lymph_node` | `spatialcpav18_gen` | **OOM.** Whole-transcriptome (~10⁶ cells × ~2×10⁴ genes) with no `n_hvg` cap, and the wrapper densifies the training matrix (`run_spatialcpav18.py:348`), which is order 80 GB; a run with a wrapper that densifies the same way was OOM-killed on this dataset. Adding `"n_hvg": 3000` to its spec would fix it, but that changes the panel a reported dataset was measured on, so it is left as it was |
+| `openst_lymph_node` | `spatialcpav18_gen` | **OOM.** Whole-transcriptome (~10⁶ cells × ~2×10⁴ genes) with no `n_hvg` cap, and the wrapper densifies the training matrix (`run_spatialcpav18.py:350`), which is order 80 GB; a run with a wrapper that densifies the same way was OOM-killed on this dataset. Adding `"n_hvg": 3000` to its spec would fix it, but that changes the panel a reported dataset was measured on, so it is left as it was |
 | `visium_mouse_brain_c2l` | all | not a failure, but degenerate: 3 sections, 1 held out, spot resolution. Its localization group scores deconvolved composition; read only against `st_mouse_brain_ortiz` |
 | `st_mouse_brain_ortiz` | all | spot resolution, same caveat |
 

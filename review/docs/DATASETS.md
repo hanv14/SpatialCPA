@@ -142,7 +142,7 @@ it did before.
 
 `openst_lymph_node` is whole-transcriptome like the two spot datasets, and it is
 **not** given an `n_hvg` cap here. v18's wrapper densifies the training matrix
-(`run_spatialcpav18.py:348`, `X_raw = _to_dense_f32(adata.X)`), which at ~10⁶ cells ×
+(`run_spatialcpav18.py:350`, `X_raw = _to_dense_f32(adata.X)`), which at ~10⁶ cells ×
 ~2×10⁴ genes is order 80 GB; a run with a wrapper that densifies the same way was
 killed by the OOM killer on this dataset. The v18_* ablations densify too, so every
 v18-hosted row on this dataset is expected to fail the same way. Capping it is the same one-line spec change the ST

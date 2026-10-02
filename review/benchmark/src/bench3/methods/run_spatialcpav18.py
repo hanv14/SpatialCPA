@@ -5,8 +5,10 @@ same ``prediction.h5`` format, same leakage guard — so ``run_benchmark`` invok
 it exactly as it invokes the rest and the evaluator reads its output unchanged.
 
 SpatialCPA-v18 is the single file ``learn_spatialcpav18.py`` at the repository
-root (flow-matching latent atlas with grounded generation, plus raw output,
-gene-mix novelty, kNN type vote and stable/diverse grounding). It is not an
+root: retrieval-based virtual-slice synthesis. Every output cell is a real cell
+retrieved from the flanking training sections, ranked by a learned
+depth-conditioned query (a flow-matching model), with a kNN type vote, partial
+gene splicing from a second retrieved cell, and verbatim raw output. It is not an
 installed package, so this wrapper loads the file directly and uses its API:
 ``Slice`` / ``SliceStack`` / ``SpatialCPAv18`` / ``V18Config`` / ``VirtualSlice``.
 ``Slice`` carries an optional ``raw_expression`` so grounded cells can emit the

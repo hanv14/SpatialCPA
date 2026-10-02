@@ -1029,8 +1029,9 @@ METHODS = {
         "conda_env": "bench_spatialcpa",
         "available": True,
         "family": "spatialcpa",
-        "notes": "flow-matching latent atlas with grounded generation — raw output, "
-                 "gene-mix novelty, kNN type vote, and stable/diverse grounding",
+        "notes": "retrieval-based virtual-slice synthesis — real flanking cells, "
+                 "ranked by a learned flow-matching query; kNN type vote, partial "
+                 "gene splicing, raw output",
         # ``wrapper_args`` pins the configuration the published v18 rows ran
         # under (``V18_ARGS`` above). The original registry had no
         # ``wrapper_args`` here and the flags arrived as ``run_all ... -- <flags>``
