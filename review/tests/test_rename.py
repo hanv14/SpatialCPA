@@ -106,7 +106,12 @@ def test_changed_files_are_exactly_the_documented_ones():
     assert changed == CHANGED
 
 
-@pytest.mark.parametrize("row", [r for r in _provenance() if r[3] != "changed"],
+def test_new_files_are_exactly_the_documented_ones():
+    new = {here for _, _, here, st in _provenance() if st == "new"}
+    assert new == {"benchmark/src/bench3/methods/run_spatialcpav18_flow.py"}
+
+
+@pytest.mark.parametrize("row", [r for r in _provenance() if r[3] in ("identical", "equivalent")],
                          ids=lambda r: r[2])
 def test_file_matches_its_original(row):
     """identical: same bytes. equivalent: same AST (verify_rename.py). Checked

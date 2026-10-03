@@ -251,3 +251,50 @@ before the merge, in the parent layout.
    `reference/SpatialZ.py` hashed in `MANIFEST.tools.sha256`.
 6. **Device.** Whether the published v18 rows trained on GPU. A published
    prediction's method log shows `torch … (cuda|cpu)`.
+
+## 7. Experimental: `spatialcpav18_gen_flow` (flow-chosen flank)
+
+**What it is.** `benchmark/src/bench3/methods/run_spatialcpav18_flow.py` subclasses
+v18's class from the unchanged `learn_spatialcpav18.py`, overriding four methods.
+The flow is used for **one** decision: which flanking section to retrieve the
+output section from. The flow is queried at each flank's own cell positions and the
+target depth, and the flank whose real cells match its prediction better (lower
+mean latent distance) is copied, at its exact positions, as in v18's `nearest`
+layout. Donor reranking, the type-vote replacement and the composition replacement
+use each cell's own source cell as the query, as in the "no flow" ablation. Flags:
+`V18_ARGS` plus `--flank-select flow` (or `rule` / `lower` / `upper` for
+diagnostics).
+
+**Identity with "nearest + no flow", proven.** `--flank-select rule` (v18's rule:
+the lower flank when `t ≤ 0.5`) was run against an independently built reference:
+the unchanged `learn_spatialcpav18.py` with the 5-line `STACK3D_AUDIT_NOFLOW`
+switch inserted before `_ground`, run with `--position-mode nearest`. All 11 X /
+obs / var arrays of the two `prediction.h5` files are **bitwise identical**. So this
+method can differ from "nearest + no flow" only through the flank the flow picks.
+
+**STARmap `paper_2_4_6`, measured (4-core CPU, seed 42).** The flow chose the
+**lower** flank for all three sections (latent distance lower vs upper: 4.46 vs
+5.04, 5.05 vs 5.18, 5.19 vs 5.33), the same as the rule. The output is therefore
+identical to "nearest + no flow":
+
+| metric | published v18 | `spatialcpav18_gen_flow` (= nearest + no flow here) | forced upper flank |
+|---|---|---|---|
+| UMAP mixing | 0.926 | 0.948 | 0.973 |
+| Moran's I r / MAE | 0.980 / 0.034 | 0.981 / 0.024 | 0.973 / 0.042 |
+| marker depth r / field r | 0.850 / 0.870 | 0.945 / 0.874 | 0.967 / 0.883 |
+| cell-type / rare-type localization | 0.780 / 0.626 | 0.754 / 0.619 | 0.814 / 0.699 |
+| gene detection ρ | 0.860 | 0.973 | 0.856 |
+
+**What this shows, and what it does not.**
+- The flank matters a lot, and neither flank wins everything. Per section, the
+  upper flank is better on most metrics for sections 2 and 6 and mixed for 4,
+  while the lower flank is better on Moran's I and detection.
+- The flow's criterion chose the lower flank every time, so on this dataset it
+  **adds nothing** over the fixed rule. One dataset and one seed say nothing about
+  its value elsewhere, where flanks are unequally spaced or genuinely differ.
+- The "forced upper" column is a **diagnostic, not a method**. It was chosen
+  after seeing the test sections, so it must not be reported as a result.
+- A defensible way to choose a flank must not look at the targets. One candidate
+  is internal validation: on interior *training* sections, measure whether copying
+  the section above or below reproduces them better, and use that to choose for
+  the held-out ones. That is the next thing to test, across datasets and seeds.

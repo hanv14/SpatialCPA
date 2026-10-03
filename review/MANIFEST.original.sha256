@@ -4,6 +4,7 @@
 # equivalent — scripts/verify_rename.py: same AST once docstrings, comments, message
 #              text and the v18 class names are set aside (tests/test_rename.py)
 # changed    — an executable change; each is listed with its reason in REVIEW_NOTES §5
+# new        — written for this repository; no parent-project original (REVIEW_NOTES §7)
 cf89792afadc697c1626008c82e4c0cf1a031b146471c90e62bb9815c6b2fbac  learn_spatialcpav18.py  learn_spatialcpav18.py  equivalent
 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  benchmark-pbya-v3/src/bench3/__init__.py  benchmark/src/bench3/__init__.py  identical
 1cd4bd9fcbb3c7394bd98ecf62e1bdbb2b61fb77954e3e17a70d8c7abf8e4183  benchmark-pbya-v3/src/bench3/_v2bridge.py  benchmark/src/bench3/_v2bridge.py  changed
@@ -74,3 +75,4 @@ b0e00619286f988ecc5210cc850283ab67a52979ca83b16b4bc5e7a7040dfa1a  benchmark-pbya
 a39fa902b684b2129588b6bde6f21467ae9cd68b7e9167292a7a8427615b0f5c  benchmark-pbya/src/data/process/process_starmap_visual_cortex.py  benchmark/src/data/process/process_starmap_visual_cortex.py  identical
 0c1f3bc46d00daa68598c218f62e32ab8507456d8703cc35f81e70cacd84e45e  benchmark-pbya/src/data/process/process_visium_mouse_brain_cell2location.py  benchmark/src/data/process/process_visium_mouse_brain_cell2location.py  identical
 9b3ccd1a3aa9d6f4c6f4c674ba786a3b197371fb263c19ce21b93e79646445ce  data/starmap/STARmap_Wang2018three_data_3D_data.h5ad  benchmark/data/raw/starmap_visual_cortex/STARmap_Wang2018three_data_3D_data.h5ad  identical
+-  -  benchmark/src/bench3/methods/run_spatialcpav18_flow.py  new

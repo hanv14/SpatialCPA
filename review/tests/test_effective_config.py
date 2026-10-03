@@ -89,3 +89,25 @@ def test_readme_table_is_the_effective_configuration():
             continue
         assert default == defaults[flag], (flag, default, defaults[flag])
         assert value == eff[flag], (flag, value, eff[flag])
+
+
+# ── spatialcpav18_gen_flow ────────────────────────────────────────────────────
+FLOW_WRAPPER = V18_WRAPPER.parent / "run_spatialcpav18_flow.py"
+
+
+def test_flow_wrapper_declares_every_v18_flag_with_the_same_default():
+    """run_spatialcpav18_flow.py reuses v18's _build_config, so its CLI must match
+    v18's flag for flag; its only extra flag is --flank-select."""
+    v18, flow = argparse_defaults(V18_WRAPPER), argparse_defaults(FLOW_WRAPPER)
+    for flag, d in v18.items():
+        assert flow.get(flag) == d, (flag, flow.get(flag), d)
+    assert set(flow) - set(v18) == {"--flank-select"}
+    assert flow["--flank-select"] == "flow"
+
+
+def test_flow_method_runs_under_v18_args_plus_flow_flank_choice():
+    c = load_bench3_config()
+    wa = list(c.METHODS["spatialcpav18_gen_flow"]["wrapper_args"])
+    assert wa == [*c.V18_ARGS, "--flank-select", "flow"]
+    # the published row is untouched
+    assert list(c.METHODS["spatialcpav18_gen"]["wrapper_args"]) == list(c.V18_ARGS)

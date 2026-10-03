@@ -1052,6 +1052,26 @@ METHODS = {
                                 "[v18] training failed",
                                 "[v18] generation failed"),
     },
+    "spatialcpav18_gen_flow": {
+        # SpatialCPA-v18 with the flow used for ONE decision: which flanking
+        # section the output section is retrieved from (exact real positions and
+        # cells, as v18's "nearest" layout). Donor reranking by the flow is off
+        # (the "no flow" setting). With --flank-select rule it is bitwise v18
+        # "nearest + no flow". Subclasses v18 from the unchanged
+        # learn_spatialcpav18.py; see methods/run_spatialcpav18_flow.py.
+        "wrapper": _wrapper("run_spatialcpav18_flow.py"),
+        "wrapper_args": [*V18_ARGS, "--flank-select", "flow"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "retrieval-based synthesis; the flow chooses which flanking "
+                 "section to retrieve; no flow donor reranking",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
     "spatialz": {
         "wrapper": _wrapper("run_spatialz.py"),
         "conda_env": "bench_spatialz",
@@ -1079,7 +1099,7 @@ METHODS = {
 # SpatialCPA-v18. This list is also ``run_all``'s default campaign.
 METHOD_ORDER = [
     "spatialz", "feast", "isost",
-    "spatialcpav18_gen",
+    "spatialcpav18_gen", "spatialcpav18_gen_flow",
 ]
 
 
