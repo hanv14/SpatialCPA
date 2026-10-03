@@ -35,11 +35,46 @@ variant exactly. The flow can change the result only through the flank it picks.
 The flank choice uses no numpy randomness, so the numpy random stream that drives
 the layout, vote, composition and gene splicing is the same as in "nearest + no
 flow". The flow's own sampling uses torch's generator, which no later step reads.
+
+``--flank-select flow-cv`` (method ``spatialcpav18_gen_flow_cv``)
+-----------------------------------------------------------------
+The flow still makes every flank decision, but the threshold it must clear is
+calibrated by internal validation on the *training* sections, so the decision is
+checked against the benchmark's metrics before it is trusted:
+
+1. For each interior training section i (both neighbours i-1 and i+1 are training
+   sections; at most ``CV_MAX_FOLDS``, evenly spaced), a fresh model is trained
+   with i left out. Its flow scores the two flanks of z_i exactly as above, giving
+   ``margin_i = d(rule flank) - d(other flank)`` (positive: the flow prefers the
+   flank v18's rule would not take).
+2. The same fold model then synthesizes section i twice, from the rule flank and
+   from the other flank, and both are scored against the real section i with the
+   benchmark's own per-section metric functions (``evaluate_paper``; UMAP off).
+   ``gain_i`` = number of the ``CV_METRICS`` on which the other flank beats the
+   rule flank, minus the number on which it loses.
+3. The threshold ``delta`` is the largest value maximizing
+   ``sum(gain_i for folds with margin_i > delta)``; ``delta = +inf`` (never
+   switch, total gain 0) wins every tie. So the flow may switch away from v18's
+   rule only where the folds showed that switching on that margin improves the
+   metrics on training sections.
+4. Each held-out section: the full-data flow scores its two flanks; the method
+   takes the other flank iff ``margin > delta``, otherwise the rule flank.
+
+When no switch is made the output is bitwise "nearest + no flow" (the fold models
+are trained before the main one, and v18 re-seeds torch at the start of every
+training run, so the main model is identical to ``--flank-select flow``'s). Every
+flow-cv flank score, on a fold or a held-out section, draws the flow's noise from
+its own generator seeded with ``--seed``, so each decision is a function of the
+model and z* alone. Nothing here reads a held-out section: the input file
+holds training sections only (``guard_no_holdout``) and every fold target is one
+of them.
 """
 
 import argparse
+import copy
 import sys
 import time
+from collections import namedtuple
 from pathlib import Path
 
 import anndata as ad
@@ -58,16 +93,43 @@ torch = _V18.torch
 _V18Base = getattr(_V18, "SpatialCPAv18", None) or _V18.SpatialCPAv14
 
 METHOD_NAME = "spatialcpav18_gen_flow"
+METHOD_NAME_CV = "spatialcpav18_gen_flow_cv"   # the same wrapper under --flank-select flow-cv
 # Cap on cells per flank scored by the flow when choosing a flank. Deterministic
 # (evenly spaced), so the choice consumes no randomness; 4000 covers STARmap's
 # sections whole and bounds the cost on million-cell volumes.
 FLANK_SCORE_MAX_CELLS = 4000
 
+# ── flow-cv (internal validation on training sections) ──
+# The composite that decides whether switching flanks helped on a fold, fixed
+# before any run: (evaluate_paper per-section key, +1 higher is better / -1 lower).
+# These are the §7 table's metrics, with the PCA embedding mixing standing in for
+# UMAP mixing (UMAP is the one stochastic, version-dependent metric).
+CV_METRICS = (
+    ("embedding_mixing_pca", +1),
+    ("morans_pearson", +1),
+    ("morans_mae", -1),
+    ("marker_depth_r", +1),
+    ("marker_field_r", +1),
+    ("celltype_localization", +1),
+    ("rare_celltype_localization", +1),
+    ("gene_detection_spearman", +1),
+)
+# At most this many folds (one model training each), evenly spaced over the
+# interior training sections.
+CV_MAX_FOLDS = 8
+# Metric differences at or below this count as ties: the Sinkhorn-based metrics
+# vary in the last bits across CPUs and thread counts (REVIEW_NOTES §3), and that
+# must not decide a fold.
+CV_TIE_TOL = 1e-9
+
+Fold = namedtuple("Fold", "section z margin gain detail")
+
 
 class SpatialCPAv18Flow(_V18Base):
     """v18 with a flow-chosen single-section layout and no flow donor reranking."""
 
-    flank_select = "flow"            # "flow" | "rule" | "lower" | "upper"; set by the wrapper
+    flank_select = "flow"            # "flow" | "flow-cv" | "rule" | "lower" | "upper"
+    cv_delta = float("inf")          # flow-cv threshold (calibrate_delta); +inf = never switch
 
     # -- remember the target depth: _resample_layout is not given z ------------
     def _generate(self, z):
@@ -82,6 +144,8 @@ class SpatialCPAv18Flow(_V18Base):
         rule_lower = t <= 0.5
         if self.flank_select == "flow":
             use_lower, info = self._flow_choose_flank(lower, upper, rule_lower)
+        elif self.flank_select == "flow-cv":
+            use_lower, info = self._flow_cv_choose_flank(lower, upper, rule_lower)
         elif self.flank_select in ("lower", "upper"):        # diagnostics only
             use_lower, info = self.flank_select == "lower", {"forced": self.flank_select}
         else:
@@ -107,6 +171,40 @@ class SpatialCPAv18Flow(_V18Base):
         the smaller mean distance is the better retrieval for depth z*. Ties go
         to v18's rule.
         """
+        dist = self._flow_flank_distances(lower, upper)
+        if dist["lower"] < dist["upper"]:
+            use_lower = True
+        elif dist["upper"] < dist["lower"]:
+            use_lower = False
+        else:
+            use_lower = rule_lower
+        return use_lower, {"dist_lower": dist["lower"], "dist_upper": dist["upper"]}
+
+    def _flow_cv_choose_flank(self, lower, upper, rule_lower):
+        """The flow's choice, gated by the internally validated threshold: take
+        the non-rule flank iff ``margin = d(rule) - d(other) > cv_delta``."""
+        dist = self._flow_flank_distances(lower, upper, generator=self._cv_generator())
+        rule, other = ("lower", "upper") if rule_lower else ("upper", "lower")
+        margin = dist[rule] - dist[other]
+        switch = bool(margin > self.cv_delta)
+        return (rule_lower != switch), {"dist_lower": dist["lower"],
+                                        "dist_upper": dist["upper"],
+                                        "margin": margin, "delta": _json_num(self.cv_delta)}
+
+    def _cv_generator(self):
+        """flow-cv's flow noise: a fresh generator seeded with ``cfg.seed`` for
+        every decision, so a flank choice depends only on the model and z*, not on
+        how much of torch's global stream earlier sections consumed (copying the
+        other flank can change the cell count, and with it that consumption)."""
+        g = torch.Generator(device=self.dev)
+        g.manual_seed(int(self.cfg.seed))
+        return g
+
+    def _flow_flank_distances(self, lower, upper, generator=None):
+        """Mean latent distance between the flow's prediction at z* and each
+        flank's real cells, queried at those cells' positions:
+        ``{"lower": d, "upper": d}``. ``generator=None`` (``--flank-select flow``)
+        draws the flow's noise from torch's global stream."""
         cfg = self.cfg
         z = self._z_current
         li = self.stack.slices.index(lower)
@@ -142,7 +240,8 @@ class SpatialCPAv18Flow(_V18Base):
                 n_ens = max(cfg.n_ensemble, 1)
                 steps = max(cfg.n_ode_steps, 1)
                 for _ in range(n_ens):
-                    h = torch.randn((Q, cfg.joint_dim), device=self.dev)
+                    h = torch.randn((Q, cfg.joint_dim), device=self.dev,
+                                    generator=generator)
                     for si in range(steps):
                         tt = torch.full((Q,), si / steps, device=self.dev)
                         h = h + (1.0 / steps) * self.vfield(h, tt, ctx, zt)
@@ -150,14 +249,7 @@ class SpatialCPAv18Flow(_V18Base):
                 e_hat = self.encoder.decode_e(h_acc / n_ens).cpu().numpy()
             e_real = st["e"][torch.as_tensor(idx, device=self.dev)].cpu().numpy()
             dist[name] = float(np.mean(np.linalg.norm(e_hat - e_real, axis=1)))
-
-        if dist["lower"] < dist["upper"]:
-            use_lower = True
-        elif dist["upper"] < dist["lower"]:
-            use_lower = False
-        else:
-            use_lower = rule_lower
-        return use_lower, {"dist_lower": dist["lower"], "dist_upper": dist["upper"]}
+        return dist
 
     # -- 2. no flow donor reranking: query = each cell's own source latent -----
     def _ground(self, anchor, anchor_src, e_hat, pool_nxy, pool_e, pool_expr, pool_type, rng):
@@ -176,8 +268,162 @@ class SpatialCPAv18Flow(_V18Base):
                                           pool_e, self._query, pool_type, pool_expr, rng, pick)
 
 
+def _json_num(x):
+    """A float for JSON: ``+inf`` (flow-cv's never-switch threshold) as ``"inf"``."""
+    return "inf" if x == float("inf") else float(x)
+
+
+def calibrate_delta(folds):
+    """The flow-cv threshold from internal-validation folds.
+
+    ``folds``: objects with ``.margin`` (the fold flow's d(rule) - d(other)) and
+    ``.gain`` (metric wins minus losses of the other flank over the rule flank).
+    Switching on held-out sections with ``margin > delta`` would have switched
+    exactly the folds with ``margin > delta``; the returned ``delta`` is the
+    largest one maximizing their total gain. ``+inf`` (switch nothing, gain 0)
+    wins every tie, so a switch needs strictly positive validated gain.
+    Returns ``(delta, total_gain)``.
+    """
+    best_gain, delta = 0, float("inf")
+    for m in sorted({float(f.margin) for f in folds}, reverse=True):
+        thr = float(np.nextafter(m, -np.inf))          # just below m: fold m switches
+        g = sum(f.gain for f in folds if f.margin > thr)
+        if g > best_gain:
+            best_gain, delta = g, thr
+    return delta, best_gain
+
+
+def _load_paper_scorer():
+    """The benchmark's own scorer module (``bench3.evaluate_paper``), imported
+    only for flow-cv. Its per-section functions are called exactly as
+    ``evaluate_paper()`` calls them; the module itself is not modified."""
+    src = str(Path(__file__).resolve().parents[2])
+    if src not in sys.path:
+        sys.path.insert(0, src)
+    from bench3 import evaluate_paper as ep
+    return ep
+
+
+def _paper_section_metrics(ep, pred_X, pred_xy, pred_types, gt_X, gt_xy, gt_types,
+                           gene_names, markers, layers):
+    """One section's ``evaluate_paper`` metrics (UMAP off), from arrays.
+
+    The same calls, arguments and order as the per-section loop of
+    ``evaluate_paper.evaluate_paper``; ``pred_X``/``gt_X`` are raw expression with
+    columns in ``gene_names`` order (sorted, as the scorer's ``np.intersect1d``).
+    """
+    k, grid, seed = ep.SPATIAL_K, ep.FIELD_GRID, ep.RANDOM_SEED
+    pR, gR = ep._rank_normalize(pred_X), ep._rank_normalize(gt_X)
+    cols, _basis = ep.scoring_columns(gene_names, markers, gt_xy, gR, spatial_k=k)
+    pred_xy_al, _ainfo = ep.align_by_expression(
+        pred_xy, pR[:, cols], gt_xy, gR[:, cols], grid=grid, seed=seed)
+    m = {}
+    m.update(ep.spatial_autocorrelation_metrics(pred_xy, pR, gt_xy, gR, k=k))
+    m.update(ep.embedding_continuity(pR, gR, seed=seed, use_umap=False))
+    m.update(ep.marker_metrics(pred_xy_al, pR, gt_xy, gR, gene_names,
+                               markers=markers, grid=grid,
+                               depth_bins=ep.DEPTH_BINS, k=k, layers=layers))
+    m.update(ep.gene_detection_metrics(pred_X, gt_X))
+    if gt_types is not None:
+        m.update(ep.celltype_localization(pred_xy_al, pred_types, gt_xy, gt_types,
+                                          seed=seed))
+    return m
+
+
+def fold_gain(rule_m, other_m):
+    """Wins minus losses of the other flank over the rule flank on ``CV_METRICS``
+    (a missing/NaN value or a difference within ``CV_TIE_TOL`` counts as a tie).
+    Returns ``(gain, {metric: {"rule": v, "other": v}})``."""
+    gain, detail = 0, {}
+    for key, sign in CV_METRICS:
+        r, o = rule_m.get(key), other_m.get(key)
+        detail[key] = {"rule": None if r is None else float(r),
+                       "other": None if o is None else float(o)}
+        if r is None or o is None or not (np.isfinite(r) and np.isfinite(o)):
+            continue
+        d = sign * (float(o) - float(r))
+        gain += int(d > CV_TIE_TOL) - int(d < -CV_TIE_TOL)
+    return gain, detail
+
+
+def _cv_folds(adata, gene_names, X_log, X_raw, ct_all, cell_type_names, cfg):
+    """Leave-one-training-section-out folds for flow-cv (see the module docstring).
+
+    Every array read here comes from the training-only input. Returns a list of
+    ``Fold``. Raises if a fold model fails to train: a fold that silently fell
+    back would calibrate the threshold on something that is not this method.
+    """
+    ep = _load_paper_scorer()
+    pp = dict(adata.uns.get("paper_protocol") or {})
+    markers = [str(g) for g in pp.get("marker_genes", [])] or ep.MARKER_GENES
+    layers = ([str(g) for g in pp.get("layer_superficial", [])] or ep.LAYER_SUPERFICIAL,
+              [str(g) for g in pp.get("layer_deep", [])] or ep.LAYER_DEEP)
+    print(f"  flow-cv: markers={markers} (uns['paper_protocol'] or the scorer's default)")
+
+    order = np.argsort(np.asarray(gene_names, dtype=str), kind="stable")
+    sorted_genes = [str(gene_names[j]) for j in order]
+    sections = adata.obs["section"].values.astype(str)
+    coords = np.asarray(adata.obsm["spatial"], dtype=np.float64)
+    has_types = "cell_type" in adata.obs.columns
+
+    full = _V18W.build_stack(adata, X_log, X_raw, ct_all)
+    ids = [s.section_id for s in full.slices]
+    zc = full.z_centers()
+    interior = list(range(1, len(ids) - 1))
+    if len(interior) > CV_MAX_FOLDS:
+        interior = [interior[int(j)] for j in
+                    np.linspace(0, len(interior) - 1, CV_MAX_FOLDS).round().astype(int)]
+    print(f"  flow-cv: {len(interior)} fold(s) over training sections "
+          f"{[ids[i] for i in interior]}")
+
+    folds = []
+    for i in interior:
+        sec, z = ids[i], float(zc[i])
+        keep = sections != sec
+        stack = _V18W.build_stack(adata[keep], X_log[keep], X_raw[keep],
+                                  None if ct_all is None else ct_all[keep])
+        print(f"  flow-cv fold {sec} (z={z:.2f}): training without it ...")
+        fold = SpatialCPAv18Flow(stack, gene_names=gene_names,
+                                 cell_type_names=cell_type_names, cfg=copy.deepcopy(cfg))
+        if not fold.trained:
+            raise RuntimeError(f"flow-cv fold {sec}: the fold model did not train")
+        fold.flank_log = []
+        lower, upper = fold.stack.pick_flanking_slices(z)
+        t = fold._tp_frac(z, lower.z_center, upper.z_center)
+        rule_lower = t <= 0.5
+        fold._z_current = z
+        dist = fold._flow_flank_distances(lower, upper, generator=fold._cv_generator())
+        rule, other = ("lower", "upper") if rule_lower else ("upper", "lower")
+        margin = dist[rule] - dist[other]
+
+        gm = sections == sec
+        gt_X = X_raw[gm][:, order]
+        gt_xy = coords[gm, :2]
+        gt_types = adata.obs["cell_type"].values[gm].astype(str) if has_types else None
+        scored = {}
+        for side in (rule, other):
+            fold.flank_select = side
+            vs = fold.generate_virtual_slice(z=z)
+            pred_X = _V18W._to_dense_f32(vs.expression)[:, order]
+            pred_types = (vs.cell_type.astype(str) if vs.cell_type is not None
+                          else np.array(["NA"] * pred_X.shape[0]))
+            scored[side] = _paper_section_metrics(
+                ep, pred_X, np.asarray(vs.coords, dtype=np.float64)[:, :2], pred_types,
+                gt_X, gt_xy, gt_types, sorted_genes, markers, layers)
+        gain, detail = fold_gain(scored[rule], scored[other])
+        print(f"    rule={rule}, d_lower={dist['lower']:.4f} d_upper={dist['upper']:.4f} "
+              f"margin={margin:+.4f}; other flank vs rule: gain {gain:+d} "
+              f"over {len(CV_METRICS)} metrics")
+        folds.append(Fold(sec, z, margin, gain,
+                          {"rule": rule, "dist_lower": dist["lower"],
+                           "dist_upper": dist["upper"], "metrics": detail}))
+        del fold
+    return folds
+
+
 def run_method(adata, targets, gene_names, X_log, X_raw, args):
-    """v18's run_method, constructing the subclass."""
+    """v18's run_method, constructing the subclass. Returns
+    ``(results, flank_log, cv)``; ``cv`` is the flow-cv record (None otherwise)."""
     train_mask = np.ones(adata.n_obs, dtype=bool)
     ct_all, cell_type_names = leakage_guard.build_labels_train_only(
         adata, "cell_type", train_mask, seed=args.seed)
@@ -186,7 +432,7 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
     stack = _V18W.build_stack(adata, X_log, X_raw, ct_all)
     if stack.n_slices < 2 or sum(s.n_spots for s in stack.slices) < 8:
         print("  SKIP: need >= 2 sections and >= 8 cells")
-        return {}, []
+        return {}, [], None
 
     cfg = _V18W._build_config(args)
     cfg.position_mode = "flanking"   # routes the layout through _resample_layout
@@ -200,10 +446,27 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
           f"edit_w={cfg.edit_weight}, blend={cfg.ground_blend_flow}, k={cfg.ground_k}, "
           f"temp={cfg.ground_temp}, device={cfg.device}, donor_query=source-cell")
 
+    # flow-cv folds run BEFORE the main model is built: v18 re-seeds torch and
+    # numpy at the start of training, so the main model (and the flow's flank
+    # distances) are then the same as under --flank-select flow.
+    cv = None
+    if args.flank_select == "flow-cv":
+        folds = _cv_folds(adata, gene_names, X_log, X_raw, ct_all, cell_type_names, cfg)
+        delta, total = calibrate_delta(folds)
+        print(f"  flow-cv: delta={delta:.6g} (validated gain {total:+d}; "
+              f"{'never switch: no fold showed a gain' if delta == float('inf') else 'switch when margin > delta'})")
+        cv = {"delta": _json_num(delta), "validated_gain": int(total),
+              "metrics": [f"{k}:{'+' if s > 0 else '-'}" for k, s in CV_METRICS],
+              "max_folds": CV_MAX_FOLDS, "tie_tol": CV_TIE_TOL,
+              "folds": [{"section": f.section, "z": f.z, "margin": f.margin,
+                         "gain": f.gain, **f.detail} for f in folds]}
+
     SpatialCPAv18Flow.flank_select = args.flank_select
     gen = SpatialCPAv18Flow(stack, gene_names=gene_names,
                             cell_type_names=cell_type_names, cfg=cfg)
     gen.flank_log = []
+    if cv is not None:
+        gen.cv_delta = delta
     print(f"  flow-matching model trained: {gen.trained}")
 
     results = {}
@@ -222,6 +485,8 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
             rule = "lower" if f["rule_lower"] else "upper"
             extra = (f", dist lower={f['dist_lower']:.4f} upper={f['dist_upper']:.4f}"
                      if "dist_lower" in f else "")
+            if "margin" in f:
+                extra += f", margin={f['margin']:+.4f} vs delta={f['delta']}"
             print(f"    flank: {chose} (rule: {rule}{extra})")
         n = vs.coords.shape[0]
         if n == 0:
@@ -232,7 +497,7 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
         results[sec] = {"X": sp.csr_matrix(_V18W._to_dense_f32(vs.expression)),
                         "coords": vs.coords.astype(np.float64),
                         "cell_type": cell_type}
-    return results, gen.flank_log
+    return results, gen.flank_log, cv
 
 
 def build_parser():
@@ -288,8 +553,11 @@ def build_parser():
                         "better by this margin")
     # ── this method's own flag ──
     p.add_argument("--flank-select", default="flow",
-                   choices=["flow", "rule", "lower", "upper"],
+                   choices=["flow", "flow-cv", "rule", "lower", "upper"],
                    help="'flow': the flow picks which flank to retrieve (default); "
+                        "'flow-cv': the flow picks, against a threshold calibrated "
+                        "by leave-one-training-section-out validation "
+                        "(method spatialcpav18_gen_flow_cv); "
                         "'rule': v18's rule (lower if t <= 0.5) — identical to v18 "
                         "'nearest + no flow'; 'lower'/'upper': force a flank "
                         "(diagnostics: is the flow's choice the better one?)")
@@ -322,7 +590,7 @@ def main():
     print(f"Running SpatialCPA-v18-flow for targets "
           f"{[(s, round(float(z), 2)) for s, z in targets]} ...")
     t0 = time.time()
-    results, flank_log = run_method(adata, targets, gene_names, X_log, X_raw, args)
+    results, flank_log, cv = run_method(adata, targets, gene_names, X_log, X_raw, args)
     wall = time.time() - t0
     if not results:
         print("No sections synthesized.")
@@ -347,9 +615,11 @@ def main():
                            for k, v in f.items()} for f in flank_log],
         "flow_matching": True, "generation_only": True,
     }
+    if cv is not None:
+        method_params["flow_cv"] = cv
     _v2_io.write_prediction_h5(
-        results, gene_names, target_sections, method_params, wall,
-        args.output, METHOD_NAME)
+        results, gene_names, target_sections, method_params, wall, args.output,
+        METHOD_NAME_CV if args.flank_select == "flow-cv" else METHOD_NAME)
     return 0
 
 
