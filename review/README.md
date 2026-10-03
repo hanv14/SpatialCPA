@@ -17,7 +17,9 @@ dataset scripts all live in one folder, [`benchmark/`](#layout).
 
 A second registry entry, **`spatialcpav18_gen_flow`**, is an experimental variant
 built on v18 without changing it: the learned flow chooses *which flanking section*
-to retrieve, and is not used to rerank donors. See REVIEW_NOTES §7.
+to retrieve, and is not used to rerank donors. A third, **`spatialcpav18_gen_flow_cv`**
+(the same wrapper under `--flank-select flow-cv`), gates the flow's choice with a
+threshold calibrated by leave-one-training-section-out validation. See REVIEW_NOTES §7.
 
 No other SpatialCPA version is in this tree: no wrapper, registry entry, method
 file or result. `tests/test_scope.py` and `tests/test_rename.py` enforce that.
@@ -513,7 +515,8 @@ make selftest          # the harness's own check: oracle / flanking copy / scram
 | `test_effective_config.py` | `V18_ARGS` = the published flags and is what `spatialcpav18_gen` runs with; comparators get none; the table above = argparse defaults ⊕ `V18_ARGS` |
 | `test_path_resolution.py` | v18 resolves to `review/learn_spatialcpav18.py` with no env vars from any cwd, looks nowhere else, and the overrides don't fall through |
 | `test_rename.py` | nothing in the tree names another SpatialCPA version; the `[v18]` fallback markers match strings v18 prints; every file carried from the parent project is identical or AST-equivalent to its original, except the 9 documented `changed` files; the checker rejects a one-constant change |
-| `test_scope.py` | the registry is exactly {spatialz, feast, isost, spatialcpav18_gen, spatialcpav18_gen_flow}; the only wrappers are those five; one `benchmark/` folder, no `benchmark-pbya*` |
+| `test_flow_cv.py` | flow-cv's threshold calibration: no folds or no validated gain means never switch; the threshold switches exactly the folds that gained; ties keep the larger threshold; per-fold gain respects metric direction and treats last-bit differences as ties |
+| `test_scope.py` | the registry is exactly {spatialz, feast, isost, spatialcpav18_gen, spatialcpav18_gen_flow, spatialcpav18_gen_flow_cv}; the only wrappers are those five; one `benchmark/` folder, no `benchmark-pbya*` |
 
 ---
 
@@ -536,7 +539,7 @@ review/
       selftest.py, selftest_datasets.py, plot_*.py, nature_theme.py
       methods/                 the method wrappers + their shared I/O
         run_spatialcpav18.py, run_spatialz.py, run_feast.py, run_isost.py, _v2_io.py
-        run_spatialcpav18_flow.py   spatialcpav18_gen_flow (subclasses v18; REVIEW_NOTES §7)
+        run_spatialcpav18_flow.py   spatialcpav18_gen_flow and _flow_cv (subclass v18; REVIEW_NOTES §7)
     src/benchmark/             shared evaluators + leakage guard, imported as `benchmark`
       evaluate.py, evaluate_generation.py, leakage_guard.py, resource_monitor.py, config.py
     src/data/download/, src/data/process/   one script per dataset source

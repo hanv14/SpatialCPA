@@ -298,3 +298,73 @@ identical to "nearest + no flow":
   is internal validation: on interior *training* sections, measure whether copying
   the section above or below reproduces them better, and use that to choose for
   the held-out ones. That is the next thing to test, across datasets and seeds.
+
+### 7a. `spatialcpav18_gen_flow_cv` (the flow's choice, validated on training sections)
+
+**What it is.** The same wrapper under `--flank-select flow-cv`. The flow still
+scores both flanks of every held-out section and makes the choice. What changes is
+the threshold it must clear before leaving v18's rule flank, which is fixed by
+internal validation on the training sections only:
+
+1. **Folds.** Each interior training section i (both neighbours are training
+   sections; at most 8, evenly spaced) is left out, and a fresh model is trained on
+   the rest. That fold's flow scores i's two flanks at z_i, giving
+   `margin = d(rule flank) − d(other flank)`.
+2. **Truth on the fold.** The fold model synthesizes section i from each flank, and
+   both are scored against the real section i with `evaluate_paper`'s own
+   per-section functions, called as `evaluate_paper()` calls them, with UMAP off.
+   `gain` = wins − losses of the other flank on 8 metrics fixed in advance: PCA
+   embedding mixing, Moran's I r and MAE, marker depth r and field r, cell-type and
+   rare-type localization, and gene-detection ρ. Differences ≤ 1e-9 are ties, so
+   Sinkhorn last-bit noise cannot decide a fold.
+3. **Threshold.** `delta` is the largest value maximizing the total gain of the
+   folds with `margin > delta`. Never switching (`delta = +inf`, gain 0) wins every
+   tie, so a switch needs strictly positive validated gain.
+4. **Held-out.** The flow takes the other flank iff `margin > delta`.
+
+The input file holds training sections only (`guard_no_holdout`), and every fold
+target is one of them. Fold models are trained before the main one, and v18
+re-seeds torch at the start of every training run, so the main model is the same
+as under `flow`. Each flow-cv flank score draws its noise from its own generator
+seeded with `--seed`, so a decision depends only on the model and z\*. Under the
+shared stream, copying a different flank for an earlier section changed the cell
+count, and with it the noise later scores saw. Cost on STARmap: two extra
+trainings plus four scorings, about 3 min on 4 CPU cores.
+
+**STARmap `paper_2_4_6` (seed 42).** Two folds:
+
+| fold | margin | upper vs lower on the fold |
+|---|---|---|
+| section_3 | −0.709 | gain +6: upper better on 7 of 8, worse only on Moran's MAE |
+| section_5 | −0.324 | gain 0: 4 wins, 4 losses |
+
+`delta = −0.709` (validated gain +6). All three held-out margins (−0.585, −0.138,
+−0.138) clear it, so the flow switched to the **upper** flank for every section.
+The X / obs arrays are bitwise identical to the forced-upper diagnostic, and to a
+second flow-cv run. Only the logged float32 distances move, at about 1e-6, and
+every held-out margin is at least 0.12 from `delta`. This time the choice was made
+from training sections only:
+
+| metric | `spatialcpav18_gen_flow` (= nearest + no flow) | `spatialcpav18_gen_flow_cv` |
+|---|---|---|
+| UMAP mixing / PCA mixing | 0.948 / 0.919 | **0.973 / 0.950** |
+| Moran's I r / MAE | **0.981 / 0.024** | 0.973 / 0.042 |
+| marker depth r / field r | 0.945 / 0.874 | **0.967 / 0.883** |
+| cell-type / rare-type localization | 0.754 / 0.619 | **0.814 / 0.699** |
+| gene detection ρ | **0.973** | 0.856 |
+
+On the pre-registered 8-metric composite the held-out result is +2 for flow-cv
+(5 wins, 3 losses), the same direction as the folds predicted.
+
+**Read this carefully:**
+- **Uniform choice.** Every held-out margin cleared `delta`, so the flow's ranking
+  did not separate the sections. The switch rests mainly on one fold
+  (section_3).
+- **Thin validation.** STARmap gives 2 folds, and they are at a 22 µm neighbour
+  gap, while each target is 11 µm from its flanks.
+- **Trade-off.** flow-cv gains continuity and localization and gives up Moran's I
+  level and detection. Whether that counts as "better" is the composite's
+  verdict, which was fixed before the run.
+- **Next.** Run it across datasets and seeds before any claim. The composite and
+  the fold rule are fixed in `CV_METRICS` / `calibrate_delta`, and must not be
+  tuned against held-out results.

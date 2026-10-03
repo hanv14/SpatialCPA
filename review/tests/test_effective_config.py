@@ -111,3 +111,12 @@ def test_flow_method_runs_under_v18_args_plus_flow_flank_choice():
     assert wa == [*c.V18_ARGS, "--flank-select", "flow"]
     # the published row is untouched
     assert list(c.METHODS["spatialcpav18_gen"]["wrapper_args"]) == list(c.V18_ARGS)
+
+
+def test_flow_cv_method_is_the_same_wrapper_under_flow_cv():
+    c = load_bench3_config()
+    m, base = c.METHODS["spatialcpav18_gen_flow_cv"], c.METHODS["spatialcpav18_gen_flow"]
+    assert list(m["wrapper_args"]) == [*c.V18_ARGS, "--flank-select", "flow-cv"]
+    assert m["wrapper"] == base["wrapper"] and m["conda_env"] == base["conda_env"]
+    assert tuple(m["invalid_log_markers"]) == tuple(base["invalid_log_markers"])
+    assert "flow-cv" in FLOW_WRAPPER.read_text()

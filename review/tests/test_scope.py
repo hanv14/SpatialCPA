@@ -9,7 +9,8 @@ import re
 from conftest import BENCH3, REVIEW_ROOT, load_bench3_config
 
 OTHER_VERSION = re.compile(r"spatialcpav(?!18)\d+|learn_spatialcpav(?!18)\d+|(?<!spatialcpa)v\d+_[a-z]")
-REVIEW_METHODS = {"spatialz", "feast", "isost", "spatialcpav18_gen", "spatialcpav18_gen_flow"}
+REVIEW_METHODS = {"spatialz", "feast", "isost", "spatialcpav18_gen", "spatialcpav18_gen_flow",
+                  "spatialcpav18_gen_flow_cv"}
 
 
 def test_registry_is_exactly_the_review_scope():
