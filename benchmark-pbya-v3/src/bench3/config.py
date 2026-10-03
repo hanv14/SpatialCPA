@@ -1210,6 +1210,35 @@ METHODS = {
                                 "[v14] training failed",
                                 "[v14] generation failed"),
     },
+    "spatialcpav18_gen_flow": {
+        # SpatialCPA-v18 with the flow used for ONE decision: which flanking
+        # section the output section is retrieved from (exact real positions and
+        # cells, as v18's "nearest" layout). Donor reranking by the flow is off
+        # (the "no flow" setting). With --flank-select rule it is bitwise v18
+        # "nearest + no flow". Subclasses v18 from the unchanged
+        # learn_spatialcpav18.py; see methods/run_spatialcpav18_flow.py and
+        # review/REVIEW_NOTES.md §7.
+        #
+        # wrapper_args pins the published v18 configuration (the flags the
+        # spatialcpav18_gen rows ran under, passed there as run_all extras) plus
+        # this method's flank choice.
+        "wrapper": _v3_wrapper("run_spatialcpav18_flow.py"),
+        "wrapper_args": ["--edit-weight", "0.0", "--ground-blend-flow", "1.0",
+                         "--ground-k", "8", "--ground-temp", "0.25",
+                         "--ground-keep-margin", "1.0", "--type-mode", "vote",
+                         "--type-vote-k", "12", "--gene-mix-frac", "0.15",
+                         "--flank-select", "flow"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "v18 retrieval with the flank chosen by the flow; no flow donor "
+                 "reranking",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v14] torch unavailable",
+                                "[v14] training failed",
+                                "[v14] generation failed"),
+    },
     "spatialcpav19_gen": {
         # v19 is the single-file ``learn_spatialcpav19.py`` at the repository
         # root (v18 + gap-adaptive generation), not a package v2 ever ran, so its
@@ -1884,6 +1913,7 @@ METHOD_ORDER = [
     "v14_lgbmrepair", "v18_lgbmrepair", "v21_lgbmrepair",
     "v14_lgbmband", "v18_lgbmband", "v21_lgbmband",
     "v14_lgbmbalance", "v18_lgbmbalance",
+    "spatialcpav18_gen_flow",
 ]
 
 
