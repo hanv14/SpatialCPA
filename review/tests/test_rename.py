@@ -108,7 +108,8 @@ def test_changed_files_are_exactly_the_documented_ones():
 
 def test_new_files_are_exactly_the_documented_ones():
     new = {here for _, _, here, st in _provenance() if st == "new"}
-    assert new == {"benchmark/src/bench3/methods/run_spatialcpav18_flow.py"}
+    assert new == {"benchmark/src/bench3/methods/run_spatialcpav18_flow.py",
+                   "benchmark/src/bench3/evaluate_vascular.py"}
 
 
 @pytest.mark.parametrize("row", [r for r in _provenance() if r[3] in ("identical", "equivalent")],

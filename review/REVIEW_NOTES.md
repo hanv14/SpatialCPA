@@ -493,3 +493,78 @@ structures, thick serial sections), on more seeds, are where this could still
 show something. The sweep and summary scripts run unchanged there. A transport
 learned from matched *cell identities* (expression-aware coupling) rather than
 positions alone would be the next design to try.
+
+## 8. Vascular-architecture metrics (`evaluate_vascular.py`, evaluation-only)
+
+**What it is.** A new scorer module, `benchmark/src/bench3/evaluate_vascular.py`,
+run over existing predictions. It reruns no method and no `prepare_dataset`, and
+it doesn't touch the pinned `evaluate_paper.py` or `metrics.json`. It writes
+`vascular_metrics.json` per prediction. It measures how vascular cells are
+organized, not whether vessels are functional; expression can't show perfusion.
+
+**Which cells are vascular.** One rule, applied identically to prediction and GT,
+and fixed by the dataset alone:
+- **Markers:** declared per dataset in `VASCULAR_SPEC`. STARmap: `Flt1`.
+- **Vascular fraction f:** the fraction of the dataset's most marker-enriched cell
+  type. STARmap: cluster 8, 4.7 % of cells, mean Flt1 rank 0.97 against 0.81 for
+  the next cluster.
+- **Per section:** the vascular cells are the top f fraction by marker rank.
+  Detection can't be used, because Flt1 is nonzero in ~100 % of STARmap cells.
+- **Consequence:** the rank rule scores placement, not density. Density is scored
+  only by the cell-type rule (`vasc_type_frac_ratio`).
+
+**Metrics.** All are calibrated as `1 − error / error(null)`. The null is the GT
+section with its vascular labels moved to random cells, so 1 = real organization
+and 0 = vessels scattered at random. Distances are in units of the section's own
+cell spacing.
+- `vasc_dist`: distance from each cell to its nearest vessel cell.
+- `vasc_nn`: vascular clustering / chaining.
+- `vasc_niche`: the expression of the non-vascular cells next to vessels.
+- `vasc_field_r`: the vascular density field, posed as the paper metrics are.
+- `vasc_type_dist`: per cell type, distance to the vascular type.
+- `vasc_type_frac_ratio`: predicted vascular-type fraction / GT fraction.
+
+`ref_neighbour_*` scores the nearest real input section as if it were the
+prediction.
+
+**Validated before use.**
+- **Synthetic section (`tests/test_evaluate_vascular.py`).** The GT scores
+  exactly 1. log1p×3 output scores the same. A spatial scramble scores ~0. A
+  different section of the same tissue scores in between.
+- **Real STARmap section 4.** Oracle 1.00 on all; scramble −0.09 to 0.14 on every
+  calibrated metric.
+- **One design fix made during validation.** An all-cell niche is dominated by
+  vascular-vascular neighbours, because vessels chain. So the niche uses
+  non-vascular neighbours only. The Pearson form (`vasc_niche_r`) swings ±0.4
+  under a scramble, so `vasc_niche`, which uses the L2 error against the null, is
+  the primary score.
+
+**First reading on existing STARmap results (seed 42; no reruns).**
+
+| hold-out | method | dist | nn | niche | field r | type dist |
+|---|---|---|---|---|---|---|
+| paper 2,4,6 | published v18 | **0.855** | 0.875 | **0.889** | 0.829 | 0.734 |
+| paper 2,4,6 | nearest + no flow | 0.831 | **0.879** | 0.855 | 0.869 | 0.647 |
+| paper 2,4,6 | flow-cv (upper flank) | 0.739 | 0.815 | 0.861 | 0.849 | **0.748** |
+| paper 2,4,6 | patch-cv | 0.807 | 0.837 | 0.877 | 0.858 | 0.721 |
+| paper 2,4,6 | copy nearest section (ref.) | 0.790 | 0.820 | 0.854 | **0.897** | 0.706 |
+| wide 4 (11 µm) | nearest + no flow | 0.775 | 0.894 | 0.856 | 0.921 | 0.793 |
+| wide 4 | copy nearest section (ref.) | 0.872 | 0.804 | 0.870 | 0.931 | 0.845 |
+| wide 3–5 (22 µm) | nearest + no flow | 0.635 | 0.823 | 0.807 | 0.874 | 0.702 |
+| wide 3–5 | flow transport (λ 0.25) | 0.606 | 0.809 | 0.780 | 0.848 | 0.702 |
+| wide 3–5 | copy nearest section (ref.) | 0.854 | 0.867 | 0.856 | 0.910 | 0.768 |
+| wide 2–6 (33 µm) | nearest + no flow | 0.479 | 0.691 | 0.695 | 0.741 | 0.768 |
+| wide 2–6 | copy nearest section (ref.) | 0.698 | 0.835 | 0.749 | 0.839 | 0.739 |
+
+- **The metrics track difficulty.** `vasc_dist` for nearest + no flow falls from
+  0.83 to 0.48 as the gap widens. They also separate methods the paper metrics
+  rank differently: flow-cv's upper flank, which wins most paper metrics, loses on
+  vessel distance and clustering.
+- **v18's post-copy steps hurt at wide gaps.** At the wide gaps, copying the
+  nearest real section beats "nearest + no flow" on vessel distance by 0.10–0.22,
+  with the same source sections. The only differences are v18's post-copy steps:
+  cell subsampling, the type vote, composition matching and the 15 % gene mix,
+  which can move Flt1 between cells. That is worth a targeted ablation before it
+  is read as a finding.
+- **Scope of this reading.** It covers one dataset, one seed and one marker
+  (Flt1). Treat it as a first reading, not a result.

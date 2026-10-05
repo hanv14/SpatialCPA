@@ -465,6 +465,23 @@ of it UMAP and the per-type Sinkhorn OT. `--no-umap` skips UMAP but leaves
 `paper_umap_*` empty, and those metrics are in the ranking. Writes
 `metrics.json` (~10 KB) beside each prediction.
 
+**Optional: vascular-architecture metrics (`evaluate_vascular`).** A separate,
+evaluation-only pass over the same predictions. It reruns no method and no
+`prepare_dataset`, and it doesn't touch `metrics.json` or the pinned scorer.
+
+```bash
+python -m src.bench3.evaluate_vascular               # every prediction lacking vascular_metrics.json
+python -m src.bench3.evaluate_vascular --force       # re-score everything
+python -m src.bench3.evaluate_vascular --results-dir ../reproduced/gap_sweep
+```
+
+It writes `vascular_metrics.json` beside each prediction: distance to vessels,
+vascular clustering, vascular niche, the vascular density field and, with a shared
+label space, per-type distance to vessels. Each comes with a nearest-real-section
+reference row. **~7 s per STARmap prediction.** A dataset needs its vascular
+markers declared in `VASCULAR_SPEC`; otherwise it gets `"applicable": false`.
+Definitions are in the module docstring; see REVIEW_NOTES §8.
+
 ### 4. Aggregate — `aggregate_results`
 
 ```bash
@@ -522,6 +539,7 @@ make selftest          # the harness's own check: oracle / flanking copy / scram
 | `test_effective_config.py` | `V18_ARGS` = the published flags and is what `spatialcpav18_gen` runs with; comparators get none; the table above = argparse defaults ⊕ `V18_ARGS` |
 | `test_path_resolution.py` | v18 resolves to `review/learn_spatialcpav18.py` with no env vars from any cwd, looks nowhere else, and the overrides don't fall through |
 | `test_rename.py` | nothing in the tree names another SpatialCPA version; the `[v18]` fallback markers match strings v18 prints; every file carried from the parent project is identical or AST-equivalent to its original, except the 9 documented `changed` files; the checker rejects a one-constant change |
+| `test_evaluate_vascular.py` | the vascular metrics on a synthetic section with known vessels: the GT scores 1, any output scale scores the same, a spatial scramble scores ~0, a real neighbouring section scores in between; undeclared datasets or missing markers are "not applicable", with no silent default |
 | `test_flow_cv.py` | patch-cv's grid, margins, top-q / seeded-random switching and q calibration (q = 0 wins ties); flow-cv's threshold calibration: no folds or no validated gain means never switch; the threshold switches exactly the folds that gained; ties keep the larger threshold; per-fold gain respects metric direction and treats last-bit differences as ties |
 | `test_scope.py` | the registry is exactly {spatialz, feast, isost, spatialcpav18_gen, spatialcpav18_gen_flow, spatialcpav18_gen_flow_cv, spatialcpav18_gen_flow_patch, spatialcpav18_gen_flow_patch_random, spatialcpav18_gen_nearest_noflow, spatialcpav18_gen_flow_transport{,_ot,_zshuffle,_pair}}; the only wrappers are those five; one `benchmark/` folder, no `benchmark-pbya*` |
 
