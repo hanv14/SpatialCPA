@@ -368,3 +368,56 @@ On the pre-registered 8-metric composite the held-out result is +2 for flow-cv
 - **Next.** Run it across datasets and seeds before any claim. The composite and
   the fold rule are fixed in `CV_METRICS` / `calibrate_delta`, and must not be
   tuned against held-out results.
+
+### 7b. `spatialcpav18_gen_flow_patch` (flank chosen per spatial patch) and its random control
+
+**What it is.** The same wrapper under `--flank-select patch-cv`. The flank is
+chosen per spatial patch instead of per section:
+- **Patches.** Both flanks' cells go on one square grid, with side 8 median cell
+  spacings (about 270–300 patches per STARmap section).
+- **Margin.** The flow is queried at every cell of both flanks at z\*. A patch's
+  margin is the rule flank's mean latent distance there minus the other flank's.
+- **Switching.** The top fraction q of patches by margin are copied from the other
+  flank, cells at their exact positions. Whole patches move, so neighbourhoods stay
+  intact, unlike the published per-cell reranking.
+- **Who decides what.** The flow decides which patches; training folds decide how
+  many. Each fold synthesizes its left-out section at q ∈ {0, 0.1, 0.25, 0.5, 0.75,
+  1} and scores it on the flow-cv metrics against q = 0. q = 0 wins ties.
+- **Control.** `spatialcpav18_gen_flow_patch_random` (`--patch-rank random`) is
+  calibrated the same way, but ranks patches in a seeded random order. The gap
+  between the two is what the flow's ranking adds.
+
+**Checks.** `--patch-q 0` (forced, no folds) is bitwise identical to "nearest + no
+flow". After the refactor this mode needed, `flow` is still bitwise identical to
+its earlier run, and `flow-cv`'s arrays are too.
+
+**STARmap `paper_2_4_6` (seed 42): negative result.** Fold gain against q = 0,
+summed over the two folds:
+
+| q | 0.1 | 0.25 | 0.5 | 0.75 | 1.0 |
+|---|---|---|---|---|---|
+| flow-ranked patches | −6 | −6 | −6 | −2 | +4 |
+| random patches (control) | −4 | −2 | −6 | −2 | +4 |
+
+- **Mixing patches hurts.** Every partial switch loses on the folds. Seams between
+  two sections cost more than any patch choice gains.
+- **The flow's ranking is no better than random**, slightly worse at q = 0.1 and
+  0.25. On this dataset the per-patch margins carry no usable signal.
+- **Both settle on q = 1, and the outputs are identical.** At q = 1 all ranked
+  patches switch, about 95 % of cells. The 4–5 % of rule-flank cells left (patches
+  where the other flank has under 5 cells, mostly at the tissue edge) cost
+  accuracy against whole-section flow-cv:
+
+| metric | nearest + no flow | flow-cv | patch-cv (q = 1) |
+|---|---|---|---|
+| UMAP / PCA mixing | 0.948 / 0.919 | **0.973 / 0.950** | 0.962 / 0.944 |
+| Moran's I r / MAE | **0.981 / 0.024** | 0.973 / 0.042 | 0.970 / 0.045 |
+| marker depth r / field r | 0.944 / 0.874 | **0.967 / 0.883** | 0.888 / 0.880 |
+| cell-type / rare-type localization | 0.754 / 0.619 | **0.814 / 0.699** | 0.804 / 0.676 |
+| gene detection ρ | **0.973** | 0.856 | 0.857 |
+
+So on STARmap the flow does not earn a patch-level role. If the flow ranking beats
+the random control on other datasets, especially ones where flanks differ within
+the section (damage, uneven coverage, wider gaps), that would be evidence for the
+flow. Run it there before drawing a conclusion either way. Both registry entries
+are kept so that comparison can be run as is.

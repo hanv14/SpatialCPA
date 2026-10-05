@@ -97,11 +97,11 @@ FLOW_WRAPPER = V18_WRAPPER.parent / "run_spatialcpav18_flow.py"
 
 def test_flow_wrapper_declares_every_v18_flag_with_the_same_default():
     """run_spatialcpav18_flow.py reuses v18's _build_config, so its CLI must match
-    v18's flag for flag; its only extra flag is --flank-select."""
+    v18's flag for flag; its only extra flags are --flank-select and patch-cv's two."""
     v18, flow = argparse_defaults(V18_WRAPPER), argparse_defaults(FLOW_WRAPPER)
     for flag, d in v18.items():
         assert flow.get(flag) == d, (flag, flow.get(flag), d)
-    assert set(flow) - set(v18) == {"--flank-select"}
+    assert set(flow) - set(v18) == {"--flank-select", "--patch-rank", "--patch-q"}
     assert flow["--flank-select"] == "flow"
 
 
@@ -120,3 +120,13 @@ def test_flow_cv_method_is_the_same_wrapper_under_flow_cv():
     assert m["wrapper"] == base["wrapper"] and m["conda_env"] == base["conda_env"]
     assert tuple(m["invalid_log_markers"]) == tuple(base["invalid_log_markers"])
     assert "flow-cv" in FLOW_WRAPPER.read_text()
+
+
+def test_patch_methods_differ_only_in_patch_rank():
+    c = load_bench3_config()
+    for name, rank in (("spatialcpav18_gen_flow_patch", "flow"),
+                       ("spatialcpav18_gen_flow_patch_random", "random")):
+        m = c.METHODS[name]
+        assert list(m["wrapper_args"]) == [*c.V18_ARGS, "--flank-select", "patch-cv",
+                                           "--patch-rank", rank]
+        assert m["wrapper"] == c.METHODS["spatialcpav18_gen_flow"]["wrapper"]

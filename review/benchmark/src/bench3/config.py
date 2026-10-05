@@ -1093,6 +1093,40 @@ METHODS = {
                                 "[v18] training failed",
                                 "[v18] generation failed"),
     },
+    "spatialcpav18_gen_flow_patch": {
+        # The flank chosen per spatial PATCH: the flow ranks patches by how much
+        # better the other flank's cells agree with its prediction; training folds
+        # choose how many to switch (0 = bitwise "nearest + no flow" wins ties).
+        "wrapper": _wrapper("run_spatialcpav18_flow.py"),
+        "wrapper_args": [*V18_ARGS, "--flank-select", "patch-cv", "--patch-rank", "flow"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "retrieval-based synthesis; flank chosen per spatial patch "
+                 "(ranked by the flow); switched fraction validated on training folds",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
+    "spatialcpav18_gen_flow_patch_random": {
+        # Control for spatialcpav18_gen_flow_patch: the same patches and fold
+        # calibration, with the patches ranked in a seeded random order instead of
+        # by the flow. The gap between the two is what the flow's ranking adds.
+        "wrapper": _wrapper("run_spatialcpav18_flow.py"),
+        "wrapper_args": [*V18_ARGS, "--flank-select", "patch-cv", "--patch-rank", "random"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "retrieval-based synthesis; flank chosen per spatial patch "
+                 "(random ranking: the control); switched fraction validated on training folds",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
     "spatialz": {
         "wrapper": _wrapper("run_spatialz.py"),
         "conda_env": "bench_spatialz",
@@ -1121,6 +1155,7 @@ METHODS = {
 METHOD_ORDER = [
     "spatialz", "feast", "isost",
     "spatialcpav18_gen", "spatialcpav18_gen_flow", "spatialcpav18_gen_flow_cv",
+    "spatialcpav18_gen_flow_patch", "spatialcpav18_gen_flow_patch_random",
 ]
 
 

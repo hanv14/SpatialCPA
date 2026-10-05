@@ -68,6 +68,27 @@ its own generator seeded with ``--seed``, so each decision is a function of the
 model and z* alone. Nothing here reads a held-out section: the input file
 holds training sections only (``guard_no_holdout``) and every fold target is one
 of them.
+
+``--flank-select patch-cv`` (method ``spatialcpav18_gen_flow_patch``)
+---------------------------------------------------------------------
+The same idea one level finer: the flank is chosen per spatial PATCH, not per
+section. The two flanks' cells are binned on one square grid (side
+``PATCH_SIDE_SPACINGS`` median cell spacings). The flow is queried at every cell
+of both flanks at z*; a patch's margin is the rule flank's mean latent distance
+there minus the other flank's (positive: the flow agrees better with the other
+flank in that patch). The top fraction q of patches by margin are copied, cells
+at their exact positions, from the other flank; the rest from the rule flank.
+Whole patches move, so neighbourhoods stay intact — the per-cell reranking of the
+published configuration broke them.
+
+The flow decides WHICH patches; the folds decide HOW MANY. Each fold synthesizes
+its left-out training section at every q in ``PATCH_Q_GRID`` and scores it with
+``CV_METRICS`` against the real section; q is the one with the largest total gain
+over q = 0, and q = 0 wins ties. q = 0 is bitwise "nearest + no flow"; q = 1 is
+the whole other flank. ``--patch-rank random`` ranks patches in a seeded random
+order instead, calibrated the same way (method
+``spatialcpav18_gen_flow_patch_random``): the control that says what the flow's
+ranking adds over switching the same number of arbitrary patches.
 """
 
 import argparse
@@ -91,6 +112,8 @@ torch = _V18.torch
 
 METHOD_NAME = "spatialcpav18_gen_flow"
 METHOD_NAME_CV = "spatialcpav18_gen_flow_cv"   # the same wrapper under --flank-select flow-cv
+METHOD_NAME_PATCH = {"flow": "spatialcpav18_gen_flow_patch",          # --flank-select patch-cv
+                     "random": "spatialcpav18_gen_flow_patch_random"}  # + --patch-rank random
 # Cap on cells per flank scored by the flow when choosing a flank. Deterministic
 # (evenly spaced), so the choice consumes no randomness; 4000 covers STARmap's
 # sections whole and bounds the cost on million-cell volumes.
@@ -121,12 +144,25 @@ CV_TIE_TOL = 1e-9
 
 Fold = namedtuple("Fold", "section z margin gain detail")
 
+# ── patch-cv ──
+# Patch side, in median nearest-neighbour spacings of the two flanks (~8 x 8
+# cells per patch), so the patch holds a neighbourhood whatever the dataset's
+# units or density.
+PATCH_SIDE_SPACINGS = 8.0
+# A patch is ranked only when both flanks have at least this many cells in it.
+PATCH_MIN_CELLS = 5
+# Fractions of ranked patches a fold may switch; 0 (= v18's nearest layout) wins
+# ties, 1 switches every ranked patch.
+PATCH_Q_GRID = (0.0, 0.1, 0.25, 0.5, 0.75, 1.0)
+
 
 class SpatialCPAv18Flow(_V18.SpatialCPAv18):
     """v18 with a flow-chosen single-section layout and no flow donor reranking."""
 
-    flank_select = "flow"            # "flow" | "flow-cv" | "rule" | "lower" | "upper"
+    flank_select = "flow"            # "flow" | "flow-cv" | "patch-cv" | "rule" | "lower" | "upper"
     cv_delta = float("inf")          # flow-cv threshold (calibrate_delta); +inf = never switch
+    patch_q = 0.0                    # patch-cv: fraction of patches switched (calibrate_q)
+    patch_rank = "flow"              # patch-cv: "flow" ranks patches; "random" is the control
 
     # -- remember the target depth: _resample_layout is not given z ------------
     def _generate(self, z):
@@ -137,7 +173,10 @@ class SpatialCPAv18Flow(_V18.SpatialCPAv18):
     # -- 1. layout: one flanking section, exact positions ----------------------
     def _resample_layout(self, lower, upper, t, n_target, rng):
         """Same as v18's ``position_mode="nearest"`` branch, except that the
-        flank is chosen by ``_flow_choose_flank`` (or v18's rule)."""
+        flank is chosen by ``_flow_choose_flank`` (or v18's rule), or, under
+        ``patch-cv``, chosen patch by patch (``_patch_layout``)."""
+        if self.flank_select == "patch-cv":
+            return self._patch_layout(lower, upper, t, n_target, rng)
         rule_lower = t <= 0.5
         if self.flank_select == "flow":
             use_lower, info = self._flow_choose_flank(lower, upper, rule_lower)
@@ -202,12 +241,26 @@ class SpatialCPAv18Flow(_V18.SpatialCPAv18):
         flank's real cells, queried at those cells' positions:
         ``{"lower": d, "upper": d}``. ``generator=None`` (``--flank-select flow``)
         draws the flow's noise from torch's global stream."""
-        cfg = self.cfg
-        z = self._z_current
         li = self.stack.slices.index(lower)
         ui = self.stack.slices.index(upper)
+        pool = self._flow_ctx_pool(li, ui, self._z_current)
 
-        # context sources: exactly as _generate builds them
+        dist = {}
+        for name, j in (("lower", li), ("upper", ui)):
+            st = self.S[j]
+            n = st["nxy"].shape[0]
+            idx = (np.linspace(0, n - 1, FLANK_SCORE_MAX_CELLS).astype(np.int64)
+                   if n > FLANK_SCORE_MAX_CELLS else np.arange(n))
+            q_nxy = st["nxy"][idx].astype(np.float32)
+            e_hat = self._flow_decode(pool, q_nxy, generator)
+            e_real = st["e"][torch.as_tensor(idx, device=self.dev)].cpu().numpy()
+            dist[name] = float(np.mean(np.linalg.norm(e_hat - e_real, axis=1)))
+        return dist
+
+    def _flow_ctx_pool(self, li, ui, z):
+        """The 3-D attention context at depth z, built exactly as ``_generate``
+        builds it (k nearest real sections per side, plus both flanks)."""
+        cfg = self.cfg
         order = np.argsort(self.stack.z_centers())
         zc = self.stack.z_centers()
         k_side = max(cfg.context_slices_each_side, 1)
@@ -220,33 +273,104 @@ class SpatialCPAv18Flow(_V18.SpatialCPAv18):
         ctx_pool_nxy, ctx_pool_z, ctx_pool_owner = self._build_pool(self.S, ctx_src)
         ctx_pool_h = torch.cat([self.S[j]["h"] for j in ctx_src], 0)
         zn = self._nz(z)
+        return ctx_pool_h, ctx_pool_nxy, ctx_pool_z, ctx_pool_owner, ctx_src, zn
 
-        dist = {}
-        for name, j in (("lower", li), ("upper", ui)):
+    def _flow_decode(self, pool, q_nxy, generator=None):
+        """The flow's decoded latent prediction at query positions ``q_nxy``
+        (normalized xy, float32) and the pool's depth: the same Euler ODE and
+        noise ensemble as ``_generate``. Returns ``(Q, d_e)`` numpy."""
+        cfg = self.cfg
+        ctx_pool_h, ctx_pool_nxy, ctx_pool_z, ctx_pool_owner, ctx_src, zn = pool
+        with torch.no_grad():
+            ctx = self._context(ctx_pool_h, ctx_pool_nxy, ctx_pool_z, ctx_pool_owner,
+                                ctx_src, self.S, q_nxy, zn, self.ctxmod, self.dev)
+            Q = q_nxy.shape[0]
+            zt = torch.full((Q,), float(zn), device=self.dev)
+            h_acc = torch.zeros((Q, cfg.joint_dim), device=self.dev)
+            n_ens = max(cfg.n_ensemble, 1)
+            steps = max(cfg.n_ode_steps, 1)
+            for _ in range(n_ens):
+                h = torch.randn((Q, cfg.joint_dim), device=self.dev,
+                                generator=generator)
+                for si in range(steps):
+                    tt = torch.full((Q,), si / steps, device=self.dev)
+                    h = h + (1.0 / steps) * self.vfield(h, tt, ctx, zt)
+                h_acc += h
+            return self.encoder.decode_e(h_acc / n_ens).cpu().numpy()
+
+    # -- patch-cv: the flow ranks spatial patches; folds set how many switch ---
+    def _flow_cell_distances(self, lower, upper):
+        """Per-cell latent distance between the flow's prediction at z* and each
+        flank's real cells, for EVERY cell (queried in chunks of
+        ``FLANK_SCORE_MAX_CELLS``, one fresh seeded generator per call): returns
+        ``(d_lower (n_lower,), d_upper (n_upper,))``. Cached per (flanks, z*), so
+        the syntheses a fold runs at several q reuse one scoring."""
+        li = self.stack.slices.index(lower)
+        ui = self.stack.slices.index(upper)
+        key = (li, ui, float(self._z_current))
+        cache = self.__dict__.setdefault("_cell_dist_cache", {})
+        if key in cache:
+            return cache[key]
+        pool = self._flow_ctx_pool(li, ui, self._z_current)
+        gen = self._cv_generator()
+        out = []
+        for j in (li, ui):
             st = self.S[j]
             n = st["nxy"].shape[0]
-            idx = (np.linspace(0, n - 1, FLANK_SCORE_MAX_CELLS).astype(np.int64)
-                   if n > FLANK_SCORE_MAX_CELLS else np.arange(n))
-            q_nxy = st["nxy"][idx].astype(np.float32)
-            with torch.no_grad():
-                ctx = self._context(ctx_pool_h, ctx_pool_nxy, ctx_pool_z, ctx_pool_owner,
-                                    ctx_src, self.S, q_nxy, zn, self.ctxmod, self.dev)
-                Q = q_nxy.shape[0]
-                zt = torch.full((Q,), float(zn), device=self.dev)
-                h_acc = torch.zeros((Q, cfg.joint_dim), device=self.dev)
-                n_ens = max(cfg.n_ensemble, 1)
-                steps = max(cfg.n_ode_steps, 1)
-                for _ in range(n_ens):
-                    h = torch.randn((Q, cfg.joint_dim), device=self.dev,
-                                    generator=generator)
-                    for si in range(steps):
-                        tt = torch.full((Q,), si / steps, device=self.dev)
-                        h = h + (1.0 / steps) * self.vfield(h, tt, ctx, zt)
-                    h_acc += h
-                e_hat = self.encoder.decode_e(h_acc / n_ens).cpu().numpy()
-            e_real = st["e"][torch.as_tensor(idx, device=self.dev)].cpu().numpy()
-            dist[name] = float(np.mean(np.linalg.norm(e_hat - e_real, axis=1)))
-        return dist
+            d = np.empty(n, dtype=np.float64)
+            for a in range(0, n, FLANK_SCORE_MAX_CELLS):
+                idx = np.arange(a, min(a + FLANK_SCORE_MAX_CELLS, n))
+                e_hat = self._flow_decode(pool, st["nxy"][idx].astype(np.float32), gen)
+                e_real = st["e"][torch.as_tensor(idx, device=self.dev)].cpu().numpy()
+                d[idx] = np.linalg.norm(e_hat - e_real, axis=1)
+            out.append(d)
+        cache[key] = (out[0], out[1])
+        return cache[key]
+
+    def _patch_layout(self, lower, upper, t, n_target, rng):
+        """``--flank-select patch-cv``: v18's ``nearest`` layout, except that the
+        top ``patch_q`` fraction of spatial patches — ranked by how much more the
+        flow's prediction at z* agrees with the other flank's cells than with the
+        rule flank's (``--patch-rank flow``), or in a seeded random order
+        (``--patch-rank random``, the control) — are copied from the other flank.
+        ``patch_q = 0`` is bitwise v18's nearest layout."""
+        rule_lower = t <= 0.5
+        n_lo = lower.n_spots
+        d_lo, d_hi = self._flow_cell_distances(lower, upper)
+        side = PATCH_SIDE_SPACINGS * float(np.median([lower.median_spacing(),
+                                                      upper.median_spacing()]))
+        pid_lo, pid_hi = patch_ids(lower.coords_xy, upper.coords_xy, side)
+        if rule_lower:
+            pid_rule, d_rule, pid_other, d_other = pid_lo, d_lo, pid_hi, d_hi
+        else:
+            pid_rule, d_rule, pid_other, d_other = pid_hi, d_hi, pid_lo, d_lo
+        patches, margins = patch_margins(pid_rule, d_rule, pid_other, d_other,
+                                         PATCH_MIN_CELLS)
+        switch = patches_to_switch(patches, margins, self.patch_q, self.patch_rank,
+                                   int(self.cfg.seed))
+        rule_keep = np.nonzero(~np.isin(pid_rule, switch))[0]
+        other_take = np.nonzero(np.isin(pid_other, switch))[0]
+        if rule_lower:
+            cand = np.concatenate([rule_keep, n_lo + other_take])
+        else:
+            cand = np.concatenate([other_take, n_lo + rule_keep])
+        cand = cand.astype(np.int64)
+
+        pick = (rng.choice(cand.shape[0], n_target, replace=False)
+                if cand.shape[0] > n_target else np.arange(cand.shape[0]))
+        src = cand[pick].astype(np.int64)
+        props = np.vstack([self._nxy(lower.coords_xy).astype(np.float32),
+                           self._nxy(upper.coords_xy).astype(np.float32)])
+        anchor = props[src]
+        from_other = (src >= n_lo) if rule_lower else (src < n_lo)
+        self.flank_log.append({
+            "z": self._z_current, "t": float(t), "rule_lower": bool(rule_lower),
+            "chose_lower": bool(rule_lower), "patch_q": float(self.patch_q),
+            "patch_rank": self.patch_rank, "patch_side_um": side,
+            "n_patches": int(len(patches)), "n_switched": int(len(switch)),
+            "frac_cells_other": float(from_other.mean()) if src.size else 0.0,
+            "mean_margin": float(np.mean(margins)) if len(margins) else 0.0})
+        return anchor, src
 
     # -- 2. no flow donor reranking: query = each cell's own source latent -----
     def _ground(self, anchor, anchor_src, e_hat, pool_nxy, pool_e, pool_expr, pool_type, rng):
@@ -288,6 +412,59 @@ def calibrate_delta(folds):
         if g > best_gain:
             best_gain, delta = g, thr
     return delta, best_gain
+
+
+def patch_ids(lo_xy, hi_xy, side):
+    """Square-patch id per cell for the two flanks, on one grid of side ``side``
+    (same units as the coordinates) anchored at their joint minimum corner.
+    Returns ``(pid_lower (n_lower,), pid_upper (n_upper,))`` int64."""
+    lo_xy = np.asarray(lo_xy, dtype=np.float64)
+    hi_xy = np.asarray(hi_xy, dtype=np.float64)
+    allxy = np.vstack([lo_xy, hi_xy])
+    keys = np.floor((allxy - allxy.min(0)) / float(side)).astype(np.int64)
+    pid = keys[:, 1] * (int(keys[:, 0].max()) + 1) + keys[:, 0]
+    return pid[:lo_xy.shape[0]], pid[lo_xy.shape[0]:]
+
+
+def patch_margins(pid_rule, d_rule, pid_other, d_other, min_cells):
+    """Per-patch flow margin ``mean d(rule cells) - mean d(other cells)``
+    (positive: the flow agrees better with the other flank there), for patches
+    where both flanks have at least ``min_cells`` cells. Returns
+    ``(patches (P,) sorted, margins (P,))``."""
+    r_ids, r_n = np.unique(pid_rule, return_counts=True)
+    o_ids, o_n = np.unique(pid_other, return_counts=True)
+    ok = np.intersect1d(r_ids[r_n >= min_cells], o_ids[o_n >= min_cells])
+    margins = np.array([float(np.mean(d_rule[pid_rule == p]))
+                        - float(np.mean(d_other[pid_other == p])) for p in ok],
+                       dtype=np.float64)
+    return ok.astype(np.int64), margins
+
+
+def patches_to_switch(patches, margins, q, rank, seed):
+    """The ``round(q * P)`` patches to copy from the other flank: the largest
+    margins (``rank="flow"``; ties by patch id) or a seeded random draw
+    (``rank="random"``, the control at the same q). Returns an int64 array."""
+    k = int(round(float(q) * len(patches)))
+    if k <= 0:
+        return np.zeros(0, dtype=np.int64)
+    if rank == "flow":
+        order = np.argsort(-np.asarray(margins), kind="stable")
+    elif rank == "random":
+        order = np.random.default_rng(seed).permutation(len(patches))
+    else:
+        raise ValueError(f"unknown patch rank {rank!r}")
+    return np.asarray(patches)[order[:k]].astype(np.int64)
+
+
+def calibrate_q(total_gain_by_q):
+    """The patch-cv fraction: the q with the largest total fold gain over q = 0;
+    the smallest q wins ties, so q = 0 (v18's nearest layout) needs no evidence.
+    Returns ``(q, total_gain)``."""
+    best_q, best = 0.0, 0
+    for q in sorted(total_gain_by_q):
+        if total_gain_by_q[q] > best:
+            best_q, best = float(q), int(total_gain_by_q[q])
+    return best_q, best
 
 
 def _load_paper_scorer():
@@ -343,12 +520,15 @@ def fold_gain(rule_m, other_m):
     return gain, detail
 
 
-def _cv_folds(adata, gene_names, X_log, X_raw, ct_all, cell_type_names, cfg):
-    """Leave-one-training-section-out folds for flow-cv (see the module docstring).
+def _fold_models(adata, gene_names, X_log, X_raw, ct_all, cell_type_names, cfg):
+    """Leave-one-training-section-out folds shared by flow-cv and patch-cv.
 
-    Every array read here comes from the training-only input. Returns a list of
-    ``Fold``. Raises if a fold model fails to train: a fold that silently fell
-    back would calibrate the threshold on something that is not this method.
+    Yields ``(section, z, fold_model, score)`` for each interior training section
+    (at most ``CV_MAX_FOLDS``, evenly spaced); ``score(vs)`` returns that
+    section's ``evaluate_paper`` metrics for a synthesized slice. Every array
+    read here comes from the training-only input. Raises if a fold model fails
+    to train: a fold that silently fell back would calibrate on something that
+    is not this method.
     """
     ep = _load_paper_scorer()
     pp = dict(adata.uns.get("paper_protocol") or {})
@@ -373,7 +553,6 @@ def _cv_folds(adata, gene_names, X_log, X_raw, ct_all, cell_type_names, cfg):
     print(f"  flow-cv: {len(interior)} fold(s) over training sections "
           f"{[ids[i] for i in interior]}")
 
-    folds = []
     for i in interior:
         sec, z = ids[i], float(zc[i])
         keep = sections != sec
@@ -385,6 +564,29 @@ def _cv_folds(adata, gene_names, X_log, X_raw, ct_all, cell_type_names, cfg):
         if not fold.trained:
             raise RuntimeError(f"flow-cv fold {sec}: the fold model did not train")
         fold.flank_log = []
+
+        gm = sections == sec
+        gt_X = X_raw[gm][:, order]
+        gt_xy = coords[gm, :2]
+        gt_types = adata.obs["cell_type"].values[gm].astype(str) if has_types else None
+
+        def score(vs, gt_X=gt_X, gt_xy=gt_xy, gt_types=gt_types):
+            pred_X = _V18W._to_dense_f32(vs.expression)[:, order]
+            pred_types = (vs.cell_type.astype(str) if vs.cell_type is not None
+                          else np.array(["NA"] * pred_X.shape[0]))
+            return _paper_section_metrics(
+                ep, pred_X, np.asarray(vs.coords, dtype=np.float64)[:, :2], pred_types,
+                gt_X, gt_xy, gt_types, sorted_genes, markers, layers)
+
+        yield sec, z, fold, score
+        del fold
+
+
+def _cv_folds(adata, gene_names, X_log, X_raw, ct_all, cell_type_names, cfg):
+    """flow-cv folds (see the module docstring). Returns a list of ``Fold``."""
+    folds = []
+    for sec, z, fold, score in _fold_models(adata, gene_names, X_log, X_raw, ct_all,
+                                            cell_type_names, cfg):
         lower, upper = fold.stack.pick_flanking_slices(z)
         t = fold._tp_frac(z, lower.z_center, upper.z_center)
         rule_lower = t <= 0.5
@@ -393,20 +595,10 @@ def _cv_folds(adata, gene_names, X_log, X_raw, ct_all, cell_type_names, cfg):
         rule, other = ("lower", "upper") if rule_lower else ("upper", "lower")
         margin = dist[rule] - dist[other]
 
-        gm = sections == sec
-        gt_X = X_raw[gm][:, order]
-        gt_xy = coords[gm, :2]
-        gt_types = adata.obs["cell_type"].values[gm].astype(str) if has_types else None
         scored = {}
         for side in (rule, other):
             fold.flank_select = side
-            vs = fold.generate_virtual_slice(z=z)
-            pred_X = _V18W._to_dense_f32(vs.expression)[:, order]
-            pred_types = (vs.cell_type.astype(str) if vs.cell_type is not None
-                          else np.array(["NA"] * pred_X.shape[0]))
-            scored[side] = _paper_section_metrics(
-                ep, pred_X, np.asarray(vs.coords, dtype=np.float64)[:, :2], pred_types,
-                gt_X, gt_xy, gt_types, sorted_genes, markers, layers)
+            scored[side] = score(fold.generate_virtual_slice(z=z))
         gain, detail = fold_gain(scored[rule], scored[other])
         print(f"    rule={rule}, d_lower={dist['lower']:.4f} d_upper={dist['upper']:.4f} "
               f"margin={margin:+.4f}; other flank vs rule: gain {gain:+d} "
@@ -414,8 +606,38 @@ def _cv_folds(adata, gene_names, X_log, X_raw, ct_all, cell_type_names, cfg):
         folds.append(Fold(sec, z, margin, gain,
                           {"rule": rule, "dist_lower": dist["lower"],
                            "dist_upper": dist["upper"], "metrics": detail}))
-        del fold
     return folds
+
+
+def _patch_cv_folds(adata, gene_names, X_log, X_raw, ct_all, cell_type_names, cfg,
+                    patch_rank):
+    """patch-cv folds: each fold synthesizes its left-out section at every q in
+    ``PATCH_Q_GRID`` and scores it against the real section; the gain of q is
+    ``fold_gain(q = 0, q)``. Returns ``(total_gain_by_q, per-fold records)``."""
+    total = {q: 0 for q in PATCH_Q_GRID}
+    records = []
+    for sec, z, fold, score in _fold_models(adata, gene_names, X_log, X_raw, ct_all,
+                                            cell_type_names, cfg):
+        fold.flank_select, fold.patch_rank = "patch-cv", patch_rank
+        per_q = {}
+        for q in PATCH_Q_GRID:
+            fold.patch_q = q
+            vs = fold.generate_virtual_slice(z=z)
+            per_q[q] = (score(vs), fold.flank_log[-1])
+        rec = {"section": sec, "z": z, "q": {}}
+        for q in PATCH_Q_GRID:
+            g, detail = fold_gain(per_q[0.0][0], per_q[q][0])
+            total[q] += g
+            lg = per_q[q][1]
+            rec["q"][str(q)] = {"gain": g, "n_switched": lg["n_switched"],
+                                "n_patches": lg["n_patches"],
+                                "frac_cells_other": lg["frac_cells_other"],
+                                "metrics": {k: v["other"] for k, v in detail.items()}}
+            print(f"    q={q:<4} switched {lg['n_switched']:>3}/{lg['n_patches']} patches "
+                  f"({100 * lg['frac_cells_other']:.0f}% cells from the other flank): "
+                  f"gain {g:+d} vs q=0")
+        records.append(rec)
+    return total, records
 
 
 def run_method(adata, targets, gene_names, X_log, X_raw, args):
@@ -447,6 +669,7 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
     # numpy at the start of training, so the main model (and the flow's flank
     # distances) are then the same as under --flank-select flow.
     cv = None
+    delta = float("inf")
     if args.flank_select == "flow-cv":
         folds = _cv_folds(adata, gene_names, X_log, X_raw, ct_all, cell_type_names, cfg)
         delta, total = calibrate_delta(folds)
@@ -458,11 +681,31 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
               "folds": [{"section": f.section, "z": f.z, "margin": f.margin,
                          "gain": f.gain, **f.detail} for f in folds]}
 
+    patch_q = 0.0
+    if args.flank_select == "patch-cv" and args.patch_q is not None:   # diagnostics only
+        patch_q = float(args.patch_q)
+        print(f"  patch-cv: q={patch_q} FORCED by --patch-q (no folds; a diagnostic)")
+        cv = {"patch_q": patch_q, "forced": True, "patch_rank": args.patch_rank}
+    elif args.flank_select == "patch-cv":
+        total, records = _patch_cv_folds(adata, gene_names, X_log, X_raw, ct_all,
+                                         cell_type_names, cfg, args.patch_rank)
+        patch_q, best = calibrate_q(total)
+        print(f"  patch-cv ({args.patch_rank} ranking): total gain by q "
+              f"{ {q: total[q] for q in PATCH_Q_GRID} } -> q={patch_q} (gain {best:+d})")
+        cv = {"patch_q": patch_q, "validated_gain": int(best),
+              "patch_rank": args.patch_rank,
+              "total_gain_by_q": {str(q): int(total[q]) for q in PATCH_Q_GRID},
+              "metrics": [f"{k}:{'+' if s > 0 else '-'}" for k, s in CV_METRICS],
+              "patch_side_spacings": PATCH_SIDE_SPACINGS,
+              "patch_min_cells": PATCH_MIN_CELLS, "max_folds": CV_MAX_FOLDS,
+              "tie_tol": CV_TIE_TOL, "folds": records}
+
     SpatialCPAv18Flow.flank_select = args.flank_select
     gen = SpatialCPAv18Flow(stack, gene_names=gene_names,
                             cell_type_names=cell_type_names, cfg=cfg)
     gen.flank_log = []
-    if cv is not None:
+    gen.patch_q, gen.patch_rank = patch_q, args.patch_rank
+    if args.flank_select == "flow-cv":
         gen.cv_delta = delta
     print(f"  flow-matching model trained: {gen.trained}")
 
@@ -476,7 +719,13 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
             import traceback
             traceback.print_exc()
             continue
-        if gen.flank_log:
+        if gen.flank_log and "patch_q" in gen.flank_log[-1]:
+            f = gen.flank_log[-1]
+            print(f"    patches: switched {f['n_switched']}/{f['n_patches']} "
+                  f"(q={f['patch_q']}, {f['patch_rank']} ranking; "
+                  f"{100 * f['frac_cells_other']:.0f}% of cells from the other flank; "
+                  f"rule flank {'lower' if f['rule_lower'] else 'upper'})")
+        elif gen.flank_log:
             f = gen.flank_log[-1]
             chose = "lower" if f["chose_lower"] else "upper"
             rule = "lower" if f["rule_lower"] else "upper"
@@ -550,14 +799,22 @@ def build_parser():
                         "better by this margin")
     # ── this method's own flag ──
     p.add_argument("--flank-select", default="flow",
-                   choices=["flow", "flow-cv", "rule", "lower", "upper"],
+                   choices=["flow", "flow-cv", "patch-cv", "rule", "lower", "upper"],
                    help="'flow': the flow picks which flank to retrieve (default); "
                         "'flow-cv': the flow picks, against a threshold calibrated "
                         "by leave-one-training-section-out validation "
-                        "(method spatialcpav18_gen_flow_cv); "
+                        "(method spatialcpav18_gen_flow_cv); 'patch-cv': the flow "
+                        "ranks spatial patches and folds set how many are copied "
+                        "from the other flank (spatialcpav18_gen_flow_patch); "
                         "'rule': v18's rule (lower if t <= 0.5) — identical to v18 "
                         "'nearest + no flow'; 'lower'/'upper': force a flank "
                         "(diagnostics: is the flow's choice the better one?)")
+    p.add_argument("--patch-rank", default="flow", choices=["flow", "random"],
+                   help="patch-cv only: rank patches by the flow (default) or in a "
+                        "seeded random order (the control that isolates the flow)")
+    p.add_argument("--patch-q", type=float, default=None,
+                   help="patch-cv only: force the switched fraction and skip the folds "
+                        "(diagnostics: --patch-q 0 is v18 'nearest + no flow')")
     return p
 
 
@@ -613,10 +870,11 @@ def main():
         "flow_matching": True, "generation_only": True,
     }
     if cv is not None:
-        method_params["flow_cv"] = cv
+        method_params["patch_cv" if args.flank_select == "patch-cv" else "flow_cv"] = cv
+    name = {"flow-cv": METHOD_NAME_CV,
+            "patch-cv": METHOD_NAME_PATCH[args.patch_rank]}.get(args.flank_select, METHOD_NAME)
     _v2_io.write_prediction_h5(
-        results, gene_names, target_sections, method_params, wall, args.output,
-        METHOD_NAME_CV if args.flank_select == "flow-cv" else METHOD_NAME)
+        results, gene_names, target_sections, method_params, wall, args.output, name)
     return 0
 
 
