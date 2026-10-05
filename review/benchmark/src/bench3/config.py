@@ -1127,6 +1127,84 @@ METHODS = {
                                 "[v18] training failed",
                                 "[v18] generation failed"),
     },
+    "spatialcpav18_gen_nearest_noflow": {
+        # The ablation baseline every flow variant is measured against: v18's
+        # nearest layout (the rule flank, exact cells) with no flow donor
+        # reranking. Bitwise v18 + the STACK3D no-flow switch + --position-mode
+        # nearest (REVIEW_NOTES §7).
+        "wrapper": _wrapper("run_spatialcpav18_flow.py"),
+        "wrapper_args": [*V18_ARGS, "--flank-select", "rule"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "v18 nearest + no flow (ablation baseline)",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
+    "spatialcpav18_gen_flow_transport": {
+        # The rule flank's cells moved to z* by a learned transport field (flow
+        # matching on exact-OT-matched cells of every consecutive pair of
+        # training sections); strength chosen by training folds (REVIEW_NOTES §7c).
+        "wrapper": _wrapper("run_spatialcpav18_flow.py"),
+        "wrapper_args": [*V18_ARGS, "--flank-select", "transport-cv", "--transport", "flow"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "retrieval + learned transport of the retrieved cells to z*",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
+    "spatialcpav18_gen_flow_transport_ot": {
+        # Control: exact OT between the two flanks, cells moved t of the way
+        # (McCann interpolation); same fold calibration. Is learning needed?
+        "wrapper": _wrapper("run_spatialcpav18_flow.py"),
+        "wrapper_args": [*V18_ARGS, "--flank-select", "transport-cv", "--transport", "ot"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "retrieval + exact-OT interpolation between flanks (control)",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
+    "spatialcpav18_gen_flow_transport_zshuffle": {
+        # Negative control: the transport field trained with depth labels
+        # rotated between section pairs. Does the flow use depth?
+        "wrapper": _wrapper("run_spatialcpav18_flow.py"),
+        "wrapper_args": [*V18_ARGS, "--flank-select", "transport-cv", "--transport", "flow-zshuffle"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "retrieval + transport with scrambled depth (negative control)",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
+    "spatialcpav18_gen_flow_transport_pair": {
+        # Negative control: the transport field trained on the two flanks only.
+        # Does the wider stack matter?
+        "wrapper": _wrapper("run_spatialcpav18_flow.py"),
+        "wrapper_args": [*V18_ARGS, "--flank-select", "transport-cv", "--transport", "flow-pair"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "retrieval + transport trained on the two flanks only (negative control)",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
     "spatialz": {
         "wrapper": _wrapper("run_spatialz.py"),
         "conda_env": "bench_spatialz",
@@ -1156,6 +1234,9 @@ METHOD_ORDER = [
     "spatialz", "feast", "isost",
     "spatialcpav18_gen", "spatialcpav18_gen_flow", "spatialcpav18_gen_flow_cv",
     "spatialcpav18_gen_flow_patch", "spatialcpav18_gen_flow_patch_random",
+    "spatialcpav18_gen_nearest_noflow", "spatialcpav18_gen_flow_transport",
+    "spatialcpav18_gen_flow_transport_ot", "spatialcpav18_gen_flow_transport_zshuffle",
+    "spatialcpav18_gen_flow_transport_pair",
 ]
 
 

@@ -89,6 +89,39 @@ the whole other flank. ``--patch-rank random`` ranks patches in a seeded random
 order instead, calibrated the same way (method
 ``spatialcpav18_gen_flow_patch_random``): the control that says what the flow's
 ranking adds over switching the same number of arbitrary patches.
+
+``--flank-select transport-cv`` (methods ``spatialcpav18_gen_flow_transport*``)
+------------------------------------------------------------------------------
+Retrieval decides WHAT each output cell is; a learned transport decides WHERE it
+goes. The layout is v18's ``nearest`` layout (the rule flank's real cells,
+their real expression), and each cell is then moved by ``lambda`` times a
+displacement that carries it from its source section's depth to z*:
+
+``--transport flow``
+    A new learned component (v18's own code is not touched): a velocity field
+    v(x, y, z) over normalized position and depth, trained by flow matching on
+    exact-OT-matched cell pairs between EVERY consecutive pair of training
+    sections (``TransportField`` / ``train_transport_field``). A cell is moved
+    by integrating dx/dz = v from its section's depth to z*, so the
+    displacement reflects how tissue changes across the whole stack and is
+    defined at the edges of the volume too.
+``--transport ot`` (control: is learning needed?)
+    Exact OT (assignment on squared xy distance) between the two flanks only;
+    each cell moves the fraction (z* - z_src)/(z_far - z_src) of the way along
+    the matched displacement (McCann interpolation), averaged over its
+    ``OT_KNN`` nearest matched cells.
+``--transport flow-zshuffle`` (negative control: does the flow use depth?)
+    The flow, trained with each section pair's depth interval rotated to the
+    next pair's, so its depth dependence is scrambled.
+``--transport flow-pair`` (negative control: does the wider stack matter?)
+    The flow, trained on the target's two flanks only.
+
+``lambda`` is chosen per method by the same leave-one-training-section-out folds
+as flow-cv (fold model and transport trained without the left-out section; every
+lambda in ``TRANSPORT_LAMBDA_GRID`` synthesized and scored against it; the
+largest total gain over lambda = 0 wins, lambda = 0 wins ties). lambda = 0 is
+bitwise "nearest + no flow". With no interior training section there are no
+folds and lambda stays 0; ``--transport-lambda`` forces a value (diagnostics).
 """
 
 import argparse
@@ -96,6 +129,10 @@ import copy
 import sys
 import time
 from collections import namedtuple
+
+from scipy.optimize import linear_sum_assignment
+from scipy.spatial import cKDTree
+from scipy.spatial.distance import cdist
 from pathlib import Path
 
 import anndata as ad
@@ -112,6 +149,10 @@ torch = _V18.torch
 
 METHOD_NAME = "spatialcpav18_gen_flow"
 METHOD_NAME_CV = "spatialcpav18_gen_flow_cv"   # the same wrapper under --flank-select flow-cv
+METHOD_NAME_TRANSPORT = {"flow": "spatialcpav18_gen_flow_transport",
+                         "ot": "spatialcpav18_gen_flow_transport_ot",
+                         "flow-zshuffle": "spatialcpav18_gen_flow_transport_zshuffle",
+                         "flow-pair": "spatialcpav18_gen_flow_transport_pair"}
 METHOD_NAME_PATCH = {"flow": "spatialcpav18_gen_flow_patch",          # --flank-select patch-cv
                      "random": "spatialcpav18_gen_flow_patch_random"}  # + --patch-rank random
 # Cap on cells per flank scored by the flow when choosing a flank. Deterministic
@@ -155,6 +196,90 @@ PATCH_MIN_CELLS = 5
 # ties, 1 switches every ranked patch.
 PATCH_Q_GRID = (0.0, 0.1, 0.25, 0.5, 0.75, 1.0)
 
+# ── transport-cv ──
+# Displacement strengths a fold may choose; 0 (= v18's nearest layout) wins ties.
+TRANSPORT_LAMBDA_GRID = (0.0, 0.25, 0.5, 0.75, 1.0)
+# Cells per section entering an exact OT assignment (evenly spaced subsample).
+OT_MAX_CELLS = 2000
+# Matched cells averaged into the OT control's displacement at a position.
+OT_KNN = 8
+# TransportField: Fourier bands per input, hidden width, layers, training steps,
+# batch, learning rate, and Euler steps when integrating dx/dz to z*.
+TRANSPORT_FOURIER = 4
+TRANSPORT_HIDDEN = 128
+TRANSPORT_LAYERS = 3
+TRANSPORT_TRAIN_STEPS = 1500
+TRANSPORT_BATCH = 1024
+TRANSPORT_LR = 1e-3
+TRANSPORT_ODE_STEPS = 16
+
+
+if torch is not None:
+    class TransportField(torch.nn.Module):
+        """Velocity field v(x, y, z) -> (dx/dz, dy/dz) over normalized position
+        and depth: Fourier features of the three inputs, then an MLP."""
+
+        def __init__(self, bands=TRANSPORT_FOURIER, hidden=TRANSPORT_HIDDEN,
+                     layers=TRANSPORT_LAYERS):
+            super().__init__()
+            self.register_buffer("freq", (2.0 ** torch.arange(bands)) * np.pi)
+            dims = [3 + 3 * 2 * bands] + [hidden] * layers
+            mods = []
+            for i in range(layers):
+                mods += [torch.nn.Linear(dims[i], dims[i + 1]), torch.nn.SiLU()]
+            mods.append(torch.nn.Linear(hidden, 2))
+            self.net = torch.nn.Sequential(*mods)
+
+        def forward(self, xy, z):
+            """``xy`` (B, 2), ``z`` (B,) -> (B, 2)."""
+            u = torch.cat([xy, z[:, None]], 1)
+            ang = u[:, :, None] * self.freq
+            f = torch.cat([u, torch.sin(ang).flatten(1), torch.cos(ang).flatten(1)], 1)
+            return self.net(f)
+
+
+def train_transport_field(segments, seed):
+    """Flow matching for positions. ``segments``: list of ``(a_p, b_p, z0, z1)``
+    — exact-OT-matched cells of two sections (normalized xy) and their
+    normalized depths. A training point is a matched pair's straight path at a
+    uniform fraction tau; its target velocity is ``(b - a) / (z1 - z0)``.
+    CPU, its own seeds (``fork_rng``), so torch's global stream is untouched.
+    Returns the trained ``TransportField`` (eval mode)."""
+    A = np.vstack([s[0] for s in segments]).astype(np.float32)
+    B = np.vstack([s[1] for s in segments]).astype(np.float32)
+    Z0 = np.concatenate([np.full(len(s[0]), s[2]) for s in segments]).astype(np.float32)
+    Z1 = np.concatenate([np.full(len(s[0]), s[3]) for s in segments]).astype(np.float32)
+    U = (B - A) / (Z1 - Z0)[:, None]
+    g = np.random.default_rng(seed)
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(int(seed))
+        model = TransportField()
+        opt = torch.optim.Adam(model.parameters(), lr=TRANSPORT_LR)
+        for _ in range(TRANSPORT_TRAIN_STEPS):
+            i = g.integers(0, len(A), size=TRANSPORT_BATCH)
+            tau = g.random(TRANSPORT_BATCH).astype(np.float32)
+            x = A[i] + tau[:, None] * (B[i] - A[i])
+            z = Z0[i] + tau * (Z1[i] - Z0[i])
+            loss = torch.nn.functional.mse_loss(
+                model(torch.from_numpy(x), torch.from_numpy(z)), torch.from_numpy(U[i]))
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+    return model.eval()
+
+
+def integrate_transport(model, xy, z0, z1, steps=TRANSPORT_ODE_STEPS):
+    """Move positions ``xy`` (n, 2) from depth ``z0`` to ``z1`` along the field
+    (midpoint Euler, normalized units). Returns the displacement (n, 2)."""
+    x = torch.from_numpy(np.asarray(xy, dtype=np.float32))
+    x0 = x.clone()
+    dz = (float(z1) - float(z0)) / steps
+    with torch.no_grad():
+        for k in range(steps):
+            z = torch.full((x.shape[0],), float(z0) + (k + 0.5) * dz)
+            x = x + dz * model(x, z)
+    return (x - x0).numpy().astype(np.float64)
+
 
 class SpatialCPAv18Flow(_V18.SpatialCPAv18):
     """v18 with a flow-chosen single-section layout and no flow donor reranking."""
@@ -163,6 +288,8 @@ class SpatialCPAv18Flow(_V18.SpatialCPAv18):
     cv_delta = float("inf")          # flow-cv threshold (calibrate_delta); +inf = never switch
     patch_q = 0.0                    # patch-cv: fraction of patches switched (calibrate_q)
     patch_rank = "flow"              # patch-cv: "flow" ranks patches; "random" is the control
+    transport = "flow"               # transport-cv: "flow" | "ot" | "flow-zshuffle" | "flow-pair"
+    transport_lambda = 0.0           # transport-cv: displacement strength (calibrate_lambda)
 
     # -- remember the target depth: _resample_layout is not given z ------------
     def _generate(self, z):
@@ -177,6 +304,8 @@ class SpatialCPAv18Flow(_V18.SpatialCPAv18):
         ``patch-cv``, chosen patch by patch (``_patch_layout``)."""
         if self.flank_select == "patch-cv":
             return self._patch_layout(lower, upper, t, n_target, rng)
+        if self.flank_select == "transport-cv":
+            return self._transport_layout(lower, upper, t, n_target, rng)
         rule_lower = t <= 0.5
         if self.flank_select == "flow":
             use_lower, info = self._flow_choose_flank(lower, upper, rule_lower)
@@ -372,6 +501,79 @@ class SpatialCPAv18Flow(_V18.SpatialCPAv18):
             "mean_margin": float(np.mean(margins)) if len(margins) else 0.0})
         return anchor, src
 
+    # -- transport-cv: retrieved cells moved to z* by a learned field ---------
+    def _transport_layout(self, lower, upper, t, n_target, rng):
+        """v18's ``nearest`` layout, then each cell moved by
+        ``transport_lambda`` x the displacement from its section's depth to z*
+        (``_transport_displacement``). ``transport_lambda = 0`` is bitwise the
+        nearest layout."""
+        rule_lower = t <= 0.5
+        near, far = (lower, upper) if rule_lower else (upper, lower)
+        near_xy = self._nxy(near.coords_xy).astype(np.float32)
+        pick = (rng.choice(near_xy.shape[0], n_target, replace=False)
+                if near_xy.shape[0] > n_target else np.arange(near_xy.shape[0]))
+        anchor = near_xy[pick]
+        anchor_src = (pick if rule_lower else pick + lower.n_spots).astype(np.int64)
+        lam = float(self.transport_lambda)
+        info = {"z": self._z_current, "t": float(t), "rule_lower": bool(rule_lower),
+                "chose_lower": bool(rule_lower), "transport": self.transport,
+                "transport_lambda": lam, "mean_shift_um": 0.0}
+        if lam > 0.0:
+            disp = self._transport_displacement(near, far, anchor)
+            anchor = (anchor + lam * disp).astype(np.float32)
+            info["mean_shift_um"] = float(np.mean(np.linalg.norm(
+                lam * disp * self._xy_s, axis=1)))
+        self.flank_log.append(info)
+        return anchor, anchor_src
+
+    def _transport_displacement(self, near, far, xy):
+        """Displacement (n, 2), normalized xy units, carrying cells at ``xy`` in
+        section ``near`` to depth z* under ``self.transport``."""
+        z_src, z_far, z_t = near.z_center, far.z_center, self._z_current
+        if self.transport == "ot":
+            a_p, b_p = self._cached(("ot", id(near), id(far)), lambda: ot_pairs(
+                self._nxy(near.coords_xy), self._nxy(far.coords_xy)))
+            frac = (z_t - z_src) / (z_far - z_src) if z_far != z_src else 0.0
+            return frac * knn_displacement(a_p, b_p, xy)
+        if self.transport in ("flow", "flow-zshuffle"):
+            field = self._cached(("field", self.transport),
+                                 lambda: self._train_field(self.transport))
+        elif self.transport == "flow-pair":
+            field = self._cached(("field-pair", id(near), id(far)),
+                                 lambda: self._train_field("flow-pair", (near, far)))
+        else:
+            raise ValueError(f"unknown transport {self.transport!r}")
+        return integrate_transport(field, xy, self._nz(z_src), self._nz(z_t))
+
+    def _cached(self, key, build):
+        cache = self.__dict__.setdefault("_transport_cache", {})
+        if key not in cache:
+            cache[key] = build()
+        return cache[key]
+
+    def _train_field(self, kind, pair=None):
+        """Train the transport field on this model's own training sections:
+        every consecutive pair (``flow``), the same with each pair's depth
+        interval rotated to the next pair's (``flow-zshuffle``; needs >= 2
+        pairs), or only ``pair`` (``flow-pair``)."""
+        slices = list(pair) if pair is not None else list(self.stack.slices)
+        slices = sorted(slices, key=lambda s: s.z_center)
+        segs = []
+        for lo, hi in zip(slices[:-1], slices[1:]):
+            a_p, b_p = self._cached(("ot", id(lo), id(hi)), lambda lo=lo, hi=hi: ot_pairs(
+                self._nxy(lo.coords_xy), self._nxy(hi.coords_xy)))
+            segs.append([a_p, b_p, self._nz(lo.z_center), self._nz(hi.z_center)])
+        if kind == "flow-zshuffle":
+            if len(segs) < 2:
+                raise RuntimeError("flow-zshuffle needs >= 3 training sections "
+                                   "(two section pairs) to rotate depth labels")
+            zs = [(sg[2], sg[3]) for sg in segs]
+            for k, sg in enumerate(segs):
+                sg[2], sg[3] = zs[(k + 1) % len(zs)]
+        print(f"    transport field ({kind}): {len(segs)} section pair(s), "
+              f"{sum(len(sg[0]) for sg in segs)} matched cells")
+        return train_transport_field([tuple(sg) for sg in segs], int(self.cfg.seed))
+
     # -- 2. no flow donor reranking: query = each cell's own source latent -----
     def _ground(self, anchor, anchor_src, e_hat, pool_nxy, pool_e, pool_expr, pool_type, rng):
         self._query = pool_e[anchor_src].copy()
@@ -454,6 +656,38 @@ def patches_to_switch(patches, margins, q, rank, seed):
     else:
         raise ValueError(f"unknown patch rank {rank!r}")
     return np.asarray(patches)[order[:k]].astype(np.int64)
+
+
+def even_subsample(n, cap):
+    """Evenly spaced indices into ``range(n)``, at most ``cap`` of them."""
+    return (np.linspace(0, n - 1, cap).astype(np.int64) if n > cap
+            else np.arange(n, dtype=np.int64))
+
+
+def ot_pairs(a, b, max_cells=OT_MAX_CELLS):
+    """Exact OT between two point clouds: the minimum total squared-distance
+    one-to-one assignment (``linear_sum_assignment``) between evenly spaced
+    subsamples of ``a`` (n, 2) and ``b`` (m, 2). Returns matched ``(a_p, b_p)``,
+    each (min(n, m, max_cells), 2). Deterministic."""
+    a = np.asarray(a, dtype=np.float64)[even_subsample(len(a), max_cells)]
+    b = np.asarray(b, dtype=np.float64)[even_subsample(len(b), max_cells)]
+    r, c = linear_sum_assignment(cdist(a, b, "sqeuclidean"))
+    return a[r], b[c]
+
+
+def knn_displacement(a_p, b_p, xy, k=OT_KNN):
+    """Mean matched displacement ``b_p - a_p`` of the ``k`` matched sources
+    nearest each position in ``xy`` (n, 2). Returns (n, 2)."""
+    k = max(1, min(int(k), len(a_p)))
+    _, nb = cKDTree(a_p).query(np.asarray(xy, dtype=np.float64), k=k)
+    nb = np.asarray(nb).reshape(len(xy), k)
+    return (b_p - a_p)[nb].mean(axis=1)
+
+
+def calibrate_lambda(total_gain_by_lambda):
+    """The transport-cv strength: same rule as ``calibrate_q`` (largest total
+    fold gain over lambda = 0; the smallest lambda wins ties)."""
+    return calibrate_q(total_gain_by_lambda)
 
 
 def calibrate_q(total_gain_by_q):
@@ -609,6 +843,34 @@ def _cv_folds(adata, gene_names, X_log, X_raw, ct_all, cell_type_names, cfg):
     return folds
 
 
+def _transport_cv_folds(adata, gene_names, X_log, X_raw, ct_all, cell_type_names, cfg,
+                        transport):
+    """transport-cv folds: each fold synthesizes its left-out section at every
+    lambda in ``TRANSPORT_LAMBDA_GRID`` (the fold's transport is trained on the
+    fold's own sections) and scores it; the gain of lambda is
+    ``fold_gain(lambda = 0, lambda)``. Returns ``(total_gain_by_lambda, records)``."""
+    total = {lam: 0 for lam in TRANSPORT_LAMBDA_GRID}
+    records = []
+    for sec, z, fold, score in _fold_models(adata, gene_names, X_log, X_raw, ct_all,
+                                            cell_type_names, cfg):
+        fold.flank_select, fold.transport = "transport-cv", transport
+        per = {}
+        for lam in TRANSPORT_LAMBDA_GRID:
+            fold.transport_lambda = lam
+            vs = fold.generate_virtual_slice(z=z)
+            per[lam] = (score(vs), fold.flank_log[-1])
+        rec = {"section": sec, "z": z, "lambda": {}}
+        for lam in TRANSPORT_LAMBDA_GRID:
+            g, detail = fold_gain(per[0.0][0], per[lam][0])
+            total[lam] += g
+            rec["lambda"][str(lam)] = {"gain": g, "mean_shift_um": per[lam][1]["mean_shift_um"],
+                                       "metrics": {k: v["other"] for k, v in detail.items()}}
+            print(f"    lambda={lam:<4} mean shift {per[lam][1]['mean_shift_um']:6.2f} um: "
+                  f"gain {g:+d} vs lambda=0")
+        records.append(rec)
+    return total, records
+
+
 def _patch_cv_folds(adata, gene_names, X_log, X_raw, ct_all, cell_type_names, cfg,
                     patch_rank):
     """patch-cv folds: each fold synthesizes its left-out section at every q in
@@ -700,9 +962,30 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
               "patch_min_cells": PATCH_MIN_CELLS, "max_folds": CV_MAX_FOLDS,
               "tie_tol": CV_TIE_TOL, "folds": records}
 
+    transport_lambda = 0.0
+    if args.flank_select == "transport-cv" and args.transport_lambda is not None:
+        transport_lambda = float(args.transport_lambda)                # diagnostics only
+        print(f"  transport-cv: lambda={transport_lambda} FORCED by --transport-lambda "
+              f"(no folds; a diagnostic)")
+        cv = {"transport": args.transport, "lambda": transport_lambda, "forced": True}
+    elif args.flank_select == "transport-cv":
+        total, records = _transport_cv_folds(adata, gene_names, X_log, X_raw, ct_all,
+                                             cell_type_names, cfg, args.transport)
+        transport_lambda, best = calibrate_lambda(total)
+        note = "" if records else " (no interior training section: no folds, lambda stays 0)"
+        print(f"  transport-cv ({args.transport}): total gain by lambda "
+              f"{ {lam: total[lam] for lam in TRANSPORT_LAMBDA_GRID} } -> "
+              f"lambda={transport_lambda} (gain {best:+d}){note}")
+        cv = {"transport": args.transport, "lambda": transport_lambda,
+              "validated_gain": int(best), "n_folds": len(records),
+              "total_gain_by_lambda": {str(k): int(v) for k, v in total.items()},
+              "metrics": [f"{k}:{'+' if sg > 0 else '-'}" for k, sg in CV_METRICS],
+              "folds": records}
+
     SpatialCPAv18Flow.flank_select = args.flank_select
     gen = SpatialCPAv18Flow(stack, gene_names=gene_names,
                             cell_type_names=cell_type_names, cfg=cfg)
+    gen.transport, gen.transport_lambda = args.transport, transport_lambda
     gen.flank_log = []
     gen.patch_q, gen.patch_rank = patch_q, args.patch_rank
     if args.flank_select == "flow-cv":
@@ -719,7 +1002,12 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
             import traceback
             traceback.print_exc()
             continue
-        if gen.flank_log and "patch_q" in gen.flank_log[-1]:
+        if gen.flank_log and "transport_lambda" in gen.flank_log[-1]:
+            f = gen.flank_log[-1]
+            print(f"    transport: {f['transport']}, lambda={f['transport_lambda']}, "
+                  f"mean shift {f['mean_shift_um']:.2f} um from the "
+                  f"{'lower' if f['rule_lower'] else 'upper'} flank")
+        elif gen.flank_log and "patch_q" in gen.flank_log[-1]:
             f = gen.flank_log[-1]
             print(f"    patches: switched {f['n_switched']}/{f['n_patches']} "
                   f"(q={f['patch_q']}, {f['patch_rank']} ranking; "
@@ -799,19 +1087,30 @@ def build_parser():
                         "better by this margin")
     # ── this method's own flag ──
     p.add_argument("--flank-select", default="flow",
-                   choices=["flow", "flow-cv", "patch-cv", "rule", "lower", "upper"],
+                   choices=["flow", "flow-cv", "patch-cv", "transport-cv", "rule",
+                            "lower", "upper"],
                    help="'flow': the flow picks which flank to retrieve (default); "
                         "'flow-cv': the flow picks, against a threshold calibrated "
                         "by leave-one-training-section-out validation "
                         "(method spatialcpav18_gen_flow_cv); 'patch-cv': the flow "
                         "ranks spatial patches and folds set how many are copied "
                         "from the other flank (spatialcpav18_gen_flow_patch); "
+                        "'transport-cv': the rule flank's cells moved to z* by "
+                        "--transport, strength set by folds; "
                         "'rule': v18's rule (lower if t <= 0.5) — identical to v18 "
                         "'nearest + no flow'; 'lower'/'upper': force a flank "
                         "(diagnostics: is the flow's choice the better one?)")
     p.add_argument("--patch-rank", default="flow", choices=["flow", "random"],
                    help="patch-cv only: rank patches by the flow (default) or in a "
                         "seeded random order (the control that isolates the flow)")
+    p.add_argument("--transport", default="flow",
+                   choices=["flow", "ot", "flow-zshuffle", "flow-pair"],
+                   help="transport-cv only: the learned field (default), exact OT "
+                        "between the flanks (control), the field with depth labels "
+                        "rotated, or the field trained on the two flanks only")
+    p.add_argument("--transport-lambda", type=float, default=None,
+                   help="transport-cv only: force the displacement strength and skip "
+                        "the folds (diagnostics: 0 is v18 'nearest + no flow')")
     p.add_argument("--patch-q", type=float, default=None,
                    help="patch-cv only: force the switched fraction and skip the folds "
                         "(diagnostics: --patch-q 0 is v18 'nearest + no flow')")
@@ -870,9 +1169,12 @@ def main():
         "flow_matching": True, "generation_only": True,
     }
     if cv is not None:
-        method_params["patch_cv" if args.flank_select == "patch-cv" else "flow_cv"] = cv
+        method_params[{"patch-cv": "patch_cv", "transport-cv": "transport_cv"}
+                      .get(args.flank_select, "flow_cv")] = cv
     name = {"flow-cv": METHOD_NAME_CV,
-            "patch-cv": METHOD_NAME_PATCH[args.patch_rank]}.get(args.flank_select, METHOD_NAME)
+            "patch-cv": METHOD_NAME_PATCH[args.patch_rank],
+            "transport-cv": METHOD_NAME_TRANSPORT[args.transport]
+            }.get(args.flank_select, METHOD_NAME)
     _v2_io.write_prediction_h5(
         results, gene_names, target_sections, method_params, wall, args.output, name)
     return 0

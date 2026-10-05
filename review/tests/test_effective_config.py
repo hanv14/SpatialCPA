@@ -97,11 +97,12 @@ FLOW_WRAPPER = V18_WRAPPER.parent / "run_spatialcpav18_flow.py"
 
 def test_flow_wrapper_declares_every_v18_flag_with_the_same_default():
     """run_spatialcpav18_flow.py reuses v18's _build_config, so its CLI must match
-    v18's flag for flag; its only extra flags are --flank-select and patch-cv's two."""
+    v18's flag for flag; its only extra flags are --flank-select and the patch/transport ones."""
     v18, flow = argparse_defaults(V18_WRAPPER), argparse_defaults(FLOW_WRAPPER)
     for flag, d in v18.items():
         assert flow.get(flag) == d, (flag, flow.get(flag), d)
-    assert set(flow) - set(v18) == {"--flank-select", "--patch-rank", "--patch-q"}
+    assert set(flow) - set(v18) == {"--flank-select", "--patch-rank", "--patch-q",
+                                       "--transport", "--transport-lambda"}
     assert flow["--flank-select"] == "flow"
 
 
@@ -130,3 +131,18 @@ def test_patch_methods_differ_only_in_patch_rank():
         assert list(m["wrapper_args"]) == [*c.V18_ARGS, "--flank-select", "patch-cv",
                                            "--patch-rank", rank]
         assert m["wrapper"] == c.METHODS["spatialcpav18_gen_flow"]["wrapper"]
+
+
+def test_transport_methods_and_baseline_are_the_same_wrapper():
+    c = load_bench3_config()
+    base = c.METHODS["spatialcpav18_gen_flow"]["wrapper"]
+    assert list(c.METHODS["spatialcpav18_gen_nearest_noflow"]["wrapper_args"]) == \
+        [*c.V18_ARGS, "--flank-select", "rule"]
+    for name, tr in (("spatialcpav18_gen_flow_transport", "flow"),
+                     ("spatialcpav18_gen_flow_transport_ot", "ot"),
+                     ("spatialcpav18_gen_flow_transport_zshuffle", "flow-zshuffle"),
+                     ("spatialcpav18_gen_flow_transport_pair", "flow-pair")):
+        m = c.METHODS[name]
+        assert m["wrapper"] == base
+        assert list(m["wrapper_args"]) == [*c.V18_ARGS, "--flank-select", "transport-cv",
+                                           "--transport", tr]

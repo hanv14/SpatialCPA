@@ -18,7 +18,9 @@ np = pytest.importorskip("numpy")
 
 FLOW_WRAPPER = BENCH3 / "methods" / "run_spatialcpav18_flow.py"
 WANTED = {"CV_METRICS", "CV_TIE_TOL", "calibrate_delta", "fold_gain",
-          "PATCH_Q_GRID", "patch_ids", "patch_margins", "patches_to_switch", "calibrate_q"}
+          "PATCH_Q_GRID", "patch_ids", "patch_margins", "patches_to_switch", "calibrate_q",
+          "TRANSPORT_LAMBDA_GRID", "OT_MAX_CELLS", "OT_KNN", "even_subsample", "ot_pairs",
+          "knn_displacement", "calibrate_lambda"}
 
 
 def _lift():
@@ -27,7 +29,11 @@ def _lift():
             if (isinstance(n, ast.FunctionDef) and n.name in WANTED)
             or (isinstance(n, ast.Assign) and any(getattr(t, "id", None) in WANTED
                                                   for t in n.targets))]
-    ns = {"np": np}
+    from scipy.optimize import linear_sum_assignment
+    from scipy.spatial import cKDTree
+    from scipy.spatial.distance import cdist
+    ns = {"np": np, "linear_sum_assignment": linear_sum_assignment,
+          "cKDTree": cKDTree, "cdist": cdist}
     exec(compile(ast.Module(body=body, type_ignores=[]), str(FLOW_WRAPPER), "exec"), ns)
     assert WANTED <= set(ns), WANTED - set(ns)
     return ns
@@ -116,3 +122,27 @@ def test_calibrate_q_needs_a_strict_gain_and_prefers_small_q():
     assert grid[0] == 0.0 and grid[-1] == 1.0
     assert cal({q: 0 for q in grid}) == (0.0, 0)
     assert cal({0.0: 0, 0.1: -1, 0.25: 3, 0.5: 3, 0.75: 1, 1.0: 2}) == (0.25, 3)
+
+
+# ── transport-cv ──────────────────────────────────────────────────────────────
+def test_exact_ot_recovers_a_known_shift():
+    rng = np.random.default_rng(0)
+    a = rng.random((200, 2))
+    b = (a + np.array([0.01, -0.02]))[rng.permutation(200)]    # same cloud, shifted
+    a_p, b_p = NS["ot_pairs"](a, b)
+    assert np.allclose(b_p - a_p, [0.01, -0.02])
+    d = NS["knn_displacement"](a_p, b_p, a[:10])
+    assert np.allclose(d, [0.01, -0.02])
+
+
+def test_ot_subsample_is_even_and_capped():
+    idx = NS["even_subsample"](10_000, NS["OT_MAX_CELLS"])
+    assert len(idx) == NS["OT_MAX_CELLS"] and idx[0] == 0 and idx[-1] == 9_999
+    assert list(NS["even_subsample"](5, 100)) == [0, 1, 2, 3, 4]
+
+
+def test_calibrate_lambda_needs_a_strict_gain_and_prefers_small_lambda():
+    grid = NS["TRANSPORT_LAMBDA_GRID"]
+    assert grid[0] == 0.0
+    assert NS["calibrate_lambda"]({lam: 0 for lam in grid}) == (0.0, 0)
+    assert NS["calibrate_lambda"]({0.0: 0, 0.25: 2, 0.5: 2, 0.75: -1, 1.0: 1}) == (0.25, 2)
