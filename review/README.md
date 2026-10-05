@@ -22,7 +22,11 @@ to retrieve, and is not used to rerank donors. A third, **`spatialcpav18_gen_flo
 threshold calibrated by leave-one-training-section-out validation.
 **`spatialcpav18_gen_flow_patch`** chooses the flank per spatial patch (flow-ranked
 patches, fold-validated fraction), with **`spatialcpav18_gen_flow_patch_random`**
-as its random-ranking control. See REVIEW_NOTES §7, 7a, 7b.
+as its random-ranking control. The **`spatialcpav18_gen_flow_transport*`** entries
+move retrieved cells to the target depth (learned field, exact-OT control, two
+negative controls) against the **`spatialcpav18_gen_nearest_noflow`** baseline;
+`scripts/gap_sweep_starmap.sh` runs them over the paper and wide designs. See
+REVIEW_NOTES §7, 7a, 7b, 7c.
 
 No other SpatialCPA version is in this tree: no wrapper, registry entry, method
 file or result. `tests/test_scope.py` and `tests/test_rename.py` enforce that.
@@ -519,7 +523,7 @@ make selftest          # the harness's own check: oracle / flanking copy / scram
 | `test_path_resolution.py` | v18 resolves to `review/learn_spatialcpav18.py` with no env vars from any cwd, looks nowhere else, and the overrides don't fall through |
 | `test_rename.py` | nothing in the tree names another SpatialCPA version; the `[v18]` fallback markers match strings v18 prints; every file carried from the parent project is identical or AST-equivalent to its original, except the 9 documented `changed` files; the checker rejects a one-constant change |
 | `test_flow_cv.py` | patch-cv's grid, margins, top-q / seeded-random switching and q calibration (q = 0 wins ties); flow-cv's threshold calibration: no folds or no validated gain means never switch; the threshold switches exactly the folds that gained; ties keep the larger threshold; per-fold gain respects metric direction and treats last-bit differences as ties |
-| `test_scope.py` | the registry is exactly {spatialz, feast, isost, spatialcpav18_gen, spatialcpav18_gen_flow, spatialcpav18_gen_flow_cv, spatialcpav18_gen_flow_patch, spatialcpav18_gen_flow_patch_random}; the only wrappers are those five; one `benchmark/` folder, no `benchmark-pbya*` |
+| `test_scope.py` | the registry is exactly {spatialz, feast, isost, spatialcpav18_gen, spatialcpav18_gen_flow, spatialcpav18_gen_flow_cv, spatialcpav18_gen_flow_patch, spatialcpav18_gen_flow_patch_random, spatialcpav18_gen_nearest_noflow, spatialcpav18_gen_flow_transport{,_ot,_zshuffle,_pair}}; the only wrappers are those five; one `benchmark/` folder, no `benchmark-pbya*` |
 
 ---
 

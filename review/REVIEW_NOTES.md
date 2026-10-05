@@ -421,3 +421,75 @@ the random control on other datasets, especially ones where flanks differ within
 the section (damage, uneven coverage, wider gaps), that would be evidence for the
 flow. Run it there before drawing a conclusion either way. Both registry entries
 are kept so that comparison can be run as is.
+
+### 7c. Transport of retrieved cells (`spatialcpav18_gen_flow_transport*`) and the STARmap gap sweep
+
+**What it is.** `--flank-select transport-cv`. Retrieval decides what each output
+cell is: v18's nearest layout, with the rule flank's real cells and real
+expression. A transport decides where the cell goes: it is moved by λ × a
+displacement from its section's depth to z\*.
+
+| method | displacement | role |
+|---|---|---|
+| `spatialcpav18_gen_nearest_noflow` | none | baseline (bitwise "nearest + no flow") |
+| `_flow_transport` | learned velocity field v(x, y, z), trained by flow matching on exact-OT-matched cells of every consecutive pair of training sections; integrated from the source depth to z\* | the method |
+| `_flow_transport_ot` | exact OT (assignment) between the two flanks, moved the fraction (z\*−z_src)/(z_far−z_src) of the way | control: is learning needed? |
+| `_flow_transport_zshuffle` | the field, with each section pair's depth interval rotated to the next pair's | negative control: does it use depth? |
+| `_flow_transport_pair` | the field, trained on the two flanks only | negative control: does the wider stack matter? |
+
+λ ∈ {0, 0.25, 0.5, 0.75, 1} is chosen per method by the flow-cv folds. The fold
+model and the transport are both trained without the left-out section. λ = 0
+wins ties, and with no interior training section (block 5) there are no folds,
+so λ stays 0. λ = 0 is bitwise "nearest + no flow" (checked).
+
+**Sweep.** `scripts/gap_sweep_starmap.sh` runs the existing designs; there is no
+change to `prepare_dataset`. The designs are `paper` (hold out 2, 4, 6) and
+`wide` blocks 1, 3 and 5 (hold out 4; 3–5; 2–6), so the farthest target is 11,
+11, 22 and 33 µm from a real section. A second pass forces λ = 1 for the flow and
+for OT, as a diagnostic of raw transport. `scripts/summarize_gap_sweep.py` writes
+the tables.
+
+**Result (seed 42): the transport does not help, and the learned field does not
+beat OT.** Composite against "nearest + no flow" (wins − losses over the 8 pooled
+metrics; 0 means the same output):
+
+| gap | flow | OT | flow, depth rotated | flow, two flanks only | λ chosen (flow / OT / rot. / pair) |
+|---|---|---|---|---|---|
+| 11 µm, alternate | 0 | 0 | 0 | 0 | 0 / 0 / 0 / 0 |
+| 11 µm, block 1 | 0 | 0 | 0 | 0 | 0 / 0 / 0 / 0 |
+| 22 µm, block 3 | **−6** | 0 | 0 | −4 | 0.25 / 0 / 0 / 0.25 |
+| 33 µm, block 5 | 0 | 0 | 0 | 0 | no folds: 0 everywhere |
+
+Forced λ = 1 (diagnostic, not a method):
+
+| gap | flow | OT |
+|---|---|---|
+| 11 µm, alternate | −6 | −2 |
+| 11 µm, block 1 | −4 | −5 |
+| 22 µm, block 3 | −4 | −2 |
+| 33 µm, block 5 | 0 | −2 |
+
+- **Moving retrieved cells makes them worse at every gap.** Forced full transport
+  loses at every gap except one tie. The folds saw this and kept λ = 0 in 14 of 16
+  calibrations.
+- **Where the folds chose λ = 0.25** (22 µm, flow and flow-pair; fold gains of
+  only +1 and +2), the held-out sections lost (−6 and −4). The folds are too few
+  (2) to separate a small real effect from noise.
+- **No evidence the learned field is better than classical OT.** The flow loses to
+  OT at 3 of 4 gaps when forced and matches it once (33 µm: 0 vs −2, one dataset,
+  one seed). The negative controls do no worse than the flow. So nothing here
+  shows that the field's use of depth or of the wider stack adds anything.
+- **Likely cause.** Neighbouring sections don't contain the same cells. An exact
+  assignment between two sections therefore produces mostly matching noise
+  (mean shifts of 8–25 µm, comparable to the 11–22 µm section spacing), not
+  tissue deformation. A field fitted to that noise moves cells away from where
+  real cells are. STARmap's sections are also already well aligned, so there is
+  little real deformation to find.
+
+**Conclusion for the paper.** On STARmap the transport adds nothing, and the
+evidence does not support claiming that a learned flow improves the method.
+Datasets with real deformation across depth (developing tissue, curved
+structures, thick serial sections), on more seeds, are where this could still
+show something. The sweep and summary scripts run unchanged there. A transport
+learned from matched *cell identities* (expression-aware coupling) rather than
+positions alone would be the next design to try.
