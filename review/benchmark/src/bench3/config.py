@@ -1265,6 +1265,22 @@ METHODS = {
                                 "[v18] training failed",
                                 "[v18] generation failed"),
     },
+    "spatialcpav18_gen_uq": {
+        # v18 nearest + no flow (the output is that row, bitwise) plus a per-cell
+        # uncertainty map from independent flow draws, written to uncertainty.npz
+        # and scored for calibration by evaluate_uncertainty.py. REVIEW_NOTES §10.
+        "wrapper": _wrapper("run_spatialcpav18_uq.py"),
+        "wrapper_args": [*V18_ARGS],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "retrieval output + flow-sample uncertainty map",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
     "spatialz": {
         "wrapper": _wrapper("run_spatialz.py"),
         "conda_env": "bench_spatialz",
@@ -1299,6 +1315,7 @@ METHOD_ORDER = [
     "spatialcpav18_gen_flow_transport_pair",
     "spatialcpav18_gen_flow_h", "spatialcpav18_gen_flow_h_untrained",
     "spatialcpav18_gen_flow_h_interp", "spatialcpav18_gen_flow_h_srcdepth",
+    "spatialcpav18_gen_uq",
 ]
 
 

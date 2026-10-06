@@ -160,3 +160,10 @@ def test_h_cv_arms_are_the_same_wrapper_and_differ_only_in_h_source():
         assert m["wrapper"] == base
         assert list(m["wrapper_args"]) == [*c.V18_ARGS, "--flank-select", "h-cv",
                                            "--h-source", src]
+
+
+def test_uq_method_runs_the_published_flags_on_its_own_wrapper():
+    c = load_bench3_config()
+    m = c.METHODS["spatialcpav18_gen_uq"]
+    assert list(m["wrapper_args"]) == list(c.V18_ARGS)
+    assert str(m["wrapper"]).endswith("run_spatialcpav18_uq.py")

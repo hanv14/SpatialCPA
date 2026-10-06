@@ -636,3 +636,52 @@ Forced γ = 1 (full h\* query; diagnostic): flow −4 / −1 / −6 / −6, untr
   shifts v18's shared random stream. Single-run differences of ±2 on the 8-metric
   composite should be read as noise unless they come from a paired (common random
   numbers) comparison or hold over several seeds.
+
+## 10. The flow used generatively: a calibrated uncertainty map? (`spatialcpav18_gen_uq`)
+
+**What it is.** A new wrapper, `methods/run_spatialcpav18_uq.py`. It imports the
+flow wrapper and v18 without editing either. The synthesized section is v18
+"nearest + no flow", bitwise (checked), so its paper metrics are those of plain
+retrieval. It also writes `uncertainty.npz` with three per-cell scores:
+- `u_flow`: the spread of 8 independent single-noise flow draws, decoded to the
+  expression latent. v18 averages its noise draws, which is what discards this
+  information.
+- `u_untrained`: the same spread from a re-initialised flow.
+- `d_flank`: the latent disagreement of the two flanking sections at the cell, a
+  retrieval-only proxy with no network.
+
+A new evaluation-only scorer, `evaluate_uncertainty.py`, poses the prediction
+onto the GT as `evaluate_paper` does. It bins both on the `FIELD_GRID` lattice
+and takes each patch's error as the L2 distance between predicted and real mean
+rank-expression. For each score it reports Spearman ρ with the error; the partial
+ρ with patch cell count, the `sampling` baseline sqrt(1/n_pred + 1/n_gt),
+regressed out; AUROC for the worst quarter of patches; and mean error per score
+quintile. Tested in `tests/test_evaluate_uncertainty.py`: a score that tracks the
+error ranks it, noise doesn't, and a pure cell-count score is caught by the
+partial ρ.
+
+**STARmap, seed 42.** Grid 20 is primary; grid 10 is a sensitivity analysis
+declared before looking.
+
+| design (patches) | u_flow ρ / partial / AUROC | u_untrained ρ / partial | d_flank ρ / partial / AUROC | sampling ρ / AUROC |
+|---|---|---|---|---|
+| paper (935) | +0.17 / −0.01 / 0.55 | −0.01 / −0.02 | +0.02 / +0.10 / 0.50 | +0.50 / 0.75 |
+| wide 4 (317) | +0.24 / +0.04 / 0.61 | −0.06 / −0.04 | +0.08 / +0.20 / 0.55 | +0.51 / 0.75 |
+| wide 3–5 (962) | +0.16 / −0.01 / 0.56 | +0.04 / +0.04 | +0.10 / +0.09 / 0.55 | +0.49 / 0.75 |
+| wide 2–6 (1545) | +0.04 / −0.02 / 0.49 | −0.02 / −0.01 | +0.14 / +0.10 / 0.58 | +0.45 / 0.73 |
+| grid 10, partial ρ (paper / w4 / w3–5 / w2–6) | −0.03 / +0.13 / −0.12 / −0.11 | −0.15 / −0.10 / +0.06 / −0.08 | −0.03 / +0.12 / +0.05 / +0.15 | — |
+
+**Reading.**
+- **The flow's spread mostly tracks cell count.** It correlates weakly with the
+  error (ρ up to 0.24, where the untrained flow gets about 0), but almost all of
+  that is how few cells a patch has. With cell count regressed out it is ≈ 0 at
+  grid 20 (−0.02 to +0.04) and inconsistent in sign at grid 10. The trained flow
+  has learned to be less certain in sparse regions, and nothing beyond that.
+- **The retrieval-only flank disagreement is better.** It has a small but
+  consistent partial ρ (+0.09 to +0.20 at grid 20), yet is still a weak predictor.
+- **Most patch error here is sampling noise.** Cell count alone reaches
+  ρ ≈ 0.5 and AUROC ≈ 0.75, so the error that any uncertainty map could explain
+  is small at this resolution.
+- **Conclusion on STARmap.** Used generatively, the flow gives no calibrated
+  uncertainty beyond cell count, and does no better than comparing the two flanks.
+  This doesn't support an uncertainty-quantification claim for the flow.
