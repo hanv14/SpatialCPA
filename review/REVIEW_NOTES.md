@@ -568,3 +568,71 @@ prediction.
   is read as a finding.
 - **Scope of this reading.** It covers one dataset, one seed and one marker
   (Flt1). Treat it as a first reading, not a result.
+
+## 9. Grounding in the flow's joint latent h (`spatialcpav18_gen_flow_h*`)
+
+**What it is.** `--flank-select h-cv`. v18 samples a 48-d joint latent `h_star`,
+covering expression, neighbourhood and type, and then keeps only its expression
+part ê for grounding. The type head is evaluated and never read, and the
+neighbourhood decoder is never called at inference. This mode re-grounds v18's
+nearest layout with v18's own `_ground`, unchanged, but in h-space:
+- **Pool:** the flanks' stored real-cell h.
+- **Query:** `(1−γ)·h_source + γ·h*`.
+- **Distances:** rescaled into ê-distance units, so the published margin 1.0 and
+  temperature 0.25 keep their meaning. γ is the only new parameter, chosen per arm
+  by the flow-cv folds; γ = 0 wins ties.
+
+| arm | h\* comes from | question |
+|---|---|---|
+| `_flow_h` | the trained flow at z\* | the method |
+| `_flow_h_untrained` | the same sampler, flow re-initialised at random | does training matter? |
+| `_flow_h_interp` | no network: (1−t)·kNN-mean h (lower) + t·kNN-mean h (upper) | is it the flow, or blending the flanks? |
+| `_flow_h_srcdepth` | the trained flow queried at the source section's depth | does the target depth matter? |
+
+**A confound found and fixed: common random numbers.** In v18 every stage draws
+from one numpy stream. A single re-grounding draw, even one that lands back on
+the same cell, shifts every later draw of the type vote, composition matching and
+gene mix. In the first sweep, 3374 of 4140 output rows changed with about one cell
+swapped, and gene detection fell from 1.000 to 0.911 with no swap at all. That
+first sweep was discarded.
+- **The fix.** Re-grounding draws from its own generator (`SplitRNG`), and under
+  h-cv the vote, composition and gene-mix stages each get their own seeded
+  generator (`STAGE_STREAMS`).
+- **Check.** γ = 0.25 with no swap is now identical to γ = 0, and γ = 1 changes
+  625 of 4140 rows.
+- **Cost.** h-cv's baseline is now h-cv at γ = 0, which is "nearest + no flow"
+  with re-drawn random numbers. Every row below is compared with it. Its gap to
+  the registry "nearest + no flow" row is a direct measure of run-to-run noise.
+
+Paired composite against h-cv γ = 0 (8 pooled metrics, wins − losses; seed 42;
+`scripts/gap_sweep_starmap.sh` with `SWEEP=h`):
+
+| gap | flow | untrained | interp | srcdepth | registry nearest + no flow (= noise) | γ chosen (flow / untr. / interp / src) |
+|---|---|---|---|---|---|---|
+| 11 µm, paper | 0 | +3 | 0 | 0 | −2 | 0 / 0.25 / 0 / 0 |
+| 11 µm, block 1 | −1 | +1 | 0 | −1 | +2 | 1 / 0.25 / 0 / 1 |
+| 22 µm, block 3 | −3 | −1 | −4 | +1 | 0 | 0.5 / 0.25 / 0.75 / 0.5 |
+| 33 µm, block 5 | 0 | 0 | 0 | 0 | +2 | no folds |
+
+Forced γ = 1 (full h\* query; diagnostic): flow −4 / −1 / −6 / −6, untrained
+−2 / −3 / −2 / −6, interp +2 / −1 / −6 / −2, srcdepth −3 / −1 / −4 / −6.
+
+**Reading.**
+- **No gain from the trained flow.** It gains nothing at any gap (0, −1, −3, 0)
+  and does no better than the untrained control (+3, +1, −1, 0) or the no-network
+  blend.
+- **Noise is ±2.** Re-drawing random numbers alone moves the composite by ±2 (the
+  registry column). Every fold-calibrated difference here is within about ±3, so
+  none is distinguishable from noise. Part of that noise is UMAP mixing, the one
+  stochastic metric, which accounts for several of the single-metric wins and
+  losses.
+- **Full h\* grounding hurts,** most at wide gaps (−6 at 22 and 33 µm), as the
+  published ê-space reranking did. Replacing copied cells with what the flow
+  predicts moves the output away from the real tissue.
+- **Conclusion on STARmap.** Using `h*` instead of ê does not make the flow
+  useful. The neighbourhood and type information in h\* doesn't pick better
+  donors than the copied cell itself.
+- **Wider lesson for every ablation in §7.** Any variant that changes a cell
+  shifts v18's shared random stream. Single-run differences of ±2 on the 8-metric
+  composite should be read as noise unless they come from a paired (common random
+  numbers) comparison or hold over several seeds.

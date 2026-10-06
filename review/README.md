@@ -26,7 +26,9 @@ as its random-ranking control. The **`spatialcpav18_gen_flow_transport*`** entri
 move retrieved cells to the target depth (learned field, exact-OT control, two
 negative controls) against the **`spatialcpav18_gen_nearest_noflow`** baseline;
 `scripts/gap_sweep_starmap.sh` runs them over the paper and wide designs. See
-REVIEW_NOTES §7, 7a, 7b, 7c.
+REVIEW_NOTES §7, 7a, 7b, 7c. The **`spatialcpav18_gen_flow_h*`** entries ground in
+the flow's joint latent h, against three controls (`SWEEP=h scripts/gap_sweep_starmap.sh`;
+REVIEW_NOTES §9).
 
 No other SpatialCPA version is in this tree: no wrapper, registry entry, method
 file or result. `tests/test_scope.py` and `tests/test_rename.py` enforce that.
