@@ -1281,6 +1281,50 @@ METHODS = {
                                 "[v18] training failed",
                                 "[v18] generation failed"),
     },
+    "spatialcpav18_gen_flow_layout": {
+        # The flow generates the layout's density: per-region cell counts move from
+        # the copied flank toward the flow's predicted density (fraction rho chosen by
+        # training folds; 0 = copy wins ties). REVIEW_NOTES §11.
+        "wrapper": _wrapper("run_spatialcpav18_layout.py"),
+        "wrapper_args": [*V18_ARGS, "--layout-source", "flow"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "retrieval with per-region cell counts from the flow's predicted density",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
+    "spatialcpav18_gen_flow_layout_untrained": {
+        # Control: the same with an untrained flow's density.
+        "wrapper": _wrapper("run_spatialcpav18_layout.py"),
+        "wrapper_args": [*V18_ARGS, "--layout-source", "untrained"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "density relayout from an untrained flow (control)",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
+    "spatialcpav18_gen_flow_layout_interp": {
+        # Control: the same with the flanks' t-weighted cell counts (no network).
+        "wrapper": _wrapper("run_spatialcpav18_layout.py"),
+        "wrapper_args": [*V18_ARGS, "--layout-source", "interp"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "density relayout from interpolated flank counts (control)",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
     "spatialz": {
         "wrapper": _wrapper("run_spatialz.py"),
         "conda_env": "bench_spatialz",
@@ -1315,7 +1359,8 @@ METHOD_ORDER = [
     "spatialcpav18_gen_flow_transport_pair",
     "spatialcpav18_gen_flow_h", "spatialcpav18_gen_flow_h_untrained",
     "spatialcpav18_gen_flow_h_interp", "spatialcpav18_gen_flow_h_srcdepth",
-    "spatialcpav18_gen_uq",
+    "spatialcpav18_gen_uq", "spatialcpav18_gen_flow_layout",
+    "spatialcpav18_gen_flow_layout_untrained", "spatialcpav18_gen_flow_layout_interp",
 ]
 
 

@@ -19,13 +19,14 @@
 #
 #   scripts/gap_sweep_starmap.sh           # PYTHON / BENCH_V3_PYTHON as in reproduce_starmap_v18.sh
 #   JOBS=2 scripts/gap_sweep_starmap.sh    # two runs at a time
-#   SWEEP=h scripts/gap_sweep_starmap.sh   # the h-cv arms -> reproduced/gap_sweep_h/
+#   SWEEP=h scripts/gap_sweep_starmap.sh       # the h-cv arms -> reproduced/gap_sweep_h/
+#   SWEEP=layout scripts/gap_sweep_starmap.sh  # the density-layout arms (§11)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PY="${PYTHON:-python}"
-SWEEP="${SWEEP:-transport}"          # transport (REVIEW_NOTES §7c) | h (§9)
-OUT="$ROOT/reproduced/gap_sweep${SWEEP/transport/}"
-OUT="${OUT/%gap_sweeph/gap_sweep_h}"
+SWEEP="${SWEEP:-transport}"          # transport (REVIEW_NOTES §7c) | h (§9) | layout (§11)
+if [ "$SWEEP" = transport ]; then OUT="$ROOT/reproduced/gap_sweep"
+else OUT="$ROOT/reproduced/gap_sweep_$SWEEP"; fi
 FORCED="${OUT}_forced"
 JOBS="${JOBS:-1}"
 if [ "$SWEEP" = h ]; then
@@ -36,6 +37,15 @@ if [ "$SWEEP" = h ]; then
   FORCED_ARMS=(flow untrained interp srcdepth)
   forced_args() { echo --h-source "$1" --h-gamma 1; }
   BASE="${OUT}_base"   # paired baseline: h-cv at gamma 0 (same random streams as every arm)
+  base_args() { echo --h-source flow --h-gamma 0; }
+elif [ "$SWEEP" = layout ]; then
+  METHODS=(spatialcpav18_gen_nearest_noflow spatialcpav18_gen_flow_layout
+           spatialcpav18_gen_flow_layout_untrained spatialcpav18_gen_flow_layout_interp)
+  FORCED_METHOD=spatialcpav18_gen_flow_layout
+  FORCED_ARMS=(flow untrained interp)
+  forced_args() { echo --layout-source "$1" --layout-rho 1; }
+  BASE="${OUT}_base"   # paired baseline: the layout method at rho 0
+  base_args() { echo --layout-source flow --layout-rho 0; }
 else
   METHODS=(spatialcpav18_gen_nearest_noflow spatialcpav18_gen_flow_transport
            spatialcpav18_gen_flow_transport_ot spatialcpav18_gen_flow_transport_zshuffle
@@ -76,7 +86,8 @@ for arm in "${FORCED_ARMS[@]}"; do
 done
 if [ -n "$BASE" ]; then
   for d in "${DESIGNS[@]}"; do
-    run "$BASE" "$FORCED_METHOD" "$d" --h-source flow --h-gamma 0 & throttle
+    # shellcheck disable=SC2046
+    run "$BASE" "$FORCED_METHOD" "$d" $(base_args) & throttle
   done
 fi
 wait

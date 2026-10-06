@@ -111,7 +111,8 @@ def test_new_files_are_exactly_the_documented_ones():
     assert new == {"benchmark/src/bench3/methods/run_spatialcpav18_flow.py",
                    "benchmark/src/bench3/evaluate_vascular.py",
                    "benchmark/src/bench3/methods/run_spatialcpav18_uq.py",
-                   "benchmark/src/bench3/evaluate_uncertainty.py"}
+                   "benchmark/src/bench3/evaluate_uncertainty.py",
+                   "benchmark/src/bench3/methods/run_spatialcpav18_layout.py"}
 
 
 @pytest.mark.parametrize("row", [r for r in _provenance() if r[3] in ("identical", "equivalent")],

@@ -43,13 +43,13 @@ def rows(root: Path):
             with h5py.File(pred, "r") as f:
                 raw = f["uns/method_params"][()]
             mp = json.loads(raw if isinstance(raw, str) else raw.decode())
-            cv = mp.get("transport_cv") or mp.get("h_cv")
-            lam = None if cv is None else cv.get("lambda", cv.get("gamma"))
+            cv = mp.get("transport_cv") or mp.get("h_cv") or mp.get("layout_cv")
+            lam = None if cv is None else cv.get("lambda", cv.get("gamma", cv.get("rho")))
         out[(hid, method)] = (json.loads(mf.read_text()), lam)
     return out
 
 
-BASE_LABEL = "paired baseline (h-cv γ=0)"
+BASE_LABEL = "paired baseline (strength 0, same random streams)"
 
 
 def composite(m, base):
