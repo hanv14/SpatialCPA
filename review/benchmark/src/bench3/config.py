@@ -1205,6 +1205,66 @@ METHODS = {
                                 "[v18] training failed",
                                 "[v18] generation failed"),
     },
+    "spatialcpav18_gen_flow_h": {
+        # v18 nearest + no flow, re-grounded in the flow's joint latent h (expression
+        # + neighbourhood + type) toward h* at z*; query strength gamma chosen by
+        # training folds (0 = nearest + no flow wins ties). REVIEW_NOTES §9.
+        "wrapper": _wrapper("run_spatialcpav18_flow.py"),
+        "wrapper_args": [*V18_ARGS, "--flank-select", "h-cv", "--h-source", "flow"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "retrieval re-grounded in the flow's joint latent h",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
+    "spatialcpav18_gen_flow_h_untrained": {
+        # Control: the same, with h* from a randomly re-initialised flow.
+        "wrapper": _wrapper("run_spatialcpav18_flow.py"),
+        "wrapper_args": [*V18_ARGS, "--flank-select", "h-cv", "--h-source", "untrained"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "h-space grounding with an untrained flow (control)",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
+    "spatialcpav18_gen_flow_h_interp": {
+        # Control: the same, with h* = t-weighted kNN blend of the two flanks' h
+        # (no network).
+        "wrapper": _wrapper("run_spatialcpav18_flow.py"),
+        "wrapper_args": [*V18_ARGS, "--flank-select", "h-cv", "--h-source", "interp"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "h-space grounding with a no-network flank blend (control)",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
+    "spatialcpav18_gen_flow_h_srcdepth": {
+        # Control: the same, with the trained flow queried at the source
+        # section's depth instead of z*.
+        "wrapper": _wrapper("run_spatialcpav18_flow.py"),
+        "wrapper_args": [*V18_ARGS, "--flank-select", "h-cv", "--h-source", "srcdepth"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "h-space grounding with the flow at the source depth (control)",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
     "spatialz": {
         "wrapper": _wrapper("run_spatialz.py"),
         "conda_env": "bench_spatialz",
@@ -1237,6 +1297,8 @@ METHOD_ORDER = [
     "spatialcpav18_gen_nearest_noflow", "spatialcpav18_gen_flow_transport",
     "spatialcpav18_gen_flow_transport_ot", "spatialcpav18_gen_flow_transport_zshuffle",
     "spatialcpav18_gen_flow_transport_pair",
+    "spatialcpav18_gen_flow_h", "spatialcpav18_gen_flow_h_untrained",
+    "spatialcpav18_gen_flow_h_interp", "spatialcpav18_gen_flow_h_srcdepth",
 ]
 
 

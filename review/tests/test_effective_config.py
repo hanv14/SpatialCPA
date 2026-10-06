@@ -102,7 +102,8 @@ def test_flow_wrapper_declares_every_v18_flag_with_the_same_default():
     for flag, d in v18.items():
         assert flow.get(flag) == d, (flag, flow.get(flag), d)
     assert set(flow) - set(v18) == {"--flank-select", "--patch-rank", "--patch-q",
-                                       "--transport", "--transport-lambda"}
+                                       "--transport", "--transport-lambda",
+                                       "--h-source", "--h-gamma"}
     assert flow["--flank-select"] == "flow"
 
 
@@ -146,3 +147,16 @@ def test_transport_methods_and_baseline_are_the_same_wrapper():
         assert m["wrapper"] == base
         assert list(m["wrapper_args"]) == [*c.V18_ARGS, "--flank-select", "transport-cv",
                                            "--transport", tr]
+
+
+def test_h_cv_arms_are_the_same_wrapper_and_differ_only_in_h_source():
+    c = load_bench3_config()
+    base = c.METHODS["spatialcpav18_gen_flow"]["wrapper"]
+    for name, src in (("spatialcpav18_gen_flow_h", "flow"),
+                      ("spatialcpav18_gen_flow_h_untrained", "untrained"),
+                      ("spatialcpav18_gen_flow_h_interp", "interp"),
+                      ("spatialcpav18_gen_flow_h_srcdepth", "srcdepth")):
+        m = c.METHODS[name]
+        assert m["wrapper"] == base
+        assert list(m["wrapper_args"]) == [*c.V18_ARGS, "--flank-select", "h-cv",
+                                           "--h-source", src]

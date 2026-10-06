@@ -41,8 +41,8 @@ def rows(root: Path):
             with h5py.File(pred, "r") as f:
                 raw = f["uns/method_params"][()]
             mp = json.loads(raw if isinstance(raw, str) else raw.decode())
-            cv = mp.get("transport_cv")
-            lam = None if cv is None else cv.get("lambda")
+            cv = mp.get("transport_cv") or mp.get("h_cv")
+            lam = None if cv is None else cv.get("lambda", cv.get("gamma"))
         out[(hid, method)] = (json.loads(mf.read_text()), lam)
     return out
 
@@ -60,7 +60,7 @@ def composite(m, base):
 
 def table(found, label):
     lines = [f"### {label}", "",
-             "| gap | method | λ | " + " | ".join(SHORT) + " | vs nearest |",
+             "| gap | method | λ/γ | " + " | ".join(SHORT) + " | vs nearest |",
              "|---|---|---|" + "---|" * len(SHORT) + "---|"]
     hids = [h for h in ORDER if any(k[0] == h for k in found)]
     for hid in hids:
@@ -79,14 +79,14 @@ def table(found, label):
 def main(argv):
     sweep = Path(argv[1])
     found = rows(sweep)
-    out = table(found, "Fold-calibrated (λ chosen on training folds; λ = 0 is plain copying)")
+    out = table(found, "Fold-calibrated (λ/γ chosen on training folds; 0 is plain copying)")
     if len(argv) > 2:
         base = {k: v for k, v in found.items() if k[1] == BASE}
         for tr_dir in sorted(Path(argv[2]).glob("*")):
-            forced = {(h, f"forced λ=1 {tr_dir.name}"): v for (h, _), v in rows(tr_dir).items()}
+            forced = {(h, f"forced 1 {tr_dir.name}"): v for (h, _), v in rows(tr_dir).items()}
             if forced:
                 out += [""] + table({**base, **forced},
-                                    f"Diagnostic: λ forced to 1 ({tr_dir.name})")
+                                    f"Diagnostic: strength forced to 1 ({tr_dir.name})")
     text = "\n".join(out) + "\n"
     (sweep / "summary.md").write_text(text)
     print(text)

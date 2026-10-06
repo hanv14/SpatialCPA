@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# STARmap gap sweep for the transport variants (REVIEW_NOTES §7c), on the
+# STARmap gap sweep for the transport variants (REVIEW_NOTES §7c) or, with
+# SWEEP=h, the h-space grounding arms (§9), on the
 # harness's existing hold-out designs — no change to prepare_dataset:
 #
 #   paper          hold out 2,4,6    every target 11 um from its nearest section
@@ -8,22 +9,36 @@
 #   wide block 5   hold out 2..6     middle target 33 um (only 1 and 7 remain:
 #                                    no interior training section, so no folds)
 #
-# Every method row is fold-calibrated (lambda = 0, plain copying, wins ties).
-# A second pass forces lambda = 1 for the flow and the OT control into
-# reproduced/gap_sweep_forced/<transport>/ — raw transport quality per gap, a
-# diagnostic, not a method.
+# Every method row is fold-calibrated (strength 0, plain copying, wins ties).
+# A second pass forces the strength to 1 for each arm into
+# reproduced/gap_sweep[_h]_forced/<arm>/ — a diagnostic, not a method.
 #
 #   scripts/gap_sweep_starmap.sh           # PYTHON / BENCH_V3_PYTHON as in reproduce_starmap_v18.sh
 #   JOBS=2 scripts/gap_sweep_starmap.sh    # two runs at a time
+#   SWEEP=h scripts/gap_sweep_starmap.sh   # the h-cv arms -> reproduced/gap_sweep_h/
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PY="${PYTHON:-python}"
-OUT="$ROOT/reproduced/gap_sweep"
-FORCED="$ROOT/reproduced/gap_sweep_forced"
+SWEEP="${SWEEP:-transport}"          # transport (REVIEW_NOTES §7c) | h (§9)
+OUT="$ROOT/reproduced/gap_sweep${SWEEP/transport/}"
+OUT="${OUT/%gap_sweeph/gap_sweep_h}"
+FORCED="${OUT}_forced"
 JOBS="${JOBS:-1}"
-METHODS=(spatialcpav18_gen_nearest_noflow spatialcpav18_gen_flow_transport
-         spatialcpav18_gen_flow_transport_ot spatialcpav18_gen_flow_transport_zshuffle
-         spatialcpav18_gen_flow_transport_pair)
+if [ "$SWEEP" = h ]; then
+  METHODS=(spatialcpav18_gen_nearest_noflow spatialcpav18_gen_flow_h
+           spatialcpav18_gen_flow_h_untrained spatialcpav18_gen_flow_h_interp
+           spatialcpav18_gen_flow_h_srcdepth)
+  FORCED_METHOD=spatialcpav18_gen_flow_h
+  FORCED_ARMS=(flow untrained interp srcdepth)
+  forced_args() { echo --h-source "$1" --h-gamma 1; }
+else
+  METHODS=(spatialcpav18_gen_nearest_noflow spatialcpav18_gen_flow_transport
+           spatialcpav18_gen_flow_transport_ot spatialcpav18_gen_flow_transport_zshuffle
+           spatialcpav18_gen_flow_transport_pair)
+  FORCED_METHOD=spatialcpav18_gen_flow_transport
+  FORCED_ARMS=(flow ot)
+  forced_args() { echo --transport "$1" --transport-lambda 1; }
+fi
 DESIGNS=("paper" "wide:1" "wide:3" "wide:5")
 mkdir -p "$OUT"
 
@@ -46,9 +61,10 @@ throttle() { n=$((n + 1)); if [ $((n % JOBS)) -eq 0 ]; then wait; fi; }
 for m in "${METHODS[@]}"; do
   for d in "${DESIGNS[@]}"; do run "$OUT" "$m" "$d" & throttle; done
 done
-for tr in flow ot; do
+for arm in "${FORCED_ARMS[@]}"; do
   for d in "${DESIGNS[@]}"; do
-    run "$FORCED/$tr" spatialcpav18_gen_flow_transport "$d" --transport "$tr" --transport-lambda 1 &
+    # shellcheck disable=SC2046
+    run "$FORCED/$arm" "$FORCED_METHOD" "$d" $(forced_args "$arm") &
     throttle
   done
 done

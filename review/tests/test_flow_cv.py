@@ -20,7 +20,8 @@ FLOW_WRAPPER = BENCH3 / "methods" / "run_spatialcpav18_flow.py"
 WANTED = {"CV_METRICS", "CV_TIE_TOL", "calibrate_delta", "fold_gain",
           "PATCH_Q_GRID", "patch_ids", "patch_margins", "patches_to_switch", "calibrate_q",
           "TRANSPORT_LAMBDA_GRID", "OT_MAX_CELLS", "OT_KNN", "even_subsample", "ot_pairs",
-          "knn_displacement", "calibrate_lambda"}
+          "knn_displacement", "calibrate_lambda",
+          "H_GAMMA_GRID", "H_SCALE_K", "h_scale", "h_query", "calibrate_gamma"}
 
 
 def _lift():
@@ -146,3 +147,26 @@ def test_calibrate_lambda_needs_a_strict_gain_and_prefers_small_lambda():
     assert grid[0] == 0.0
     assert NS["calibrate_lambda"]({lam: 0 for lam in grid}) == (0.0, 0)
     assert NS["calibrate_lambda"]({0.0: 0, 0.25: 2, 0.5: 2, 0.75: -1, 1.0: 1}) == (0.25, 2)
+
+
+# ── h-cv ──────────────────────────────────────────────────────────────────────
+def test_h_query_is_exactly_the_source_at_gamma_zero():
+    rng = np.random.default_rng(0)
+    h_src, h_star = rng.normal(size=(5, 4)), rng.normal(size=(5, 4))
+    assert np.array_equal(NS["h_query"](h_src, None, 0.0), h_src)   # no h* needed
+    assert np.allclose(NS["h_query"](h_src, h_star, 1.0), h_star)
+    assert np.allclose(NS["h_query"](h_src, h_star, 0.25), 0.75 * h_src + 0.25 * h_star)
+
+
+def test_h_scale_maps_h_distances_into_e_units():
+    rng = np.random.default_rng(1)
+    xy = rng.random((300, 2))
+    e = rng.normal(size=(300, 3))
+    assert NS["h_scale"](xy, e, 0.5 * e) == pytest.approx(2.0)      # h = e / 2 -> x2
+
+
+def test_calibrate_gamma_needs_a_strict_gain_and_prefers_small_gamma():
+    grid = NS["H_GAMMA_GRID"]
+    assert grid[0] == 0.0
+    assert NS["calibrate_gamma"]({g: 0 for g in grid}) == (0.0, 0)
+    assert NS["calibrate_gamma"]({0.0: 0, 0.25: 1, 0.5: 3, 0.75: 3, 1.0: -2}) == (0.5, 3)

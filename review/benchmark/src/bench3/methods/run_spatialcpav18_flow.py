@@ -122,6 +122,38 @@ lambda in ``TRANSPORT_LAMBDA_GRID`` synthesized and scored against it; the
 largest total gain over lambda = 0 wins, lambda = 0 wins ties). lambda = 0 is
 bitwise "nearest + no flow". With no interior training section there are no
 folds and lambda stays 0; ``--transport-lambda`` forces a value (diagnostics).
+
+``--flank-select h-cv`` (methods ``spatialcpav18_gen_flow_h*``)
+--------------------------------------------------------------
+Grounding in the flow's JOINT latent h (expression + neighbourhood + type),
+which v18 samples (``h_star``) and then reduces to its expression part ê
+before grounding. Layout: v18's ``nearest`` layout. Each output cell g, copied
+from source cell s, is re-grounded with v18's own ``_ground`` (same local
+candidates, keep-margin, temperature, locality and de-duplication), but with
+distances in h-space to the query
+
+    q_g = (1 - gamma) * h_s + gamma * h*_g
+
+over the real cells' stored h. h-distances are rescaled into ê-distance units
+(``h_scale``: the ratio of median latent distances between spatial neighbours in
+the pool), so the published margin (1.0) and temperature (0.25) keep their
+meaning; gamma is the only new parameter. gamma = 0 queries each cell's own
+source, so nothing is swapped: bitwise "nearest + no flow". Type vote and
+composition matching are left exactly as in "nearest + no flow".
+
+``--h-source`` sets h*, the four arms of one experiment:
+
+``flow``       the trained flow at z* (the method)
+``untrained``  the same sampler with the flow (vector field + context module)
+               re-initialised at random — does a TRAINED flow matter?
+``interp``     no network: (1 - t) x the mean h of the k nearest lower-flank
+               cells + t x the same on the upper flank — is it the flow, or
+               just blending the two flanks?
+``srcdepth``   the trained flow queried at the source section's own depth
+               instead of z* — does conditioning on the target depth matter?
+
+gamma is chosen per arm by the same leave-one-training-section-out folds
+(``H_GAMMA_GRID``; gamma = 0 wins ties). ``--h-gamma`` forces it (diagnostics).
 """
 
 import argparse
@@ -153,6 +185,10 @@ METHOD_NAME_TRANSPORT = {"flow": "spatialcpav18_gen_flow_transport",
                          "ot": "spatialcpav18_gen_flow_transport_ot",
                          "flow-zshuffle": "spatialcpav18_gen_flow_transport_zshuffle",
                          "flow-pair": "spatialcpav18_gen_flow_transport_pair"}
+METHOD_NAME_H = {"flow": "spatialcpav18_gen_flow_h",
+                  "untrained": "spatialcpav18_gen_flow_h_untrained",
+                  "interp": "spatialcpav18_gen_flow_h_interp",
+                  "srcdepth": "spatialcpav18_gen_flow_h_srcdepth"}
 METHOD_NAME_PATCH = {"flow": "spatialcpav18_gen_flow_patch",          # --flank-select patch-cv
                      "random": "spatialcpav18_gen_flow_patch_random"}  # + --patch-rank random
 # Cap on cells per flank scored by the flow when choosing a flank. Deterministic
@@ -212,6 +248,14 @@ TRANSPORT_TRAIN_STEPS = 1500
 TRANSPORT_BATCH = 1024
 TRANSPORT_LR = 1e-3
 TRANSPORT_ODE_STEPS = 16
+
+# ── h-cv ──
+# Query strengths a fold may choose; 0 (= v18's nearest + no flow) wins ties.
+H_GAMMA_GRID = (0.0, 0.25, 0.5, 0.75, 1.0)
+# Real cells per flank averaged into the interp control's h at a position.
+H_INTERP_K = 8
+# Spatial neighbours per pool cell used to set h_scale.
+H_SCALE_K = 8
 
 
 if torch is not None:
@@ -290,6 +334,8 @@ class SpatialCPAv18Flow(_V18.SpatialCPAv18):
     patch_rank = "flow"              # patch-cv: "flow" ranks patches; "random" is the control
     transport = "flow"               # transport-cv: "flow" | "ot" | "flow-zshuffle" | "flow-pair"
     transport_lambda = 0.0           # transport-cv: displacement strength (calibrate_lambda)
+    h_source = "flow"                # h-cv: "flow" | "untrained" | "interp" | "srcdepth"
+    h_gamma = 0.0                    # h-cv: query strength (calibrate_gamma)
 
     # -- remember the target depth: _resample_layout is not given z ------------
     def _generate(self, z):
@@ -318,6 +364,7 @@ class SpatialCPAv18Flow(_V18.SpatialCPAv18):
         info.update(z=self._z_current, t=float(t), rule_lower=bool(rule_lower),
                     chose_lower=bool(use_lower))
         self.flank_log.append(info)
+        self._flanks, self._t_current = (lower, upper), float(t)
 
         near = lower if use_lower else upper
         near_xy = self._nxy(near.coords_xy).astype(np.float32)
@@ -408,11 +455,20 @@ class SpatialCPAv18Flow(_V18.SpatialCPAv18):
         """The flow's decoded latent prediction at query positions ``q_nxy``
         (normalized xy, float32) and the pool's depth: the same Euler ODE and
         noise ensemble as ``_generate``. Returns ``(Q, d_e)`` numpy."""
+        with torch.no_grad():
+            return self.encoder.decode_e(self._flow_h(pool, q_nxy, generator)).cpu().numpy()
+
+    def _flow_h(self, pool, q_nxy, generator=None, vfield=None, ctxmod=None):
+        """The flow's sampled joint latent h* at ``q_nxy`` and the pool's depth
+        (torch, (Q, joint_dim)); ``vfield`` / ``ctxmod`` default to the trained
+        ones."""
         cfg = self.cfg
+        vfield = self.vfield if vfield is None else vfield
+        ctxmod = self.ctxmod if ctxmod is None else ctxmod
         ctx_pool_h, ctx_pool_nxy, ctx_pool_z, ctx_pool_owner, ctx_src, zn = pool
         with torch.no_grad():
             ctx = self._context(ctx_pool_h, ctx_pool_nxy, ctx_pool_z, ctx_pool_owner,
-                                ctx_src, self.S, q_nxy, zn, self.ctxmod, self.dev)
+                                ctx_src, self.S, q_nxy, zn, ctxmod, self.dev)
             Q = q_nxy.shape[0]
             zt = torch.full((Q,), float(zn), device=self.dev)
             h_acc = torch.zeros((Q, cfg.joint_dim), device=self.dev)
@@ -423,9 +479,9 @@ class SpatialCPAv18Flow(_V18.SpatialCPAv18):
                                 generator=generator)
                 for si in range(steps):
                     tt = torch.full((Q,), si / steps, device=self.dev)
-                    h = h + (1.0 / steps) * self.vfield(h, tt, ctx, zt)
+                    h = h + (1.0 / steps) * vfield(h, tt, ctx, zt)
                 h_acc += h
-            return self.encoder.decode_e(h_acc / n_ens).cpu().numpy()
+            return h_acc / n_ens
 
     # -- patch-cv: the flow ranks spatial patches; folds set how many switch ---
     def _flow_cell_distances(self, lower, upper):
@@ -577,8 +633,71 @@ class SpatialCPAv18Flow(_V18.SpatialCPAv18):
     # -- 2. no flow donor reranking: query = each cell's own source latent -----
     def _ground(self, anchor, anchor_src, e_hat, pool_nxy, pool_e, pool_expr, pool_type, rng):
         self._query = pool_e[anchor_src].copy()
+        if self.flank_select == "h-cv":
+            return self._ground_h(anchor, anchor_src, pool_nxy, pool_e, pool_expr,
+                                  pool_type, rng)
         return super()._ground(anchor, anchor_src, self._query, pool_nxy, pool_e,
                                pool_expr, pool_type, rng)
+
+    # -- h-cv: grounding in the flow's joint latent -----------------------------
+    def _ground_h(self, anchor, anchor_src, pool_nxy, pool_e, pool_expr, pool_type, rng):
+        """v18's ``_ground``, unchanged, run on h-space vectors: pool = the
+        flanks' stored h, query = ``h_query(h_src, h*, gamma)``, both scaled by
+        ``h_scale`` into e-distance units. Type vote and composition matching
+        keep the e-space source query (``self._query``)."""
+        lower, upper = self._flanks
+        li, ui = self.stack.slices.index(lower), self.stack.slices.index(upper)
+        pool_h = torch.cat([self.S[li]["h"], self.S[ui]["h"]], 0).cpu().numpy()
+        scale = self._cached(("h_scale", li, ui),
+                             lambda: h_scale(pool_nxy, pool_e, pool_h))
+        gamma = float(self.h_gamma)
+        h_star = (None if gamma == 0 else
+                  self._h_star(anchor.astype(np.float32), pool_nxy, pool_h))
+        q = h_query(pool_h[anchor_src], h_star, gamma)
+        expr, ct, pick = super()._ground(anchor, anchor_src, q * scale, pool_nxy,
+                                         pool_h * scale, pool_expr, pool_type, rng)
+        if self.flank_log:
+            self.flank_log[-1].update(h_source=self.h_source, h_gamma=gamma,
+                                      h_scale=scale,
+                                      swapped_frac=float(np.mean(pick != anchor_src)))
+        return expr, ct, pick
+
+    def _h_star(self, anchor, pool_nxy, pool_h):
+        """h* at the output cells' positions under ``self.h_source``: (Q, d)."""
+        lower, upper = self._flanks
+        li, ui = self.stack.slices.index(lower), self.stack.slices.index(upper)
+        if self.h_source == "interp":
+            n_lo, t = lower.n_spots, self._t_current
+            k = min(H_INTERP_K, n_lo, len(pool_nxy) - n_lo)
+            _, a = cKDTree(pool_nxy[:n_lo]).query(anchor, k=k)
+            _, b = cKDTree(pool_nxy[n_lo:]).query(anchor, k=k)
+            a, b = np.asarray(a).reshape(len(anchor), k), np.asarray(b).reshape(len(anchor), k)
+            return (1.0 - t) * pool_h[:n_lo][a].mean(1) + t * pool_h[n_lo:][b].mean(1)
+        if self.h_source == "srcdepth":
+            near = lower if self._t_current <= 0.5 else upper
+            z = near.z_center
+            vfield = ctxmod = None
+        elif self.h_source in ("flow", "untrained"):
+            z = self._z_current
+            vfield = ctxmod = None
+            if self.h_source == "untrained":
+                vfield, ctxmod = self._cached(("untrained",), self._untrained_flow)
+        else:
+            raise ValueError(f"unknown h source {self.h_source!r}")
+        pool = self._flow_ctx_pool(li, ui, z)
+        return self._flow_h(pool, anchor, self._cv_generator(), vfield, ctxmod).cpu().numpy()
+
+    def _untrained_flow(self):
+        """Copies of the vector field and context module re-initialised at random
+        (seeded; torch's global stream untouched)."""
+        vf, cm = copy.deepcopy(self.vfield), copy.deepcopy(self.ctxmod)
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(int(self.cfg.seed))
+            for mod in (vf, cm):
+                for sub in mod.modules():
+                    if hasattr(sub, "reset_parameters"):
+                        sub.reset_parameters()
+        return vf.eval(), cm.eval()
 
     def _vote_types(self, anchor, pick, ct_idx, expr, pool_nxy, pool_type,
                     pool_expr, pool_e, e_hat, rng):
@@ -682,6 +801,30 @@ def knn_displacement(a_p, b_p, xy, k=OT_KNN):
     _, nb = cKDTree(a_p).query(np.asarray(xy, dtype=np.float64), k=k)
     nb = np.asarray(nb).reshape(len(xy), k)
     return (b_p - a_p)[nb].mean(axis=1)
+
+
+def h_scale(pool_nxy, pool_e, pool_h, k=H_SCALE_K):
+    """Factor that puts h-space distances in e-space units: the median latent
+    distance between each pool cell and its ``k`` nearest spatial neighbours,
+    in e over in h. The published margin and temperature then keep their
+    meaning in h-space."""
+    _, nb = cKDTree(pool_nxy).query(pool_nxy, k=min(k + 1, len(pool_nxy)))
+    nb = np.asarray(nb)[:, 1:]
+    de = np.linalg.norm(pool_e[:, None, :] - pool_e[nb], axis=2)
+    dh = np.linalg.norm(pool_h[:, None, :] - pool_h[nb], axis=2)
+    mh = float(np.median(dh))
+    return float(np.median(de)) / mh if mh > 0 else 1.0
+
+
+def h_query(h_src, h_star, gamma):
+    """``(1 - gamma) * h_src + gamma * h_star``; exactly ``h_src`` at gamma 0."""
+    return h_src.copy() if gamma == 0 else (1.0 - gamma) * h_src + gamma * h_star
+
+
+def calibrate_gamma(total_gain_by_gamma):
+    """The h-cv strength: same rule as ``calibrate_q`` (largest total fold gain
+    over gamma = 0; the smallest gamma wins ties)."""
+    return calibrate_q(total_gain_by_gamma)
 
 
 def calibrate_lambda(total_gain_by_lambda):
@@ -871,6 +1014,32 @@ def _transport_cv_folds(adata, gene_names, X_log, X_raw, ct_all, cell_type_names
     return total, records
 
 
+def _h_cv_folds(adata, gene_names, X_log, X_raw, ct_all, cell_type_names, cfg, h_source):
+    """h-cv folds: each fold synthesizes its left-out section at every gamma in
+    ``H_GAMMA_GRID`` and scores it; the gain of gamma is
+    ``fold_gain(gamma = 0, gamma)``. Returns ``(total_gain_by_gamma, records)``."""
+    total = {g: 0 for g in H_GAMMA_GRID}
+    records = []
+    for sec, z, fold, score in _fold_models(adata, gene_names, X_log, X_raw, ct_all,
+                                            cell_type_names, cfg):
+        fold.flank_select, fold.h_source = "h-cv", h_source
+        per = {}
+        for g in H_GAMMA_GRID:
+            fold.h_gamma = g
+            vs = fold.generate_virtual_slice(z=z)
+            per[g] = (score(vs), fold.flank_log[-1])
+        rec = {"section": sec, "z": z, "gamma": {}}
+        for g in H_GAMMA_GRID:
+            gain, detail = fold_gain(per[0.0][0], per[g][0])
+            total[g] += gain
+            sw = per[g][1].get("swapped_frac", 0.0)
+            rec["gamma"][str(g)] = {"gain": gain, "swapped_frac": sw,
+                                    "metrics": {k: v["other"] for k, v in detail.items()}}
+            print(f"    gamma={g:<4} {100 * sw:5.1f}% cells re-grounded: gain {gain:+d} vs gamma=0")
+        records.append(rec)
+    return total, records
+
+
 def _patch_cv_folds(adata, gene_names, X_log, X_raw, ct_all, cell_type_names, cfg,
                     patch_rank):
     """patch-cv folds: each fold synthesizes its left-out section at every q in
@@ -962,6 +1131,25 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
               "patch_min_cells": PATCH_MIN_CELLS, "max_folds": CV_MAX_FOLDS,
               "tie_tol": CV_TIE_TOL, "folds": records}
 
+    h_gamma = 0.0
+    if args.flank_select == "h-cv" and args.h_gamma is not None:          # diagnostics only
+        h_gamma = float(args.h_gamma)
+        print(f"  h-cv: gamma={h_gamma} FORCED by --h-gamma (no folds; a diagnostic)")
+        cv = {"h_source": args.h_source, "gamma": h_gamma, "forced": True}
+    elif args.flank_select == "h-cv":
+        total, records = _h_cv_folds(adata, gene_names, X_log, X_raw, ct_all,
+                                     cell_type_names, cfg, args.h_source)
+        h_gamma, best = calibrate_gamma(total)
+        note = "" if records else " (no interior training section: no folds, gamma stays 0)"
+        print(f"  h-cv ({args.h_source}): total gain by gamma "
+              f"{ {g: total[g] for g in H_GAMMA_GRID} } -> gamma={h_gamma} "
+              f"(gain {best:+d}){note}")
+        cv = {"h_source": args.h_source, "gamma": h_gamma, "validated_gain": int(best),
+              "n_folds": len(records),
+              "total_gain_by_gamma": {str(k): int(v) for k, v in total.items()},
+              "metrics": [f"{k}:{'+' if sg > 0 else '-'}" for k, sg in CV_METRICS],
+              "folds": records}
+
     transport_lambda = 0.0
     if args.flank_select == "transport-cv" and args.transport_lambda is not None:
         transport_lambda = float(args.transport_lambda)                # diagnostics only
@@ -986,6 +1174,7 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
     gen = SpatialCPAv18Flow(stack, gene_names=gene_names,
                             cell_type_names=cell_type_names, cfg=cfg)
     gen.transport, gen.transport_lambda = args.transport, transport_lambda
+    gen.h_source, gen.h_gamma = args.h_source, h_gamma
     gen.flank_log = []
     gen.patch_q, gen.patch_rank = patch_q, args.patch_rank
     if args.flank_select == "flow-cv":
@@ -1002,7 +1191,12 @@ def run_method(adata, targets, gene_names, X_log, X_raw, args):
             import traceback
             traceback.print_exc()
             continue
-        if gen.flank_log and "transport_lambda" in gen.flank_log[-1]:
+        if gen.flank_log and "h_gamma" in gen.flank_log[-1]:
+            f = gen.flank_log[-1]
+            print(f"    h-cv: {f['h_source']}, gamma={f['h_gamma']}, "
+                  f"{100 * f['swapped_frac']:.1f}% of cells re-grounded "
+                  f"(h_scale={f['h_scale']:.3f})")
+        elif gen.flank_log and "transport_lambda" in gen.flank_log[-1]:
             f = gen.flank_log[-1]
             print(f"    transport: {f['transport']}, lambda={f['transport_lambda']}, "
                   f"mean shift {f['mean_shift_um']:.2f} um from the "
@@ -1087,8 +1281,8 @@ def build_parser():
                         "better by this margin")
     # ── this method's own flag ──
     p.add_argument("--flank-select", default="flow",
-                   choices=["flow", "flow-cv", "patch-cv", "transport-cv", "rule",
-                            "lower", "upper"],
+                   choices=["flow", "flow-cv", "patch-cv", "transport-cv", "h-cv",
+                            "rule", "lower", "upper"],
                    help="'flow': the flow picks which flank to retrieve (default); "
                         "'flow-cv': the flow picks, against a threshold calibrated "
                         "by leave-one-training-section-out validation "
@@ -1096,13 +1290,22 @@ def build_parser():
                         "ranks spatial patches and folds set how many are copied "
                         "from the other flank (spatialcpav18_gen_flow_patch); "
                         "'transport-cv': the rule flank's cells moved to z* by "
-                        "--transport, strength set by folds; "
+                        "--transport, strength set by folds; 'h-cv': grounding in "
+                        "the flow's joint latent h, strength set by folds; "
                         "'rule': v18's rule (lower if t <= 0.5) — identical to v18 "
                         "'nearest + no flow'; 'lower'/'upper': force a flank "
                         "(diagnostics: is the flow's choice the better one?)")
     p.add_argument("--patch-rank", default="flow", choices=["flow", "random"],
                    help="patch-cv only: rank patches by the flow (default) or in a "
                         "seeded random order (the control that isolates the flow)")
+    p.add_argument("--h-source", default="flow",
+                   choices=["flow", "untrained", "interp", "srcdepth"],
+                   help="h-cv only: h* from the trained flow at z* (default), a "
+                        "randomly re-initialised flow, a no-network blend of the two "
+                        "flanks' h, or the trained flow at the source section's depth")
+    p.add_argument("--h-gamma", type=float, default=None,
+                   help="h-cv only: force the query strength and skip the folds "
+                        "(diagnostics: 0 is v18 'nearest + no flow')")
     p.add_argument("--transport", default="flow",
                    choices=["flow", "ot", "flow-zshuffle", "flow-pair"],
                    help="transport-cv only: the learned field (default), exact OT "
@@ -1169,11 +1372,12 @@ def main():
         "flow_matching": True, "generation_only": True,
     }
     if cv is not None:
-        method_params[{"patch-cv": "patch_cv", "transport-cv": "transport_cv"}
-                      .get(args.flank_select, "flow_cv")] = cv
+        method_params[{"patch-cv": "patch_cv", "transport-cv": "transport_cv",
+                       "h-cv": "h_cv"}.get(args.flank_select, "flow_cv")] = cv
     name = {"flow-cv": METHOD_NAME_CV,
             "patch-cv": METHOD_NAME_PATCH[args.patch_rank],
-            "transport-cv": METHOD_NAME_TRANSPORT[args.transport]
+            "transport-cv": METHOD_NAME_TRANSPORT[args.transport],
+            "h-cv": METHOD_NAME_H[args.h_source],
             }.get(args.flank_select, METHOD_NAME)
     _v2_io.write_prediction_h5(
         results, gene_names, target_sections, method_params, wall, args.output, name)
