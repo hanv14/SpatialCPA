@@ -30,7 +30,9 @@ REVIEW_NOTES §7, 7a, 7b, 7c. The **`spatialcpav18_gen_flow_h*`** entries ground
 the flow's joint latent h, against three controls (`SWEEP=h scripts/gap_sweep_starmap.sh`;
 REVIEW_NOTES §9). **`spatialcpav18_gen_uq`** emits the retrieval output plus a
 per-cell flow-sample uncertainty map, scored for calibration by
-`python -m src.bench3.evaluate_uncertainty` (REVIEW_NOTES §10).
+`python -m src.bench3.evaluate_uncertainty` (REVIEW_NOTES §10). **`spatialcpav18_gen_flow_layout*`** let the
+flow (or its controls) set the layout's per-region cell counts
+(`SWEEP=layout scripts/gap_sweep_starmap.sh`; REVIEW_NOTES §11).
 
 No other SpatialCPA version is in this tree: no wrapper, registry entry, method
 file or result. `tests/test_scope.py` and `tests/test_rename.py` enforce that.

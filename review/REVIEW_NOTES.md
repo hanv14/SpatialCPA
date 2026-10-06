@@ -685,3 +685,59 @@ declared before looking.
 - **Conclusion on STARmap.** Used generatively, the flow gives no calibrated
   uncertainty beyond cell count, and does no better than comparing the two flanks.
   This doesn't support an uncertainty-quantification claim for the flow.
+
+## 11. The flow generates the layout's density (`spatialcpav18_gen_flow_layout*`)
+
+**What it is.** A new wrapper, `methods/run_spatialcpav18_layout.py`. It imports
+the flow wrapper and v18 without editing either. v18 copies one flank's layout;
+here a density source decides how many cells each region of the output holds.
+- **Bins and targets.** The rule flank is copied, and both flanks' cells are
+  binned on one grid of 5 median spacings. Each bin's count moves from the copied
+  count c_b towards `N · w_b / Σw` by a fraction ρ; the total N is kept up to the
+  caveat below.
+- **Moving cells.** Bins over target drop copied cells; bins under target take
+  unused real cells of either flank in that bin. Every cell is still a real cell
+  at a real position.
+- **Strength.** ρ ∈ {0, 0.25, 0.5, 0.75, 1} is chosen by the flow-cv folds, and
+  ρ = 0 (the copy) wins ties.
+- **Random numbers.** As in h-cv, they are paired (common random numbers). The
+  check passed: ρ = 0 is bitwise h-cv's γ = 0 baseline.
+
+| arm | w_b comes from |
+|---|---|
+| `_flow_layout` | the trained flow: decoded density channel of v18's neighbourhood head at the bin's cell centroid, squared (density is an inverse spacing) |
+| `_flow_layout_untrained` | the same from a re-initialised flow |
+| `_flow_layout_interp` | no network: (1−t)·lower-flank count + t·upper-flank count |
+
+**Caveat.** Where the flow asks for more cells than the flanks have unused cells
+in that bin, the bin stays short. At ρ = 1 the flow arms emit about 4 % fewer
+cells; the interpolation arm loses none.
+
+**STARmap, seed 42.** Paired composite against ρ = 0 (8 pooled metrics, wins −
+losses; `SWEEP=layout scripts/gap_sweep_starmap.sh`):
+
+| gap | flow | untrained | interp (no network) | registry nearest + no flow (= noise) | ρ chosen (flow / untr. / interp) |
+|---|---|---|---|---|---|
+| 11 µm, paper | 0 | 0 | 0 | −2 | 0 / 0 / 0 |
+| 11 µm, block 1 | +2 | 0 | 0 | +2 | 0.25 / 0 / 0.25 |
+| 22 µm, block 3 | 0 | 0 | **+4** | 0 | 0 / 0 / 1.0 |
+| 33 µm, block 5 | 0 | 0 | 0 | +2 | no folds |
+
+Forced ρ = 1 (diagnostic): flow 0 / −2 / −4 / −6; untrained −6 / −4 / −4 / −6;
+interp +2 / −1 / +4 / −2.
+
+**Reading.**
+- **The trained flow's density is better than an untrained one** (forced: 0 to
+  −6 against −4 to −6; untrained folds always keep ρ = 0). So the flow has learned
+  something about where cells are.
+- **It is no better than interpolating the two flanks' counts, which needs no
+  network.** The interpolation is the only arm with a gain beyond the ±2 noise
+  floor (+4 at 22 µm, under both calibrated and forced ρ). The flow's best is +2
+  at 11 µm, inside the noise.
+- **Pushing the layout fully to the flow's density hurts at wide gaps** (−4 and
+  −6).
+- **Conclusion on STARmap.** A flow-generated density does not beat a classical
+  interpolation, so it supports no claim that the flow is useful. If anything
+  here is worth following up, it is the no-network interpolated layout at wide
+  gaps: one dataset, one seed, +4, to be checked over seeds before it means
+  anything.
