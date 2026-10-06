@@ -21,13 +21,14 @@ WANTED = {"CV_METRICS", "CV_TIE_TOL", "calibrate_delta", "fold_gain",
           "PATCH_Q_GRID", "patch_ids", "patch_margins", "patches_to_switch", "calibrate_q",
           "TRANSPORT_LAMBDA_GRID", "OT_MAX_CELLS", "OT_KNN", "even_subsample", "ot_pairs",
           "knn_displacement", "calibrate_lambda",
-          "H_GAMMA_GRID", "H_SCALE_K", "h_scale", "h_query", "calibrate_gamma"}
+          "H_GAMMA_GRID", "H_SCALE_K", "h_scale", "h_query", "calibrate_gamma",
+          "H_GROUND_STREAM", "SplitRNG"}
 
 
 def _lift():
     tree = ast.parse(FLOW_WRAPPER.read_text())
     body = [n for n in tree.body
-            if (isinstance(n, ast.FunctionDef) and n.name in WANTED)
+            if (isinstance(n, (ast.FunctionDef, ast.ClassDef)) and n.name in WANTED)
             or (isinstance(n, ast.Assign) and any(getattr(t, "id", None) in WANTED
                                                   for t in n.targets))]
     from scipy.optimize import linear_sum_assignment
@@ -170,3 +171,12 @@ def test_calibrate_gamma_needs_a_strict_gain_and_prefers_small_gamma():
     assert grid[0] == 0.0
     assert NS["calibrate_gamma"]({g: 0 for g in grid}) == (0.0, 0)
     assert NS["calibrate_gamma"]({0.0: 0, 0.25: 1, 0.5: 3, 0.75: 3, 1.0: -2}) == (0.5, 3)
+
+
+def test_split_rng_keeps_regrounding_off_the_shared_stream():
+    shared, ref = np.random.default_rng(5), np.random.default_rng(5)
+    r = NS["SplitRNG"](shared, 42)
+    assert list(r.choice(100, size=10, replace=False)) == list(ref.choice(100, size=10,
+                                                                          replace=False))
+    r.choice(8, p=np.full(8, 1 / 8))                 # a re-grounding draw ...
+    assert shared.random() == ref.random()           # ... leaves the shared stream alone

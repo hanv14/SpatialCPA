@@ -1,6 +1,8 @@
 """Summarize the STARmap gap sweep (scripts/gap_sweep_starmap.sh).
 
     python scripts/summarize_gap_sweep.py reproduced/gap_sweep reproduced/gap_sweep_forced
+    python scripts/summarize_gap_sweep.py reproduced/gap_sweep_h reproduced/gap_sweep_h_forced \
+        reproduced/gap_sweep_h_base      # compare against the paired h-cv gamma 0 baseline
 
 For each hold-out design and method: the fold-chosen lambda, the pooled paper
 metrics, and the composite against "nearest + no flow" on the same design —
@@ -47,6 +49,9 @@ def rows(root: Path):
     return out
 
 
+BASE_LABEL = "paired baseline (h-cv γ=0)"
+
+
 def composite(m, base):
     g = 0
     for key, sign in METRICS:
@@ -58,18 +63,19 @@ def composite(m, base):
     return g
 
 
-def table(found, label):
+def table(found, label, base_name=BASE):
     lines = [f"### {label}", "",
              "| gap | method | λ/γ | " + " | ".join(SHORT) + " | vs nearest |",
              "|---|---|---|" + "---|" * len(SHORT) + "---|"]
     hids = [h for h in ORDER if any(k[0] == h for k in found)]
     for hid in hids:
-        base = next((m for (h, meth), (m, _) in found.items() if h == hid and meth == BASE), None)
+        base = next((m for (h, meth), (m, _) in found.items()
+                     if h == hid and meth == base_name), None)
         for (h, meth), (m, lam) in sorted(found.items()):
             if h != hid:
                 continue
             vals = " | ".join("—" if m.get(k) is None else f"{m[k]:.3f}" for k, _ in METRICS)
-            comp = "" if base is None or meth == BASE else f"{composite(m, base):+d}"
+            comp = "" if base is None or meth == base_name else f"{composite(m, base):+d}"
             name = meth.replace("spatialcpav18_gen_", "")
             lines.append(f"| {GAP.get(hid, hid)} | {name} | "
                          f"{'—' if lam is None else lam} | {vals} | {comp} |")
@@ -79,14 +85,20 @@ def table(found, label):
 def main(argv):
     sweep = Path(argv[1])
     found = rows(sweep)
-    out = table(found, "Fold-calibrated (λ/γ chosen on training folds; 0 is plain copying)")
+    base_name = BASE
+    if len(argv) > 3:                       # a paired baseline root (h-cv at gamma 0)
+        base_name = BASE_LABEL
+        found.update({(h, BASE_LABEL): v for (h, _), v in rows(Path(argv[3])).items()})
+    out = table(found, "Fold-calibrated (λ/γ chosen on training folds; 0 is plain copying)",
+                base_name)
     if len(argv) > 2:
-        base = {k: v for k, v in found.items() if k[1] == BASE}
+        base = {k: v for k, v in found.items() if k[1] == base_name}
         for tr_dir in sorted(Path(argv[2]).glob("*")):
             forced = {(h, f"forced 1 {tr_dir.name}"): v for (h, _), v in rows(tr_dir).items()}
             if forced:
                 out += [""] + table({**base, **forced},
-                                    f"Diagnostic: strength forced to 1 ({tr_dir.name})")
+                                    f"Diagnostic: strength forced to 1 ({tr_dir.name})",
+                                    base_name)
     text = "\n".join(out) + "\n"
     (sweep / "summary.md").write_text(text)
     print(text)

@@ -11,7 +11,11 @@
 #
 # Every method row is fold-calibrated (strength 0, plain copying, wins ties).
 # A second pass forces the strength to 1 for each arm into
-# reproduced/gap_sweep[_h]_forced/<arm>/ — a diagnostic, not a method.
+# reproduced/gap_sweep[_h]_forced/<arm>/ — a diagnostic, not a method. For
+# SWEEP=h, every row is compared with h-cv at gamma 0 (reproduced/gap_sweep_h_base/),
+# which draws the same random numbers as every arm; the registry
+# "nearest + no flow" row is shown too, and its gap to that baseline is the
+# run-to-run noise floor.
 #
 #   scripts/gap_sweep_starmap.sh           # PYTHON / BENCH_V3_PYTHON as in reproduce_starmap_v18.sh
 #   JOBS=2 scripts/gap_sweep_starmap.sh    # two runs at a time
@@ -31,6 +35,7 @@ if [ "$SWEEP" = h ]; then
   FORCED_METHOD=spatialcpav18_gen_flow_h
   FORCED_ARMS=(flow untrained interp srcdepth)
   forced_args() { echo --h-source "$1" --h-gamma 1; }
+  BASE="${OUT}_base"   # paired baseline: h-cv at gamma 0 (same random streams as every arm)
 else
   METHODS=(spatialcpav18_gen_nearest_noflow spatialcpav18_gen_flow_transport
            spatialcpav18_gen_flow_transport_ot spatialcpav18_gen_flow_transport_zshuffle
@@ -38,6 +43,7 @@ else
   FORCED_METHOD=spatialcpav18_gen_flow_transport
   FORCED_ARMS=(flow ot)
   forced_args() { echo --transport "$1" --transport-lambda 1; }
+  BASE=""
 fi
 DESIGNS=("paper" "wide:1" "wide:3" "wide:5")
 mkdir -p "$OUT"
@@ -68,5 +74,10 @@ for arm in "${FORCED_ARMS[@]}"; do
     throttle
   done
 done
+if [ -n "$BASE" ]; then
+  for d in "${DESIGNS[@]}"; do
+    run "$BASE" "$FORCED_METHOD" "$d" --h-source flow --h-gamma 0 & throttle
+  done
+fi
 wait
-"$PY" "$ROOT/scripts/summarize_gap_sweep.py" "$OUT" "$FORCED"
+"$PY" "$ROOT/scripts/summarize_gap_sweep.py" "$OUT" "$FORCED" $BASE

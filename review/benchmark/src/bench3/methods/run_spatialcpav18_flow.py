@@ -138,7 +138,7 @@ over the real cells' stored h. h-distances are rescaled into ê-distance units
 (``h_scale``: the ratio of median latent distances between spatial neighbours in
 the pool), so the published margin (1.0) and temperature (0.25) keep their
 meaning; gamma is the only new parameter. gamma = 0 queries each cell's own
-source, so nothing is swapped: bitwise "nearest + no flow". Type vote and
+source, so nothing is swapped. Type vote and
 composition matching are left exactly as in "nearest + no flow".
 
 ``--h-source`` sets h*, the four arms of one experiment:
@@ -151,6 +151,17 @@ composition matching are left exactly as in "nearest + no flow".
                just blending the two flanks?
 ``srcdepth``   the trained flow queried at the source section's own depth
                instead of z* — does conditioning on the target depth matter?
+
+Re-grounding draws come from their own seeded generator (``SplitRNG``), so a
+change of gamma changes which donors are picked and nothing else: the type
+vote, composition matching and gene mix see the same random numbers as in
+"nearest + no flow" (common random numbers, a paired comparison). For the same
+reason the type vote, composition matching and gene mix each draw from their own
+seeded generator under h-cv (``STAGE_STREAMS``), at every gamma: a re-grounded
+cell can affect them only through the data. The price: h-cv at gamma = 0 is
+"nearest + no flow" with re-drawn random numbers, not bitwise the registry row;
+the paired baseline for h-cv is h-cv at gamma = 0 (``--h-gamma 0``), and its
+difference from the registry row measures the run-to-run noise floor.
 
 gamma is chosen per arm by the same leave-one-training-section-out folds
 (``H_GAMMA_GRID``; gamma = 0 wins ties). ``--h-gamma`` forces it (diagnostics).
@@ -256,6 +267,13 @@ H_GAMMA_GRID = (0.0, 0.25, 0.5, 0.75, 1.0)
 H_INTERP_K = 8
 # Spatial neighbours per pool cell used to set h_scale.
 H_SCALE_K = 8
+# Second seed word of the re-grounding generator (SplitRNG).
+H_GROUND_STREAM = 101
+# h-cv: second seed word of each post-grounding stage's own generator. With one
+# shared stream, a single re-grounded cell changes how many draws the type vote
+# makes, which shifts the numbers the gene mix reads for EVERY cell: the change
+# of donors would be confounded with a re-randomization of the whole section.
+STAGE_STREAMS = {"vote": 201, "composition": 202, "gene_mix": 203}
 
 
 if torch is not None:
@@ -336,12 +354,21 @@ class SpatialCPAv18Flow(_V18.SpatialCPAv18):
     transport_lambda = 0.0           # transport-cv: displacement strength (calibrate_lambda)
     h_source = "flow"                # h-cv: "flow" | "untrained" | "interp" | "srcdepth"
     h_gamma = 0.0                    # h-cv: query strength (calibrate_gamma)
+    _stage_rng = None                # h-cv: per-stage generators, set by _generate
 
     # -- remember the target depth: _resample_layout is not given z ------------
     def _generate(self, z):
         self._z_current = float(z)
         self._query = None
+        # h-cv: one fresh generator per post-grounding stage (see STAGE_STREAMS)
+        self._stage_rng = ({k: np.random.default_rng([int(self.cfg.seed), v])
+                            for k, v in STAGE_STREAMS.items()}
+                           if self.flank_select == "h-cv" else None)
         return super()._generate(z)
+
+    def _stage(self, name, rng):
+        """The generator stage ``name`` draws from: its own (h-cv) or v18's shared one."""
+        return rng if self._stage_rng is None else self._stage_rng[name]
 
     # -- 1. layout: one flanking section, exact positions ----------------------
     def _resample_layout(self, lower, upper, t, n_target, rng):
@@ -655,7 +682,8 @@ class SpatialCPAv18Flow(_V18.SpatialCPAv18):
                   self._h_star(anchor.astype(np.float32), pool_nxy, pool_h))
         q = h_query(pool_h[anchor_src], h_star, gamma)
         expr, ct, pick = super()._ground(anchor, anchor_src, q * scale, pool_nxy,
-                                         pool_h * scale, pool_expr, pool_type, rng)
+                                         pool_h * scale, pool_expr, pool_type,
+                                         SplitRNG(rng, int(self.cfg.seed)))
         if self.flank_log:
             self.flank_log[-1].update(h_source=self.h_source, h_gamma=gamma,
                                       h_scale=scale,
@@ -702,12 +730,17 @@ class SpatialCPAv18Flow(_V18.SpatialCPAv18):
     def _vote_types(self, anchor, pick, ct_idx, expr, pool_nxy, pool_type,
                     pool_expr, pool_e, e_hat, rng):
         return super()._vote_types(anchor, pick, ct_idx, expr, pool_nxy, pool_type,
-                                   pool_expr, pool_e, self._query, rng)
+                                   pool_expr, pool_e, self._query, self._stage("vote", rng))
 
     def _match_composition(self, lower, upper, t, ct_idx, expr, anchor, pool_nxy, pool_e,
                            e_hat, pool_type, pool_expr, rng, pick=None):
         return super()._match_composition(lower, upper, t, ct_idx, expr, anchor, pool_nxy,
-                                          pool_e, self._query, pool_type, pool_expr, rng, pick)
+                                          pool_e, self._query, pool_type, pool_expr,
+                                          self._stage("composition", rng), pick)
+
+    def _gene_mix(self, anchor, pick, ct_idx, expr_pool, pool_nxy, pool_type, n_genes, rng):
+        return super()._gene_mix(anchor, pick, ct_idx, expr_pool, pool_nxy, pool_type,
+                                 n_genes, self._stage("gene_mix", rng))
 
 
 def _json_num(x):
@@ -801,6 +834,31 @@ def knn_displacement(a_p, b_p, xy, k=OT_KNN):
     _, nb = cKDTree(a_p).query(np.asarray(xy, dtype=np.float64), k=k)
     nb = np.asarray(nb).reshape(len(xy), k)
     return (b_p - a_p)[nb].mean(axis=1)
+
+
+class SplitRNG:
+    """Common random numbers for h-cv. v18's ``_ground`` draws once to pick the
+    cells it considers (``rng.choice(n, size=..., replace=False)``) and then once
+    per cell it actually re-grounds. The first draw goes to the shared generator,
+    as in "nearest + no flow"; every later draw goes to a separate generator
+    seeded with ``(seed, H_GROUND_STREAM)``. Re-grounding then never shifts the
+    shared stream that the type vote, composition matching and gene mix read, so
+    two gamma values differ only in the donors they pick, not in reshuffled
+    downstream randomness. With no re-grounding (gamma = 0) nothing reaches the
+    second generator: bitwise "nearest + no flow"."""
+
+    def __init__(self, shared, seed):
+        self._shared, self._first = shared, True
+        self._own = np.random.default_rng([int(seed), H_GROUND_STREAM])
+
+    def choice(self, *args, **kwargs):
+        if self._first:
+            self._first = False
+            return self._shared.choice(*args, **kwargs)
+        return self._own.choice(*args, **kwargs)
+
+    def __getattr__(self, name):            # anything else _ground might call
+        return getattr(self._own, name)
 
 
 def h_scale(pool_nxy, pool_e, pool_h, k=H_SCALE_K):
