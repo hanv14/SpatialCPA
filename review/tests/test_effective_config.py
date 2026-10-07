@@ -177,3 +177,10 @@ def test_combo_arms_run_the_published_flags_on_their_own_wrapper():
         m = c.METHODS[name]
         assert str(m["wrapper"]).endswith("run_spatialcpav18_combo.py")
         assert list(m["wrapper_args"]) == [*c.V18_ARGS, "--combo-arm", arm]
+
+
+def test_flow_cv_stable_runs_the_published_flags_on_its_own_wrapper():
+    c = load_bench3_config()
+    m = c.METHODS["spatialcpav18_gen_flow_cv_stable"]
+    assert str(m["wrapper"]).endswith("run_spatialcpav18_flowcv_stable.py")
+    assert list(m["wrapper_args"]) == list(c.V18_ARGS)

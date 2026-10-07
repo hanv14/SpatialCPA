@@ -1369,6 +1369,23 @@ METHODS = {
                                 "[v18] training failed",
                                 "[v18] generation failed"),
     },
+    "spatialcpav18_gen_flow_cv_stable": {
+        # flow_cv with a lower-variance switch decision: paired replicate fold
+        # syntheses, a signal-to-noise fold score and a one-sided 95% lower-bound
+        # gate on the validated gain (no admissible gain = never switch).
+        # REVIEW_NOTES §14.
+        "wrapper": _wrapper("run_spatialcpav18_flowcv_stable.py"),
+        "wrapper_args": [*V18_ARGS],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "flow_cv with a replicated, confidence-gated switch decision",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
     "spatialz": {
         "wrapper": _wrapper("run_spatialz.py"),
         "conda_env": "bench_spatialz",
@@ -1406,7 +1423,7 @@ METHOD_ORDER = [
     "spatialcpav18_gen_uq", "spatialcpav18_gen_flow_layout",
     "spatialcpav18_gen_flow_layout_untrained", "spatialcpav18_gen_flow_layout_interp",
     "spatialcpav18_gen_flow_combo", "spatialcpav18_gen_flow_combo_untrained",
-    "spatialcpav18_gen_flow_combo_noflow",
+    "spatialcpav18_gen_flow_combo_noflow", "spatialcpav18_gen_flow_cv_stable",
 ]
 
 
