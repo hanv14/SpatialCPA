@@ -741,3 +741,41 @@ interp +2 / −1 / +4 / −2.
   here is worth following up, it is the no-network interpolated layout at wide
   gaps: one dataset, one seed, +4, to be checked over seeds before it means
   anything.
+
+## 12. Seed replication of the interpolated layout (`scripts/seed_sweep_layout_interp.sh`)
+
+**Design, fixed before running.**
+- **Seeds:** 1–5, all fresh. Seed 42 produced the §11 lead and is excluded.
+- **Runs:** per seed and design, the fold-calibrated
+  `spatialcpav18_gen_flow_layout_interp`, its ρ = 0 baseline and forced ρ = 1, on
+  shared random streams. 60 runs, all completed.
+- **Primary endpoint:** the 22 µm block-3 paired 8-metric composite (wins −
+  losses against the same seed's ρ = 0). `scripts/summarize_seed_sweep.py` writes
+  the tables.
+
+| gap | composite, fold-calibrated: mean ± sd (seeds > 0 / < 0) | forced ρ = 1: mean ± sd | per-seed calibrated composite |
+|---|---|---|---|
+| 11 µm, paper | +2.0 ± 2.4 (4 / 1) | +2.0 ± 2.0 | +4, +2, −2, +2, +4 |
+| 11 µm, block 1 | +2.4 ± 2.6 (3 / 0) | +2.6 ± 1.3 | +4, 0, +6, 0, +2 |
+| **22 µm, block 3 (primary)** | **+0.4 ± 0.9 (1 / 0)** | +0.8 ± 1.1 | 0, +2, 0, 0, 0 |
+| 33 µm, block 5 | 0 (no folds) | +0.4 ± 2.6 | — |
+
+**Primary result: not replicated.** At 22 µm the folds kept ρ = 0 for three seeds
+of five, and the composite averaged +0.4. The seed-42 +4 that motivated this was
+noise.
+
+**Exploratory, not pre-registered: a consistent small gain at 11 µm.** At both
+11 µm designs the interpolated layout is ≥ 0 in 9 of 10 calibrated runs. Forced
+ρ = 1 is ≥ 0 in all 10 and > 0 in 8. The per-metric means show the gain:
+- **Gains:** cell-type localization +0.023 to +0.025, rare-type localization up
+  to +0.022, and field r and detection up slightly.
+- **Costs:** Moran's I MAE is slightly worse (+0.001 to +0.005).
+
+Read this carefully:
+1. **It was not the hypothesis tested.** It needs its own confirmation on new
+   seeds and other datasets before any claim.
+2. **The effect is small.** It is about +2 on the composite with an sd of about
+   2.5, at a noise floor of ±2.
+3. **It is not a flow result.** The interpolated density uses no network. If it
+   holds up, it is a retrieval improvement: set each region's cell count from both
+   flanks, depth-weighted, rather than copying one flank's layout.
