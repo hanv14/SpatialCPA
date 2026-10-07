@@ -858,3 +858,63 @@ Paired SNR composite against (1, 0), 5 seeds:
 - **Where further work would pay off.** In making that decision stable: more
   folds, a lower-variance score, or averaging the decision over seeds. Not in
   re-adding the published configuration's components.
+
+## 14. A stable switch decision for flow_cv (`spatialcpav18_gen_flow_cv_stable`)
+
+**Why flow_cv was unstable (§13).** The flow's flank margins barely move between
+seeds (−0.71 to −0.74 at the paper design). Each fold's evidence, though, came
+from one synthesis per side, scored by wins − losses, and any positive total
+switched.
+
+**The fix, in a new wrapper `methods/run_spatialcpav18_flowcv_stable.py`.**
+Nothing else about flow_cv changes.
+- **Paired replicates.** Each fold synthesizes its left-out section from the rule
+  flank and from the other flank 5 times. Replicate r reseeds the generation
+  randomness and is shared by both sides.
+- **Signal-to-noise score.** Each replicate is scored with the §13 composite
+  (Σ ±Δ / run-to-run sd), so noisy metrics no longer decide the sign. A fold's
+  evidence is the replicate mean ± its standard error.
+- **Confidence gate.** A threshold that switches a set of folds is admissible only
+  if the one-sided 95 % lower bound on their summed gain is positive. With none
+  admissible, it never switches.
+- **Tests.** `tests/test_flowcv_stable.py`.
+
+**Fold evidence, seeds 1–5.**
+- **Paper design:** fold section 3 (upper flank) +208 to +224, fold section 5
+  −33 to −44, each with an se of about 2–7.
+- **Block 1:** +50 to +64, −22 to −31, −61 to −70 and +15 to +24 across its four
+  folds.
+- **Block 3:** −155 to −169 and −190 to −203.
+
+**The decision, now identical in 5 of 5 seeds at every design:**
+
+| design | flow_cv (§13) | flow_cv_stable |
+|---|---|---|
+| 11 µm paper | switch in 3/5 seeds | **switch in 5/5** (lower bound +158 to +180) |
+| 11 µm block 1 | switch in 1/5 | **never (0/5)**: no threshold has a positive bound |
+| 22 µm block 3 | never | **never (0/5)** |
+
+**Performance.** SNR composite per seed, against the same seed:
+
+| design | stable − nearest + no flow | flow_cv − nearest + no flow (§13) |
+|---|---|---|
+| 11 µm paper | **+27.5, +32.3, +36.6, +34.1, +42.5 = +34.6 ± 5.5** (wins − losses +2 in every seed) | +19.6 ± 18.1 |
+| 11 µm block 1 | +1.6 ± 5.5 (stream noise; it doesn't switch) | +3.9 ± 8.8 |
+| 22 µm block 3 | +1.5 ± 3.7 (stream noise) | 0 |
+
+- **Mean gain up, spread down.** At the paper design the mean gain over "nearest
+  + no flow" rises from +19.6 to +34.6, and the across-seed sd falls from 18.1 to
+  5.5. Every seed now gets the switch.
+- **The trade-off is unchanged.** Mean over seeds at the paper design, stable
+  against nearest + no flow:
+  - better: localization 0.815 vs 0.754, rare-type localization 0.695 vs 0.638,
+    marker depth 0.971 vs 0.944, UMAP mixing 0.970 vs 0.951;
+  - worse: Moran's I MAE 0.042 vs 0.024, gene detection 0.868 vs 0.973.
+  It is the same choice of flank, now made reliably. Whether it is a net gain
+  depends on the composite, which was fixed from noise sds before these runs, not
+  tuned.
+- **Limitation.** The decision is still a single threshold on the flow's margin.
+  At the paper design it switches both folds' margin range, including the one
+  fold where upper is worse (−40), because no threshold can select the
+  more-negative-margin fold alone. A held-out section is switched as a whole,
+  never per region.
