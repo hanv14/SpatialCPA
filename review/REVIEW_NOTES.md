@@ -779,3 +779,82 @@ Read this carefully:
 3. **It is not a flow result.** The interpolated density uses no network. If it
    holds up, it is a retrieval improvement: set each region's cell count from both
    flanks, depth-weighted, rather than copying one flank's layout.
+
+## 13. flow_cv replicated over seeds, and flow_cv × published v18 as one family (`spatialcpav18_gen_flow_combo*`)
+
+### Step A: 5-seed replication (seeds 1–5; paper, block 1, block 3)
+
+`scripts/seed_sweep_methods.sh`, summarized by `scripts/summarize_combo.py`. The
+composite here is the signal-to-noise score: Σ ±Δmetric / run-to-run sd, with the
+sds fixed from the §12 baselines.
+
+| design | flow_cv − nearest + no flow (per seed) | published v18 − nearest + no flow |
+|---|---|---|
+| 11 µm paper | +28.7, +34.7, 0, +34.8, 0 (switched upper in 3/5) | −47.1, −22.6, −32.0, −0.3, −39.8 |
+| 11 µm block 1 | 0, 0, +19.6, 0, 0 (switched in 1/5) | −76.6, −53.6, −46.1, −71.9, −66.2 |
+| 22 µm block 3 | 0 × 5 (never switched) | strongly worse (UMAP mixing 0.807 vs 0.929, Moran's I MAE 0.067 vs 0.034) |
+
+- **flow_cv's switch is a real trade-off,** not noise. At the paper design the
+  switch to the upper flank lifts cell-type localization (0.754 → ~0.79),
+  rare-type localization (0.638 → 0.674), mixing and marker depth/field. It costs
+  Moran's I MAE (0.024 → 0.036) and gene detection (0.973 → 0.903).
+- **Whether it switches is unstable across seeds.** The threshold rests on 2
+  folds, so the same data switches for some seeds and not others.
+- **The published configuration is worse than "nearest + no flow" at every design
+  and seed,** most at wide gaps.
+
+### Step B: the combined family
+
+**What it is.** A new wrapper, `methods/run_spatialcpav18_combo.py`. It imports the
+flow wrapper and v18 without editing either.
+- **Direction:** flow_cv's flank decision.
+- **Flank weight** w ∈ {1, 0.75, 0.5}, laid out with v18's coherent patches.
+- **Re-grounding** β ∈ {0, 0.25, 0.5, 1}, v18's flow-guided re-grounding.
+- **Corners:** (1, 0) is flow_cv; (0.5, 1) carries the published mechanisms. That
+  corner reproduces the published metrics on 7 of 8 to three decimals.
+- **Selection:** stepwise on shared fold models with the SNR composite; a step
+  must beat the current point by > 1; (1, 0) wins ties.
+- **Random numbers:** common random numbers throughout, with the paired baseline
+  at (1, 0).
+- **Controls:** an untrained flow, and a no-flow arm (rule direction,
+  flank-interpolated query).
+
+Paired SNR composite against (1, 0), 5 seeds:
+
+| design | combo (flow) | combo untrained | combo noflow | corner (0.5, 1), forced |
+|---|---|---|---|---|
+| 11 µm paper | 0 × 5 | 0 × 5 | −25.8 ± 15.2 (0/5 > 0) | −54.7 ± 22.1 (0/5) |
+| 11 µm block 1 | 0 × 5 | 0 × 5 | 0 × 5 | −64.5 ± 17.6 (0/5) |
+| 22 µm block 3 | 0 × 5 | 0 × 5 | 0 × 5 | −240.5 ± 19.2 (0/5) |
+
+- **The folds chose (w = 1, β = 0), plain flow_cv, for every arm, seed and
+  design.** Neither of the published configuration's two mechanisms ever
+  improved the training-section folds.
+- **The held-out sections agree.** Forcing the published corner is far worse at
+  every design and seed (−55, −65, −240). The selection rejected the published
+  mechanisms correctly; it did not just fail to find a gain.
+- **The no-flow arm** differs from the flow arm only through direction: it
+  never switches flanks. It is −26 at the paper design for 4 of 5 seeds, the same
+  trade-off as in step A.
+- **Run-to-run swing (combo at (1, 0) against registry flow_cv, same seed):**
+  −32 to +43 at the paper design. Changing the random streams changes the 2-fold
+  switch decision.
+- **A data-integrity fault, found and fixed.** Before `seed_sweep_methods.sh`
+  had an input-build lock, two concurrent runs wrote the same training-input file.
+  Two seed-3 block-3 runs trained on the corrupted file: half-size predictions,
+  UMAP mixing 0.43, flank margins 5–10× normal. Both were deleted and rerun on the
+  verified input (sha256 identical across all sweeps), and the rerun matches its
+  paired baseline exactly. All other results are either identical to their
+  baseline or consistent across seeds.
+
+**Conclusion.**
+- **No boost.** Combining the published configuration with flow_cv does not
+  improve flow_cv. The published mechanisms (two-flank coherent mixing,
+  flow-guided re-grounding) only hurt here, and the fold selection correctly
+  keeps flow_cv.
+- **What flow_cv's value is.** It is the flank switch: a localization and
+  continuity gain bought with autocorrelation and detection. Its weakness is that
+  the switch decision is unstable across seeds.
+- **Where further work would pay off.** In making that decision stable: more
+  folds, a lower-variance score, or averaging the decision over seeds. Not in
+  re-adding the published configuration's components.
