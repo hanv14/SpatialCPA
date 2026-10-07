@@ -7,6 +7,7 @@
 #   DESIGNS="paper wide:1 wide:3" NAME=seed_methods JOBS=3 scripts/seed_sweep_methods.sh
 #
 # Extra wrapper arguments for every run: EXTRA="--flag value".
+# SKIP_EXISTING=1 resumes an interrupted sweep (run_all --skip-existing).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PY="${PYTHON:-python}"
@@ -26,18 +27,22 @@ run() {  # run <seed> <method> <design[:block]>
   local d=${spec%%:*} args=(--methods "$m" --dataset starmap_visual_cortex --design "${spec%%:*}"
                             --seed "$seed")
   [ "$spec" != "$d" ] && args+=(--holdout-block "${spec#*:}")
+  [ -n "${SKIP_EXISTING:-}" ] && args+=(--skip-existing)
   [ ${#EXTRA[@]} -gt 0 ] && args+=(-- "${EXTRA[@]}")
   mkdir -p "$res"
   local log="$res/${m}_${spec/:/_}.log"
-  if ( cd "$ROOT/benchmark" && BENCH_V3_RESULTS="$res" "$PY" -m src.bench3.run_all "${args[@]}" ) \
-       > "$log" 2>&1; then echo "done  seed $seed $m $spec"
+  # Runs of one seed and design share one training-input file, which run_all
+  # builds on first use: serialize them on a lock so two never write it at once.
+  if ( cd "$ROOT/benchmark" && flock "$res/.lock_${spec/:/_}" env BENCH_V3_RESULTS="$res" \
+         "$PY" -m src.bench3.run_all "${args[@]}" ) > "$log" 2>&1; then
+    echo "done  seed $seed $m $spec"
   else echo "FAIL  seed $seed $m $spec (see $log)"; fi
 }
 
 n=0
 throttle() { n=$((n + 1)); if [ $((n % JOBS)) -eq 0 ]; then wait; fi; }
-for s in "${SEEDS[@]}"; do
-  for m in "${METHODS[@]}"; do
+for m in "${METHODS[@]}"; do          # method-major: concurrent runs differ in seed
+  for s in "${SEEDS[@]}"; do            # or design, so the lock rarely waits
     for d in "${DESIGNS[@]}"; do run "$s" "$m" "$d" & throttle; done
   done
 done
