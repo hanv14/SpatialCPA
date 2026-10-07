@@ -1325,6 +1325,50 @@ METHODS = {
                                 "[v18] training failed",
                                 "[v18] generation failed"),
     },
+    "spatialcpav18_gen_flow_combo": {
+        # flow_cv and the published v18 as one family: flank weight w (coherent
+        # patches) and v18 re-grounding beta chosen by training folds with a
+        # signal-to-noise composite; (1, 0) = flow_cv wins ties. REVIEW_NOTES §13.
+        "wrapper": _wrapper("run_spatialcpav18_combo.py"),
+        "wrapper_args": [*V18_ARGS, "--combo-arm", "flow"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "flow_cv x published v18: fold-chosen flank weight and re-grounding",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
+    "spatialcpav18_gen_flow_combo_untrained": {
+        # Control: every flow use from a re-initialised flow.
+        "wrapper": _wrapper("run_spatialcpav18_combo.py"),
+        "wrapper_args": [*V18_ARGS, "--combo-arm", "untrained"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "combo with an untrained flow (control)",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
+    "spatialcpav18_gen_flow_combo_noflow": {
+        # Control: no network (rule direction, flank-interpolated query).
+        "wrapper": _wrapper("run_spatialcpav18_combo.py"),
+        "wrapper_args": [*V18_ARGS, "--combo-arm", "noflow"],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "combo without the flow (control)",
+        "invalid_log_markers": ("flow-matching model trained: False",
+                                "torch UNAVAILABLE",
+                                "[v18] torch unavailable",
+                                "[v18] training failed",
+                                "[v18] generation failed"),
+    },
     "spatialz": {
         "wrapper": _wrapper("run_spatialz.py"),
         "conda_env": "bench_spatialz",
@@ -1361,6 +1405,8 @@ METHOD_ORDER = [
     "spatialcpav18_gen_flow_h_interp", "spatialcpav18_gen_flow_h_srcdepth",
     "spatialcpav18_gen_uq", "spatialcpav18_gen_flow_layout",
     "spatialcpav18_gen_flow_layout_untrained", "spatialcpav18_gen_flow_layout_interp",
+    "spatialcpav18_gen_flow_combo", "spatialcpav18_gen_flow_combo_untrained",
+    "spatialcpav18_gen_flow_combo_noflow",
 ]
 
 

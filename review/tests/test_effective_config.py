@@ -167,3 +167,13 @@ def test_uq_method_runs_the_published_flags_on_its_own_wrapper():
     m = c.METHODS["spatialcpav18_gen_uq"]
     assert list(m["wrapper_args"]) == list(c.V18_ARGS)
     assert str(m["wrapper"]).endswith("run_spatialcpav18_uq.py")
+
+
+def test_combo_arms_run_the_published_flags_on_their_own_wrapper():
+    c = load_bench3_config()
+    for name, arm in (("spatialcpav18_gen_flow_combo", "flow"),
+                      ("spatialcpav18_gen_flow_combo_untrained", "untrained"),
+                      ("spatialcpav18_gen_flow_combo_noflow", "noflow")):
+        m = c.METHODS[name]
+        assert str(m["wrapper"]).endswith("run_spatialcpav18_combo.py")
+        assert list(m["wrapper_args"]) == [*c.V18_ARGS, "--combo-arm", arm]

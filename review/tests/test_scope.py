@@ -18,7 +18,8 @@ REVIEW_METHODS = {"spatialz", "feast", "isost", "spatialcpav18_gen", "spatialcpa
                   "spatialcpav18_gen_flow_h_untrained", "spatialcpav18_gen_flow_h_interp",
                   "spatialcpav18_gen_flow_h_srcdepth", "spatialcpav18_gen_uq",
                   "spatialcpav18_gen_flow_layout", "spatialcpav18_gen_flow_layout_untrained",
-                  "spatialcpav18_gen_flow_layout_interp"}
+                  "spatialcpav18_gen_flow_layout_interp", "spatialcpav18_gen_flow_combo",
+                  "spatialcpav18_gen_flow_combo_untrained", "spatialcpav18_gen_flow_combo_noflow"}
 
 
 def test_registry_is_exactly_the_review_scope():
@@ -30,7 +31,8 @@ def test_registry_is_exactly_the_review_scope():
 def test_wrappers_are_exactly_the_four_methods():
     wrappers = sorted(p.name for p in (BENCH3 / "methods").glob("run_*.py"))
     assert wrappers == ["run_feast.py", "run_isost.py", "run_spatialcpav18.py",
-                        "run_spatialcpav18_flow.py", "run_spatialcpav18_layout.py",
+                        "run_spatialcpav18_combo.py", "run_spatialcpav18_flow.py",
+                        "run_spatialcpav18_layout.py",
                         "run_spatialcpav18_uq.py",
                         "run_spatialz.py"]
     stray = [p for p in REVIEW_ROOT.rglob("*.py")
