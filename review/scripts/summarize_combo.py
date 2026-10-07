@@ -30,12 +30,12 @@ GAP = {"paper_2_4_6": "11 µm paper", "wide_4": "11 µm block 1", "wide_3_4_5": 
 SEEDS = ("1", "2", "3", "4", "5")
 
 
-def metrics(root, sweep, seed, method, hid):
+def metrics(root, sweep, method, seed, hid):
     f = root / sweep / f"seed{seed}" / method / "starmap_visual_cortex" / hid / "metrics.json"
     return json.loads(f.read_text()) if f.exists() else None
 
 
-def choice(root, sweep, seed, method, hid):
+def choice(root, sweep, method, seed, hid):
     f = root / sweep / f"seed{seed}" / method / "starmap_visual_cortex" / hid / "prediction.h5"
     if not f.exists():
         return None
