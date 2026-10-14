@@ -918,3 +918,127 @@ Nothing else about flow_cv changes.
   fold where upper is worse (−40), because no threshold can select the
   more-negative-margin fold alone. A held-out section is switched as a whole,
   never per region.
+
+## 15. SpatialCPA-TF: transfer-fidelity donor selection (`spatialcpa_tf`)
+
+**Why a new method.** Two findings from §13–§14 drive it.
+- **The flow did not make the decision.** flow_cv_stable's decision came from
+  fold evidence. Its threshold sat below every held-out margin at the paper
+  design, so the flow's margin selected nothing.
+- **The post-copy steps add little.** v18's grounding, voting, composition
+  matching and gene mixing bring tuned constants and seed noise. On the flank
+  stable chooses, they do not help.
+
+**Diagnostic 1: plain copies score as well as stable.** A plain copy takes the
+flank's real coordinates at the target z, raw counts and real types, with no
+post-processing. At the paper design, a plain copy of the upper flank (stable's
+choice) scores:
+- localization 0.829 vs stable's 0.815;
+- rare-type localization 0.696 vs 0.695;
+- UMAP 0.971 vs 0.970;
+- Moran's I MAE 0.037 vs 0.042.
+
+That is an SNR composite of about +12 over stable.
+
+A per-gene marginal transport of the copy, to the depth-interpolated
+(W2-geodesic) marginal, changed nothing: gene detection went from 0.856 to
+0.860. It was dropped.
+
+**Diagnostic 2: copy fidelity belongs to the (donor, target) pair.** The
+fidelity of "section i copied onto section k" does not depend on the design. One
+7 × 7 matrix therefore scores every design.
+- **Acquisition pairs.** Gene detection is identical within {1, 2}, {3, 4} and
+  {6, 7}.
+- **Section 1 is a poor donor for every target.**
+- **Fidelity rises with donor depth.** This is why the upper flank won at the
+  paper design.
+
+**The method (`methods/run_spatialcpa_tf.py`, no network and no random draws).**
+1. Score every ordered pair of *training* sections (i copied onto k) with the
+   scorer's per-section functions on the 8 flow-cv metrics. Scale each metric by
+   its sd over the training pairs and sum with signs; the result is `Y[i,k]`.
+2. Fit OLS `Y[i,k] = c + a·z_i + b·z_k + β·|z_i − z_k|`:
+   - a is the donor-depth gradient;
+   - b is the target-depth gradient;
+   - β is the decay with the gap.
+3. For a target z\* between flanks z_lo < z\* < z_hi, compute
+   `gain = a·(z_hi − z_lo) + β·(|z_hi − z*| − |z_lo − z*|)`. Copy the upper flank
+   if gain > 0, otherwise the lower one.
+   - This is the argmax of predicted fidelity.
+   - With a = 0 it reduces to the nearest section.
+   - A tie, an unestimable contrast or a one-sided target copies the nearest
+     section.
+4. Emit the donor's cells verbatim at z\*.
+
+The coefficients, their standard errors and every decision are written to
+`uns/method_params`. Tests: `tests/test_spatialcpa_tf.py`.
+
+**Fitted model and decisions.**
+
+| design | a (/µm) | β (/µm) | donors |
+|---|---|---|---|
+| paper | +0.183 ± 0.044 | −0.318 ± 0.063 | 2←3, 4←5, 6←7 |
+| block 1 | +0.128 ± 0.029 | −0.297 ± 0.038 | 4←5 |
+| block 3 | +0.090 ± 0.041 | −0.275 ± 0.050 | 3←2 (gain −2.1 ± 2.1), 4←6, 5←6 |
+
+The predictions are bitwise identical for seeds 1 and 2.
+
+**Performance** (`scripts/summarize_tf.py`; `reproduced/tf_summary.md`). SNR
+composite against every seed of the other method:
+
+| design | TF − flow_cv_stable | TF − nearest + no flow | TF − published v18 |
+|---|---|---|---|
+| 11 µm paper | **+12.6 ± 4.4** (5/5 seeds > 0) | +47.2 ± 4.0 | +75.6 ± 15.8 |
+| 11 µm block 1 | **+22.2 ± 4.3** (5/5) | +23.8 ± 2.7 | +86.7 ± 11.9 |
+| 22 µm block 3 | **+19.9 ± 1.3** (5/5) | +21.4 ± 4.8 | +200.3 ± 13.9 |
+
+Wins − losses against stable per seed:
+- paper: +2, −2, 0, +4, 0;
+- block 1: 0, +2, 0, 0, 0;
+- block 3: 0, +2, +2, +2, 0.
+
+**Wall time** in the harness, three runs in parallel:
+
+| design | TF | v18 | stable |
+|---|---|---|---|
+| paper | 51 s | 38 s | 174 s |
+| block 1 | 144 s | 59 s | 404 s |
+| block 3 | 46 s | 38 s | 169 s |
+
+Block 1 takes longer because it has 30 training pairs; the cost is O(n²) in
+training sections.
+
+**Every 1–3-section hold-out** (`scripts/tf_all_designs.py`;
+`reproduced/tf_all_designs.md`). Each design is decided from its own training
+pairs. SNR gain over the nearest section, totalled over the 25 designs:
+
+| rule | total | designs gaining | designs losing |
+|---|---|---|---|
+| TF | +1818 | 21 | 4 |
+| always the deeper flank | +1834 | 21 | 4 |
+| oracle flank | +2604 | 21 | 0 |
+
+**Limitations. A reviewer will raise these.**
+- **One dataset.** The model form was chosen after this 25-design analysis on
+  STARmap. The alternatives tried were:
+  - free per-section donor effects: total +1533 (asymmetric) or +1354
+    (symmetric). They are unidentifiable at block 3.
+  - the same model with a one-sided 5 % gate: total +1961, but only 18 designs
+    gain.
+  - a leave-one-section-out direction vote: identical to "always deeper".
+  Evidence that TF generalizes needs a second volume.
+- **On STARmap, TF is almost "always copy the deeper section".** It differs in
+  only 2 of 25 designs. The model's claim is that it estimates the direction and
+  size of the quality gradient and trades it against the gap. Here the gradient
+  is positive everywhere, so the claim is not stress-tested.
+- **The four losing designs all hold out section 5.** In them, 6 or 7 is a worse
+  donor than 4, and a depth-linear model cannot see that. The losses are −32,
+  −69, −116 and −149.
+- **It is worse than nearest + no flow on two metrics at the paper design.**
+  Moran's I MAE is 0.037 vs 0.024 and gene detection 0.856 vs 0.973. This is the
+  §13–§14 trade-off: the deeper donor belongs to another acquisition pair.
+- **The standard errors are optimistic.** They treat ordered pairs as
+  independent, while (i, k) and (k, i) are nearly symmetric. The decision uses
+  only the sign of the gain; the SEs are reported for context.
+- **The output is a real section, not a new one.** The method interpolates no
+  new tissue state. Its contribution is the validated choice of donor.

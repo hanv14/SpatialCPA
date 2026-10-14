@@ -35,7 +35,7 @@ flow (or its controls) set the layout's per-region cell counts
 (`SWEEP=layout scripts/gap_sweep_starmap.sh`; REVIEW_NOTES §11). **`spatialcpav18_gen_flow_combo*`** put flow_cv
 and the published configuration in one fold-selected family (REVIEW_NOTES §13;
 `scripts/seed_sweep_methods.sh`, `scripts/summarize_combo.py`). **`spatialcpav18_gen_flow_cv_stable`** is flow_cv
-with a replicated, confidence-gated switch decision (REVIEW_NOTES §14).
+with a replicated, confidence-gated switch decision (REVIEW_NOTES §14). **`spatialcpa_tf`** (SpatialCPA-TF, a new SpatialCPA method rather than a version) transfers a whole real training section, the donor flank chosen by a 4-coefficient transfer-fidelity model fitted on training pairs. It has no network and no random draws (REVIEW_NOTES §15; `scripts/summarize_tf.py`, `scripts/tf_all_designs.py`).
 
 No other SpatialCPA version is in this tree: no wrapper, registry entry, method
 file or result. `tests/test_scope.py` and `tests/test_rename.py` enforce that.

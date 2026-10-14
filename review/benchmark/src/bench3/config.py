@@ -1386,6 +1386,18 @@ METHODS = {
                                 "[v18] training failed",
                                 "[v18] generation failed"),
     },
+    "spatialcpa_tf": {
+        # SpatialCPA-TF: a real training section transferred whole to the target
+        # depth; the donor flank is chosen by a 4-coefficient transfer-fidelity
+        # model (donor depth, target depth, gap) fitted on training pairs only.
+        # No network, no random draws. REVIEW_NOTES §15.
+        "wrapper": _wrapper("run_spatialcpa_tf.py"),
+        "wrapper_args": [],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "transfer-fidelity donor selection (deterministic, no network)",
+    },
     "spatialz": {
         "wrapper": _wrapper("run_spatialz.py"),
         "conda_env": "bench_spatialz",
@@ -1424,6 +1436,7 @@ METHOD_ORDER = [
     "spatialcpav18_gen_flow_layout_untrained", "spatialcpav18_gen_flow_layout_interp",
     "spatialcpav18_gen_flow_combo", "spatialcpav18_gen_flow_combo_untrained",
     "spatialcpav18_gen_flow_combo_noflow", "spatialcpav18_gen_flow_cv_stable",
+    "spatialcpa_tf",
 ]
 
 

@@ -184,3 +184,10 @@ def test_flow_cv_stable_runs_the_published_flags_on_its_own_wrapper():
     m = c.METHODS["spatialcpav18_gen_flow_cv_stable"]
     assert str(m["wrapper"]).endswith("run_spatialcpav18_flowcv_stable.py")
     assert list(m["wrapper_args"]) == list(c.V18_ARGS)
+
+
+def test_spatialcpa_tf_has_no_v18_flags_and_its_own_wrapper():
+    c = load_bench3_config()
+    m = c.METHODS["spatialcpa_tf"]
+    assert str(m["wrapper"]).endswith("run_spatialcpa_tf.py")
+    assert list(m["wrapper_args"]) == []
