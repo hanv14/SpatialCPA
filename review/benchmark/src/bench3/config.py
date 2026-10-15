@@ -1398,6 +1398,18 @@ METHODS = {
         "family": "spatialcpa",
         "notes": "transfer-fidelity donor selection (deterministic, no network)",
     },
+    "spatialcpa_x": {
+        # SpatialCPA-X: spatialcpa_tf's donor model applied to every training
+        # section (interpolation and extrapolation), plus an empirical-Bayes
+        # depth-response model that carries the donor's counts to the target
+        # depth by binomial thinning / Poisson addition. REVIEW_NOTES §16.
+        "wrapper": _wrapper("run_spatialcpa_x.py"),
+        "wrapper_args": [],
+        "conda_env": "bench_spatialcpa",
+        "available": True,
+        "family": "spatialcpa",
+        "notes": "section transfer + depth-response model (interpolates and extrapolates)",
+    },
     "spatialz": {
         "wrapper": _wrapper("run_spatialz.py"),
         "conda_env": "bench_spatialz",
@@ -1436,7 +1448,7 @@ METHOD_ORDER = [
     "spatialcpav18_gen_flow_layout_untrained", "spatialcpav18_gen_flow_layout_interp",
     "spatialcpav18_gen_flow_combo", "spatialcpav18_gen_flow_combo_untrained",
     "spatialcpav18_gen_flow_combo_noflow", "spatialcpav18_gen_flow_cv_stable",
-    "spatialcpa_tf",
+    "spatialcpa_tf", "spatialcpa_x",
 ]
 
 
