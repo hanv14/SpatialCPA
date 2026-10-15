@@ -43,8 +43,11 @@ is estimated, and the fallbacks (fewer than three sections) are recorded in
 """
 
 import argparse
+import multiprocessing as mp
+import os
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import anndata as ad
@@ -135,8 +138,33 @@ def transfer_counts(X, r, generator, integer):
 
 # ── the method ───────────────────────────────────────────────────────────────
 
+_PAIR_STATE = {}
+
+
+def _score_pair(pair):
+    """One ordered pair's fidelity metrics (runs in a forked worker; reads
+    ``_PAIR_STATE``, set by the parent before the pool starts)."""
+    st = _PAIR_STATE
+    mi, mk = st["sections"] == pair[0], st["sections"] == pair[1]
+    types, order = st["types"], st["order"]
+    return _TF.section_metrics(
+        st["ep"], st["X"][mi][:, order], st["coords"][mi, :2],
+        None if types is None else types[mi],
+        st["X"][mk][:, order], st["coords"][mk, :2], None if types is None else types[mk],
+        st["genes"], st["markers"], st["layers"])
+
+
+def _n_workers():
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except AttributeError:                        # not Linux
+        return max(1, os.cpu_count() or 1)
+
+
 def _fidelity_model(adata, X, sections, coords, types, ids, z):
-    """The transfer-fidelity model of spatialcpa_tf on the training pairs."""
+    """The transfer-fidelity model of spatialcpa_tf on the training pairs. Pairs
+    are scored in parallel over the available cores (each pair is deterministic,
+    so the result does not depend on the number of workers)."""
     ep = _TF._load_scorer()
     pp = dict(adata.uns.get("paper_protocol") or {})
     markers = [str(g) for g in pp.get("marker_genes", [])] or ep.MARKER_GENES
@@ -146,13 +174,15 @@ def _fidelity_model(adata, X, sections, coords, types, ids, z):
     order = np.argsort(genes, kind="stable")
     sorted_genes = [str(g) for g in genes[order]]
     pairs = [(i, k) for i in ids for k in ids if i != k]
-    rows = []
-    for i, k in pairs:
-        mi, mk = sections == i, sections == k
-        rows.append(_TF.section_metrics(
-            ep, X[mi][:, order], coords[mi, :2], None if types is None else types[mi],
-            X[mk][:, order], coords[mk, :2], None if types is None else types[mk],
-            sorted_genes, markers, layers))
+    _PAIR_STATE.update(ep=ep, X=X, sections=sections, coords=coords, types=types,
+                       order=order, genes=sorted_genes, markers=markers, layers=layers)
+    workers = min(_n_workers(), max(len(pairs), 1))
+    if workers > 1 and "fork" in mp.get_all_start_methods():
+        with ProcessPoolExecutor(workers, mp_context=mp.get_context("fork")) as pool:
+            rows = list(pool.map(_score_pair, pairs))
+    else:
+        rows = [_score_pair(pr) for pr in pairs]
+    _PAIR_STATE.clear()
     Y, used = _TF.fidelity_composite(rows) if rows else (np.zeros(0), [])
     model = _TF.fit_fidelity_model(pairs, z, Y) if pairs and used else None
     if model is not None and (model["dof"] < 1 or model["rank"] < 4):

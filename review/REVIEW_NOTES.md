@@ -1042,3 +1042,120 @@ pairs. SNR gain over the nearest section, totalled over the 25 designs:
   only the sign of the gain; the SEs are reported for context.
 - **The output is a real section, not a new one.** The method interpolates no
   new tissue state. Its contribution is the validated choice of donor.
+
+## 16. SpatialCPA-X: section transfer with a depth-response model (`spatialcpa_x`)
+
+**Goal.** Reconstruct sections between *and beyond* the training sections, with
+no network and no tuned constants, at least as well as flow_cv_stable.
+
+**What was tried for extrapolation first** (STARmap 7 × 7 copy matrix; 8
+end-of-stack hold-outs, 20 targets). These are negative results, and the reason
+the method is built as it is:
+- **Choosing a better donor beyond the edge.** The edge section is already the
+  best real donor in 19 of 20 targets.
+- **Per-gene marginal and capture corrections.** Invisible to the pinned scorer,
+  which rank-normalizes every gene: the composite moved by −0.8 to +2.4.
+- **Linear extrapolation of cell-type composition.** Worse than keeping the
+  edge's composition at every gap (total-variation error 0.090 vs 0.089 at
+  11 µm, 0.26 vs 0.21 at 33 µm).
+- **A per-metric fidelity forecast.** 90 % intervals covered only 46–61 % of
+  outcomes, and its point error was no better than "average fidelity at that
+  gap".
+
+**What the data does show.** Capture falls with depth: median library size goes
+from 402k to 63k over sections 1–7, roughly log-linearly. Successive per-gene
+mean shifts are strongly correlated (r = 0.77–0.92), so a per-gene depth
+response is estimable and extrapolates.
+
+**The method (`methods/run_spatialcpa_x.py`).**
+1. **Structure.** The transfer-fidelity model of §15, refitted on the training
+   pairs. The donor is `argmax_d a·z_d + β·|z_d − z*|` over *all* training
+   sections. The target term cancels, so the same rule applies inside and
+   beyond the range. On STARmap it reproduces spatialcpa_tf's choice in all
+   75 decisions (55 interpolation, 20 extrapolation).
+2. **Molecular abundance.** Per gene, `log mean count` is linear in z (OLS over
+   the training sections).
+   - The slopes are shrunk to their precision-weighted mean by empirical Bayes,
+     `s_g ← s̄ + τ²/(τ² + se_g²)·(s_g − s̄)`.
+   - The between-gene variance τ² is a method-of-moments estimate from the same
+     fit, so the amount of shrinkage is not a parameter.
+   - Against no correction, a single global slope and unshrunk per-gene slopes,
+     it had the lowest per-gene error in interpolation (0.090 vs 0.334, 0.103,
+     0.093) and in extrapolation (0.293 vs 0.595, 0.299, 0.323).
+3. **Count transfer.** With `r_g = exp(s_g·(z* − z_d))`:
+   - binomial thinning where `r_g ≤ 1`;
+   - `x + Poisson((r_g − 1)·x)` where `r_g > 1`;
+   - both keep `E = r_g·x`, integer counts and every zero;
+   - non-integer expression is scaled instead, and that is recorded.
+   - Seeded per target.
+4. **Speed.** Training pairs are scored in parallel over the available cores, and
+   the result is identical for any worker count. Wall time: 12.5 s at the paper
+   design (12 pairs), 33 s with 6 training sections (30 pairs), on 4 cores.
+
+**Nested baselines and parameters.** `a = 0` gives the nearest section; `s = 0`
+gives spatialcpa_tf. The fitted quantities are the 4 transfer coefficients and
+one depth slope per gene; τ² is estimated; nothing is tuned.
+
+**New evaluation pieces, both evaluation-side.**
+- `evaluate_depth.py` scores the *level* of expression, which the pinned scorer
+  is deliberately blind to:
+  - library-size log ratio;
+  - median per-gene |log ratio| of mean counts;
+  - r of log means.
+- `run_extrapolation.py` builds end-of-stack hold-outs without changing
+  `design.py`: `extrap_hi_k` (k deepest held out) and `extrap_lo_k`
+  (k shallowest held out), with k = 1–3.
+
+Tests: `tests/test_spatialcpa_x.py`. Summary: `scripts/summarize_x.py` writes
+`reproduced/x_summary.md`.
+
+**Interpolation (seeds 1–2; against every seed of the other method).** SNR
+composite:
+
+| design | X − flow_cv_stable | X − TF | library \|log ratio\|: X / TF / stable / v18 |
+|---|---|---|---|
+| 11 µm paper | **+12.8 ± 4.6** (5/5 seeds > 0) | +0.4 | 0.034 / 0.266 / 0.214 / 0.045 |
+| 11 µm block 1 | **+22.4 ± 4.3** (5/5) | +0.2 | 0.050 / 0.237 / 0.198 / 0.014 |
+| 22 µm block 3 | **+20.4 ± 1.3** (5/5) | +0.5 | 0.046 / 0.353 / 0.292 / 0.100 |
+
+**Extrapolation (seeds 1–3 for every method).** SNR composite, mean ± sd over
+seeds:
+
+| design | X − stable | X − nearest + no flow | X − published v18 | library \|log ratio\|: X / TF / stable / v18 |
+|---|---|---|---|---|
+| deep end, 1 held out | +97.5 ± 2.1 | +8.3 ± 1.1 | +42.4 ± 2.2 | 0.045 / 0.250 / 0.487 / 0.291 |
+| deep end, 2 held out | +54.7 ± 5.7 | +11.4 ± 1.7 | +20.3 ± 6.1 | 0.085 / 0.381 / 0.601 / 0.430 |
+| deep end, 3 held out | +53.2 ± 6.7 | +4.2 ± 3.1 | +25.2 ± 2.9 | 0.210 / 0.492 / 0.699 / 0.554 |
+| shallow end, 1 held out | +264.1 ± 6.9 | +13.4 ± 3.0 | +22.5 ± 14.3 | 0.312 / 0.573 / 0.842 / 0.608 |
+| shallow end, 2 held out | +47.1 ± 33.9 | +7.9 ± 3.0 | **−25.1 ± 2.9** | 0.234 / 0.594 / 0.726 / 0.622 |
+| shallow end, 3 held out | −1.3 ± 2.6 (tie) | +1.9 ± 0.7 | **−17.9 ± 2.0** | 0.148 / 0.620 / 0.628 / 0.660 |
+
+Per-gene mean |log ratio| follows the library column: X is 2–3× lower than
+every other method in every design. Beyond the deep end, thinning also
+reproduces the fall in gene detection (detection Spearman 0.938 vs TF's 0.926
+with two sections held out; 0.947 vs 0.868 with three).
+
+**Limitations. A reviewer will raise these.**
+- **Structure beyond the edge is the edge section.** On the pinned scorer, X ties
+  with TF (|SNR| ≤ 2.1). Its extrapolation gain over TF is entirely the depth
+  response: count level and detection.
+- **Published v18 wins two shallow designs.** With 2 or 3 shallow sections held
+  out, v18's gene mixing gives a lower Moran's I MAE (0.078 vs 0.095; 0.064 vs
+  0.077).
+- **Linear in z.** The depth response is log-linear. The first step of the
+  STARmap volume (sections 1 → 2) is steeper than the rest, so shallow
+  extrapolation retains a library error of 0.15–0.31.
+- **One dataset.** The model forms (the linear fidelity model, log-linear depth
+  response, empirical-Bayes shrinkage) were chosen on STARmap. The code is
+  dataset-agnostic, and every run takes `--dataset`. A second thick-tissue
+  volume is the test:
+  ```
+  python -m src.bench3.prepare_dataset --dataset <name>
+  python -m src.bench3.run_extrapolation --dataset <name> --side both --depth 3 \
+      --methods spatialcpa_x spatialcpa_tf spatialcpav18_gen_nearest_noflow spatialcpav18_gen
+  python -m src.bench3.run_all --dataset <name> --design paper --methods spatialcpa_x
+  ```
+- **The extrapolation evidence is new evaluation.** `evaluate_depth` and the
+  end-of-stack designs are added for this method. They are documented here and
+  run identically for every method, but they are not part of the pinned
+  protocol.
